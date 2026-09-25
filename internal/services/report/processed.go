@@ -120,6 +120,12 @@ type ProcessedCluster struct {
 	// the 2.8 Cluster Linking floor ("Yes" >= 2.8, "No" below, "" unknown), read from
 	// the source configuration during processing.
 	SourceInterBrokerProtocol string `json:"source_inter_broker_protocol,omitempty"`
+	// SourceType records which source platform this cluster came from ("msk" | "osk").
+	// The report service never sets it (MSK clusters carry no source-type marker in
+	// their own JSON); the plan layer sets it to "osk" when it flattens a
+	// ProcessedOSKCluster into this shape so buildProfile can pick the OSK code path.
+	// Empty is treated as MSK, so existing report output is byte-for-byte unchanged.
+	SourceType types.SourceType `json:"source_type,omitempty"`
 }
 
 type CostAggregate struct {

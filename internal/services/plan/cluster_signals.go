@@ -81,7 +81,14 @@ func hasLongRetention(c report.ProcessedCluster) *string {
 // when neither metric was scanned (metrics collection wasn't run).
 func storedGB(c report.ProcessedCluster) *float64 {
 	aggs := c.ClusterMetrics.Aggregates
+	// MSK CloudWatch labels carry a "(GB)" unit suffix and a remote-storage metric;
+	// OSK Jolokia/Prometheus emit a bare "TotalLocalStorageUsage" (already GiB) and
+	// have no remote-storage metric. Read whichever label is present — MSK aggregates
+	// never carry the bare OSK key and vice-versa, so this stays exact for both.
 	local, okL := pickPercentile(aggs, "TotalLocalStorageUsage(GB)", "max")
+	if !okL {
+		local, okL = pickPercentile(aggs, "TotalLocalStorageUsage", "max")
+	}
 	remote, okR := pickPercentile(aggs, "TotalRemoteStorageUsage(GB)", "max")
 	if !okL && !okR {
 		return nil
@@ -122,6 +129,23 @@ func clusterStorageMode(c report.ProcessedCluster) kafkatypes.StorageMode {
 	return prov.StorageMode
 }
 
+// oskTieredFromTopics reports whether an OSK/CP cluster uses tiered storage, from
+// the scanned topic summary: RemoteStorageTopics > 0 (topics with
+// remote.storage.enable=true) means tiered is in use. Returns nil when topics were
+// not scanned, so the plan asks tiered_storage instead. OSK has no cluster-level
+// storage config and no remote-storage metric, so this summary count is the only
+// tiered-storage signal an OSK scan expresses.
+func oskTieredFromTopics(c report.ProcessedCluster) *string {
+	t := c.KafkaAdminClientInformation.Topics
+	if t == nil {
+		return nil
+	}
+	if t.Summary.RemoteStorageTopics > 0 {
+		return sp("Yes")
+	}
+	return sp("No")
+}
+
 // Source-auth tokens. Stable strings — the profile builder (engine_adapter.go)
 // and the plan renderer map on them to describe how the source authenticates.
 // Keep them in sync with the source-auth answer vocabulary.
@@ -130,6 +154,9 @@ const (
 	SourceAuthIAM    = "iam"
 	SourceAuthMTLS   = "mtls"
 	SourceAuthUnauth = "unauth"
+	// SourceAuthSASLPlain is SASL/PLAIN, an OSK/CP-only source auth (MSK's SASL is
+	// SCRAM). It maps to the engine's "API keys (SASL/PLAIN)" source-auth string.
+	SourceAuthSASLPlain = "sasl-plain"
 )
 
 // DiscoveredClientAuth* mirrors the literal strings that
@@ -163,6 +190,9 @@ const (
 // Multiple auths can be enabled simultaneously; the plan renders all
 // detected source auths and never picks one when more than one is on.
 func sourceAuthsDetected(c report.ProcessedCluster) []string {
+	if c.SourceType == types.SourceTypeOSK {
+		return oskSourceAuthsDetected(c)
+	}
 	if isServerless(c) {
 		return serverlessSourceAuths(c)
 	}
@@ -209,6 +239,22 @@ func authFromSaslMechanism(mech string) string {
 	default:
 		return ""
 	}
+}
+
+// oskSourceAuthsDetected reads the one auth fact an OSK (Apache Kafka / Confluent
+// Platform) scan records — KafkaAdminClientInformation.SaslMechanism — into a
+// source-auth token. Only SASL/SCRAM (with SHA variant) and SASL/PLAIN are ever
+// recorded; mTLS, unauthenticated-plaintext and unauthenticated-TLS all leave the
+// mechanism empty and are indistinguishable in the scan, so an empty mechanism
+// returns nothing and the plan asks source_auth (surfaced as an open question).
+func oskSourceAuthsDetected(c report.ProcessedCluster) []string {
+	switch types.NormalizeSaslMechanism(c.KafkaAdminClientInformation.SaslMechanism) {
+	case "SCRAM-SHA-256", "SCRAM-SHA-512":
+		return []string{SourceAuthSCRAM}
+	case "PLAIN":
+		return []string{SourceAuthSASLPlain}
+	}
+	return nil
 }
 
 func serverlessSourceAuths(c report.ProcessedCluster) []string {

@@ -5,7 +5,7 @@
     "kcp_version": "0.0.0-localdev",
     "generated_at": "<example>",
     "state_generated_at": "2026-09-04T12:00:00Z",
-    "plan_schema_version": "2"
+    "plan_schema_version": "3"
   },
   "summary": {
     "clusters": 3,
@@ -39,7 +39,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {
@@ -604,7 +604,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {
@@ -1183,7 +1183,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {

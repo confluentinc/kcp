@@ -15,17 +15,23 @@ ways the command is run.
   what to fill in.
 - **[`no-scan/`](no-scan/plan.md)** — **no `--state-file`**, run as a pure questionnaire.
   The planner starts a single placeholder cluster, so every fact becomes a question.
+- **[`osk-scan/`](osk-scan/plan.md)** — an **Apache Kafka** scan (self-managed / Confluent
+  Platform sources). The planner reads what the scan expresses (auth, partitions, tiered
+  storage, connectors, Schema Registry) and asks for what it can't (version, source cloud).
 
 ## How these stay current
 
 These examples are **generated from committed fixtures, not hand-edited**, so they
 can't silently drift from what `kcp report plan` actually produces:
 
-- **[`demo-scan.json`](demo-scan.json)** — the synthetic scan fixture they're built
-  from (fake account `123456789012`, made-up cluster names — no real customer data).
+- **[`demo-scan.json`](demo-scan.json)** — the synthetic MSK scan fixture the first
+  three examples are built from (fake account `123456789012`, made-up cluster names —
+  no real customer data).
+- **[`demo-osk-scan.json`](demo-osk-scan.json)** — the synthetic Apache Kafka scan
+  fixture the `osk-scan/` example is built from (synthetic cluster, no real customer data).
 - **[`filled-inputs.yaml`](filled-inputs.yaml)** — the answered `plan-inputs.yaml`
-  seed used for the `filled/` example. `first-run/` and `no-scan/` start with no
-  answers.
+  seed used for the `filled/` example. `first-run/`, `no-scan/` and `osk-scan/` start
+  with no answers.
 
 `TestReportPlanExamples_UpToDate` (in `internal/services/plan/`) regenerates all
 three artifacts for each mode through the same library entrypoints the CLI uses,

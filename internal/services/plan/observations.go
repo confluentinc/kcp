@@ -33,8 +33,14 @@ func clusterObservations(c report.ProcessedCluster, p engine.Profile) []Observat
 	// data; on a start-fresh migration there is no backfill, so this would
 	// contradict the historical-data verdict.
 	if deref(p.StorageMode) == "Yes" && p.NeedsDataMigration != "No" {
+		// MSK tiers to S3; a self-managed Apache Kafka / Confluent Platform source
+		// tiers to its own object store, so keep the location generic off MSK.
+		where := "in S3"
+		if !engine.IsMSK(p) {
+			where = "in your tiered object storage"
+		}
 		obs = append(obs, Observation{"info", "Tiered storage in use",
-			"Historical data sits in S3. Backfilling it during cutover takes time proportional to the tiered volume."})
+			"Historical data sits " + where + ". Backfilling it during cutover takes time proportional to the tiered volume."})
 	}
 	if len(c.ClusterMetrics.Aggregates) == 0 {
 		obs = append(obs, Observation{"warn", "No throughput metrics scanned",

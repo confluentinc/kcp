@@ -5,7 +5,7 @@
     "kcp_version": "0.0.0-localdev",
     "generated_at": "<example>",
     "state_generated_at": "2026-09-04T12:00:00Z",
-    "plan_schema_version": "2"
+    "plan_schema_version": "3"
   },
   "summary": {
     "clusters": 3,
@@ -40,7 +40,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {
@@ -640,7 +640,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {
@@ -1135,7 +1135,7 @@
       ],
       "scan_facts": [
         {
-          "name": "msk_cluster_type",
+          "name": "source_cluster_type",
           "value": "Provisioned"
         },
         {
@@ -1501,7 +1501,7 @@
           "self_serve": true,
           "zone_config": "Multi-zone",
           "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
-          "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+          "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option to run day-to-day. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
           "why": "Public networking works for your workload size.",
           "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
           "action": "Create a Standard cluster",
@@ -1568,7 +1568,7 @@
           "value": "Confluent Replicator",
           "mm2": false,
           "replicator": true,
-          "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+          "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise).",
           "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
           "action": "Set up Confluent Replicator",
           "pros": [
@@ -1578,7 +1578,7 @@
           "cons": [
             "Part of Confluent Platform Enterprise, so it needs a license",
             "You run and operate the Connect worker for the length of the migration",
-            "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+            "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only — non-Java consumers have no automatic offset-translation path and resume per auto.offset.reset (reprocess or skip)"
           ],
           "tech_assist": true,
           "source_credential_handling": [
@@ -1739,7 +1739,7 @@
               "self_serve": true,
               "zone_config": "Multi-zone",
               "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
-              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option to run day-to-day. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
               "why": "Public networking works for your workload size.",
               "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
               "action": "Create a Standard cluster",
@@ -1806,7 +1806,7 @@
               "value": "Confluent Replicator",
               "mm2": false,
               "replicator": true,
-              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise).",
               "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
               "action": "Set up Confluent Replicator",
               "pros": [
@@ -1816,7 +1816,7 @@
               "cons": [
                 "Part of Confluent Platform Enterprise, so it needs a license",
                 "You run and operate the Connect worker for the length of the migration",
-                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only — non-Java consumers have no automatic offset-translation path and resume per auto.offset.reset (reprocess or skip)"
               ],
               "tech_assist": true,
               "source_credential_handling": [
@@ -1973,7 +1973,7 @@
               "self_serve": true,
               "zone_config": "Multi-zone",
               "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
-              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option to run day-to-day. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
               "why": "Public networking works for your workload size.",
               "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
               "action": "Create a Standard cluster",
@@ -2040,7 +2040,7 @@
               "value": "Confluent Replicator",
               "mm2": false,
               "replicator": true,
-              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise).",
               "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
               "action": "Set up Confluent Replicator",
               "pros": [
@@ -2050,7 +2050,7 @@
               "cons": [
                 "Part of Confluent Platform Enterprise, so it needs a license",
                 "You run and operate the Connect worker for the length of the migration",
-                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only — non-Java consumers have no automatic offset-translation path and resume per auto.offset.reset (reprocess or skip)"
               ],
               "tech_assist": true,
               "source_credential_handling": [

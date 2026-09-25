@@ -5,6 +5,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/plan/engine"
 	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // IntakeInputs are the customer-declared facts the scan cannot derive — the
@@ -20,6 +21,12 @@ import (
 // which populates these fields via each question's set func — so it carries no
 // struct tags.
 type IntakeInputs struct {
+	// Source platform + cloud. SourcePlatform is an engine platform string ("Amazon
+	// MSK" | "Apache Kafka" | "Confluent Platform"); empty means MSK. SourceCloud is
+	// the source's cloud, declared only for a non-MSK source (MSK is AWS).
+	SourcePlatform string
+	SourceCloud    string
+
 	// Networking requirement — the public/private fork. "Yes" = public is fine.
 	PublicEndpointsOK string
 	ConnectsToday     string
@@ -88,6 +95,8 @@ func mergeInputs(base, over IntakeInputs) IntakeInputs {
 		return a
 	}
 	return IntakeInputs{
+		SourcePlatform:                s(base.SourcePlatform, over.SourcePlatform),
+		SourceCloud:                   s(base.SourceCloud, over.SourceCloud),
 		PublicEndpointsOK:             s(base.PublicEndpointsOK, over.PublicEndpointsOK),
 		ConnectsToday:                 s(base.ConnectsToday, over.ConnectsToday),
 		UseCaseBreadth:                s(base.UseCaseBreadth, over.UseCaseBreadth),
@@ -123,13 +132,37 @@ func mergeInputs(base, over IntakeInputs) IntakeInputs {
 const (
 	engineAuthAWSIAM = "AWS IAM"
 	engineAuthSCRAM  = "SASL/SCRAM"
-	engineAuthMTLS   = "TLS client certificates (mTLS)"
-	engineAuthUnauth = "None / plaintext"
+	// engineAuthSASLPlain mirrors the source_auth question's "sasl-plain" engine value
+	// (shared with target API-key auth); OSK/CP SASL/PLAIN sources map to it.
+	engineAuthSASLPlain = "API keys (SASL/PLAIN)"
+	engineAuthMTLS      = "TLS client certificates (mTLS)"
+	engineAuthUnauth    = "None / plaintext"
 
 	// engineSRGlue is the engine's Schema Registry value for AWS Glue (mirrors the
 	// schema_registry question's "glue" option).
 	engineSRGlue = "AWS Glue Schema Registry"
+
+	// Engine source-platform strings (mirror the source_platform question's engine
+	// values). buildProfile maps these onto the engine SourceType axis.
+	enginePlatformMSK = "Amazon MSK"
+	enginePlatformOSK = "Apache Kafka"
+	enginePlatformCP  = "Confluent Platform"
 )
+
+// resolveSourceType maps a declared source_platform engine string onto the engine
+// SourceType, its display name, and its default cloud. An empty/unknown platform
+// is MSK (backward-compatible), which is always AWS; a non-MSK source has no
+// default cloud (source_cloud supplies it).
+func resolveSourceType(platform string) (engine.SourceType, string, string) {
+	switch platform {
+	case enginePlatformOSK:
+		return engine.SourceApacheKafka, enginePlatformOSK, ""
+	case enginePlatformCP:
+		return engine.SourceConfluentPlatform, enginePlatformCP, ""
+	default:
+		return engine.SourceMSK, enginePlatformMSK, "AWS"
+	}
+}
 
 // buildProfile maps one scanned cluster plus the customer-declared IntakeInputs onto
 // an engine.Profile. Scan-derivable facts (serverless, auth, Kafka version,
@@ -138,24 +171,45 @@ const (
 // intake would apply before the engine runs (e.g. Serverless forcing AWS IAM) is
 // reproduced here.
 func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, scanless bool) engine.Profile {
+	// Resolve the source axis. The declared source_platform wins; unset falls back to
+	// the scanned source kind — an OSK scan defaults to Apache Kafka (a declared
+	// Confluent Platform answer still promotes it), and everything else defaults to
+	// MSK (backward-compatible). MSK is AWS; a non-MSK source names its cloud via
+	// source_cloud (blank means unknown — the engine falls back to the target cloud).
+	sourceType, platformName, defaultCloud := resolveSourceType(in.SourcePlatform)
+	if in.SourcePlatform == "" && c.SourceType == types.SourceTypeOSK {
+		sourceType, platformName, defaultCloud = engine.SourceApacheKafka, enginePlatformOSK, ""
+	}
+	sourceCloud := defaultCloud
+	if sourceType != engine.SourceMSK && in.SourceCloud != "" {
+		sourceCloud = in.SourceCloud
+	}
 	p := engine.Profile{
-		SourcePlatform:     "Amazon MSK",
+		SourceType:         sourceType,
+		SourcePlatform:     platformName,
 		SourcePublicAccess: yesNo(sourcePublicAccess(c)), // drives whether the migration link needs a private egress path
-		SourceCloud:        "AWS",
-		TargetCloud:        in.TargetCloud, // engine defaults to source/AWS when ""
+		SourceCloud:        sourceCloud,
+		TargetCloud:        in.TargetCloud, // engine defaults to source cloud (AWS for MSK) when ""
+		Scanless:           scanless,       // lets source_platform render so a scanless user can pick OSK/CP
 	}
 
-	// Source cluster type. Serverless is IAM-only; the engine forces AWS IAM, and
-	// we seed it too so downstream reads are consistent. A scan-fact override wins.
-	serverless := isServerless(c)
-	if in.OvClusterType != "" {
+	// Source cluster type. Serverless is an MSK-only concept: Serverless is IAM-only,
+	// so the engine forces AWS IAM and we seed it too. A non-MSK source is never
+	// Serverless. A scan-fact override wins (MSK only).
+	serverless := sourceType == engine.SourceMSK && isServerless(c)
+	if sourceType == engine.SourceMSK && in.OvClusterType != "" {
 		serverless = in.OvClusterType == engine.MSKServerless
 	}
-	if serverless {
+	switch {
+	case serverless:
 		p.MSKClusterType = engine.MSKServerless
 		p.SourceAuthTypes = []string{engineAuthAWSIAM}
-	} else {
+	case sourceType == engine.SourceMSK:
 		p.MSKClusterType = engine.MSKProvisioned
+		p.SourceAuthTypes = translateSourceAuths(sourceAuthsDetected(c))
+	default:
+		// OSK/CP: no MSK cluster-type axis. Auth comes from the scan (Phase B) or, in
+		// questionnaire mode, from the declared source_auth override below.
 		p.SourceAuthTypes = translateSourceAuths(sourceAuthsDetected(c))
 	}
 	if len(in.OvSourceAuth) > 0 {
@@ -163,7 +217,7 @@ func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, sca
 		p.AuthAnswered = true
 	}
 	// The source cluster type (provisioned vs Serverless) is scan-derived; answered
-	// when overridden, or always in scanless mode.
+	// when overridden, or always in scanless mode. Not applicable off MSK.
 	p.SourceClusterTypeAnswered = scanless || in.OvClusterType != ""
 
 	// Sizing anchor: the exact partition count from the topic scan drives the band
@@ -213,9 +267,21 @@ func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, sca
 		p.InterBrokerProtocol = in.OvInterBrokerProtocol
 	}
 
-	// Tiered storage (only meaningful on Provisioned).
+	// Tiered storage. MSK reads it from the cluster config (Provisioned only); an
+	// OSK/CP source has no such config, so it is derived from the topic summary's
+	// remote-storage topic count (remote.storage.enable per topic) — > 0 means tiered
+	// is in use. Both leave StorageMode nil when their source wasn't scanned, so the
+	// plan asks tiered_storage instead.
 	tieredScanned := false
-	if !serverless {
+	switch {
+	case serverless:
+		// Serverless has no tiered storage.
+	case sourceType != engine.SourceMSK:
+		if flag := oskTieredFromTopics(c); flag != nil {
+			p.StorageMode = flag
+			tieredScanned = true
+		}
+	default:
 		if clusterStorageMode(c) == kafkatypes.StorageModeTiered {
 			p.StorageMode = sp("Yes")
 			tieredScanned = true
@@ -319,6 +385,8 @@ func translateSourceAuths(kcpTokens []string) []string {
 			out = append(out, engineAuthAWSIAM)
 		case SourceAuthSCRAM:
 			out = append(out, engineAuthSCRAM)
+		case SourceAuthSASLPlain:
+			out = append(out, engineAuthSASLPlain)
 		case SourceAuthMTLS:
 			out = append(out, engineAuthMTLS)
 		case SourceAuthUnauth:
@@ -340,6 +408,8 @@ func engineAuthToKCP(engineAuths []string) []string {
 			out = append(out, SourceAuthIAM)
 		case engineAuthSCRAM:
 			out = append(out, SourceAuthSCRAM)
+		case engineAuthSASLPlain:
+			out = append(out, SourceAuthSASLPlain)
 		case engineAuthMTLS:
 			out = append(out, SourceAuthMTLS)
 		case engineAuthUnauth:

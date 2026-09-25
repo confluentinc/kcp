@@ -30,6 +30,15 @@ type opt struct {
 	Label  string
 	Engine string
 	Detail string
+	// Applies gates whether the option is OFFERED (rendered) for a given profile;
+	// nil means always. The token stays parseable regardless (so a hand-added value
+	// still resolves) — this only controls which options are shown in the legend and
+	// terse hints, e.g. AWS IAM / AWS Glue are shown only for MSK.
+	Applies func(p engine.Profile) bool
+	// detailFn overrides Detail per source type (nil, or an empty return, keeps the
+	// static Detail). Lets one option carry source-specific wording without a second
+	// option, e.g. the connectors "keep self-managed" note.
+	detailFn func(p engine.Profile) string
 }
 
 type question struct {
@@ -41,6 +50,9 @@ type question struct {
 	Opts    []opt
 	Default string                      // default token (optional questions)
 	Applies func(p engine.Profile) bool // conditional visibility; nil = always
+	// hintFn overrides Hint per source type (nil, or an empty return, keeps the
+	// static Hint). Lets a hint drop MSK-only wording (e.g. "Amazon S3") for OSK/CP.
+	hintFn func(p engine.Profile) string
 	// set applies the resolved engine value(s) for this question onto IntakeInputs.
 	set func(in *IntakeInputs, engineVals []string)
 	// Scan marks a question kcp answers from the scan; Current reads the effective
@@ -94,6 +106,37 @@ func first(vals []string) string {
 // catalog is the ordered question set (reading order).
 var catalog = []question{
 	// ── Required ──────────────────────────────────────────────────────────────
+	// source_platform drives the whole source axis. It renders only for a non-MSK
+	// source (its value is already set once it applies), so MSK plans are unchanged;
+	// unset, the source defaults to MSK for backward compatibility. The key stays
+	// parseable in plan-inputs.yaml regardless, so a customer selects Apache Kafka /
+	// Confluent Platform by declaring it.
+	{Key: "source_platform", Prompt: "What is your source platform?", Disp: dispRequired,
+		Opts: []opt{
+			{Token: "msk", Label: "Amazon MSK", Engine: "Amazon MSK"},
+			{Token: "apache-kafka", Label: "Apache Kafka", Engine: "Apache Kafka"},
+			{Token: "confluent-platform", Label: "Confluent Platform", Engine: "Confluent Platform"},
+		},
+		// Render in scanless mode (so a questionnaire user can pick Apache Kafka / CP)
+		// and for any already-non-MSK source. A scan run knows the source, and an MSK
+		// scan leaves this off, so MSK scan output is unchanged.
+		Applies: func(p engine.Profile) bool { return p.Scanless || engine.IsOSKorCP(p) },
+		set:     func(in *IntakeInputs, v []string) { in.SourcePlatform = first(v) }},
+
+	// source_cloud stands in for source_cluster_type on a non-MSK source: it names
+	// where the source runs and feeds the target-cloud default and networking the
+	// same way an MSK source's AWS cloud does. MSK never asks it (MSK is AWS).
+	{Key: "source_cloud", Prompt: "Which cloud does your source run in?", Disp: dispRequired,
+		Hint: "Where your Kafka runs today. It sets the default target cloud (you can still choose a different one below) and shapes the networking plan.",
+		Opts: []opt{
+			{Token: "aws", Label: "AWS", Engine: "AWS"},
+			{Token: "azure", Label: "Azure", Engine: "Azure"},
+			{Token: "gcp", Label: "GCP", Engine: "GCP"},
+			{Token: "on-prem", Label: "On-premises or other", Engine: "On-prem or other"},
+		},
+		Applies: engine.IsOSKorCP,
+		set:     func(in *IntakeInputs, v []string) { in.SourceCloud = first(v) }},
+
 	{Key: "use_case_breadth", Prompt: "How widely is this cluster used?", Disp: dispRequired,
 		Opts: []opt{
 			{Token: "one-app", Label: "One team, one application", Engine: "One team, one application"},
@@ -238,7 +281,13 @@ var catalog = []question{
 
 	{Key: "connector_destination", Prompt: "Do you want to keep your connectors self-managed, or move them to Confluent-managed?", Disp: dispOptional, Default: "confluent-managed",
 		Opts: []opt{
-			{Token: "self-managed", Label: "Keep self-managed", Engine: "Keep self-managed", Detail: "Continue to run your own Connect cluster, which is new infrastructure to stand up if you're moving off MSK Connect"},
+			{Token: "self-managed", Label: "Keep self-managed", Engine: "Keep self-managed", Detail: "Continue to run your own Connect cluster, which is new infrastructure to stand up if you're moving off MSK Connect",
+				detailFn: func(p engine.Profile) string {
+					if engine.IsMSK(p) {
+						return ""
+					}
+					return "Continue to run your own Connect cluster, which is new infrastructure to stand up if you don't run Kafka Connect today"
+				}},
 			{Token: "confluent-managed", Label: "Move to Confluent-managed", Engine: "Move to Confluent-managed", Detail: "Confluent runs the connector for you, with no Connect cluster to stand up, scale, or patch"},
 		},
 		Applies: connectorsPresent,
@@ -256,6 +305,9 @@ var catalog = []question{
 // value off the built profile (which already applies any override).
 var scanCatalog = []question{
 	{Key: "source_cluster_type", Prompt: "Source cluster type", Scan: true, readOnly: true, requiredWhenMissing: true,
+		// Provisioned vs Serverless is an MSK-only distinction; a non-MSK source uses
+		// source_cloud instead.
+		Applies: engine.IsMSK,
 		Opts: []opt{
 			{Token: "provisioned", Label: "Provisioned", Engine: "Provisioned"},
 			{Token: "serverless", Label: "Serverless", Engine: "Serverless"},
@@ -309,9 +361,12 @@ var scanCatalog = []question{
 		overridden: func(in IntakeInputs) bool { return in.OvPartitionBand != "" }},
 
 	{Key: "source_auth", Prompt: "How your Kafka clients authenticate today", Scan: true, Multi: true, requiredWhenMissing: true,
+		// AWS IAM is offered only for MSK; SASL/PLAIN is offered only for a non-MSK
+		// source (MSK's SASL is SCRAM). SASL/SCRAM, mTLS and plaintext apply to both.
 		Opts: []opt{
-			{Token: "iam", Label: "AWS IAM", Engine: "AWS IAM"},
+			{Token: "iam", Label: "AWS IAM", Engine: "AWS IAM", Applies: engine.IsMSK},
 			{Token: "scram", Label: "SASL/SCRAM", Engine: "SASL/SCRAM"},
+			{Token: "sasl-plain", Label: "SASL/PLAIN", Engine: "API keys (SASL/PLAIN)", Applies: engine.IsOSKorCP},
 			{Token: "mtls", Label: "TLS client certificates (mTLS)", Engine: "TLS client certificates (mTLS)"},
 			{Token: "unauth", Label: "None / plaintext", Engine: "None / plaintext"},
 		},
@@ -320,7 +375,14 @@ var scanCatalog = []question{
 		overridden: func(in IntakeInputs) bool { return len(in.OvSourceAuth) > 0 }},
 
 	{Key: "tiered_storage", Prompt: "Do your topics use tiered storage?", Scan: true, readOnly: true, requiredWhenMissing: true,
-		Hint:       "Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.",
+		Hint: "Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.",
+		// A non-MSK source tiers to its own object store, not Amazon S3.
+		hintFn: func(p engine.Profile) string {
+			if engine.IsMSK(p) {
+				return ""
+			}
+			return "Tiered data is stored separately from your active topics, in object storage, so retrieving it during cutover takes extra time and can add cost."
+		},
 		Applies:    func(p engine.Profile) bool { return !engine.IsServerless(p) }, // Serverless has no tiered storage
 		Opts:       yn("Yes", "No", "Yes", "No"),
 		Current:    func(p engine.Profile) []string { return nonEmpty(deref(p.StorageMode)) },
@@ -335,6 +397,9 @@ var scanCatalog = []question{
 		overridden: func(in IntakeInputs) bool { return in.OvTopicSettings != "" }},
 
 	{Key: "msk_connect_present", Prompt: "Do you use MSK Connect?", Scan: true, readOnly: true, requiredWhenMissing: true,
+		// MSK Connect is an MSK-only managed service; a non-MSK source only answers
+		// self_managed_connectors.
+		Applies:    engine.IsMSK,
 		Opts:       yn("Yes", "No", "Yes", "No"),
 		Current:    func(p engine.Profile) []string { return nonEmpty(deref(p.MSKConnectPresent)) },
 		set:        func(in *IntakeInputs, v []string) { in.OvMSKConnect = first(v) },
@@ -366,12 +431,44 @@ type ResolvedQuestion struct {
 	Source     string   `json:"source,omitempty"`     // canonical source code: app | cluster | all_clusters | built_in_default | scan | override
 }
 
-func (q question) legend() []string {
-	out := make([]string, len(q.Opts))
-	for i, o := range q.Opts {
+// visibleOpts returns the options offered for this profile: every option whose
+// Applies passes (nil = always). For an MSK profile this is every option, so MSK
+// output is unchanged; a non-MSK profile drops the MSK-only options.
+func (q question) visibleOpts(p engine.Profile) []opt {
+	out := make([]opt, 0, len(q.Opts))
+	for _, o := range q.Opts {
+		if o.Applies != nil && !o.Applies(p) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// visibleTokens lists the tokens offered for this profile (for terse inline hints
+// and the multi-select example). tokens() (all tokens) stays the parse/error set.
+func (q question) visibleTokens(p engine.Profile) []string {
+	vis := q.visibleOpts(p)
+	out := make([]string, len(vis))
+	for i, o := range vis {
+		out[i] = o.Token
+	}
+	return out
+}
+
+func (q question) legend(p engine.Profile) []string {
+	vis := q.visibleOpts(p)
+	out := make([]string, len(vis))
+	for i, o := range vis {
+		detail := o.Detail
+		if o.detailFn != nil {
+			if d := o.detailFn(p); d != "" {
+				detail = d
+			}
+		}
 		line := o.Token + " → " + o.Label
-		if o.Detail != "" {
-			line += ": " + o.Detail
+		if detail != "" {
+			line += ": " + detail
 		}
 		if o.Token == q.Default {
 			line += "  (default)"
@@ -379,6 +476,17 @@ func (q question) legend() []string {
 		out[i] = line
 	}
 	return out
+}
+
+// hint returns the effective hint for this profile: hintFn when it returns a
+// non-empty string, else the static Hint.
+func (q question) hint(p engine.Profile) string {
+	if q.hintFn != nil {
+		if h := q.hintFn(p); h != "" {
+			return h
+		}
+	}
+	return q.Hint
 }
 
 // resolveQuestions evaluates the declared catalog (applicable questions only) and
@@ -409,7 +517,7 @@ func resolveOne(q question, p engine.Profile, in IntakeInputs) ResolvedQuestion 
 	} else {
 		toks = mapEngineTokens(q, q.engineValues(in))
 	}
-	rq := ResolvedQuestion{Key: q.Key, Prompt: q.Prompt, Hint: q.Hint, Legend: q.legend(), Tokens: q.tokens(), Required: q.Disp == dispRequired && !q.Scan, Multi: q.Multi, Scan: q.Scan, ReadOnly: q.readOnly}
+	rq := ResolvedQuestion{Key: q.Key, Prompt: q.Prompt, Hint: q.hint(p), Legend: q.legend(p), Tokens: q.visibleTokens(p), Required: q.Disp == dispRequired && !q.Scan, Multi: q.Multi, Scan: q.Scan, ReadOnly: q.readOnly}
 	if q.Scan && q.overridden != nil {
 		rq.Overridden = q.overridden(in)
 	}
@@ -498,6 +606,10 @@ func mapEngineTokens(q question, engVals []string) []string {
 // engineValues reads the resolved engine value(s) for this question off IntakeInputs.
 func (q question) engineValues(in IntakeInputs) []string {
 	switch q.Key {
+	case "source_platform":
+		return nonEmpty(in.SourcePlatform)
+	case "source_cloud":
+		return nonEmpty(in.SourceCloud)
 	case "private_networking_required":
 		return nonEmpty(in.PublicEndpointsOK)
 	case "use_case_breadth":

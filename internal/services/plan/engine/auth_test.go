@@ -65,11 +65,11 @@ func TestAuth_SourceCredentialNotes(t *testing.T) {
 		t.Errorf("IAM Serverless note = %q", n)
 	}
 	// Unauthenticated source over a cluster link: nothing to prepare on the source
-	// (the link reads it over plaintext with no credentials); the clients need a
-	// supported method on Confluent Cloud after cutover.
+	// CC has no unauthenticated link path, so the link uses a SASL/SCRAM listener the
+	// source adds; the clients also need a supported method on Confluent Cloud after cutover.
 	unauth := baseProfile(func(p *Profile) { p.SourceAuthTypes = []string{"None / plaintext"} })
-	if n := credNotes(unauth); !strings.Contains(n, "Nothing to prepare on your source") ||
-		!strings.Contains(n, "unauthenticated clients will need a supported auth method on Confluent Cloud after cutover") {
+	if n := credNotes(unauth); !strings.Contains(n, "add a SASL/SCRAM listener") ||
+		!strings.Contains(n, "supported auth method on Confluent Cloud after cutover") {
 		t.Errorf("unauth note = %q", n)
 	}
 }

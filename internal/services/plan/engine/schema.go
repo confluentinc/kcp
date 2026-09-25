@@ -100,7 +100,7 @@ func schemaDecision(p Profile) SchemaResult {
 				Value:        "Schemaless",
 				Kind:         SchemaKindSchemaless,
 				Reason:       basis(srcOr(p.SchemaAnswered, "no Schema Registry detected")) + "with no Schema Registry, we skip the schema steps.",
-				OpenQuestion: "Confirm the source is genuinely schemaless, or that the Schema Registry scan was run, before we lock this in.",
+				OpenQuestion: "Confirm the source is genuinely schemaless before we lock this in.",
 			}
 		case schemaStrategyFresh:
 			return SchemaResult{
@@ -169,7 +169,7 @@ func schemaDecision(p Profile) SchemaResult {
 					Cons:   []string{"Your Schema Registry needs outbound reach to Confluent Cloud on port 443", "The target Schema Registry is set to IMPORT mode", "A dedicated context is needed if the target already holds schemas"},
 				}
 			}
-			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Platform Enterprise 7.1+"), ans("migrate your schemas")) + "the schema exporter is unavailable here, because your registry cannot reach Confluent Cloud or this is a government cloud. Replicator replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is part of Confluent Platform Enterprise, which you already run, so it needs a license rather than an edition change. Contact us and we'll help.")
+			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Platform Enterprise 7.1+"), ans("migrate your schemas")) + "the schema exporter is unavailable here, because your registry cannot reach Confluent Cloud or this is a government cloud. Replicator replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is part of Confluent Platform Enterprise, which you already run, so it needs a license rather than an edition change.")
 		}
 		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")
 	}
@@ -188,7 +188,7 @@ func schemaDecision(p Profile) SchemaResult {
 			}
 		}
 		if strategy == schemaStrategyMigrate {
-			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Community Schema Registry"), ans("migrate your schemas")) + "the schema exporter is Confluent Platform Enterprise 7.1+ only, so Replicator is the method for carrying your existing schemas across. It replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is also a Confluent Platform Enterprise component, so it needs a license that Community edition does not include. Contact us and we'll help. Alternatively, starting fresh on Confluent Cloud Schema Registry needs no license at all.")
+			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Community Schema Registry"), ans("migrate your schemas")) + "the schema exporter is Confluent Platform Enterprise 7.1+ only, so Replicator is the method for carrying your existing schemas across. It replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is also a Confluent Platform Enterprise component, so it needs a license that Community edition does not include. Alternatively, starting fresh on Confluent Cloud Schema Registry needs no license at all.")
 		}
 		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")
 	}

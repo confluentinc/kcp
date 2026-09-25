@@ -68,6 +68,45 @@ func TestMigrationInfraFor(t *testing.T) {
 	}
 }
 
+// An Apache Kafka (OSK/CP) source must print every flag the CLI marks required for
+// --source-type apache-kafka (unlike MSK, which back-fills them from scanned state):
+// type 2 needs --vpc-id/--region/--subnet-id/--security-group-id, and a non-SCRAM
+// source needs --source-sasl-scram-mechanism. MSK must NOT carry any of them.
+func TestMigrationInfraCommand_OSKFlags(t *testing.T) {
+	scram := engine.Profile{SourceAuthTypes: []string{engineAuthSCRAM}}
+
+	// OSK type 2 with a non-SCRAM (mTLS) source: all AWS networking flags + the SCRAM
+	// mechanism placeholder (the recommended new listener supplies it).
+	oskMTLS := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthMTLS},
+		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	cmd := migrationInfraCommand(oskMTLS, "kcp-state.json")
+	for _, want := range []string{"--source-type apache-kafka", "--vpc-id", "--region",
+		"--subnet-id", "--security-group-id", "--source-sasl-scram-mechanism"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("OSK type-2 (mTLS) command missing %q:\n%s", want, cmd)
+		}
+	}
+
+	// OSK type 2 with a SCRAM source: mechanism comes from state, so no placeholder.
+	oskSCRAM := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthSCRAM},
+		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	if c := migrationInfraCommand(oskSCRAM, "kcp-state.json"); strings.Contains(c, "--source-sasl-scram-mechanism") {
+		t.Errorf("OSK SCRAM source must not carry --source-sasl-scram-mechanism:\n%s", c)
+	}
+
+	// MSK derives all of these from state; the command must carry none of them.
+	msk := ClusterPlan{ClusterID: "orders", Arn: "arn:aws:kafka:...:cluster/orders/abc",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	mskCmd := migrationInfraCommand(msk, "kcp-state.json")
+	for _, unwanted := range []string{"--vpc-id", "--region", "--subnet-id", "--security-group-id", "--source-sasl-scram-mechanism"} {
+		if strings.Contains(mskCmd, unwanted) {
+			t.Errorf("MSK command must not carry %q (derived from state):\n%s", unwanted, mskCmd)
+		}
+	}
+}
+
 // migrate-topics: mirror mode must carry --cluster-link-name and --mode mirror;
 // new mode must carry --mode new and must NOT carry --cluster-link-name (the CLI
 // rejects it). Both need the required cluster/target flags.

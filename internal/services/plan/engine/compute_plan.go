@@ -154,6 +154,7 @@ func ComputePlan(p Profile) PlanResult {
 		// differs by tier (PNI is Enterprise-only).
 		networking = networkingDecision(p, netCtx{TC: tc, Band: sizing.Band, Tier: final.Tier, CrossedToPrivate: final.CrossedToPrivate, ApplyMigrationEgress: true})
 	}
+	addOnPremHybridNote(p, &networking)
 
 	sizingVerdict := buildSizingVerdict(p, sizing, final.Tier)
 

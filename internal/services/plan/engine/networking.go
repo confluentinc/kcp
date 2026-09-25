@@ -199,6 +199,22 @@ type netCtx struct {
 	ApplyMigrationEgress bool
 }
 
+// addOnPremHybridNote appends a hybrid-connectivity caveat when the source runs
+// on-premises and the target uses a private networking method. An on-prem client
+// can't reach a private Confluent Cloud endpoint directly — it needs Cloud
+// Interconnect / VPN into the cloud network that holds the endpoint. Cloud sources
+// already sit in a VPC/VNet, so the note is on-prem-only.
+func addOnPremHybridNote(p Profile, net *NetworkingResult) {
+	if p.SourceCloud != "On-prem or other" || strings.HasPrefix(net.Value, "Public") {
+		return
+	}
+	note := " Your clients run on-premises, so reaching this private Confluent Cloud endpoint needs hybrid connectivity — Cloud Interconnect or a VPN into the cloud network that holds the endpoint — which is a networking project to plan alongside the migration."
+	net.Reason += note
+	if net.Why != "" {
+		net.Why += " On-prem clients reach it over Cloud Interconnect or VPN."
+	}
+}
+
 func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	tc := ctx.TC
 	tier := ctx.Tier
