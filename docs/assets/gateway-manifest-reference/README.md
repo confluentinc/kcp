@@ -19,6 +19,18 @@ This manifest drives an imperative, resumable state machine:
 
 Every `execute` reconciles the current manifest live against the cluster; there is no persisted registration to drift from. A completed migration re-reconciles to a no-op, and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
+**Resume an interrupted migration with the same topic set (dynamic routes).**
+On a dynamic route, kcp recognises the fence it added by its exact topic set.
+If a run is interrupted after fencing, resume it with a manifest that resolves
+to the same topics. Resuming with a different set — a topic added or removed,
+or a `topicPatterns` entry that now also matches a topic created on the source
+since the interrupted run — is a different migration: kcp fences the new set,
+treats the earlier fence as operator-authored, and leaves it on the route, so
+those topics stay blocked after switchover. Finish the interrupted migration
+first, then migrate the changed set. If this has already happened, remove the
+leftover `blocked` entry from the route's `rules.fencing` by hand. Static
+routes are unaffected: their fence is a single route-level block.
+
 `spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
 run rather than fixed once — each field is a default that a matching
 CLI flag can override for a single run, without editing the file.
@@ -161,15 +173,19 @@ omit-`topics`-means-all default anymore: to migrate every active mirror topic,
 write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
 absent.
 
+`topicPatterns` are resolved against the live source on every run, so the
+selected set can change between runs without the manifest changing. On a
+dynamic route that matters when resuming an interrupted migration — see
+[Execution model](#execution-model).
+
 The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
-— is **not** declared here; kcp reads it from the live CR's route binding on the
-first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
+— is **not** declared here; kcp reads it from the live CR's route binding on
+every execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
 the manifest. Both modes are fully implemented: `kcp migration execute` resolves
 the mode from the live gateway CR each run and dispatches to the matching engine and FSM —
-AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
-a resume. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
+AAO's for static routes, TBM's for dynamic. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
 dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
 warns and proceeds rather than refusing a manifest that sets it.
 

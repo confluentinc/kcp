@@ -176,6 +176,11 @@ func (rt *RulesTree) DropFence(topics []string) {
 // isKcpFenceFor reports whether e is a fence entry kcp itself would author for
 // exactly this topic set: blocked==true and the same topics as a set. Operator
 // entries never match, so they are preserved by PrependFence's dedupe.
+//
+// The exact-set match is kcp's only notion of fence ownership on a shared
+// route, so an interrupted batch must be resumed with the same resolved topic
+// set: a run with a different set treats the earlier run's fence as
+// operator-authored, and it survives the switchover.
 func isKcpFenceFor(e any, topics []string) bool {
 	m, ok := e.(map[string]any)
 	if !ok {
