@@ -83,8 +83,6 @@ TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
 # The pool runs 001..075, all mirrored; 001..050 are unused headroom.
 SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-75}"   # tbm-topic-001..075 on source
 MIRRORED_COUNT="${MIRRORED_COUNT:-75}"           # 001..075 all mirrored on the link
-SUCCESS_HI="${SUCCESS_HI:-44}"                    # (unused by idempotent-fsm; kept for .env/run.sh contract)
-RESERVED_TOPIC="${RESERVED_TOPIC:-45}"           # (unused by idempotent-fsm; kept for .env/run.sh contract)
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —
 # the input for the "exists on target but is not a mirror" halt, which verdict.go
 # classifies only when a topic is onSource && MirrorNone && onTarget.
@@ -158,7 +156,7 @@ echo "=== KCP idempotent-fsm E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, hot reload)"
-echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored / success 001..$(printf '%03d' "${SUCCESS_HI}") / reserved $(printf '%03d' "${RESERVED_TOPIC}")"
+echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored"
 echo ""
 
 # --- Preflight ---
@@ -406,9 +404,8 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 
-# --- Discover cluster IDs ---
+# --- Discover the destination cluster ID ---
 DEST_CLUSTER_ID="$(kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafka destination-kafka -o jsonpath='{.status.clusterID}' 2>/dev/null || echo '')"
-SOURCE_CLUSTER_ID="$(kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafka source-kafka -o jsonpath='{.status.clusterID}' 2>/dev/null || echo '')"
 [ -n "${DEST_CLUSTER_ID}" ] || { echo "FATAL: could not read destination cluster ID"; exit 1; }
 
 if [ "${GATEWAY_MODE}" = "static" ]; then
@@ -503,7 +500,6 @@ ENV_FILE="${SCRIPT_DIR}/.env"
   echo "KCP_TBM_RENDERED_DIR=${RENDERED_DIR}"
   echo "KCP_TBM_GATEWAY_MODE=${GATEWAY_MODE}"
   echo "KCP_TBM_GATEWAY_NAME=${GATEWAY_NAME}"
-  echo "KCP_TBM_GATEWAY_REPLICAS=${GATEWAY_REPLICAS}"
   echo "KCP_TBM_ROUTE_NAME=${ROUTE_NAME}"
   echo "KCP_TBM_SOURCE_DOMAIN=${SOURCE_DOMAIN}"
   echo "KCP_TBM_SOURCE_BOOTSTRAP_ID=${SOURCE_BOOTSTRAP_ID}"
@@ -512,14 +508,8 @@ ENV_FILE="${SCRIPT_DIR}/.env"
   echo "KCP_TBM_DEST_BOOTSTRAP=${DEST_BOOTSTRAP}"
   echo "KCP_TBM_REST_ENDPOINT=${REST_ENDPOINT}"
   echo "KCP_TBM_DEST_CLUSTER_ID=${DEST_CLUSTER_ID}"
-  echo "KCP_TBM_SOURCE_CLUSTER_ID=${SOURCE_CLUSTER_ID}"
   echo "KCP_TBM_CLUSTER_LINK_NAME=${CLUSTER_LINK_NAME}"
   echo "KCP_TBM_TOPIC_PREFIX=${TOPIC_PREFIX}"
-  echo "KCP_TBM_SOURCE_TOPIC_COUNT=${SOURCE_TOPIC_COUNT}"
-  echo "KCP_TBM_MIRRORED_COUNT=${MIRRORED_COUNT}"
-  echo "KCP_TBM_SUCCESS_HI=${SUCCESS_HI}"
-  echo "KCP_TBM_RESERVED_TOPIC=${RESERVED_TOPIC}"
-  echo "KCP_TBM_ORPHAN_TOPIC=${ORPHAN_TOPIC}"
 } > "${ENV_FILE}"
 
 echo ""

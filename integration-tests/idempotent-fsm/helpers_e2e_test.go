@@ -71,8 +71,6 @@ type env struct {
 	sourceBootstrapID string // static only: route.streamingDomain.bootstrapServerId
 	linkName          string
 	topicPrefix       string
-	successHi         int
-	reservedTopic     int
 	renderedDir       string
 	saslUser          string
 	saslPassword      string
@@ -96,8 +94,6 @@ func newEnv() *env {
 		sourceBootstrapID: envOrDefault("KCP_TBM_SOURCE_BOOTSTRAP_ID", "UNAUTHED"),
 		linkName:          envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
 		topicPrefix:       envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
-		successHi:         envInt("KCP_TBM_SUCCESS_HI", 44),
-		reservedTopic:     envInt("KCP_TBM_RESERVED_TOPIC", 45),
 		renderedDir:       envOrDefault("KCP_TBM_RENDERED_DIR", "/workspace/rendered"),
 		saslUser:          os.Getenv("KCP_TBM_DEST_SASL_USER"),
 		saslPassword:      os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
@@ -152,18 +148,6 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	n := fallback
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-		return fallback
-	}
-	return n
 }
 
 // topicName is the zero-padded source topic name for an index (1 ⇒ tbm-topic-001),
