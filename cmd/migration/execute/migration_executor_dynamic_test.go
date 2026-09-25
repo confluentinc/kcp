@@ -21,7 +21,7 @@ import (
 )
 
 // This file exercises the dynamic-mode branch of `execute` the way
-// cmd_migration_execute_static_test.go exercises the static one.
+// migration_executor_static_test.go exercises the static one.
 //
 // The command layer calls migplan.Reconcile with no injectable seam, and a real
 // Reconcile dials live Kafka and pulls the live Gateway CR (see
@@ -142,7 +142,7 @@ func runDynamicBranchWithConfig(
 	return out.String(), err
 }
 
-// --- stub downstream services (shared with cmd_migration_execute_static_test.go) ---
+// --- stub downstream services (shared with migration_executor_static_test.go) ---
 
 // zeroLagOffsetProvider implements offset.Provider, reporting the same fixed
 // offset for every topic requested — used for both source and destination, so
