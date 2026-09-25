@@ -41,25 +41,24 @@ const (
 
 // ----- migration configuration -----
 
-// MigrationConfig holds all domain configuration for a migration.
-// This is pure data with no behavior - just fields that get serialized (for
-// the run report) or passed to a live call - there is no migration state
-// file, so this struct is built fresh from the manifest on every run.
+// MigrationConfig holds all domain configuration for a migration: pure data,
+// built fresh from the manifest and the reconcile result on every run, held in
+// memory only, and never written anywhere.
 type MigrationConfig struct {
-	MigrationId string `json:"migration_id"`
+	MigrationId string
 
 	// Gateway configuration
-	KubeConfigPath string `json:"kube_config_path"`
+	KubeConfigPath string
 
 	// Source cluster configuration
-	SourceBootstrap string `json:"source_bootstrap"`
+	SourceBootstrap string
 
 	// Destination cluster configuration
-	ClusterBootstrap    string   `json:"cluster_bootstrap"`
-	ClusterId           string   `json:"cluster_id"`
-	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
-	ClusterLinkName     string   `json:"cluster_link_name"`
-	Topics              []string `json:"topics"`
+	ClusterBootstrap    string
+	ClusterId           string
+	ClusterRestEndpoint string
+	ClusterLinkName     string
+	Topics              []string
 
 	// AwaitStopped is the subset of Topics that reconcile found already
 	// mid-promotion (PENDING_STOPPED) on this run — resume-derived, so it is
@@ -67,18 +66,18 @@ type MigrationConfig struct {
 	// stage seeds these straight into its awaiting-STOPPED set: it waits for
 	// them to reach STOPPED and never re-issues a promote on an already-
 	// promoting mirror. Empty on a first run (nothing promoted yet).
-	AwaitStopped []string `json:"await_stopped,omitempty"`
+	AwaitStopped []string
 
 	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns,
 	// read fresh from the manifest each run alongside Route/TargetDomain —
 	// nil when the manifest instead used an explicit topics list. Unlike
 	// Topics (the resolved topic set, populated once reconcile runs), this is
 	// the raw declared patterns themselves.
-	TopicPatterns []string `json:"topic_patterns,omitempty"`
+	TopicPatterns []string
 
 	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
 	// PauseConsumerOffsetSync records the operator's choice at init time.
-	PauseConsumerOffsetSync bool `json:"pause_consumer_offset_sync"`
+	PauseConsumerOffsetSync bool
 
 	// ConsumerOffsetSyncBaseline is the declared pre-migration state of
 	// consumer.offset.sync.enable on the cluster link (manifest
@@ -87,14 +86,14 @@ type MigrationConfig struct {
 	// the live cluster link. The pause/restore bookends apply this value as an
 	// idempotent AlterConfigs SET rather than diffing against a live snapshot,
 	// so neither depends on data read back from the cluster link.
-	ConsumerOffsetSyncBaseline string `json:"consumer_offset_sync_baseline,omitempty"`
+	ConsumerOffsetSyncBaseline string
 
 	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
 	// safety check that verifies source offsets are not still increasing before
 	// promoting mirror topics. A value of 0 skips the check. An increasing offset
 	// after fencing indicates a producer that bypassed the gateway and is writing
 	// directly to the source cluster.
-	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
+	DetectUnroutedProducersDuration time.Duration
 
 	// ConsumerOffsetSyncDrainDuration is how long the pause_offset_sync stage
 	// waits after fencing before disabling the cluster link's
@@ -106,45 +105,45 @@ type MigrationConfig struct {
 	// is asynchronous, so this reduces but does not eliminate duplicate
 	// processing. A value of 0 (the default) skips the wait — the link is
 	// disabled immediately after fencing, the prior behaviour.
-	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
+	ConsumerOffsetSyncDrainDuration time.Duration
 
 	// Gateway CR configuration
-	InitialCrName string `json:"initial_cr_name"`
-	K8sNamespace  string `json:"k8s_namespace"`
+	InitialCrName string
+	K8sNamespace  string
 
 	// GatewayYAML is the whole gateway CR migplan pulled and cleaned (see
 	// migplan/gatewayfile.go's cleanGatewayDoc), captured once at init — the
 	// fence/switch derivation base. Renamed from InitialCrYAML; no longer a
 	// separately re-cleaned []byte, since migplan strips server-managed
 	// metadata once, centrally.
-	GatewayYAML string `json:"gateway_yaml"`
+	GatewayYAML string
 
 	// GatewayVerificationMode is how kcp confirms a gateway state transition
 	// landed, as resolved against the live cluster at init time. It records what
 	// the operator was told to expect; execute re-derives it and the re-derived
 	// value is the one that governs the run, because the cluster can be upgraded
 	// (or rolled back) between init and execute.
-	GatewayVerificationMode string `json:"gateway_verification_mode"`
+	GatewayVerificationMode string
 
 	// GatewayHotReloadEnabled records whether spec.hotReload.enabled was declared
 	// at init time by the live Gateway CR or by either of the CRs this migration
 	// will apply — the fence apply is what puts hot-reload into force, so the files
 	// count. Diagnostic: it explains which gate produced GatewayVerificationMode.
-	GatewayHotReloadEnabled bool `json:"gateway_hot_reload_enabled"`
+	GatewayHotReloadEnabled bool
 
 	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
 	// on. Configurable because the contract requires it to be; nothing fronts
 	// this port, so kcp dials pod IPs on it directly.
-	GatewayConfigPort int `json:"gateway_config_port"`
+	GatewayConfigPort int
 
 	// Route is the single spec.route.name this migration fences and
 	// switches — captured once at init, mirroring TBMConfig.Route. AAO, like
 	// TBM, only ever operates on one route per migration.
-	Route string `json:"route"`
+	Route string
 
 	// TargetDomain is spec.route.targetStreamingDomain, read directly from
 	// the manifest (not from migplan.Result, which does not carry it).
-	TargetDomain string `json:"target_domain"`
+	TargetDomain string
 
 	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
 	// migplan.Reconcile returns (a {fence: {...}} block, a
@@ -152,10 +151,10 @@ type MigrationConfig struct {
 	// init, never re-derived. Applied by splicing onto Route's fence/
 	// streamingDomain key in GatewayYAML (see gateway.ReplaceRouteFenceObj/
 	// ReplaceRouteStreamingDomainObj) rather than the old whole-CR mutation.
-	FenceYAML      string `json:"fence_yaml"`
-	SwitchoverYAML string `json:"switchover_yaml"`
+	FenceYAML      string
+	SwitchoverYAML string
 
 	// Mode is the route mode migplan resolved this migration under ("static" for
 	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
-	Mode string `json:"mode"`
+	Mode string
 }
