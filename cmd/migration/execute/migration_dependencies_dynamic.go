@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/IBM/sarama"
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -41,7 +39,7 @@ func buildDynamicOffsetProviders(g *manifest.GatewayMigration) (offset.Provider,
 		return nil, nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	srcConn := types.MigrateConn(g.Spec.Source.BootstrapServers, srcCreds)
-	srcClient, err := newDynamicKafkaClientForConn(srcConn)
+	srcClient, err := newKafkaClientForConn(srcConn)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("connecting to source cluster: %w", err)
 	}
@@ -59,7 +57,7 @@ func buildDynamicOffsetProviders(g *manifest.GatewayMigration) (offset.Provider,
 	if sp := destConn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
 		sp.UseTLS = true
 	}
-	destClient, err := newDynamicKafkaClientForConn(destConn)
+	destClient, err := newKafkaClientForConn(destConn)
 	if err != nil {
 		_ = srcClient.Close()
 		return nil, nil, nil, fmt.Errorf("connecting to destination cluster: %w", err)
@@ -69,24 +67,6 @@ func buildDynamicOffsetProviders(g *manifest.GatewayMigration) (offset.Provider,
 		return errors.Join(srcClient.Close(), destClient.Close())
 	}
 	return offset.NewOffsetService(srcClient), offset.NewOffsetService(destClient), closeFn, nil
-}
-
-// newDynamicKafkaClientForConn resolves conn's auth option and dials it as a
-// sarama.Client, for offset.NewOffsetService.
-func newDynamicKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
-	authType, err := conn.GetSelectedAuthType()
-	if err != nil {
-		return nil, fmt.Errorf("determining auth type: %w", err)
-	}
-	region := ""
-	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
-		region = conn.AuthMethod.IAM.Region
-	}
-	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
-	if err != nil {
-		return nil, fmt.Errorf("resolving auth option: %w", err)
-	}
-	return client.NewKafkaClient(conn.BootstrapServers, region, authOpt)
 }
 
 // buildDynamicGatewayService opens a real gateway.Service using the manifest's

@@ -403,28 +403,34 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		"sasl_scram": {
 			"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA256\n",
 			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				assert.Equal(t, "u", o.SaslScramUsername)
-				assert.Equal(t, "p", o.SaslScramPassword)
-				assert.Equal(t, "SHA256", o.SaslScramMechanism)
+				sc := o.SourceConn.AuthMethod.SASLScram
+				require.NotNil(t, sc)
+				assert.Equal(t, "u", sc.Username)
+				assert.Equal(t, "p", sc.Password)
+				assert.Equal(t, "SHA256", sc.Mechanism)
 			},
 		},
 		"iam": {
 			"iam:\n  region: eu-west-2\n",
 			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				assert.Equal(t, "eu-west-2", o.AWSRegion, "iam.region replaces --aws-region")
+				require.NotNil(t, o.SourceConn.AuthMethod.IAM)
+				assert.Equal(t, "eu-west-2", o.SourceConn.AuthMethod.IAM.Region)
 			},
 		},
 		"sasl_plain": {
 			"sasl_plain:\n  username: pu\n  password: pp\n  tls: true\n",
 			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				assert.Equal(t, "pu", o.SaslPlainUsername)
-				assert.True(t, o.SaslPlainUseTLS, "tls: true must not be silently dropped to cleartext")
+				sp := o.SourceConn.AuthMethod.SASLPlain
+				require.NotNil(t, sp)
+				assert.Equal(t, "pu", sp.Username)
+				assert.True(t, sp.UseTLS, "tls: true must not be silently dropped to cleartext")
 			},
 		},
 		"unauthenticated_plaintext": {
 			"unauthenticated_plaintext: {}\n",
 			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				assert.Empty(t, o.SaslScramUsername)
+				assert.NotNil(t, o.SourceConn.AuthMethod.UnauthenticatedPlaintext)
+				assert.Nil(t, o.SourceConn.AuthMethod.SASLScram)
 			},
 		},
 	} {
@@ -450,7 +456,7 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 	g, cfg := freshConfig(t, f)
 	opts, err := buildExecutorOpts(g, cfg, nil)
 	require.NoError(t, err)
-	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
 	assert.True(t, opts.RestCreds.InsecureSkipVerify)
 
@@ -557,7 +563,7 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	opts, err := buildExecutorOpts(g, cfg, nil)
 	require.NoError(t, err)
 
-	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
+	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify, "the source asked for it")
 	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
 	assert.False(t, opts.RestCreds.InsecureSkipVerify, "nor the destination REST leg")
 }
@@ -573,7 +579,7 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	opts, err := buildExecutorOpts(g, cfg, nil)
 	require.NoError(t, err)
 
-	assert.False(t, opts.SourceInsecureSkipTLSVerify)
+	assert.False(t, opts.SourceConn.InsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
 	assert.False(t, opts.RestCreds.InsecureSkipVerify, "the REST leg is its own file and did not ask for it")
 }
@@ -590,7 +596,7 @@ func TestExecute_LinkCredentialsGovernTheRestLeg(t *testing.T) {
 	opts, err := buildExecutorOpts(g, cfg, nil)
 	require.NoError(t, err)
 
-	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify)
 	assert.False(t, opts.RestCreds.InsecureSkipVerify,
 		"a link credentials file that did not ask for it must keep verifying")
 }

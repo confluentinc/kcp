@@ -18,24 +18,13 @@ import (
 )
 
 type StaticMigrationExecutorOpts struct {
-	MigrationConfig    migration.MigrationConfig
-	LagThreshold       int64
-	ClusterBootstrap   string
-	SourceBootstrap    string
-	AWSRegion          string
-	AuthType           types.AuthType
-	SaslScramUsername  string
-	SaslScramPassword  string
-	SaslScramMechanism string
-	SaslPlainUsername  string
-	SaslPlainPassword  string
-	// SaslPlainUseTLS selects SASL_SSL over the system trust store when no
-	// ca_cert is supplied. Without it a `tls: true` source block would be
-	// silently downgraded to cleartext SASL_PLAINTEXT.
-	SaslPlainUseTLS bool
-	TlsCaCert       string
-	TlsClientCert   string
-	TlsClientKey    string
+	MigrationConfig  migration.MigrationConfig
+	LagThreshold     int64
+	ClusterBootstrap string
+	// SourceConn is the source leg's bootstrap servers, auth method and TLS
+	// trust, passed through from the manifest credentials exactly as the
+	// dynamic branch does (types.MigrateConn).
+	SourceConn types.KafkaSourceConn
 	// DestAuthType / DestAuthMethod select and configure the destination Kafka
 	// leg's auth, mapped via client.AdminOptionForAuthMethod — the same mapper
 	// the source leg uses. Carrying the full per-method config (rather than a
@@ -50,10 +39,9 @@ type StaticMigrationExecutorOpts struct {
 	// different principal — the Kafka leg must not silently authenticate as the
 	// REST one.
 	RestCreds *targets.Credentials
-	// TLS trust is per leg. One shared boolean meant relaxing verification for a
-	// self-signed source also stopped verifying the destination connections,
-	// which carry the destination API key as SASL/PLAIN and as HTTP Basic.
-	SourceInsecureSkipTLSVerify    bool
+	// TLS trust is per leg (the source's is on SourceConn): relaxing
+	// verification for a self-signed source must not stop verifying the
+	// destination, which carries the destination API key.
 	DestKafkaInsecureSkipTLSVerify bool
 	// RolloutTimeout bounds the gateway-readiness wait during fence and
 	// switch. A value of 0 means no deadline — the wait runs until the
@@ -212,70 +200,18 @@ func (m *StaticMigrationExecutor) Run() error {
 	return nil
 }
 
-// sourceClusterAuth builds the source ClusterAuth from the execute flags.
-// TlsCaCert is the CA that verifies the source broker's TLS server certificate
-// and is applied to EVERY TLS-fronted auth method — SASL/SCRAM and SASL/PLAIN over
-// TLS (SASL_SSL), one-way unauthenticated TLS, and mTLS — not only the mTLS path.
-// For SASL/PLAIN, supplying it selects SASL_SSL over cleartext SASL_PLAINTEXT.
-func sourceClusterAuth(opts StaticMigrationExecutorOpts) types.ClusterAuth {
-	clusterAuth := types.ClusterAuth{}
-	switch opts.AuthType {
-	case types.AuthTypeSASLSCRAM:
-		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:       true,
-			Username:  opts.SaslScramUsername,
-			Password:  opts.SaslScramPassword,
-			Mechanism: opts.SaslScramMechanism,
-			CACert:    opts.TlsCaCert,
-		}
-	case types.AuthTypeTLS:
-		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
-			Use:        true,
-			CACert:     opts.TlsCaCert,
-			ClientCert: opts.TlsClientCert,
-			ClientKey:  opts.TlsClientKey,
-		}
-	case types.AuthTypeSASLPlain:
-		clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{
-			Use:      true,
-			Username: opts.SaslPlainUsername,
-			Password: opts.SaslPlainPassword,
-			CACert:   opts.TlsCaCert,
-			UseTLS:   opts.SaslPlainUseTLS,
-		}
-	case types.AuthTypeIAM:
-		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
-	case types.AuthTypeUnauthenticatedTLS:
-		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{Use: true, CACert: opts.TlsCaCert}
-	case types.AuthTypeUnauthenticatedPlaintext:
-		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
-	}
-	return clusterAuth
-}
-
 func createSourceOffset(o StaticMigrationExecutorOpts) (offsetProviderCloser, error) {
-	authType := o.AuthType
-	brokerAddresses := strings.Split(o.SourceBootstrap, ",")
-
-	region := o.AWSRegion
-
-	clusterAuth := sourceClusterAuth(o)
-
-	// skipTLSVerify is threaded through the mapper into every TLS path, so no
-	// separate WithInsecureSkipVerify() override is needed.
-	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, o.SourceInsecureSkipTLSVerify)
+	conn := o.SourceConn
+	authType, err := conn.GetSelectedAuthType()
 	if err != nil {
-		return nil, fmt.Errorf("resolving source auth option: %w", err)
+		return nil, fmt.Errorf("resolving source auth method: %w", err)
 	}
-	opts := []client.AdminOption{authOpt}
-
 	slog.Debug("connecting to source cluster",
-		"brokers", len(brokerAddresses),
+		"brokers", len(conn.BootstrapServers),
 		"auth_type", authType,
-		"region", region,
-		"insecure_skip_tls_verify", o.SourceInsecureSkipTLSVerify,
+		"insecure_skip_tls_verify", conn.InsecureSkipTLSVerify,
 	)
-	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
+	sourceClient, err := newKafkaClientForConn(conn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
 	}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -384,7 +386,6 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		MigrationConfig:   *config,
 		LagThreshold:      int64(g.Spec.DefaultPolicies.LagThreshold),
 		ClusterBootstrap:  config.ClusterBootstrap,
-		SourceBootstrap:   config.SourceBootstrap,
 		RolloutTimeout:    g.Spec.DefaultPolicies.RolloutTimeout,
 		HotReloadTimeout:  g.Spec.DefaultPolicies.HotReloadTimeout,
 		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
@@ -409,44 +410,28 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		// Each leg carries only what its own block asked for. Collapsing these
 		// would mean relaxing TLS for a self-signed source also stops verifying
 		// the destination connections that carry the destination API key.
-		SourceInsecureSkipTLSVerify:    srcCreds.InsecureSkipTLSVerify,
+		SourceConn: types.MigrateConn(g.Spec.Source.BootstrapServers, srcCreds),
+
 		DestKafkaInsecureSkipTLSVerify: dstCreds.InsecureSkipTLSVerify,
 	}
-	applySourceAuth(&opts, srcCreds)
 	return opts, nil
 }
 
-// applySourceAuth flattens the resolved source credentials onto the executor's
-// per-method fields — the same shape the six --use-* flags and their credential
-// strings used to fill.
-func applySourceAuth(opts *StaticMigrationExecutorOpts, creds types.MigrateClusterCredentials) {
-	switch {
-	case creds.IAM != nil:
-		opts.AuthType = types.AuthTypeIAM
-		// iam.region replaces --aws-region, which init never had — the drift
-		// that made an IAM-authenticated source pass init and fail at execute.
-		opts.AWSRegion = creds.IAM.Region
-	case creds.SASLScram != nil:
-		opts.AuthType = types.AuthTypeSASLSCRAM
-		opts.SaslScramUsername = creds.SASLScram.Username
-		opts.SaslScramPassword = creds.SASLScram.Password
-		opts.SaslScramMechanism = creds.SASLScram.Mechanism
-		opts.TlsCaCert = creds.SASLScram.CACert
-	case creds.SASLPlain != nil:
-		opts.AuthType = types.AuthTypeSASLPlain
-		opts.SaslPlainUsername = creds.SASLPlain.Username
-		opts.SaslPlainPassword = creds.SASLPlain.Password
-		opts.TlsCaCert = creds.SASLPlain.CACert
-		opts.SaslPlainUseTLS = creds.SASLPlain.UseTLS
-	case creds.MTLS != nil:
-		opts.AuthType = types.AuthTypeTLS
-		opts.TlsCaCert = creds.MTLS.CACert
-		opts.TlsClientCert = creds.MTLS.ClientCert
-		opts.TlsClientKey = creds.MTLS.ClientKey
-	case creds.UnauthenticatedTLS != nil:
-		opts.AuthType = types.AuthTypeUnauthenticatedTLS
-		opts.TlsCaCert = creds.UnauthenticatedTLS.CACert
-	case creds.UnauthenticatedPlaintext != nil:
-		opts.AuthType = types.AuthTypeUnauthenticatedPlaintext
+// newKafkaClientForConn resolves conn's auth option and dials it as a
+// sarama.Client, for offset.NewOffsetService. Shared by both branches: the
+// dynamic branch's offset providers and the static branch's source leg.
+func newKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
+	authType, err := conn.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("determining auth type: %w", err)
 	}
+	region := ""
+	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
+		region = conn.AuthMethod.IAM.Region
+	}
+	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("resolving auth option: %w", err)
+	}
+	return client.NewKafkaClient(conn.BootstrapServers, region, authOpt)
 }

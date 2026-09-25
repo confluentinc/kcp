@@ -235,48 +235,39 @@ func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 		"the pause stage disables offset sync, then Run's bookend restores the declared baseline")
 }
 
-// TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath is the regression test for
-// review finding #8: --tls-ca-cert must reach the CACert field of every TLS-fronted
-// source auth method (SASL/SCRAM and SASL/PLAIN over TLS, unauthenticated-TLS, mTLS),
-// not only the mTLS path — so a migration source behind a private CA can be verified.
-func TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath(t *testing.T) {
-	const ca = "/etc/certs/source-ca.pem"
+// TestSourceConn_CACertReachesEveryTLSPath: a source ca_cert must reach the
+// CACert of every TLS-fronted auth method (SASL/SCRAM, SASL/PLAIN over TLS,
+// mTLS, unauthenticated TLS) — not only mTLS — so a source behind a private CA
+// can be verified. Driven from real manifest credential files through
+// buildExecutorOpts.
+func TestSourceConn_CACertReachesEveryTLSPath(t *testing.T) {
+	dir := t.TempDir()
+	file := func(name string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte("pem"), 0o600))
+		return p
+	}
+	ca, cert, key := file("source-ca.pem"), file("client.pem"), file("client-key.pem")
 
-	t.Run("sasl_scram", func(t *testing.T) {
-		a := sourceClusterAuth(StaticMigrationExecutorOpts{
-			AuthType: types.AuthTypeSASLSCRAM, TlsCaCert: ca,
-			SaslScramUsername: "u", SaslScramPassword: "p", SaslScramMechanism: "SHA512",
+	for name, tc := range map[string]struct {
+		block  string
+		caCert func(types.AuthMethodConfig) string
+	}{
+		"sasl_scram": {"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA512\n  ca_cert: " + ca + "\n",
+			func(m types.AuthMethodConfig) string { return m.SASLScram.CACert }},
+		"sasl_plain": {"sasl_plain:\n  username: u\n  password: p\n  ca_cert: " + ca + "\n",
+			func(m types.AuthMethodConfig) string { return m.SASLPlain.CACert }},
+		"mtls": {"mtls:\n  ca_cert: " + ca + "\n  client_cert: " + cert + "\n  client_key: " + key + "\n",
+			func(m types.AuthMethodConfig) string { return m.TLS.CACert }},
+		"unauthenticated_tls": {"unauthenticated_tls:\n  ca_cert: " + ca + "\n",
+			func(m types.AuthMethodConfig) string { return m.UnauthenticatedTLS.CACert }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
+			g, cfg := freshConfig(t, f)
+			opts, err := buildExecutorOpts(g, cfg, nil)
+			require.NoError(t, err)
+			assert.Equal(t, ca, tc.caCert(opts.SourceConn.AuthMethod))
 		})
-		require.NotNil(t, a.AuthMethod.SASLScram)
-		assert.Equal(t, ca, a.AuthMethod.SASLScram.CACert)
-	})
-
-	t.Run("sasl_plain", func(t *testing.T) {
-		a := sourceClusterAuth(StaticMigrationExecutorOpts{
-			AuthType: types.AuthTypeSASLPlain, TlsCaCert: ca,
-			SaslPlainUsername: "u", SaslPlainPassword: "p",
-		})
-		require.NotNil(t, a.AuthMethod.SASLPlain)
-		assert.Equal(t, ca, a.AuthMethod.SASLPlain.CACert, "ca_cert selects SASL_SSL over cleartext SASL_PLAINTEXT")
-	})
-
-	t.Run("tls_mtls", func(t *testing.T) {
-		a := sourceClusterAuth(StaticMigrationExecutorOpts{
-			AuthType: types.AuthTypeTLS, TlsCaCert: ca,
-			TlsClientCert: "c.pem", TlsClientKey: "k.pem",
-		})
-		require.NotNil(t, a.AuthMethod.TLS)
-		assert.Equal(t, ca, a.AuthMethod.TLS.CACert)
-	})
-
-	t.Run("unauthenticated_tls", func(t *testing.T) {
-		a := sourceClusterAuth(StaticMigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedTLS, TlsCaCert: ca})
-		require.NotNil(t, a.AuthMethod.UnauthenticatedTLS)
-		assert.Equal(t, ca, a.AuthMethod.UnauthenticatedTLS.CACert)
-	})
-
-	t.Run("plaintext ignores ca", func(t *testing.T) {
-		a := sourceClusterAuth(StaticMigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedPlaintext, TlsCaCert: ca})
-		require.NotNil(t, a.AuthMethod.UnauthenticatedPlaintext)
-	})
+	}
 }
