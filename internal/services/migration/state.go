@@ -75,17 +75,18 @@ type MigrationConfig struct {
 	// the raw declared patterns themselves.
 	TopicPatterns []string
 
-	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
-	// PauseConsumerOffsetSync records the operator's choice at init time.
+	// PauseConsumerOffsetSync is the operator's opt-in (manifest
+	// spec.clusterLink.pauseConsumerOffsetSync, read each run) to pause
+	// cluster-link consumer offset sync for the duration of execute.
 	PauseConsumerOffsetSync bool
 
 	// ConsumerOffsetSyncBaseline is the declared pre-migration state of
 	// consumer.offset.sync.enable on the cluster link (manifest
 	// spec.clusterLink.consumerOffsetSyncBaseline: "enabled" or "disabled"),
-	// captured once at registration from the manifest projection — never from
-	// the live cluster link. The pause/restore bookends apply this value as an
-	// idempotent AlterConfigs SET rather than diffing against a live snapshot,
-	// so neither depends on data read back from the cluster link.
+	// read from the manifest each run — never from the live cluster link. The
+	// pause/restore bookends apply this value as an idempotent AlterConfigs SET
+	// rather than diffing against a live snapshot, so neither depends on data
+	// read back from the cluster link.
 	ConsumerOffsetSyncBaseline string
 
 	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
@@ -112,9 +113,9 @@ type MigrationConfig struct {
 	K8sNamespace  string
 
 	// GatewayYAML is the whole gateway CR migplan pulled and cleaned (see
-	// migplan/gatewayfile.go's cleanGatewayDoc), captured once at init — the
-	// fence/switch derivation base. Renamed from InitialCrYAML; no longer a
-	// separately re-cleaned []byte, since migplan strips server-managed
+	// migplan/gatewayfile.go's cleanGatewayDoc), set each run from the reconcile
+	// result — the fence/switch derivation base. Renamed from InitialCrYAML; no
+	// longer a separately re-cleaned []byte, since migplan strips server-managed
 	// metadata once, centrally.
 	GatewayYAML string
 
@@ -137,8 +138,8 @@ type MigrationConfig struct {
 	GatewayConfigPort int
 
 	// Route is the single spec.route.name this migration fences and
-	// switches — captured once at init, mirroring TBMConfig.Route. AAO, like
-	// TBM, only ever operates on one route per migration.
+	// switches, read from the manifest each run. AAO, like TBM, only ever
+	// operates on one route per migration.
 	Route string
 
 	// TargetDomain is spec.route.targetStreamingDomain, read directly from
@@ -147,8 +148,8 @@ type MigrationConfig struct {
 
 	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
 	// migplan.Reconcile returns (a {fence: {...}} block, a
-	// {streamingDomain: {...}} block for a static route) — captured once at
-	// init, never re-derived. Applied by splicing onto Route's fence/
+	// {streamingDomain: {...}} block for a static route), set each run from the
+	// reconcile result. Applied by splicing onto Route's fence/
 	// streamingDomain key in GatewayYAML (see gateway.ReplaceRouteFenceObj/
 	// ReplaceRouteStreamingDomainObj) rather than the old whole-CR mutation.
 	FenceYAML      string
