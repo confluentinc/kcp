@@ -33,7 +33,7 @@ const (
 	scenarioPauseSyncHappy             = "pause-sync-happy"              // TestMigrationE2E_PauseOffsetSync_HappyPath
 	scenarioPauseSyncRefuses           = "pause-sync-refuses"            // TestMigrationE2E_PauseOffsetSync_ExecuteRefuses
 	scenarioPauseSyncRogue             = "pause-sync-rogue"              // TestMigrationE2E_PauseOffsetSync_RogueProducerRollback
-	scenarioPauseSyncDrift             = "pause-sync-drift"              // TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence
+	scenarioPauseSyncDrift             = "pause-sync-drift"              // TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes
 	scenarioPauseSyncDrain             = "pause-sync-drain"              // TestMigrationE2E_PauseOffsetSync_Drain
 	scenarioBatch                      = "batch"                         // TestMigrationE2E_PromoteBatchSize
 	scenarioRogueProducer              = "rogue-producer"                // TestMigrationE2E_RogueProducerDetection
@@ -350,8 +350,8 @@ func setClusterLinkConfig(t *testing.T, cfg envConfig, name, value string) {
 // setClusterLinkConfig: it returns an error instead of calling require on a
 // *testing.T. Use this inside background goroutines — Go's testing package
 // documents FailNow/require as unsafe outside the test goroutine. Used by
-// PauseOffsetSync_DriftRollsBackFence to inject drift concurrently with a
-// single in-flight execute call.
+// PauseOffsetSync_DriftDuringRunStillCompletes to inject drift concurrently
+// with a single in-flight execute call.
 func setClusterLinkConfigSoft(cfg envConfig, name, value string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1480,30 +1480,17 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 	})
 }
 
-// TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence previously exercised a
-// pause-stage precondition: the pause stage used to run its own live
-// ListConfigs check and refuse (rolling the fence back via abort_fence) if
-// the cluster link had drifted to disabled after registration but before the
-// pause step ran. Commit 47dec7b3 ("offset-sync restore/pause driven by
-// declared baseline, not state-file markers") removed that check along with
-// the state file it depended on: workflow.go's PauseOffsetSync is now
-// "Plan- and manifest-driven only: it never reads the live cluster link to
-// decide anything ... so re-running it ... simply re-applies the same SET".
-//
-// This test now proves the opposite of its old name: a drift injected while
-// execute is running does NOT cause a refusal or a rollback. The pause
-// stage's idempotent AlterConfigs SET just re-applies enable=false regardless
-// of what it finds live, the migration completes normally to switched, and
-// the post-switchover restore bookend still brings the link back to the
-// declared baseline. The exact timing of the drift injection no longer
-// matters (unlike the old defense-in-depth check, which had a real race to
-// win) — a fixed short delay is enough, since restore is idempotent
-// regardless of when the drift landed.
+// TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes proves that
+// an out-of-band change to the link's consumer.offset.sync.enable while
+// execute is running neither refuses nor rolls back the migration: the pause
+// stage is a manifest-driven idempotent SET (it never reads the live link),
+// the run completes to switched, and the post-switchover restore bookend
+// still returns the link to the declared baseline.
 //
 // Runs against the "pause-sync-drift" scenario — its own dedicated source
 // topic, cluster link, and gateway CR provisioned by setup.sh — so flipping
 // offset-sync during the run does not leak into other tests.
-func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
+func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T) {
 	cfg := loadEnvConfig(t, scenarioPauseSyncDrift)
 
 	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -1550,9 +1537,13 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	// from a non-test goroutine — so its result is reported back over a
 	// channel and asserted on the main goroutine after execute returns.
 	t.Run("drift_during_run_does_not_block_completion", func(t *testing.T) {
+		// The drift must land before the restore bookend, or the final
+		// restored-to-true assertion would fail. The 10s unrouted-producer
+		// window (verify_fence, between pause and restore) guarantees that.
+		const driftDelay = 3 * time.Second
 		driftErr := make(chan error, 1)
 		go func() {
-			time.Sleep(3 * time.Second)
+			time.Sleep(driftDelay)
 			driftErr <- setClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable", "false")
 		}()
 
@@ -1563,8 +1554,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 
 		require.NoError(t, <-driftErr, "failed to inject drift while execute was in flight")
 
-		require.NoErrorf(t, err, "execute must succeed despite a mid-run drift — the pause stage's own live "+
-			"check is gone (Task 1):\n%s", combined)
+		require.NoErrorf(t, err, "execute must succeed despite a mid-run drift:\n%s", combined)
 		assert.Contains(t, combined, "Pausing consumer.offset.sync", "the pause stage must still run")
 		assert.Contains(t, combined, "Restoring consumer.offset.sync", "the post-switchover restore bookend must run")
 		assert.NotContains(t, combined, "refused", "the pause stage no longer performs a live drift check")
