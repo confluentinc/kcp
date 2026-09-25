@@ -48,7 +48,6 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 	// None of these may panic.
 	r.StageStarted(EventFence, StateLagsOk, StateFenced)
 	r.StageEnded(StateFenced)
-	r.StageSkipped(EventInitialize)
 	r.StageFailed(errors.New("boom"))
 	r.Finish(StateFenced, nil)
 }
@@ -58,7 +57,7 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 // outcome. This tests the wiring, not just the writer — the recorder is only
 // useful if the orchestrator actually calls it at the right points.
 func TestRunReport_FullWorkflow(t *testing.T) {
-	orch, config := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch, config := newHappyPathOrchestrator(t, nil)
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 42, orch.fsm.Current())
@@ -83,7 +82,6 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.Equal(t, StateSwitched, report.FinalState)
 	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 	assert.Empty(t, report.Error)
-	assert.Empty(t, report.SkippedStages, "a run from uninitialized skips nothing")
 
 	// Every forward transition in the canonical workflow should be recorded, in order.
 	expected := make([]string, 0, len(canonicalWorkflow))
@@ -108,30 +106,6 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
 }
 
-// TestRunReport_ResumeRecordsSkippedStages verifies that a resumed run
-// distinguishes stages it ran from stages it passed over. Skipped stages are
-// named in SkippedStages rather than appearing in Stages with zero timings, so a
-// consumer never has to test for a zero timestamp.
-func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
-	orch, config := newHappyPathOrchestrator(t, StateLagsOk, nil)
-	reportPath := filepath.Join(t.TempDir(), "run-report.json")
-
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.fsm.Current())
-	orch.SetRunReportRecorder(recorder)
-
-	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil))
-	recorder.Finish(orch.fsm.Current(), nil)
-
-	report := readRunReport(t, reportPath)
-
-	// Resuming at lags_ok means initialize and wait_for_lags were already done.
-	assert.Equal(t, []string{EventInitialize, EventWaitForLags}, report.SkippedStages)
-	assert.NotContains(t, stageEvents(report), EventInitialize)
-	assert.NotContains(t, stageEvents(report), EventWaitForLags)
-	assert.Equal(t, EventFence, report.Stages[0].Event, "the first stage run should be the fence")
-	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
-}
-
 // TestRunReport_FailedRunIsRecorded is the case the perf rig depends on: a run
 // that does not complete must still leave a report naming the stage that failed.
 // A failure is a result, not an absence of one.
@@ -141,7 +115,7 @@ func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
-	orch, config := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.fsm.Current())
@@ -250,7 +224,7 @@ func TestRunReport_WrittenAt0600(t *testing.T) {
 // meant to be collected and archived, so it must not carry credentials, and it
 // records only a topic count rather than the topic names themselves.
 func TestRunReport_NoCredentialsOrTopicNames(t *testing.T) {
-	orch, config := newHappyPathOrchestrator(t, StateUninitialized, []string{"secret-topic-name"})
+	orch, config := newHappyPathOrchestrator(t, []string{"secret-topic-name"})
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.fsm.Current())

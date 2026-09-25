@@ -222,12 +222,6 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	// the step's actual work happens — BEFORE the general before_event one, so
 	// before_event fires after the work is already done and cannot mark a start.
 	for _, step := range canonicalWorkflow {
-		if !o.canTransition(step.Event) {
-			slog.Debug("skipping already-completed step", "step", step.Description, "event", step.Event)
-			o.runReport.StageSkipped(step.Event)
-			continue // Skip already-completed steps (enables resumability)
-		}
-
 		if header, ok := stepHeaders[step.Event]; ok {
 			o.reporter.section(header)
 		}
@@ -474,9 +468,4 @@ func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 	if err := o.actions.SwitchGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 	}
-}
-
-// canTransition checks if the given event can be triggered from the current state
-func (o *MigrationOrchestrator) canTransition(event string) bool {
-	return o.fsm.Can(event)
 }

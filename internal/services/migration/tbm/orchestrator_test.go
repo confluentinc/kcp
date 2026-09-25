@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *migration.MigrationConfig) {
+func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationConfig) {
 	t.Helper()
 
 	config := &migration.MigrationConfig{
@@ -57,7 +57,7 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 }
 
 func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
-	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t)
 
 	require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{}))
 
@@ -65,7 +65,7 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 }
 
 func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *testing.T) {
-	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t)
 	// Force the fence step to block on ctx: a real gateway wait that never
 	// resolves on its own, cancellable only by ctx, is what proves the walk
 	// stops mid-step rather than after the whole Execute call completes.
@@ -84,7 +84,7 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 }
 
 func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing.T) {
-	orchestrator, config := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, config := newTestOrchestrator(t)
 
 	res := realisticReconcileResult()
 
@@ -99,7 +99,7 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 }
 
 func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t *testing.T) {
-	orchestrator, config := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, config := newTestOrchestrator(t)
 
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag", "gateway rejected the fence spec"}}
 
@@ -176,7 +176,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 }
 
 func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
-	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t)
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
 
@@ -485,11 +485,9 @@ func TestTBMOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 	assert.Empty(t, *promoteCalls, "no promote occurred — interrupted before the promote stage")
 }
 
-// TestTBM_S1_AlreadyFencedNoReapply covers matrix row T-S1: the persisted
-// CurrentState a kill right after fencing would leave, mirrors still ACTIVE
-// (nothing was promoted by the prior, killed run). Construction ignores the
-// stale state (see newTBMKillPointOrchestrator's doc comment), so the FSM
-// still walks the whole workflow — there is no live read that could tell
+// TestTBM_S1_AlreadyFencedNoReapply covers matrix row T-S1: the world a kill
+// right after fencing leaves, mirrors still ACTIVE (nothing was promoted by
+// the prior, killed run). The FSM walks the whole workflow — there is no live read that could tell
 // this run "the route is already fenced" apart from a fresh one, so Fence's
 // apply is unconditionally re-issued every run. What this pins is that
 // re-issuing that apply is safe: exactly one fence patch, never doubled
@@ -505,7 +503,7 @@ func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
 	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Len(t, *patchCalls, 2,
-		"one fence re-apply plus one switch apply — never doubled by resuming into a state that already says fenced")
+		"one fence re-apply plus one switch apply — never doubled")
 	require.Len(t, *promoteCalls, 1)
 	assert.ElementsMatch(t, topics, (*promoteCalls)[0])
 

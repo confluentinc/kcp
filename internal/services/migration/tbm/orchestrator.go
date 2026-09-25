@@ -168,11 +168,6 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
-		if !o.canTransition(step.Event) {
-			slog.Debug("skipping already-completed tbm step", "step", step.Description, "event", step.Event)
-			continue
-		}
-
 		if header, ok := stepHeaders[step.Event]; ok {
 			o.reporter.section(header)
 		}
@@ -306,8 +301,4 @@ func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 		return
 	}
 	o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
-}
-
-func (o *TBMOrchestrator) canTransition(event string) bool {
-	return o.fsm.Can(event)
 }
