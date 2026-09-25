@@ -76,36 +76,65 @@ type MigrationExecutorOpts struct {
 	// JSON. Empty (the default) disables the report.
 	RunReportPath string
 	// ReconcileResult is the migplan.Result the command layer computed live,
-	// via migplan.Reconcile, on THIS invocation (see cmd_migration_execute.go)
-	// — non-nil on every ordinary run now, not only a deferred init: the AAO
-	// FSM always starts at uninitialized (start-from-zero) and onInitialize
-	// consumes this fresh result every time.
+	// via migplan.Reconcile, on THIS invocation (see cmd_migration_execute.go).
+	// The AAO FSM always starts at uninitialized and onInitialize consumes it.
 	ReconcileResult *migplan.Result
 }
 
 type MigrationExecutor struct {
 	opts MigrationExecutorOpts
+	deps aaoDependencies
+}
+
+// offsetProviderCloser is an offset source the executor closes when Run ends.
+type offsetProviderCloser interface {
+	offset.Provider
+	Close() error
+}
+
+// aaoDependencies builds the AAO branch's downstream services. Run takes them
+// from here rather than constructing them inline so this package's tests can
+// substitute stubs, as runTBMBranch's builder functions allow for the dynamic
+// branch.
+type aaoDependencies struct {
+	sourceOffset       func(MigrationExecutorOpts) (offsetProviderCloser, error)
+	destinationOffset  func(MigrationExecutorOpts) (offsetProviderCloser, error)
+	gatewayService     func(kubeConfigPath string) gateway.Service
+	clusterLinkService func(clusterlink.HTTPClient) clusterlink.Service
+}
+
+// liveAAODependencies dials the real source and destination Kafka clusters,
+// Kubernetes, and the cluster-link REST endpoint.
+var liveAAODependencies = aaoDependencies{
+	sourceOffset:      createSourceOffset,
+	destinationOffset: createDestinationOffset,
+	gatewayService: func(kubeConfigPath string) gateway.Service {
+		return gateway.NewK8sService(kubeConfigPath)
+	},
+	clusterLinkService: func(httpClient clusterlink.HTTPClient) clusterlink.Service {
+		return clusterlink.NewConfluentCloudService(httpClient)
+	},
 }
 
 func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
-	return &MigrationExecutor{
-		opts: opts,
-	}
+	return newMigrationExecutorWithDeps(opts, liveAAODependencies)
+}
+
+func newMigrationExecutorWithDeps(opts MigrationExecutorOpts, deps aaoDependencies) *MigrationExecutor {
+	return &MigrationExecutor{opts: opts, deps: deps}
 }
 
 func (m *MigrationExecutor) Run() error {
 	config := m.opts.MigrationConfig
 	ctx := context.Background()
 
-	// Create source Kafka client (MSK)
-	sourceOffset, err := m.createSourceOffset(ctx)
+	sourceOffset, err := m.deps.sourceOffset(m.opts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = sourceOffset.Close() }()
 
-	// Create destination Kafka client (CC)
-	destinationOffset, err := m.createDestinationOffset()
+	destinationOffset, err := m.deps.destinationOffset(m.opts)
 	if err != nil {
 		return err
 	}
@@ -118,14 +147,15 @@ func (m *MigrationExecutor) Run() error {
 		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
-	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
-	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
+	gatewayService := m.deps.gatewayService(config.KubeConfigPath)
+	clusterLinkService := m.deps.clusterLinkService(httpClient)
 	actions := migration.NewMigrationActionsWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	actions.SetRolloutTimeout(m.opts.RolloutTimeout)
 	actions.SetHotReloadTimeout(m.opts.HotReloadTimeout)
 	actions.SetPromoteBatchSize(m.opts.PromoteBatchSize)
 
-	// An explicit --gateway-config-port overrides whatever init recorded.
+	// An explicit gateway config port (manifest policy or flag) overrides the
+	// config's default.
 	if m.opts.GatewayConfigPort > 0 {
 		config.GatewayConfigPort = m.opts.GatewayConfigPort
 	}
@@ -223,17 +253,17 @@ func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
 	return clusterAuth
 }
 
-func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
-	authType := m.opts.AuthType
-	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
+func createSourceOffset(o MigrationExecutorOpts) (offsetProviderCloser, error) {
+	authType := o.AuthType
+	brokerAddresses := strings.Split(o.SourceBootstrap, ",")
 
-	region := m.opts.AWSRegion
+	region := o.AWSRegion
 
-	clusterAuth := sourceClusterAuth(m.opts)
+	clusterAuth := sourceClusterAuth(o)
 
 	// skipTLSVerify is threaded through the mapper into every TLS path, so no
 	// separate WithInsecureSkipVerify() override is needed.
-	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, m.opts.SourceInsecureSkipTLSVerify)
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, o.SourceInsecureSkipTLSVerify)
 	if err != nil {
 		return nil, fmt.Errorf("resolving source auth option: %w", err)
 	}
@@ -243,7 +273,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 		"brokers", len(brokerAddresses),
 		"auth_type", authType,
 		"region", region,
-		"insecure_skip_tls_verify", m.opts.SourceInsecureSkipTLSVerify,
+		"insecure_skip_tls_verify", o.SourceInsecureSkipTLSVerify,
 	)
 	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
 	if err != nil {
@@ -254,17 +284,17 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	return offset.NewOffsetService(sourceClient), nil
 }
 
-func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
-	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
+func createDestinationOffset(o MigrationExecutorOpts) (offsetProviderCloser, error) {
+	ccBrokers := strings.Split(o.ClusterBootstrap, ",")
 	slog.Debug("connecting to destination cluster",
 		"brokers", len(ccBrokers),
-		"auth_type", m.opts.DestAuthType,
-		"insecure_skip_tls_verify", m.opts.DestKafkaInsecureSkipTLSVerify,
+		"auth_type", o.DestAuthType,
+		"insecure_skip_tls_verify", o.DestKafkaInsecureSkipTLSVerify,
 	)
 	// The credential is the destination KAFKA one, not the REST one — they may
 	// differ. skipTLSVerify is threaded through the mapper into every TLS path,
 	// mirroring createSourceOffset.
-	authOpt, err := client.AdminOptionForAuthMethod(m.opts.DestAuthType, m.opts.DestAuthMethod, m.opts.DestKafkaInsecureSkipTLSVerify)
+	authOpt, err := client.AdminOptionForAuthMethod(o.DestAuthType, o.DestAuthMethod, o.DestKafkaInsecureSkipTLSVerify)
 	if err != nil {
 		return nil, fmt.Errorf("resolving destination auth option: %w", err)
 	}
