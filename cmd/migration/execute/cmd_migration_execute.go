@@ -8,12 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/sarama"
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -55,18 +52,16 @@ Each spec.defaultPolicies value can also be overridden for a single run with its
 If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
 from the live state, not from any persisted position.`
 
-// NewMigrationExecuteCmd builds the `execute` command bound to the dynamic
-// branch's live dependencies. The static branch takes its own live
-// dependencies from liveStaticDependencies (see NewStaticMigrationExecutor).
+// NewMigrationExecuteCmd builds the `execute` command bound to the live
+// dependencies both branches share.
 func NewMigrationExecuteCmd() *cobra.Command {
-	return newMigrationExecuteCmd(buildDynamicOffsetProviders, buildDynamicGatewayService, buildDynamicClusterLinkService)
+	return newMigrationExecuteCmd(liveExecutorDependencies)
 }
 
-// newMigrationExecuteCmd builds the command with the dynamic branch's
-// dependencies injected, so this package's tests can pass stubs for a
-// dynamic run without dialing Kafka, Kubernetes, or a cluster-link REST
-// endpoint. The static branch's equivalent seam is staticDependencies.
-func newMigrationExecuteCmd(buildDynamicOffsets offsetProvidersFunc, buildDynamicGateway gatewayServiceFunc, buildDynamicClusterLink clusterLinkServiceFunc) *cobra.Command {
+// newMigrationExecuteCmd builds the command with deps injected, so this
+// package's tests can pass stubs for either branch without dialing Kafka,
+// Kubernetes, or a cluster-link REST endpoint.
+func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "execute",
 		Short: "Execute a migration (run the cutover)",
@@ -83,7 +78,7 @@ func newMigrationExecuteCmd(buildDynamicOffsets offsetProvidersFunc, buildDynami
 		Args:         cobra.NoArgs,
 		PreRunE:      func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
 		RunE: func(c *cobra.Command, args []string) error {
-			return runMigrationExecute(c, args, buildDynamicOffsets, buildDynamicGateway, buildDynamicClusterLink)
+			return runMigrationExecute(c, args, deps)
 		},
 	}
 
@@ -168,7 +163,7 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 	}
 }
 
-func runMigrationExecute(cmd *cobra.Command, args []string, buildDynamicOffsets offsetProvidersFunc, buildDynamicGateway gatewayServiceFunc, buildDynamicClusterLink clusterLinkServiceFunc) error {
+func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDependencies) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -248,18 +243,33 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildDynamicOffsets 
 
 	switch mode {
 	case "dynamic":
-		return runDynamicBranch(cmd, g, &config, reconcileResult, buildDynamicOffsets, buildDynamicGateway, buildDynamicClusterLink)
+		return runDynamicBranch(cmd, g, &config, reconcileResult, deps)
 	default:
 		// "static", and any value not yet recognized as dynamic — the static
 		// path is the safe default.
-		opts, err := buildExecutorOpts(g, &config, reconcileResult)
-		if err != nil {
-			return err
-		}
-		// run-report is an execute-time diagnostics path, not part of the
-		// manifest; carry it straight from the flag onto the opts.
-		opts.RunReportPath = runReport
-		return NewStaticMigrationExecutor(opts).Run()
+		return runStaticBranch(cmd, g, &config, reconcileResult, deps, runReport)
+	}
+}
+
+// applyEffectivePolicy copies the effective policy (the manifest's
+// spec.defaultPolicies with any per-run flag overrides already applied) onto
+// config, the same way for both branches: the gateway config port, the two
+// runtime fields the static workflow reads back during execute, and the
+// LastRunPolicies record of what this run used.
+func applyEffectivePolicy(config *migration.MigrationConfig, p manifest.DefaultPolicies) {
+	if p.GatewayConfigPort > 0 {
+		config.GatewayConfigPort = p.GatewayConfigPort
+	}
+	config.DetectUnroutedProducersDuration = p.DetectUnroutedProducersDuration
+	config.ConsumerOffsetSyncDrainDuration = p.ConsumerOffsetSyncDrainDuration
+	config.LastRunPolicies = &migration.LastRunPolicies{
+		LagThreshold:                    p.LagThreshold,
+		PromoteBatchSize:                p.PromoteBatchSize,
+		RolloutTimeout:                  p.RolloutTimeout,
+		DetectUnroutedProducersDuration: p.DetectUnroutedProducersDuration,
+		ConsumerOffsetSyncDrainDuration: p.ConsumerOffsetSyncDrainDuration,
+		HotReloadTimeout:                p.HotReloadTimeout,
+		GatewayConfigPort:               config.GatewayConfigPort,
 	}
 }
 
@@ -319,119 +329,4 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	if cmd.Flags().Changed("gateway-config-port") {
 		p.GatewayConfigPort = gatewayConfigPortOverride
 	}
-}
-
-// buildExecutorOpts resolves every credential leg and the execute-time policy
-// from the manifest. The manifest is a second deserializer into the same
-// struct the flags filled, so nothing downstream changes shape.
-func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, reconcileResult *migplan.Result) (StaticMigrationExecutorOpts, error) {
-	srcCreds, errs := g.SourceCredentials()
-	if len(errs) > 0 {
-		return StaticMigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
-	}
-	restCreds, err := g.RestCredentials()
-	if err != nil {
-		return StaticMigrationExecutorOpts{}, fmt.Errorf("resolving destination REST credentials: %w", err)
-	}
-	dstCreds, errs := g.DestinationKafkaCredentials()
-	if len(errs) > 0 {
-		return StaticMigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
-	}
-
-	// A nil bootstrap is fine here: MigrateConn folds it straight into
-	// KafkaSourceConn.BootstrapServers, which auth-type mapping never reads
-	// (see TestMigrateConn_NilBootstrapServers_AuthMappingUnaffected).
-	destConn := types.MigrateConn(nil, dstCreds)
-	destAuthType, err := destConn.GetSelectedAuthType()
-	if err != nil {
-		// The validators upstream already enforce exactly one method (and
-		// reject iam), so this is an invariant, not an expected user error —
-		// but failing loudly here beats a nil dereference mid-cutover.
-		return StaticMigrationExecutorOpts{}, fmt.Errorf("resolving destination auth method: %w", err)
-	}
-	destAuthMethod := destConn.AuthMethod
-
-	// Backward-compat trap: the old destination client always dialled SASL/PLAIN
-	// over TLS against the public trust store (WithSASLPlainAuth with an empty
-	// ca_cert). AdminOptionForAuthMethod maps sasl_plain with NEITHER ca_cert nor
-	// tls set to cleartext SASL_PLAINTEXT — a silent downgrade for a Confluent
-	// Cloud destination. Default UseTLS=true in that case: the destination is a
-	// managed/production cluster, always TLS, unlike a source which may
-	// legitimately be on-prem plaintext. Every existing manifest (which never
-	// set tls: nor ca_cert:) keeps dialling exactly as before.
-	if sp := destAuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
-		sp.UseTLS = true
-	}
-
-	// Policy is re-read fresh from the manifest on every run, so these two
-	// runtime fields (which the workflow reads back during execute) always
-	// carry this run's effective value rather than any stale copy.
-	config.DetectUnroutedProducersDuration = g.Spec.DefaultPolicies.DetectUnroutedProducersDuration
-	config.ConsumerOffsetSyncDrainDuration = g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration
-
-	// Record the full effective policy (manifest defaults with this run's
-	// overrides applied) as an observational snapshot for the operator and
-	// support — never read back by kcp.
-	config.LastRunPolicies = &migration.LastRunPolicies{
-		LagThreshold:                    g.Spec.DefaultPolicies.LagThreshold,
-		PromoteBatchSize:                g.Spec.DefaultPolicies.PromoteBatchSize,
-		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
-		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
-		ConsumerOffsetSyncDrainDuration: g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
-		HotReloadTimeout:                g.Spec.DefaultPolicies.HotReloadTimeout,
-		GatewayConfigPort:               g.Spec.DefaultPolicies.GatewayConfigPort,
-	}
-
-	opts := StaticMigrationExecutorOpts{
-		MigrationConfig:   *config,
-		LagThreshold:      int64(g.Spec.DefaultPolicies.LagThreshold),
-		ClusterBootstrap:  config.ClusterBootstrap,
-		RolloutTimeout:    g.Spec.DefaultPolicies.RolloutTimeout,
-		HotReloadTimeout:  g.Spec.DefaultPolicies.HotReloadTimeout,
-		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
-		PromoteBatchSize:  g.Spec.DefaultPolicies.PromoteBatchSize,
-
-		// Always populated: runMigrationExecute reconciles live on every run.
-		ReconcileResult: reconcileResult,
-
-		// The destination Kafka leg authenticates with the KAFKA block. The
-		// cluster-link REST credential (spec.clusterLink.linkCredentials) may name
-		// a different, broader principal, and sending that to the broker would
-		// invert least privilege.
-		DestAuthType:   destAuthType,
-		DestAuthMethod: destAuthMethod,
-
-		// The full resolved REST credential — basic, bearer, mtls, or the
-		// api_key form — carried through rather than flattened to a scalar
-		// key/secret pair, so bearer/basic/mTLS headers and client certs reach
-		// the REST leg.
-		RestCreds: restCreds,
-
-		// Each leg carries only what its own block asked for. Collapsing these
-		// would mean relaxing TLS for a self-signed source also stops verifying
-		// the destination connections that carry the destination API key.
-		SourceConn: types.MigrateConn(g.Spec.Source.BootstrapServers, srcCreds),
-
-		DestKafkaInsecureSkipTLSVerify: dstCreds.InsecureSkipTLSVerify,
-	}
-	return opts, nil
-}
-
-// newKafkaClientForConn resolves conn's auth option and dials it as a
-// sarama.Client, for offset.NewOffsetService. Shared by both branches: the
-// dynamic branch's offset providers and the static branch's source leg.
-func newKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
-	authType, err := conn.GetSelectedAuthType()
-	if err != nil {
-		return nil, fmt.Errorf("determining auth type: %w", err)
-	}
-	region := ""
-	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
-		region = conn.AuthMethod.IAM.Region
-	}
-	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
-	if err != nil {
-		return nil, fmt.Errorf("resolving auth option: %w", err)
-	}
-	return client.NewKafkaClient(conn.BootstrapServers, region, authOpt)
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/pflag"
@@ -230,14 +231,14 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 `
 	})
 	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
 
-	assert.EqualValues(t, 42, opts.LagThreshold)
-	assert.Equal(t, 7, opts.PromoteBatchSize)
-	assert.EqualValues(t, 180, opts.RolloutTimeout.Seconds())
-	assert.EqualValues(t, 30, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
-	assert.EqualValues(t, 15, opts.MigrationConfig.ConsumerOffsetSyncDrainDuration.Seconds())
+	require.NotNil(t, cfg.LastRunPolicies)
+	assert.Equal(t, 42, cfg.LastRunPolicies.LagThreshold)
+	assert.Equal(t, 7, cfg.LastRunPolicies.PromoteBatchSize)
+	assert.EqualValues(t, 180, cfg.LastRunPolicies.RolloutTimeout.Seconds())
+	assert.EqualValues(t, 30, cfg.DetectUnroutedProducersDuration.Seconds())
+	assert.EqualValues(t, 15, cfg.ConsumerOffsetSyncDrainDuration.Seconds())
 }
 
 // --- per-policy override flags ---
@@ -265,10 +266,10 @@ func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, p.RolloutTimeout, "an unset flag leaves the manifest default untouched")
 }
 
-// TestExecute_PolicyOverrideReachesExecutorOpts — an override applied to the
-// manifest's defaults flows all the way through buildExecutorOpts, the same path
-// runMigrationExecute takes.
-func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
+// TestExecute_PolicyOverrideReachesTheConfig — an override applied to the
+// manifest's defaults flows through applyEffectivePolicy onto the config, the
+// same path runMigrationExecute takes for both branches.
+func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    detectUnroutedProducersDuration: 30s\n"
 	})
@@ -283,13 +284,13 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 99, opts.LagThreshold)
-	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
+	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
+	require.NotNil(t, cfg.LastRunPolicies)
+	assert.Equal(t, 99, cfg.LastRunPolicies.LagThreshold)
+	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
 }
 
-// TestExecute_RecordsLastRunPolicies — buildExecutorOpts stamps the effective
+// TestExecute_RecordsLastRunPolicies — applyEffectivePolicy stamps the effective
 // policy (manifest defaults with this run's overrides applied) onto the config
 // as an observational LastRunPolicies record for the run report. It is never
 // read back by kcp, so this proves it is at least written, and that it
@@ -308,10 +309,9 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
 
-	rec := opts.MigrationConfig.LastRunPolicies
+	rec := cfg.LastRunPolicies
 	require.NotNil(t, rec, "the effective policy must be recorded on the config")
 	assert.Equal(t, 99, rec.LagThreshold, "the override, not the manifest default, is recorded")
 	assert.Equal(t, 3, rec.PromoteBatchSize)
@@ -379,7 +379,7 @@ func TestExecute_InitDoesNotCarryLastRunPolicies(t *testing.T) {
 	f := newFixture(t, nil)
 	_, cfg := freshConfig(t, f)
 	assert.Nil(t, cfg.LastRunPolicies,
-		"a migration config that has not yet gone through buildExecutorOpts must have no LastRunPolicies record")
+		"a migration config that has not yet gone through applyEffectivePolicy must have no LastRunPolicies record")
 }
 
 // TestExecute_InvalidPolicyOverrideIsRejected — an override can carry a value the
@@ -393,17 +393,31 @@ func TestExecute_InvalidPolicyOverrideIsRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 }
 
+// resolvedLegs resolves the three connection legs from the manifest exactly as
+// both branches do: source and destination Kafka through sourceConn /
+// destinationConn, and the cluster-link REST leg from linkCredentials.
+func resolvedLegs(t *testing.T, g *manifest.GatewayMigration) (src, dst types.KafkaSourceConn, rest *targets.Credentials) {
+	t.Helper()
+	src, err := sourceConn(g)
+	require.NoError(t, err)
+	dst, err = destinationConn(g)
+	require.NoError(t, err)
+	rest, err = g.RestCredentials()
+	require.NoError(t, err)
+	return src, dst, rest
+}
+
 // --- source auth mapping ---
 
-func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
+func TestExecute_MapsSourceAuthOntoSourceConn(t *testing.T) {
 	for name, tc := range map[string]struct {
 		block  string
-		assert func(*testing.T, StaticMigrationExecutorOpts)
+		assert func(*testing.T, types.KafkaSourceConn)
 	}{
 		"sasl_scram": {
 			"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA256\n",
-			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				sc := o.SourceConn.AuthMethod.SASLScram
+			func(t *testing.T, o types.KafkaSourceConn) {
+				sc := o.AuthMethod.SASLScram
 				require.NotNil(t, sc)
 				assert.Equal(t, "u", sc.Username)
 				assert.Equal(t, "p", sc.Password)
@@ -412,15 +426,15 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		},
 		"iam": {
 			"iam:\n  region: eu-west-2\n",
-			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				require.NotNil(t, o.SourceConn.AuthMethod.IAM)
-				assert.Equal(t, "eu-west-2", o.SourceConn.AuthMethod.IAM.Region)
+			func(t *testing.T, o types.KafkaSourceConn) {
+				require.NotNil(t, o.AuthMethod.IAM)
+				assert.Equal(t, "eu-west-2", o.AuthMethod.IAM.Region)
 			},
 		},
 		"sasl_plain": {
 			"sasl_plain:\n  username: pu\n  password: pp\n  tls: true\n",
-			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				sp := o.SourceConn.AuthMethod.SASLPlain
+			func(t *testing.T, o types.KafkaSourceConn) {
+				sp := o.AuthMethod.SASLPlain
 				require.NotNil(t, sp)
 				assert.Equal(t, "pu", sp.Username)
 				assert.True(t, sp.UseTLS, "tls: true must not be silently dropped to cleartext")
@@ -428,18 +442,17 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		},
 		"unauthenticated_plaintext": {
 			"unauthenticated_plaintext: {}\n",
-			func(t *testing.T, o StaticMigrationExecutorOpts) {
-				assert.NotNil(t, o.SourceConn.AuthMethod.UnauthenticatedPlaintext)
-				assert.Nil(t, o.SourceConn.AuthMethod.SASLScram)
+			func(t *testing.T, o types.KafkaSourceConn) {
+				assert.NotNil(t, o.AuthMethod.UnauthenticatedPlaintext)
+				assert.Nil(t, o.AuthMethod.SASLScram)
 			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
-			g, cfg := freshConfig(t, f)
-			opts, err := buildExecutorOpts(g, cfg, nil)
+			conn, err := sourceConn(loadGateway(t, f.manifestPath))
 			require.NoError(t, err)
-			tc.assert(t, opts)
+			tc.assert(t, conn)
 		})
 	}
 }
@@ -453,15 +466,9 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
 		link:      "api_key: CC_KEY\napi_secret: CC_SECRET\ninsecure_skip_verify: true\n",
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
-	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify)
-	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestCreds.InsecureSkipVerify)
-
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
+	src, dst, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
+	assert.True(t, src.InsecureSkipTLSVerify)
+	assert.True(t, dst.InsecureSkipTLSVerify)
 	assert.True(t, rest.InsecureSkipVerify, "the REST leg reads its own linkCredentials file")
 }
 
@@ -469,30 +476,28 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 // leg is authenticated from spec.target.kafka.clusterCredentials.
 func TestExecute_DestinationKafkaUsesItsClusterCredentials(t *testing.T) {
 	f := newFixture(t, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
+	_, dst, _ := resolvedLegs(t, loadGateway(t, f.manifestPath))
+	dstType, err := dst.GetSelectedAuthType()
 	require.NoError(t, err)
-	assert.Equal(t, types.AuthTypeSASLPlain, opts.DestAuthType)
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
-	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
-	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
+	assert.Equal(t, types.AuthTypeSASLPlain, dstType)
+	require.NotNil(t, dst.AuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", dst.AuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", dst.AuthMethod.SASLPlain.Password)
 }
 
 // TestExecute_DestSASLPlainDefaultsToTLS is the ⚠️ backward-compat fix (A.3):
 // the old destination client always dialled SASL_SSL over the public trust
 // store. AdminOptionForAuthMethod maps sasl_plain with no ca_cert/tls to
-// cleartext SASL_PLAINTEXT, so buildExecutorOpts must default UseTLS=true when
+// cleartext SASL_PLAINTEXT, so destinationConn must default UseTLS=true when
 // neither is set — the single most important regression to prove, since every
 // existing manifest never sets tls: nor ca_cert: on the destination.
 func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n",
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
-	assert.True(t, opts.DestAuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
+	_, dst, _ := resolvedLegs(t, loadGateway(t, f.manifestPath))
+	require.NotNil(t, dst.AuthMethod.SASLPlain)
+	assert.True(t, dst.AuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
 }
 
 // TestExecute_DestSASLPlainCACertIsNotOverridden — the compat default must not
@@ -505,12 +510,10 @@ func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: " + ca + "\n",
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
-	assert.Equal(t, ca, opts.DestAuthMethod.SASLPlain.CACert)
-	assert.False(t, opts.DestAuthMethod.SASLPlain.UseTLS, "ca_cert already selects SASL_SSL; the compat default must not also flip UseTLS")
+	_, dst, _ := resolvedLegs(t, loadGateway(t, f.manifestPath))
+	require.NotNil(t, dst.AuthMethod.SASLPlain)
+	assert.Equal(t, ca, dst.AuthMethod.SASLPlain.CACert)
+	assert.False(t, dst.AuthMethod.SASLPlain.UseTLS, "ca_cert already selects SASL_SSL; the compat default must not also flip UseTLS")
 }
 
 // --- ported preRunE errors (§6) ---
@@ -559,13 +562,11 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	src, dst, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
 
-	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify, "the source asked for it")
-	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
-	assert.False(t, opts.RestCreds.InsecureSkipVerify, "nor the destination REST leg")
+	assert.True(t, src.InsecureSkipTLSVerify, "the source asked for it")
+	assert.False(t, dst.InsecureSkipTLSVerify, "the destination Kafka leg did not")
+	assert.False(t, rest.InsecureSkipVerify, "nor the destination REST leg")
 }
 
 // TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
@@ -575,13 +576,11 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	src, dst, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
 
-	assert.False(t, opts.SourceConn.InsecureSkipTLSVerify)
-	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.False(t, opts.RestCreds.InsecureSkipVerify, "the REST leg is its own file and did not ask for it")
+	assert.False(t, src.InsecureSkipTLSVerify)
+	assert.True(t, dst.InsecureSkipTLSVerify)
+	assert.False(t, rest.InsecureSkipVerify, "the REST leg is its own file and did not ask for it")
 }
 
 // TestExecute_LinkCredentialsGovernTheRestLeg — the REST leg is driven entirely
@@ -592,12 +591,10 @@ func TestExecute_LinkCredentialsGovernTheRestLeg(t *testing.T) {
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 		link:   "api_key: K\napi_secret: S\n",
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	src, _, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
 
-	assert.True(t, opts.SourceConn.InsecureSkipTLSVerify)
-	assert.False(t, opts.RestCreds.InsecureSkipVerify,
+	assert.True(t, src.InsecureSkipTLSVerify)
+	assert.False(t, rest.InsecureSkipVerify,
 		"a link credentials file that did not ask for it must keep verifying")
 }
 
@@ -612,27 +609,23 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.
 	f := newFixtureCreds(t, credOverrides{
 		link: "api_key: REST_ONLY_KEY\napi_secret: REST_ONLY_SECRET\n",
 	}, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
+	_, dst, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
 
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.clusterCredentials")
-	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
-	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
-	assert.Equal(t, "REST_ONLY_KEY", opts.RestCreds.APIKey, "the REST leg uses linkCredentials")
-	assert.Equal(t, "REST_ONLY_SECRET", opts.RestCreds.APISecret)
+	require.NotNil(t, dst.AuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.clusterCredentials")
+	assert.Equal(t, "CC_KEY", dst.AuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", dst.AuthMethod.SASLPlain.Password)
+	assert.Equal(t, "REST_ONLY_KEY", rest.APIKey, "the REST leg uses linkCredentials")
+	assert.Equal(t, "REST_ONLY_SECRET", rest.APISecret)
 }
 
 // TestExecute_RestCredentialsComeFromLinkCredentials — the REST leg is resolved
 // from spec.clusterLink.linkCredentials, never derived from the Kafka leg.
 func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 	f := newFixture(t, nil)
-	g, cfg := freshConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, nil)
-	require.NoError(t, err)
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
-	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
-	assert.Equal(t, "CC_KEY", opts.RestCreds.APIKey)
+	_, dst, rest := resolvedLegs(t, loadGateway(t, f.manifestPath))
+	require.NotNil(t, dst.AuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", dst.AuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_KEY", rest.APIKey)
 }
 
 // --- helper functions ---

@@ -284,8 +284,8 @@ func TestGateway_RejectsIAMDestination(t *testing.T) {
 }
 
 // TestGateway_AllowsDestinationSASLPlainCACert — a private-CA sasl_plain
-// destination now that createDestinationOffset routes through
-// AdminOptionForAuthMethod instead of a hardcoded empty-CA client.
+// destination is allowed: the destination leg dials through
+// AdminOptionForAuthMethod, which honours its ca_cert.
 func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
 	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
 	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))

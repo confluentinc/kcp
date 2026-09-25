@@ -3,6 +3,8 @@ package execute
 import (
 	"context"
 	"encoding/json"
+	"github.com/spf13/cobra"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,14 +20,12 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/services/offset"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 // This file exercises the static-mode branch the way
 // migration_executor_dynamic_test.go exercises the dynamic one: the real
-// manifest → buildExecutorOpts → StaticMigrationExecutor.Run path, with the four
-// downstream services stubbed through staticDependencies and the live
+// manifest → runStaticBranch path, with the four
+// downstream services stubbed through executorDependencies (stubDeps) and the live
 // migplan.Reconcile (which cannot run in-process) replaced by staticResult.
 
 // staticRouteGatewayYAML and the two fragments are the shapes migplan.Reconcile
@@ -63,38 +63,11 @@ func staticResult(topics []string) *migplan.Result {
 	}
 }
 
-// closableOffsets adds the Close the static executor defers on its offset
-// providers to a stub that has nothing to close.
-type closableOffsets struct{ offset.Provider }
-
-func (closableOffsets) Close() error { return nil }
-
-// stubStaticDependencies builds staticDependencies over the shared stubs, with gw
-// and cl substituted when non-nil so a test can record what reaches them.
-func stubStaticDependencies(gw gateway.Service, cl clusterlink.Service) staticDependencies {
-	if gw == nil {
-		gw = stubGatewayServiceImpl{}
-	}
-	if cl == nil {
-		cl = stubClusterLinkServiceImpl{}
-	}
-	offsets := func(StaticMigrationExecutorOpts) (offsetProviderCloser, error) {
-		return closableOffsets{zeroLagOffsetProvider{}}, nil
-	}
-	return staticDependencies{
-		sourceOffset:       offsets,
-		destinationOffset:  offsets,
-		gatewayService:     func(string) gateway.Service { return gw },
-		clusterLinkService: func(clusterlink.HTTPClient) clusterlink.Service { return cl },
-	}
-}
-
-// runStaticBranch drives the static branch exactly as runMigrationExecute does
-// after its live reconcile: a fresh config from the manifest, buildExecutorOpts,
-// then StaticMigrationExecutor.Run, with deps in place of the live services.
-// editGateway, when non-nil, stands in for a CLI policy override (the same
-// substitution the dynamic tests make; see runDynamicBranchWithConfig).
-func runStaticBranch(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps staticDependencies) error {
+// runStaticBranchWithConfig drives runStaticBranch directly, as
+// runDynamicBranchWithConfig does for the dynamic branch: a fresh config from
+// the manifest and staticResult standing in for the live reconcile.
+// editGateway, when non-nil, stands in for a CLI policy override.
+func runStaticBranchWithConfig(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps executorDependencies) error {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	if editGateway != nil {
@@ -104,16 +77,14 @@ func runStaticBranch(t *testing.T, f fixture, topics []string, editGateway func(
 	require.NoError(t, err)
 	config := buildFreshMigrationConfig(g, g.Metadata.Name, kubeConfigPath)
 
-	opts, err := buildExecutorOpts(g, &config, staticResult(topics))
-	require.NoError(t, err)
-	opts.RunReportPath = runReportPath
-
-	return newStaticMigrationExecutorWithDeps(opts, deps).Run()
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	return runStaticBranch(cmd, g, &config, staticResult(topics), deps, runReportPath)
 }
 
 func TestExecute_StaticMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	f := newFixture(t, nil)
-	require.NoError(t, runStaticBranch(t, f, []string{"t1.order"}, nil, "", stubStaticDependencies(nil, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, f, []string{"t1.order"}, nil, "", stubDeps(nil, nil)))
 }
 
 // PromoteBatchSize reaches MigrationActions.SetPromoteBatchSize: with a cap of
@@ -125,13 +96,13 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 	t.Run("policy caps the batch", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
 		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
-		require.NoError(t, runStaticBranch(t, newFixture(t, nil), topics, editGateway, "", stubStaticDependencies(nil, rec)))
+		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, editGateway, "", stubDeps(nil, rec)))
 		assert.Equal(t, 1, rec.maxBatch(), "promoteBatchSize 1 must cap every promote batch at one topic")
 	})
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
-		require.NoError(t, runStaticBranch(t, newFixture(t, nil), topics, nil, "", stubStaticDependencies(nil, rec)))
+		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, nil, "", stubDeps(nil, rec)))
 		assert.Equal(t, len(topics), rec.maxBatch(),
 			"with no cap both topics promote in one call — proving the policy, not chance, capped the run above")
 	})
@@ -142,7 +113,7 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *testing.T) {
 	rec := &recordingGatewayService{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
-	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubStaticDependencies(rec, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubDeps(rec, nil)))
 	assert.Equal(t, 9999, rec.port(), "gatewayConfigPort must reach the static capability probe")
 }
 
@@ -166,7 +137,7 @@ func (r *readinessRecordingGateway) WaitForGatewayReady(_ context.Context, _, _ 
 func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 	rec := &readinessRecordingGateway{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.RolloutTimeout = 7 * time.Minute }
-	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubStaticDependencies(rec, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubDeps(rec, nil)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -180,7 +151,7 @@ func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 // disk names every stage of the completed run.
 func TestExecute_StaticMode_WritesRunReport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run-report.json")
-	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, nil, path, stubStaticDependencies(nil, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, nil, path, stubDeps(nil, nil)))
 
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err, "the run report must be written")
@@ -227,47 +198,10 @@ func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 		return strings.Replace(doc, anchor, anchor+"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)
 	})
 	rec := &alterRecordingClusterLink{}
-	require.NoError(t, runStaticBranch(t, f, []string{"t1.order"}, nil, "", stubStaticDependencies(nil, rec)))
+	require.NoError(t, runStaticBranchWithConfig(t, f, []string{"t1.order"}, nil, "", stubDeps(nil, rec)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	assert.Equal(t, []string{"false", "true"}, rec.set,
 		"the pause stage disables offset sync, then Run's bookend restores the declared baseline")
-}
-
-// TestSourceConn_CACertReachesEveryTLSPath: a source ca_cert must reach the
-// CACert of every TLS-fronted auth method (SASL/SCRAM, SASL/PLAIN over TLS,
-// mTLS, unauthenticated TLS) — not only mTLS — so a source behind a private CA
-// can be verified. Driven from real manifest credential files through
-// buildExecutorOpts.
-func TestSourceConn_CACertReachesEveryTLSPath(t *testing.T) {
-	dir := t.TempDir()
-	file := func(name string) string {
-		p := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(p, []byte("pem"), 0o600))
-		return p
-	}
-	ca, cert, key := file("source-ca.pem"), file("client.pem"), file("client-key.pem")
-
-	for name, tc := range map[string]struct {
-		block  string
-		caCert func(types.AuthMethodConfig) string
-	}{
-		"sasl_scram": {"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA512\n  ca_cert: " + ca + "\n",
-			func(m types.AuthMethodConfig) string { return m.SASLScram.CACert }},
-		"sasl_plain": {"sasl_plain:\n  username: u\n  password: p\n  ca_cert: " + ca + "\n",
-			func(m types.AuthMethodConfig) string { return m.SASLPlain.CACert }},
-		"mtls": {"mtls:\n  ca_cert: " + ca + "\n  client_cert: " + cert + "\n  client_key: " + key + "\n",
-			func(m types.AuthMethodConfig) string { return m.TLS.CACert }},
-		"unauthenticated_tls": {"unauthenticated_tls:\n  ca_cert: " + ca + "\n",
-			func(m types.AuthMethodConfig) string { return m.UnauthenticatedTLS.CACert }},
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
-			g, cfg := freshConfig(t, f)
-			opts, err := buildExecutorOpts(g, cfg, nil)
-			require.NoError(t, err)
-			assert.Equal(t, ca, tc.caCert(opts.SourceConn.AuthMethod))
-		})
-	}
 }

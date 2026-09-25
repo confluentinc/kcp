@@ -434,9 +434,8 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // then fail opaquely at connection time. Every other method (sasl_plain,
 // sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
 // end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
-// already uses — including a custom ca_cert on sasl_plain, now that
-// createDestinationOffset routes through the mapper instead of a hardcoded
-// empty-CA client.
+// already uses — including a custom ca_cert on sasl_plain (the destination leg
+// dials through the mapper; see cmd/migration/execute's destinationConn).
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(

@@ -11,86 +11,43 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// runDynamicBranch drives a dynamic-mode migration through
-// tbm.TBMOrchestrator. The live reconcile that builds the run's config lives
-// once, shared, in runMigrationExecute; this branch only dispatches.
+// runDynamicBranch drives a dynamic-mode migration through tbm.TBMOrchestrator.
+// Its twin is runStaticBranch; the shared live reconcile that produced
+// reconcileResult runs once, in runMigrationExecute.
 //
-// Every policy value applied here is read from g.Spec.DefaultPolicies — the
-// EFFECTIVE policy, i.e. the manifest's spec.defaultPolicies after
-// applyPolicyOverrides has already folded in any per-run flag overrides
-// (runMigrationExecute applies them unconditionally before this dispatch).
-// This is deliberate parity with the static branch, which threads the same
-// effective values through buildExecutorOpts/StaticMigrationExecutor: an unset flag
-// must leave the manifest default in force, not silently reset the knob to
-// zero. Reading the raw *Override package vars instead would ignore a manifest
-// rolloutTimeout/hotReloadTimeout/promoteBatchSize/gatewayConfigPort whenever
-// its flag was omitted — and would disagree with the LastRunPolicies snapshot
-// below, which records the effective policy.
+// Every policy value is read from g.Spec.DefaultPolicies — the EFFECTIVE
+// policy, i.e. the manifest's spec.defaultPolicies after applyPolicyOverrides
+// has folded in any per-run flag overrides — so an unset flag leaves the
+// manifest default in force rather than resetting the knob to zero.
 func runDynamicBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
 	config *migration.MigrationConfig,
 	reconcileResult *migplan.Result,
-	buildOffsets offsetProvidersFunc,
-	buildGateway gatewayServiceFunc,
-	buildClusterLink clusterLinkServiceFunc,
+	deps executorDependencies,
 ) error {
 	ctx := context.Background()
+	policy := g.Spec.DefaultPolicies
 
-	sourceOffset, destinationOffset, closeOffsets, err := buildOffsets(g)
+	svc, err := buildExecutorServices(g, deps)
 	if err != nil {
-		return fmt.Errorf("failed to connect to source/destination clusters: %w", err)
+		return err
 	}
-	defer func() { _ = closeOffsets() }()
+	defer func() { _ = svc.close() }()
 
-	gatewayService, err := buildGateway(g)
-	if err != nil {
-		return fmt.Errorf("failed to build gateway service: %w", err)
-	}
+	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink)
+	actions.SetRolloutTimeout(policy.RolloutTimeout)
+	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
+	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
-	clusterLinkService, err := buildClusterLink(g)
-	if err != nil {
-		return fmt.Errorf("failed to build cluster-link service: %w", err)
-	}
-	restCreds, err := g.RestCredentials()
-	if err != nil {
-		return fmt.Errorf("failed to resolve cluster-link REST credentials: %w", err)
-	}
+	applyEffectivePolicy(config, policy)
 
-	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gatewayService, clusterLinkService)
-	actions.SetRolloutTimeout(g.Spec.DefaultPolicies.RolloutTimeout)
-	actions.SetHotReloadTimeout(g.Spec.DefaultPolicies.HotReloadTimeout)
-	actions.SetPromoteBatchSize(g.Spec.DefaultPolicies.PromoteBatchSize)
-
-	// An explicit gateway-config-port (flag or manifest) overrides the value
-	// already on config — mirrors StaticMigrationExecutor.Run's own guard.
-	if g.Spec.DefaultPolicies.GatewayConfigPort > 0 {
-		config.GatewayConfigPort = g.Spec.DefaultPolicies.GatewayConfigPort
-	}
-
-	// The FSM always starts at uninitialized (start-from-zero) — there is no
-	// resume position: reconcile (run every invocation) + idempotent applies
-	// determine what happens.
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)
-
-	// Record the effective policy this run used, as the static branch does.
-	// ConsumerOffsetSyncDrainDuration stays zero: the dynamic FSM has no
-	// offset-sync-pause stage to record a value for.
-	config.LastRunPolicies = &migration.LastRunPolicies{
-		LagThreshold:                    g.Spec.DefaultPolicies.LagThreshold,
-		PromoteBatchSize:                g.Spec.DefaultPolicies.PromoteBatchSize,
-		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
-		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
-		HotReloadTimeout:                g.Spec.DefaultPolicies.HotReloadTimeout,
-		GatewayConfigPort:               config.GatewayConfigPort,
-	}
-
-	restAuth := restCreds.Authenticator()
-	if err := orchestrator.Execute(ctx, reconcileResult, int64(g.Spec.DefaultPolicies.LagThreshold),
-		g.Spec.DefaultPolicies.DetectUnroutedProducersDuration, restAuth); err != nil {
+	if err := orchestrator.Execute(ctx, reconcileResult, int64(policy.LagThreshold),
+		policy.DetectUnroutedProducersDuration, svc.restAuth); err != nil {
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
-	cmd.Printf("✅ Migration completed: %s\n", config.MigrationId)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s\n", config.MigrationId)
 	return nil
 }
