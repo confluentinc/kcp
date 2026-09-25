@@ -21,10 +21,10 @@ import (
 	"github.com/confluentinc/kcp/internal/services/offset"
 )
 
-// This file exercises the static-mode (AAO) branch the way
-// cmd_migration_execute_tbm_test.go exercises the dynamic one: the real
-// manifest → buildExecutorOpts → MigrationExecutor.Run path, with the four
-// downstream services stubbed through aaoDependencies and the live
+// This file exercises the static-mode branch the way
+// cmd_migration_execute_dynamic_test.go exercises the dynamic one: the real
+// manifest → buildExecutorOpts → StaticMigrationExecutor.Run path, with the four
+// downstream services stubbed through staticDependencies and the live
 // migplan.Reconcile (which cannot run in-process) replaced by staticResult.
 
 // staticRouteGatewayYAML and the two fragments are the shapes migplan.Reconcile
@@ -62,25 +62,25 @@ func staticResult(topics []string) *migplan.Result {
 	}
 }
 
-// closableOffsets adds the Close the AAO executor defers on its offset
+// closableOffsets adds the Close the static executor defers on its offset
 // providers to a stub that has nothing to close.
 type closableOffsets struct{ offset.Provider }
 
 func (closableOffsets) Close() error { return nil }
 
-// stubAAODependencies builds aaoDependencies over the shared stubs, with gw
+// stubStaticDependencies builds staticDependencies over the shared stubs, with gw
 // and cl substituted when non-nil so a test can record what reaches them.
-func stubAAODependencies(gw gateway.Service, cl clusterlink.Service) aaoDependencies {
+func stubStaticDependencies(gw gateway.Service, cl clusterlink.Service) staticDependencies {
 	if gw == nil {
 		gw = stubGatewayServiceImpl{}
 	}
 	if cl == nil {
 		cl = stubClusterLinkServiceImpl{}
 	}
-	offsets := func(MigrationExecutorOpts) (offsetProviderCloser, error) {
+	offsets := func(StaticMigrationExecutorOpts) (offsetProviderCloser, error) {
 		return closableOffsets{zeroLagOffsetProvider{}}, nil
 	}
-	return aaoDependencies{
+	return staticDependencies{
 		sourceOffset:       offsets,
 		destinationOffset:  offsets,
 		gatewayService:     func(string) gateway.Service { return gw },
@@ -88,12 +88,12 @@ func stubAAODependencies(gw gateway.Service, cl clusterlink.Service) aaoDependen
 	}
 }
 
-// runAAOBranch drives the static branch exactly as runMigrationExecute does
+// runStaticBranch drives the static branch exactly as runMigrationExecute does
 // after its live reconcile: a fresh config from the manifest, buildExecutorOpts,
-// then MigrationExecutor.Run, with deps in place of the live services.
+// then StaticMigrationExecutor.Run, with deps in place of the live services.
 // editGateway, when non-nil, stands in for a CLI policy override (the same
-// substitution the TBM tests make; see runTBMBranchWithConfig).
-func runAAOBranch(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps aaoDependencies) error {
+// substitution the dynamic tests make; see runDynamicBranchWithConfig).
+func runStaticBranch(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps staticDependencies) error {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	if editGateway != nil {
@@ -107,30 +107,30 @@ func runAAOBranch(t *testing.T, f fixture, topics []string, editGateway func(*ma
 	require.NoError(t, err)
 	opts.RunReportPath = runReportPath
 
-	return newMigrationExecutorWithDeps(opts, deps).Run()
+	return newStaticMigrationExecutorWithDeps(opts, deps).Run()
 }
 
 func TestExecute_StaticMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	f := newFixture(t, nil)
-	require.NoError(t, runAAOBranch(t, f, []string{"t1.order"}, nil, "", stubAAODependencies(nil, nil)))
+	require.NoError(t, runStaticBranch(t, f, []string{"t1.order"}, nil, "", stubStaticDependencies(nil, nil)))
 }
 
 // PromoteBatchSize reaches MigrationActions.SetPromoteBatchSize: with a cap of
 // 1, each PromoteMirrorTopics call submits exactly one topic; uncapped, both
 // go in one call.
-func TestExecute_StaticMode_PromoteBatchSizeReachesAAOActions(t *testing.T) {
+func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 	topics := []string{"t1.order", "t2.inventory"}
 
 	t.Run("policy caps the batch", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
 		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
-		require.NoError(t, runAAOBranch(t, newFixture(t, nil), topics, editGateway, "", stubAAODependencies(nil, rec)))
+		require.NoError(t, runStaticBranch(t, newFixture(t, nil), topics, editGateway, "", stubStaticDependencies(nil, rec)))
 		assert.Equal(t, 1, rec.maxBatch(), "promoteBatchSize 1 must cap every promote batch at one topic")
 	})
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
-		require.NoError(t, runAAOBranch(t, newFixture(t, nil), topics, nil, "", stubAAODependencies(nil, rec)))
+		require.NoError(t, runStaticBranch(t, newFixture(t, nil), topics, nil, "", stubStaticDependencies(nil, rec)))
 		assert.Equal(t, len(topics), rec.maxBatch(),
 			"with no cap both topics promote in one call — proving the policy, not chance, capped the run above")
 	})
@@ -138,11 +138,11 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesAAOActions(t *testing.T) {
 
 // GatewayConfigPort reaches config.GatewayConfigPort before the capability
 // probe (DetectCapability) runs.
-func TestExecute_StaticMode_GatewayConfigPortReachesAAO(t *testing.T) {
+func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *testing.T) {
 	rec := &recordingGatewayService{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
-	require.NoError(t, runAAOBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubAAODependencies(rec, nil)))
-	assert.Equal(t, 9999, rec.port(), "gatewayConfigPort must reach the AAO capability probe")
+	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubStaticDependencies(rec, nil)))
+	assert.Equal(t, 9999, rec.port(), "gatewayConfigPort must reach the static capability probe")
 }
 
 // readinessRecordingGateway records the timeout passed to each
@@ -165,7 +165,7 @@ func (r *readinessRecordingGateway) WaitForGatewayReady(_ context.Context, _, _ 
 func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 	rec := &readinessRecordingGateway{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.RolloutTimeout = 7 * time.Minute }
-	require.NoError(t, runAAOBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubAAODependencies(rec, nil)))
+	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubStaticDependencies(rec, nil)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -179,7 +179,7 @@ func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 // disk names every stage of the completed run.
 func TestExecute_StaticMode_WritesRunReport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run-report.json")
-	require.NoError(t, runAAOBranch(t, newFixture(t, nil), []string{"t1.order"}, nil, path, stubAAODependencies(nil, nil)))
+	require.NoError(t, runStaticBranch(t, newFixture(t, nil), []string{"t1.order"}, nil, path, stubStaticDependencies(nil, nil)))
 
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err, "the run report must be written")
@@ -226,7 +226,7 @@ func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 		return strings.Replace(doc, anchor, anchor+"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)
 	})
 	rec := &alterRecordingClusterLink{}
-	require.NoError(t, runAAOBranch(t, f, []string{"t1.order"}, nil, "", stubAAODependencies(nil, rec)))
+	require.NoError(t, runStaticBranch(t, f, []string{"t1.order"}, nil, "", stubStaticDependencies(nil, rec)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()

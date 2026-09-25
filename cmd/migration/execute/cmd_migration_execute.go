@@ -53,20 +53,18 @@ Each spec.defaultPolicies value can also be overridden for a single run with its
 If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
 from the live state, not from any persisted position.`
 
-// NewMigrationExecuteCmd builds the `execute` command bound to real, live
-// dependencies for a dynamic-mode (TBM) run. A static-mode (AAO) run never
-// uses these — it calls migplan.Reconcile and its own live service
-// constructors directly, exactly as before this command was unified.
+// NewMigrationExecuteCmd builds the `execute` command bound to the dynamic
+// branch's live dependencies. The static branch takes its own live
+// dependencies from liveStaticDependencies (see NewStaticMigrationExecutor).
 func NewMigrationExecuteCmd() *cobra.Command {
-	return newMigrationExecuteCmd(buildTBMOffsetProviders, buildTBMGatewayService, buildTBMClusterLinkService)
+	return newMigrationExecuteCmd(buildDynamicOffsetProviders, buildDynamicGatewayService, buildDynamicClusterLinkService)
 }
 
-// newMigrationExecuteCmd builds the command with the TBM branch's live
-// dependencies injected, so this package's own tests can pass stubs for a
-// dynamic-mode run without dialing Kafka, Kubernetes, or a cluster-link REST
-// endpoint. A static-mode (AAO) run has no equivalent injection point — the
-// test posture between the two branches is deliberately asymmetric.
-func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) *cobra.Command {
+// newMigrationExecuteCmd builds the command with the dynamic branch's
+// dependencies injected, so this package's tests can pass stubs for a
+// dynamic run without dialing Kafka, Kubernetes, or a cluster-link REST
+// endpoint. The static branch's equivalent seam is staticDependencies.
+func newMigrationExecuteCmd(buildDynamicOffsets offsetProvidersFunc, buildDynamicGateway gatewayServiceFunc, buildDynamicClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "execute",
 		Short: "Execute a migration (run the cutover)",
@@ -83,7 +81,7 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 		Args:         cobra.NoArgs,
 		PreRunE:      func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
 		RunE: func(c *cobra.Command, args []string) error {
-			return runMigrationExecute(c, args, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+			return runMigrationExecute(c, args, buildDynamicOffsets, buildDynamicGateway, buildDynamicClusterLink)
 		},
 	}
 
@@ -127,8 +125,7 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	}
 	// Unset: prefer in-cluster config when running inside a pod (an empty path
 	// makes client-go use the in-cluster service account), else fall back to the
-	// developer's ~/.kube/config. Without this the static/AAO path could not run
-	// in-cluster the way the dynamic/TBM path already does.
+	// developer's ~/.kube/config, so both branches run in-cluster.
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		return "", nil
 	}
@@ -169,7 +166,7 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 	}
 }
 
-func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) error {
+func runMigrationExecute(cmd *cobra.Command, args []string, buildDynamicOffsets offsetProvidersFunc, buildDynamicGateway gatewayServiceFunc, buildDynamicClusterLink clusterLinkServiceFunc) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -191,7 +188,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// own live Gateway CR + source/target/cluster-link reads directly from the
 	// manifest) and renders its own report to the command's writer. Nothing
 	// past this point — config resolution, any FSM transition — runs under
-	// --dry-run. Mirrors execute-tbm's identical --dry-run branch.
+	// --dry-run.
 	if dryRun {
 		res, err := migplan.Reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
 		if err != nil {
@@ -224,12 +221,10 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// values are also snapshotted into LastRunPolicies for the run report.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, g.Spec.DefaultPolicies)...)
 
-	// migplan.Reconcile now runs on EVERY invocation — not only when resuming a
-	// migration still at StateUninitialized. reconcile is the single component
-	// that observes live state and decides what remains outstanding; the AAO
-	// FSM always starts at uninitialized (internal/services/migration) and
-	// simply applies this run's fresh result idempotently. The route's mode
-	// comes from this run's reconcile result every time.
+	// migplan.Reconcile runs on every invocation: it is the single component
+	// that observes live state and decides what remains outstanding. Both FSMs
+	// start at uninitialized and apply this run's fresh result idempotently,
+	// and the route's mode comes from it.
 	reconcileResult, err := migplan.Reconcile(cmd.Context(), g)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
@@ -240,7 +235,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	mode := reconcileResult.Mode
 
 	// Pause-offset-sync has no effect for a topic-based (dynamic)
-	// migration — TBM's FSM has no offset_sync_paused state at all. A
+	// migration — the dynamic FSM has no offset_sync_paused state at all. A
 	// dynamic route requires consumer offset sync to be disabled, so
 	// pausing it is contradictory; refuse rather than silently ignore.
 	if pauseOffsetSyncRefusedForDynamic(mode, g) {
@@ -251,10 +246,10 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 
 	switch mode {
 	case "dynamic":
-		return runTBMBranch(cmd, g, &config, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+		return runDynamicBranch(cmd, g, &config, reconcileResult, buildDynamicOffsets, buildDynamicGateway, buildDynamicClusterLink)
 	default:
 		// "static", and any value not yet recognized as dynamic — the static
-		// AAO path is the safe default.
+		// path is the safe default.
 		opts, err := buildExecutorOpts(g, &config, reconcileResult)
 		if err != nil {
 			return err
@@ -262,7 +257,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		// run-report is an execute-time diagnostics path, not part of the
 		// manifest; carry it straight from the flag onto the opts.
 		opts.RunReportPath = runReport
-		return NewMigrationExecutor(opts).Run()
+		return NewStaticMigrationExecutor(opts).Run()
 	}
 }
 
@@ -286,9 +281,9 @@ func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []an
 
 // pauseOffsetSyncRefusedForDynamic reports whether spec.clusterLink.
 // pauseConsumerOffsetSync is set on a manifest that resolved to a topic-based
-// (dynamic) migration, where the field has no effect — TBM's FSM has no
+// (dynamic) migration, where the field has no effect — the dynamic FSM has no
 // offset_sync_paused state. It is the guard for the refusal
-// runMigrationExecute makes on the StateUninitialized reconcile path; a static
+// runMigrationExecute makes after reconcile; a static
 // route honors the field, so this is false for one. Factored out so the
 // decision can be unit-tested without a live migplan.Reconcile — the only path
 // that reaches the refusal through the command.
@@ -327,18 +322,18 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 // buildExecutorOpts resolves every credential leg and the execute-time policy
 // from the manifest. The manifest is a second deserializer into the same
 // struct the flags filled, so nothing downstream changes shape.
-func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, reconcileResult *migplan.Result) (MigrationExecutorOpts, error) {
+func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, reconcileResult *migplan.Result) (StaticMigrationExecutorOpts, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
+		return StaticMigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	restCreds, err := g.RestCredentials()
 	if err != nil {
-		return MigrationExecutorOpts{}, fmt.Errorf("resolving destination REST credentials: %w", err)
+		return StaticMigrationExecutorOpts{}, fmt.Errorf("resolving destination REST credentials: %w", err)
 	}
 	dstCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
+		return StaticMigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 
 	// A nil bootstrap is fine here: MigrateConn folds it straight into
@@ -350,7 +345,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		// The validators upstream already enforce exactly one method (and
 		// reject iam), so this is an invariant, not an expected user error —
 		// but failing loudly here beats a nil dereference mid-cutover.
-		return MigrationExecutorOpts{}, fmt.Errorf("resolving destination auth method: %w", err)
+		return StaticMigrationExecutorOpts{}, fmt.Errorf("resolving destination auth method: %w", err)
 	}
 	destAuthMethod := destConn.AuthMethod
 
@@ -385,7 +380,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		GatewayConfigPort:               g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
-	opts := MigrationExecutorOpts{
+	opts := StaticMigrationExecutorOpts{
 		MigrationConfig:   *config,
 		LagThreshold:      int64(g.Spec.DefaultPolicies.LagThreshold),
 		ClusterBootstrap:  config.ClusterBootstrap,
@@ -424,7 +419,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 // applySourceAuth flattens the resolved source credentials onto the executor's
 // per-method fields — the same shape the six --use-* flags and their credential
 // strings used to fill.
-func applySourceAuth(opts *MigrationExecutorOpts, creds types.MigrateClusterCredentials) {
+func applySourceAuth(opts *StaticMigrationExecutorOpts, creds types.MigrateClusterCredentials) {
 	switch {
 	case creds.IAM != nil:
 		opts.AuthType = types.AuthTypeIAM

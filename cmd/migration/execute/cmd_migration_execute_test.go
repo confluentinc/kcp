@@ -398,11 +398,11 @@ func TestExecute_InvalidPolicyOverrideIsRejected(t *testing.T) {
 func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 	for name, tc := range map[string]struct {
 		block  string
-		assert func(*testing.T, MigrationExecutorOpts)
+		assert func(*testing.T, StaticMigrationExecutorOpts)
 	}{
 		"sasl_scram": {
 			"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA256\n",
-			func(t *testing.T, o MigrationExecutorOpts) {
+			func(t *testing.T, o StaticMigrationExecutorOpts) {
 				assert.Equal(t, "u", o.SaslScramUsername)
 				assert.Equal(t, "p", o.SaslScramPassword)
 				assert.Equal(t, "SHA256", o.SaslScramMechanism)
@@ -410,20 +410,20 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		},
 		"iam": {
 			"iam:\n  region: eu-west-2\n",
-			func(t *testing.T, o MigrationExecutorOpts) {
+			func(t *testing.T, o StaticMigrationExecutorOpts) {
 				assert.Equal(t, "eu-west-2", o.AWSRegion, "iam.region replaces --aws-region")
 			},
 		},
 		"sasl_plain": {
 			"sasl_plain:\n  username: pu\n  password: pp\n  tls: true\n",
-			func(t *testing.T, o MigrationExecutorOpts) {
+			func(t *testing.T, o StaticMigrationExecutorOpts) {
 				assert.Equal(t, "pu", o.SaslPlainUsername)
 				assert.True(t, o.SaslPlainUseTLS, "tls: true must not be silently dropped to cleartext")
 			},
 		},
 		"unauthenticated_plaintext": {
 			"unauthenticated_plaintext: {}\n",
-			func(t *testing.T, o MigrationExecutorOpts) {
+			func(t *testing.T, o StaticMigrationExecutorOpts) {
 				assert.Empty(t, o.SaslScramUsername)
 			},
 		},
@@ -673,7 +673,7 @@ func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
 func TestResolveKubeConfigPath_InClusterWhenInPod(t *testing.T) {
 	// Running inside a pod (KUBERNETES_SERVICE_HOST set) with an unset manifest
 	// kubeconfig must resolve to in-cluster config (empty path → client-go
-	// in-cluster), matching TBM — not the developer's ~/.kube/config, which does
+	// in-cluster), matching the dynamic branch — not the developer's ~/.kube/config, which does
 	// not exist in a pod.
 	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
 	f := newFixture(t, nil)

@@ -16,7 +16,7 @@ func TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath(t *testing.T) {
 	const ca = "/etc/certs/source-ca.pem"
 
 	t.Run("sasl_scram", func(t *testing.T) {
-		a := sourceClusterAuth(MigrationExecutorOpts{
+		a := sourceClusterAuth(StaticMigrationExecutorOpts{
 			AuthType: types.AuthTypeSASLSCRAM, TlsCaCert: ca,
 			SaslScramUsername: "u", SaslScramPassword: "p", SaslScramMechanism: "SHA512",
 		})
@@ -25,7 +25,7 @@ func TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath(t *testing.T) {
 	})
 
 	t.Run("sasl_plain", func(t *testing.T) {
-		a := sourceClusterAuth(MigrationExecutorOpts{
+		a := sourceClusterAuth(StaticMigrationExecutorOpts{
 			AuthType: types.AuthTypeSASLPlain, TlsCaCert: ca,
 			SaslPlainUsername: "u", SaslPlainPassword: "p",
 		})
@@ -34,7 +34,7 @@ func TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath(t *testing.T) {
 	})
 
 	t.Run("tls_mtls", func(t *testing.T) {
-		a := sourceClusterAuth(MigrationExecutorOpts{
+		a := sourceClusterAuth(StaticMigrationExecutorOpts{
 			AuthType: types.AuthTypeTLS, TlsCaCert: ca,
 			TlsClientCert: "c.pem", TlsClientKey: "k.pem",
 		})
@@ -43,13 +43,13 @@ func TestSourceClusterAuth_TlsCaCertPlumbedToEveryTLSPath(t *testing.T) {
 	})
 
 	t.Run("unauthenticated_tls", func(t *testing.T) {
-		a := sourceClusterAuth(MigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedTLS, TlsCaCert: ca})
+		a := sourceClusterAuth(StaticMigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedTLS, TlsCaCert: ca})
 		require.NotNil(t, a.AuthMethod.UnauthenticatedTLS)
 		assert.Equal(t, ca, a.AuthMethod.UnauthenticatedTLS.CACert)
 	})
 
 	t.Run("plaintext ignores ca", func(t *testing.T) {
-		a := sourceClusterAuth(MigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedPlaintext, TlsCaCert: ca})
+		a := sourceClusterAuth(StaticMigrationExecutorOpts{AuthType: types.AuthTypeUnauthenticatedPlaintext, TlsCaCert: ca})
 		require.NotNil(t, a.AuthMethod.UnauthenticatedPlaintext)
 	})
 }

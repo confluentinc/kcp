@@ -17,7 +17,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type MigrationExecutorOpts struct {
+type StaticMigrationExecutorOpts struct {
 	MigrationConfig    migration.MigrationConfig
 	LagThreshold       int64
 	ClusterBootstrap   string
@@ -77,13 +77,13 @@ type MigrationExecutorOpts struct {
 	RunReportPath string
 	// ReconcileResult is the migplan.Result the command layer computed live,
 	// via migplan.Reconcile, on THIS invocation (see cmd_migration_execute.go).
-	// The AAO FSM always starts at uninitialized and onInitialize consumes it.
+	// The static FSM always starts at uninitialized and onInitialize consumes it.
 	ReconcileResult *migplan.Result
 }
 
-type MigrationExecutor struct {
-	opts MigrationExecutorOpts
-	deps aaoDependencies
+type StaticMigrationExecutor struct {
+	opts StaticMigrationExecutorOpts
+	deps staticDependencies
 }
 
 // offsetProviderCloser is an offset source the executor closes when Run ends.
@@ -92,20 +92,20 @@ type offsetProviderCloser interface {
 	Close() error
 }
 
-// aaoDependencies builds the AAO branch's downstream services. Run takes them
-// from here rather than constructing them inline so this package's tests can
-// substitute stubs, as runTBMBranch's builder functions allow for the dynamic
-// branch.
-type aaoDependencies struct {
-	sourceOffset       func(MigrationExecutorOpts) (offsetProviderCloser, error)
-	destinationOffset  func(MigrationExecutorOpts) (offsetProviderCloser, error)
+// staticDependencies builds the static branch's downstream services. Run takes
+// them from here rather than constructing them inline so this package's tests
+// can substitute stubs, as runDynamicBranch's builder functions allow for the
+// dynamic branch.
+type staticDependencies struct {
+	sourceOffset       func(StaticMigrationExecutorOpts) (offsetProviderCloser, error)
+	destinationOffset  func(StaticMigrationExecutorOpts) (offsetProviderCloser, error)
 	gatewayService     func(kubeConfigPath string) gateway.Service
 	clusterLinkService func(clusterlink.HTTPClient) clusterlink.Service
 }
 
-// liveAAODependencies dials the real source and destination Kafka clusters,
+// liveStaticDependencies dials the real source and destination Kafka clusters,
 // Kubernetes, and the cluster-link REST endpoint.
-var liveAAODependencies = aaoDependencies{
+var liveStaticDependencies = staticDependencies{
 	sourceOffset:      createSourceOffset,
 	destinationOffset: createDestinationOffset,
 	gatewayService: func(kubeConfigPath string) gateway.Service {
@@ -116,15 +116,15 @@ var liveAAODependencies = aaoDependencies{
 	},
 }
 
-func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
-	return newMigrationExecutorWithDeps(opts, liveAAODependencies)
+func NewStaticMigrationExecutor(opts StaticMigrationExecutorOpts) *StaticMigrationExecutor {
+	return newStaticMigrationExecutorWithDeps(opts, liveStaticDependencies)
 }
 
-func newMigrationExecutorWithDeps(opts MigrationExecutorOpts, deps aaoDependencies) *MigrationExecutor {
-	return &MigrationExecutor{opts: opts, deps: deps}
+func newStaticMigrationExecutorWithDeps(opts StaticMigrationExecutorOpts, deps staticDependencies) *StaticMigrationExecutor {
+	return &StaticMigrationExecutor{opts: opts, deps: deps}
 }
 
-func (m *MigrationExecutor) Run() error {
+func (m *StaticMigrationExecutor) Run() error {
 	config := m.opts.MigrationConfig
 	ctx := context.Background()
 
@@ -217,7 +217,7 @@ func (m *MigrationExecutor) Run() error {
 // and is applied to EVERY TLS-fronted auth method — SASL/SCRAM and SASL/PLAIN over
 // TLS (SASL_SSL), one-way unauthenticated TLS, and mTLS — not only the mTLS path.
 // For SASL/PLAIN, supplying it selects SASL_SSL over cleartext SASL_PLAINTEXT.
-func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
+func sourceClusterAuth(opts StaticMigrationExecutorOpts) types.ClusterAuth {
 	clusterAuth := types.ClusterAuth{}
 	switch opts.AuthType {
 	case types.AuthTypeSASLSCRAM:
@@ -253,7 +253,7 @@ func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
 	return clusterAuth
 }
 
-func createSourceOffset(o MigrationExecutorOpts) (offsetProviderCloser, error) {
+func createSourceOffset(o StaticMigrationExecutorOpts) (offsetProviderCloser, error) {
 	authType := o.AuthType
 	brokerAddresses := strings.Split(o.SourceBootstrap, ",")
 
@@ -284,7 +284,7 @@ func createSourceOffset(o MigrationExecutorOpts) (offsetProviderCloser, error) {
 	return offset.NewOffsetService(sourceClient), nil
 }
 
-func createDestinationOffset(o MigrationExecutorOpts) (offsetProviderCloser, error) {
+func createDestinationOffset(o StaticMigrationExecutorOpts) (offsetProviderCloser, error) {
 	ccBrokers := strings.Split(o.ClusterBootstrap, ",")
 	slog.Debug("connecting to destination cluster",
 		"brokers", len(ccBrokers),

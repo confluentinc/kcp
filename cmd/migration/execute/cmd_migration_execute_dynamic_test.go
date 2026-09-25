@@ -20,26 +20,16 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
-// This file exercises the dynamic-mode (TBM) branch of the unified `execute`
-// dispatcher. Its structural problem, and the reason these tests are shaped the
-// way they are:
+// This file exercises the dynamic-mode branch of `execute` the way
+// cmd_migration_execute_static_test.go exercises the static one.
 //
-// The command layer calls migplan.Reconcile with NO injectable seam (Global
-// Constraints keep the AAO branch's zero-DI posture, and the dynamic branch
-// inherits it for reconcile). A real migplan.Reconcile builds LIVE source/target
-// Kafka listers and a LIVE Gateway CR pull unconditionally (see
+// The command layer calls migplan.Reconcile with no injectable seam, and a real
+// Reconcile dials live Kafka and pulls the live Gateway CR (see
 // internal/services/migplan/run.go), so it cannot succeed — nor resolve a
-// Mode — inside this test process. There is also no migration state file any
-// more: every run builds its MigrationConfig fresh from the manifest
-// and drives the FSM from StateUninitialized on a *migplan.Result the command
-// layer's live Reconcile call would have produced. Tests here that need to
-// observe TBM dispatch/execution behavior call runTBMBranch directly
-// (runTBMBranchWithConfig below), standing in for that live Reconcile call
-// with a hand-built *migplan.Result and MigrationConfig — the same seam shape
-// runMigrationExecute itself uses, just fed by hand instead of a live pull.
-// Only tests whose assertions hold regardless of WHERE the run fails (e.g. the
-// negative control in cmd_migration_execute_test.go's
-// TestExecute_AlwaysCallsReconcile) still go through the full CLI.
+// Mode — inside this test process. These tests therefore call runDynamicBranch
+// directly (runDynamicBranchWithConfig below), standing in for that live call
+// with a hand-built *migplan.Result and MigrationConfig, and stub the
+// downstream services through the builders newMigrationExecuteCmd injects.
 
 // dynamicRouteGatewayYAML is a minimal dynamic-route Gateway CR fixture,
 // mirroring internal/services/migration/tbm's own test fixture of the same
@@ -88,7 +78,7 @@ const (
 // manifest, plus Mode and the fence/switchover/gateway artifacts a live
 // migplan.Reconcile would have produced for this fixture. There is no
 // migration state file to read any of this from any more, so a test
-// that needs to drive runTBMBranch directly builds the config and its
+// that needs to drive runDynamicBranch directly builds the config and its
 // matching *migplan.Result (dynamicResult) by hand. edit runs last, so a test
 // can vary a single field.
 func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
@@ -121,17 +111,17 @@ func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 	}
 }
 
-// runTBMBranchWithConfig drives runTBMBranch directly against config and its
+// runDynamicBranchWithConfig drives runDynamicBranch directly against config and its
 // matching dynamicResult, standing in for the live migplan.Reconcile call
 // runMigrationExecute now makes on every invocation ahead of the mode dispatch
 // — a call that cannot succeed in this process (see this file's header
-// comment). This still exercises the SAME TBMOrchestrator.Execute call
-// runTBMBranch makes in production, just reached via a reconcile-free front
+// comment). This still exercises the SAME tbm.TBMOrchestrator.Execute call
+// runDynamicBranch makes in production, just reached via a reconcile-free front
 // door. editGateway, when non-nil, mutates the loaded manifest before
 // dispatch — the substitute for a CLI flag override (applyPolicyOverrides
 // needs real cobra flag parsing, which this seam skips; setting the manifest
 // field directly is equivalent for what these tests observe).
-func runTBMBranchWithConfig(
+func runDynamicBranchWithConfig(
 	t *testing.T, f fixture, config *migration.MigrationConfig,
 	editGateway func(*manifest.GatewayMigration),
 	buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc,
@@ -148,11 +138,11 @@ func runTBMBranchWithConfig(
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 
-	err := runTBMBranch(cmd, g, config, res, buildOffsets, buildGateway, buildClusterLink)
+	err := runDynamicBranch(cmd, g, config, res, buildOffsets, buildGateway, buildClusterLink)
 	return out.String(), err
 }
 
-// --- stub downstream services (ported from the deleted execute-tbm test) ---
+// --- stub downstream services (shared with cmd_migration_execute_static_test.go) ---
 
 // zeroLagOffsetProvider implements offset.Provider, reporting the same fixed
 // offset for every topic requested — used for both source and destination, so
@@ -289,30 +279,26 @@ func promoteAll(topicNames []string) *clusterlink.PromoteMirrorTopicsResponse {
 	return resp
 }
 
-// --- Test 1: dynamic dispatch drives the TBM orchestrator to switched ---
+// --- a dynamic run completes on stubbed services ---
 
-// TestExecute_DynamicMode_DispatchesToTBMOrchestrator proves a dynamic-mode
-// run routes through tbm.TBMOrchestrator and walks its FSM all the way to
-// switched, printing the same "Migration completed" banner the AAO branch
-// prints. Reaching that point is the discriminator: the AAO branch dials the
-// real source/destination Kafka clusters before it ever builds an
-// orchestrator, so against the fixture's placeholder endpoints it could not
-// get there — only the stubbed dynamic branch can.
-func TestExecute_DynamicMode_DispatchesToTBMOrchestrator(t *testing.T) {
+// TestExecute_DynamicMode_RunsToCompletionOnStubbedServices proves a
+// dynamic-mode run on stubbed services walks tbm.TBMOrchestrator's FSM all the
+// way to switched and prints the "Migration completed" banner.
+func TestExecute_DynamicMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	f := newFixture(t, nil)
 	config := dynamicConfig(t, f, nil)
 
-	out, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
+	out, err := runDynamicBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Migration completed")
 }
 
-// --- Test 2: --promote-batch-size reaches TBMActions.SetPromoteBatchSize ---
+// --- --promote-batch-size reaches tbm.TBMActions.SetPromoteBatchSize ---
 
 // recordingClusterLinkService is stubClusterLinkServiceImpl plus a record of
 // the batch size passed to each PromoteMirrorTopics call, so a test can observe
 // how many topics the promote transition submitted per batch — the only
-// externally visible effect of TBMActions.SetPromoteBatchSize.
+// externally visible effect of tbm.TBMActions.SetPromoteBatchSize.
 type recordingClusterLinkService struct {
 	stubClusterLinkServiceImpl
 	mu      sync.Mutex
@@ -338,13 +324,13 @@ func (r *recordingClusterLinkService) maxBatch() int {
 	return max
 }
 
-// TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions confirms that
-// --promote-batch-size, previously AAO-only, now reaches
-// TBMActions.SetPromoteBatchSize for a dynamic-mode run. Two topics are staged
+// TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions confirms that
+// --promote-batch-size reaches tbm.TBMActions.SetPromoteBatchSize for a
+// dynamic-mode run. Two topics are staged
 // at zero lag; the recorded per-call batch sizes discriminate a capped run
 // (batch size 1 → each PromoteMirrorTopics call submits exactly one topic) from
 // an uncapped one (both promoted in a single call).
-func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
+func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T) {
 	topics := []string{"t1.order", "t2.inventory"}
 
 	t.Run("flag caps the batch", func(t *testing.T) {
@@ -352,12 +338,12 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		// The CLI's --promote-batch-size relies on real cobra flag parsing
-		// (applyPolicyOverrides), which runTBMBranchWithConfig's reconcile-free
+		// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 		// seam skips (see its doc comment) — setting the manifest's
 		// spec.defaultPolicies field directly is equivalent for what this test
-		// observes: runTBMBranch always reads the effective policy from there.
+		// observes: runDynamicBranch always reads the effective policy from there.
 		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
-		_, err := runTBMBranchWithConfig(t, f, config, editGateway, stubOffsetProviders, stubGatewayService,
+		_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubOffsetProviders, stubGatewayService,
 			func(*manifest.GatewayMigration) (clusterlink.Service, error) { return rec, nil })
 		require.NoError(t, err)
 		assert.Equal(t, 1, rec.maxBatch(),
@@ -368,7 +354,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 		f := newFixture(t, nil)
 		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
-		_, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService,
+		_, err := runDynamicBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService,
 			func(*manifest.GatewayMigration) (clusterlink.Service, error) { return rec, nil })
 		require.NoError(t, err)
 		assert.Equal(t, len(topics), rec.maxBatch(),
@@ -381,9 +367,10 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 // TestExecute_DynamicMode_RecordsLastRunPolicies confirms that a
 // dynamic-mode run populates config.LastRunPolicies with its five supported
 // fields (read from the effective policy — the manifest's spec.defaultPolicies,
-// no flags here — the same source TBMActions reads, so this also pins the
-// AAO-parity policy plumbing), while ConsumerOffsetSyncDrainDuration stays zero
-// because TBM has no offset-sync-pause stage to record a value for.
+// no flags here — the same source tbm.TBMActions reads, so this also pins
+// policy plumbing parity with the static branch), while
+// ConsumerOffsetSyncDrainDuration stays zero because the dynamic FSM has no
+// offset-sync-pause stage to record a value for.
 func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return doc + "  defaultPolicies:\n" +
@@ -396,22 +383,22 @@ func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 	})
 	config := dynamicConfig(t, f, nil)
 
-	_, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
+	_, err := runDynamicBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	require.NoError(t, err)
 
 	rec := config.LastRunPolicies
 	require.NotNil(t, rec, "a dynamic-mode run must record the effective policy")
 	assert.Equal(t, 42, rec.LagThreshold)
-	assert.Equal(t, 7, rec.PromoteBatchSize, "the manifest default reaches the record with no flag set — AAO-parity policy plumbing")
+	assert.Equal(t, 7, rec.PromoteBatchSize, "the manifest default reaches the record with no flag set — the same policy plumbing as the static branch")
 	assert.Equal(t, 3*time.Minute, rec.RolloutTimeout)
 	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
 	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
 	assert.Equal(t, 9090, rec.GatewayConfigPort)
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration,
-		"TBM has no offset-sync-pause stage, so this field stays zero")
+		"the dynamic FSM has no offset-sync-pause stage, so this field stays zero")
 }
 
-// --- Test 5: --gateway-config-port reaches the TBM capability probe ---
+// --- --gateway-config-port reaches the dynamic capability probe ---
 
 // recordingGatewayService is stubGatewayServiceImpl plus a record of the port
 // passed to DetectCapability — the first place a gateway transition reads
@@ -437,27 +424,27 @@ func (r *recordingGatewayService) port() int {
 	return r.seenPort
 }
 
-// TestExecute_DynamicMode_GatewayConfigPortOverrideReachesTBM confirms Decision
-// 7 end-to-end through the command: --gateway-config-port reaches
-// config.GatewayConfigPort before tbm's capability probe (DetectCapability)
-// runs.
-func TestExecute_DynamicMode_GatewayConfigPortOverrideReachesTBM(t *testing.T) {
+// TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe
+// confirms end-to-end through the command that --gateway-config-port reaches
+// config.GatewayConfigPort before the dynamic capability probe
+// (DetectCapability) runs.
+func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *testing.T) {
 	f := newFixture(t, nil)
 	config := dynamicConfig(t, f, nil)
 
 	rec := &recordingGatewayService{}
 	// The CLI's --gateway-config-port relies on real cobra flag parsing
-	// (applyPolicyOverrides), which runTBMBranchWithConfig's reconcile-free
+	// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for
-	// what this test observes: runTBMBranch reads GatewayConfigPort straight
+	// what this test observes: runDynamicBranch reads GatewayConfigPort straight
 	// from g.Spec.DefaultPolicies.
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
-	_, err := runTBMBranchWithConfig(t, f, config, editGateway, stubOffsetProviders,
+	_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubOffsetProviders,
 		func(*manifest.GatewayMigration) (gateway.Service, error) { return rec, nil },
 		stubClusterLinkService)
 	require.NoError(t, err)
 	assert.Equal(t, 9999, rec.port(),
-		"--gateway-config-port must reach config.GatewayConfigPort before the TBM capability probe")
+		"--gateway-config-port must reach config.GatewayConfigPort before the dynamic capability probe")
 	assert.Equal(t, 9999, config.GatewayConfigPort)
 }
 
