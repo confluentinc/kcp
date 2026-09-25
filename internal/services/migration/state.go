@@ -158,28 +158,4 @@ type MigrationConfig struct {
 	// Mode is the route mode migplan resolved this migration under ("static" for
 	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
 	Mode string `json:"mode"`
-
-	// LastRunPolicies records the effective execute-time policy this run used —
-	// the manifest's spec.defaultPolicies with any per-run flag overrides
-	// applied. It is observational: written for the operator and support (the
-	// run report), never read back by kcp. A pointer with omitempty so it is
-	// absent until an execute has actually populated it.
-	LastRunPolicies *LastRunPolicies `json:"last_run_policies,omitempty"`
-}
-
-// LastRunPolicies is the observational record of the effective policy an execute
-// run used (see MigrationConfig.LastRunPolicies). Its fields mirror
-// manifest.DefaultPolicies one-to-one; zero values are recorded verbatim because
-// zero is meaningful for every knob (0 skips the check / imposes no deadline /
-// promotes all at once), so an audit reader sees exactly what each was set to.
-type LastRunPolicies struct {
-	LagThreshold                    int           `json:"lag_threshold"`
-	PromoteBatchSize                int           `json:"promote_batch_size"`
-	RolloutTimeout                  time.Duration `json:"rollout_timeout"`
-	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
-	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
-	// HotReloadTimeout mirrors manifest.DefaultPolicies.HotReloadTimeout.
-	HotReloadTimeout time.Duration `json:"hot_reload_timeout"`
-	// GatewayConfigPort mirrors manifest.DefaultPolicies.GatewayConfigPort.
-	GatewayConfigPort int `json:"gateway_config_port"`
 }

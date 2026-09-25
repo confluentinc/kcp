@@ -214,8 +214,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
-	// this is the durable audit trail of the knobs a given execute used; the same
-	// values are also snapshotted into LastRunPolicies for the run report.
+	// this is the durable audit trail of the knobs a given execute used.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, g.Spec.DefaultPolicies)...)
 
 	// migplan.Reconcile runs on every invocation: it is the single component
@@ -253,31 +252,21 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 
 // applyEffectivePolicy copies the effective policy (the manifest's
 // spec.defaultPolicies with any per-run flag overrides already applied) onto
-// config, the same way for both branches: the gateway config port, the two
-// runtime fields the static workflow reads back during execute, and the
-// LastRunPolicies record of what this run used.
+// config, the same way for both branches: the gateway config port and the two
+// runtime fields the static workflow reads back during execute.
 func applyEffectivePolicy(config *migration.MigrationConfig, p manifest.DefaultPolicies) {
 	if p.GatewayConfigPort > 0 {
 		config.GatewayConfigPort = p.GatewayConfigPort
 	}
 	config.DetectUnroutedProducersDuration = p.DetectUnroutedProducersDuration
 	config.ConsumerOffsetSyncDrainDuration = p.ConsumerOffsetSyncDrainDuration
-	config.LastRunPolicies = &migration.LastRunPolicies{
-		LagThreshold:                    p.LagThreshold,
-		PromoteBatchSize:                p.PromoteBatchSize,
-		RolloutTimeout:                  p.RolloutTimeout,
-		DetectUnroutedProducersDuration: p.DetectUnroutedProducersDuration,
-		ConsumerOffsetSyncDrainDuration: p.ConsumerOffsetSyncDrainDuration,
-		HotReloadTimeout:                p.HotReloadTimeout,
-		GatewayConfigPort:               config.GatewayConfigPort,
-	}
 }
 
 // effectivePolicyLogArgs renders the effective execute-time policy as slog
 // key/value pairs for the audit log line. It is the single place the log's copy
-// of DefaultPolicies is spelled out, so it cannot drift field-by-field from the
-// LastRunPolicies snapshot the way the previous hand-inlined call already had
-// (hotReloadTimeout and gatewayConfigPort had been silently dropped).
+// of DefaultPolicies is spelled out, so a new field cannot silently drop out of
+// it the way the previous hand-inlined call had dropped hotReloadTimeout and
+// gatewayConfigPort.
 func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []any {
 	return []any{
 		"migration_id", migrationID,

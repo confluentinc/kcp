@@ -3,7 +3,6 @@ package execute
 import (
 	"bytes"
 	"testing"
-	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
@@ -185,42 +184,6 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 		assert.Equal(t, len(topics), rec.maxBatch(),
 			"with no batch cap both topics promote in a single call — proving the flag, not chance, produced the capped run above")
 	})
-}
-
-// --- Test 3: a dynamic run records LastRunPolicies ---
-
-// TestExecute_DynamicMode_RecordsLastRunPolicies confirms that a
-// dynamic-mode run populates config.LastRunPolicies with its five supported
-// fields (read from the effective policy — the manifest's spec.defaultPolicies,
-// no flags here — the same source tbm.TBMActions reads, so this also pins
-// policy plumbing parity with the static branch), while
-// ConsumerOffsetSyncDrainDuration stays zero because the dynamic FSM has no
-// offset-sync-pause stage to record a value for.
-func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n" +
-			"    lagThreshold: 42\n" +
-			"    promoteBatchSize: 7\n" +
-			"    rolloutTimeout: 3m\n" +
-			"    detectUnroutedProducersDuration: 30s\n" +
-			"    hotReloadTimeout: 45s\n" +
-			"    gatewayConfigPort: 9090\n"
-	})
-	config := dynamicConfig(t, f, nil)
-
-	_, err := runDynamicBranchWithConfig(t, f, config, nil, stubDeps(nil, nil))
-	require.NoError(t, err)
-
-	rec := config.LastRunPolicies
-	require.NotNil(t, rec, "a dynamic-mode run must record the effective policy")
-	assert.Equal(t, 42, rec.LagThreshold)
-	assert.Equal(t, 7, rec.PromoteBatchSize, "the manifest default reaches the record with no flag set — the same policy plumbing as the static branch")
-	assert.Equal(t, 3*time.Minute, rec.RolloutTimeout)
-	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
-	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
-	assert.Equal(t, 9090, rec.GatewayConfigPort)
-	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration,
-		"the dynamic FSM has no offset-sync-pause stage, so this field stays zero")
 }
 
 // --- --gateway-config-port reaches the dynamic capability probe ---

@@ -233,10 +233,10 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	g, cfg := freshConfig(t, f)
 	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
 
-	require.NotNil(t, cfg.LastRunPolicies)
-	assert.Equal(t, 42, cfg.LastRunPolicies.LagThreshold)
-	assert.Equal(t, 7, cfg.LastRunPolicies.PromoteBatchSize)
-	assert.EqualValues(t, 180, cfg.LastRunPolicies.RolloutTimeout.Seconds())
+	// Both branches read these three straight from g.Spec.DefaultPolicies.
+	assert.Equal(t, 42, g.Spec.DefaultPolicies.LagThreshold)
+	assert.Equal(t, 7, g.Spec.DefaultPolicies.PromoteBatchSize)
+	assert.EqualValues(t, 180, g.Spec.DefaultPolicies.RolloutTimeout.Seconds())
 	assert.EqualValues(t, 30, cfg.DetectUnroutedProducersDuration.Seconds())
 	assert.EqualValues(t, 15, cfg.ConsumerOffsetSyncDrainDuration.Seconds())
 }
@@ -285,41 +285,9 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
 	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
-	require.NotNil(t, cfg.LastRunPolicies)
-	assert.Equal(t, 99, cfg.LastRunPolicies.LagThreshold)
+	assert.Equal(t, 99, g.Spec.DefaultPolicies.LagThreshold,
+		"the override replaces the manifest default in the policy both branches read")
 	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
-}
-
-// TestExecute_RecordsLastRunPolicies — applyEffectivePolicy stamps the effective
-// policy (manifest defaults with this run's overrides applied) onto the config
-// as an observational LastRunPolicies record for the run report. It is never
-// read back by kcp, so this proves it is at least written, and that it
-// captures the OVERRIDE rather than the manifest default.
-func TestExecute_RecordsLastRunPolicies(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n    hotReloadTimeout: 45s\n    gatewayConfigPort: 9090\n"
-	})
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.Flags().Parse([]string{
-		"--migration-yaml", f.manifestPath,
-		"--lag-threshold", "99",
-	}))
-
-	g, cfg := freshConfig(t, f)
-	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
-	require.Empty(t, g.Spec.DefaultPolicies.Validate())
-
-	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
-
-	rec := cfg.LastRunPolicies
-	require.NotNil(t, rec, "the effective policy must be recorded on the config")
-	assert.Equal(t, 99, rec.LagThreshold, "the override, not the manifest default, is recorded")
-	assert.Equal(t, 3, rec.PromoteBatchSize)
-	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
-	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
-	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
-	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
-	assert.Equal(t, 9090, rec.GatewayConfigPort)
 }
 
 // TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
@@ -369,17 +337,6 @@ func kvMap(t *testing.T, args []any) map[string]any {
 		m[key] = args[i+1]
 	}
 	return m
-}
-
-// TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
-// first execute: a freshly-built config (buildFreshMigrationConfig's pure
-// manifest projection) must not carry an empty block, which is why the field
-// is a pointer with omitempty.
-func TestExecute_InitDoesNotCarryLastRunPolicies(t *testing.T) {
-	f := newFixture(t, nil)
-	_, cfg := freshConfig(t, f)
-	assert.Nil(t, cfg.LastRunPolicies,
-		"a migration config that has not yet gone through applyEffectivePolicy must have no LastRunPolicies record")
 }
 
 // TestExecute_InvalidPolicyOverrideIsRejected — an override can carry a value the
