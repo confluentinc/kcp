@@ -50,12 +50,11 @@ type WorkflowStep struct {
 //     operator did not opt in — so it fires at the latest safe moment (right
 //     after fencing) instead of stretching the paused window across the run.
 //   - There is no terminal/failed state. A step failure cancels its transition
-//     (e.Cancel) and leaves the FSM at the last good state within the SAME
-//     run; there is no cross-run resume position — every run's FSM starts
-//     fresh at uninitialized (see NewMigrationOrchestrator) and walks forward
-//     again, re-applying each step's artifact idempotently. abort_fence
-//     ({fenced, offset_sync_paused} → initialized) is the only mid-run
-//     rollback.
+//     (e.Cancel) and leaves the FSM at the last good state for the rest of the
+//     run. Every run's FSM starts at uninitialized (see
+//     NewMigrationOrchestrator) and walks forward, re-applying each step's
+//     artifact idempotently. abort_fence ({fenced, offset_sync_paused} →
+//     initialized) is the only mid-run rollback.
 var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
@@ -92,8 +91,8 @@ type ExecutionParams struct {
 	// full resolved Authenticator (basic, bearer, or mtls), not only an
 	// api_key/api_secret pair.
 	RestAuth clusterlink.Authenticator
-	// ReconcileResult is the migplan.Result the init command already computed
-	// live, moments before triggering this transition — mirrors TBM's own
+	// ReconcileResult is the migplan.Result the command layer computed via
+	// migplan.Reconcile just before Execute — mirrors TBM's own
 	// ExecutionParams shape. onInitialize consumes it directly instead of
 	// running any validation of its own; migplan.Reconcile already did that.
 	ReconcileResult *migplan.Result
@@ -150,11 +149,11 @@ func NewMigrationOrchestrator(
 		Dst:  StateInitialized,
 	})
 
-	// The FSM always starts at uninitialized on construction — there is no
-	// resume position: the command layer calls migplan.Reconcile live on
-	// every invocation and hands its fresh *migplan.Result to Execute, which
-	// walks canonicalWorkflow from the top and re-applies each step's artifact
-	// idempotently (the len(config.Topics)==0 no-op guards make an
+	// The FSM starts at uninitialized: the command layer calls
+	// migplan.Reconcile on every invocation and hands its *migplan.Result to
+	// Execute, which walks canonicalWorkflow from the top and re-applies each
+	// step's artifact idempotently (the plan-driven no-op guards — Fence on
+	// FenceYAML, Promote on Topics, Switch on SwitchoverYAML — make an
 	// already-complete migration a side-effect-free walk-through).
 	//
 	// Action callbacks are registered per-event (before_<EVENT>), not per-state
@@ -185,8 +184,7 @@ func NewMigrationOrchestrator(
 
 // SetRunReportRecorder attaches a run-report recorder, which records per-stage
 // timings as Execute walks the workflow. A nil recorder (the default) disables
-// reporting; it is a setter rather than a constructor argument so the init path,
-// which builds an orchestrator for a single transition, is untouched.
+// reporting.
 func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 	o.runReport = r
 }

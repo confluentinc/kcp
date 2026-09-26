@@ -13,11 +13,11 @@ see [gateway migration example](gateway-migration-example.md).
 
 This manifest drives an imperative, resumable state machine:
 
-- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and drives the fence → promote → switchover FSM forward. There is no state file and no registration step: every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
+- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and drives the fence → promote → switchover FSM forward. Every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
   - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. Nothing is changed and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-Every `execute` reconciles the current manifest live against the cluster; there is no persisted registration to drift from. A completed migration re-reconciles to a no-op, and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
+Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to a no-op, and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
 **Resume an interrupted migration with the same topic set (dynamic routes).**
 On a dynamic route, kcp recognises the fence it added by its exact topic set.
@@ -31,9 +31,8 @@ first, then migrate the changed set. If this has already happened, remove the
 leftover `blocked` entry from the route's `rules.fencing` by hand. Static
 routes are unaffected: their fence is a single route-level block.
 
-`spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
-run rather than fixed once — each field is a default that a matching
-CLI flag can override for a single run, without editing the file.
+Each `spec.defaultPolicies` field is a default that a matching CLI flag can
+override for a single run, without editing the file.
 
 ## At a glance
 
@@ -183,11 +182,11 @@ The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
 every execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
-the manifest. Both modes are fully implemented: `kcp migration execute` resolves
-the mode from the live gateway CR each run and dispatches to the matching engine and FSM —
-AAO's for static routes, TBM's for dynamic. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
-dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
-warns and proceeds rather than refusing a manifest that sets it.
+the manifest. `kcp migration execute` resolves the mode from the live gateway CR
+each run and dispatches to the matching engine and FSM — AAO's for static routes,
+TBM's for dynamic. A dynamic-mode migration refuses
+`spec.clusterLink.pauseConsumerOffsetSync`: a dynamic route requires consumer
+offset sync to be disabled.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.
@@ -206,7 +205,7 @@ on every `execute`, never fixed once.
 | `detectUnroutedProducersDuration` | duration | `0`     | `--detect-unrouted-producers-duration`  | Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. `0` **skips the check entirely**; minimum `10s` when set — shorter can't span a producer's metadata refresh.                           |
 | `consumerOffsetSyncDrainDuration` | duration | `0`     | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait.                                                                                               |
 | `hotReloadTimeout`                | duration | `0`     | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
-| `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the persisted value, falling back to the gateway default (`9180`).                                                                                            |
+| `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
 
 ## Credentials
 

@@ -42,12 +42,9 @@ type TBMActions struct {
 	gatewayCapability gateway.Capability
 	// capabilityResolved is true once gatewayCapability has actually been
 	// resolved against the live cluster this process — see
-	// ensureGatewayCapability in gateway.go. Deliberately NOT persisted:
-	// a new process always starts false and
-	// re-resolves fresh the first time Fence or Switch needs it, which is
-	// exactly the correctness property this field exists to provide (a run
-	// resuming directly at switch, with fence already done in an earlier
-	// process, must not silently use an unresolved zero-value capability).
+	// ensureGatewayCapability in gateway.go. It starts false in every
+	// process, so the first of Fence or Switch to need the capability
+	// resolves it and neither step ever acts on the unresolved zero value.
 	capabilityResolved bool
 	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
 	// deadline.

@@ -36,9 +36,9 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The dynamic-routing gateway build. 1.4.0-master-430 is the proven dynamic build
-# (see ~/gateway-testing/gateway-dynamic-local.yaml). Native-arch tag so the
-# gateway pod needs no emulation; only the operator image is amd64-only.
+# The dynamic-routing gateway build. 1.4.0-master-430 is the dynamic-routing
+# build this suite is validated against. Native-arch tag so the gateway pod
+# needs no emulation; only the operator image is amd64-only.
 case "$(uname -m)" in
   arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-430-arm64" ;;
   *) GATEWAY_TAG_DEFAULT="1.4.0-master-424-amd64" ;;

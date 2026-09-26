@@ -551,9 +551,8 @@ func (s *MigrationActions) confirmFence(
 // pulled and cleaned of server-managed metadata (managedFields,
 // resourceVersion, uid, creationTimestamp, generation, status — see
 // migplan/gatewayfile.go's cleanGatewayDoc) — into a plain
-// map[string]interface{} for the splice helpers below. Unlike the pre-migplan
-// cleanInitialCR this does no cleaning of its own: migplan already did that
-// once, centrally, when it captured GatewayYAML at init.
+// map[string]interface{} for the splice helpers below. It does no cleaning of
+// its own: migplan cleans the CR when it pulls it.
 func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 	var obj map[string]interface{}
 	if err := yaml.Unmarshal([]byte(gatewayYAML), &obj); err != nil {
@@ -568,10 +567,9 @@ func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 // apply and ResolveGatewayCapability's detection both derive from the same
 // source, so they can never drift from each other.
 //
-// AAO's execute path is static-route-only by construction: a dynamic-resolved
-// route is refused up front at reconcile (see MigrationConfig.Mode's own doc
-// comment), so FenceYAML here is always the
-// static {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
+// This FSM only runs for static routes (the command layer sends a dynamic
+// route to the TBM FSM), so FenceYAML here is always the static
+// {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
 func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
 	base, err := parseGatewayYAML(config.GatewayYAML)
 	if err != nil {
@@ -616,8 +614,8 @@ func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) 
 // deriveUnfenceRoutePatch — the switch happens from the fenced state and must
 // drop the fence key, and a field-level "add" can only overwrite a key, never
 // remove one. Grafting onto the captured route (which carries the pre-staged
-// redundant auth for the target domain, proved at init) yields unfenced +
-// target-domain + target-auth in one patch.
+// redundant auth for the target domain, checked by migplan.Reconcile) yields
+// unfenced + target-domain + target-auth in one patch.
 func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
 	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
 	if err != nil {
@@ -1029,8 +1027,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // same no-deadline-by-default behavior as FenceGateway.
 //
 // Because the captured route is unfenced and already carries pre-staged
-// ("redundant") auth for the target domain (proved by migplan.Reconcile's
-// redundant-auth check at init), this one whole-route replace yields unfenced +
+// ("redundant") auth for the target domain (checked by migplan.Reconcile's
+// redundant-auth precondition), this one whole-route replace yields unfenced +
 // target-domain + target-auth with no secret or auth change at cutover — it
 // both drops the fence and flips the domain, and there is no separately-authored
 // switchover CR to apply.

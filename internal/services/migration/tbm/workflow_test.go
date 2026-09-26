@@ -717,7 +717,7 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 // ===========================================================================
 // Fence/Switch no-op guard tests — prove the guard is keyed on the plan's
 // own artifact (config.FenceYAML / config.SwitchoverYAML), never on
-// config.Topics (the promote set). The bug this covers: an all-promoted
+// config.Topics (the promote set). The case this covers: an all-promoted
 // batch has an empty promote set (Topics) but still owes a fence/switch
 // (FenceYAML/SwitchoverYAML non-empty) — gating on Topics would wrongly
 // no-op it and report the batch complete without cutting over.
@@ -746,7 +746,7 @@ func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
 	require.NoError(t, err, "Fence with empty FenceYAML must no-op, not error")
 }
 
-// TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences is the bug case:
+// TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences:
 // Topics empty (nothing left to promote — an all-promoted batch) but
 // FenceYAML still set (a fence is still owed ahead of switchover). Fence
 // must still apply exactly one patch, not no-op.
@@ -789,9 +789,9 @@ func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
 	require.NoError(t, err, "Switch with empty SwitchoverYAML must no-op, not error")
 }
 
-// TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches is the bug
-// case: Topics empty (all-promoted batch) but SwitchoverYAML still set (the
-// switch is still owed). Switch must still apply exactly one patch.
+// TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches: Topics
+// empty (all-promoted batch) but SwitchoverYAML still set (the switch is
+// still owed). Switch must still apply exactly one patch.
 func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
 	var applyCalls int
 	gw := &mockGatewayService{

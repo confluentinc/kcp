@@ -123,7 +123,8 @@ func TestGenerateGateway_Enums(t *testing.T) {
 
 // TestGenerateGateway_OffsetSyncBaselineEnum guards that
 // spec.clusterLink.consumerOffsetSyncBaseline is constrained to the two values
-// Validate() accepts, so an editor/CI lint catches a typo before init does.
+// Validate() accepts, so an editor or CI lint catches a typo before
+// `kcp migration execute` does.
 func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
 	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
 	clusterLink := props(t, spec["clusterLink"].(map[string]any))

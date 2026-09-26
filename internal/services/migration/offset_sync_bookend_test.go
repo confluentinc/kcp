@@ -219,9 +219,7 @@ func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // WarnIfPausedOnExecuteFailure — a single generic reminder gated only on the
-// manifest-declared intent (config.PauseConsumerOffsetSync). It no longer
-// reads config.CurrentState or the state-file PauseConsumerOffsetSyncFlipped
-// marker (both being removed once the state file itself goes).
+// manifest-declared intent (config.PauseConsumerOffsetSync).
 // ---------------------------------------------------------------------------
 
 func TestWarnIfPaused_NotRequested_NoOutput(t *testing.T) {
@@ -234,9 +232,8 @@ func TestWarnIfPaused_NotRequested_NoOutput(t *testing.T) {
 }
 
 func TestWarnIfPaused_Requested_Warns(t *testing.T) {
-	// There is no persisted state to vary over any more (no MigrationConfig
-	// field mirrors the FSM's position) — the guidance is a single generic
-	// reminder gated only on the manifest-declared PauseConsumerOffsetSync.
+	// The guidance is a single generic reminder gated only on the
+	// manifest-declared PauseConsumerOffsetSync.
 	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,

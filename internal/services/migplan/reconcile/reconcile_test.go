@@ -158,9 +158,8 @@ func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
 // TestReconcileDynamic_ResumeAlreadyFencedNoDouble: a resume where the live
 // route is ALREADY fenced for the batch (a prior run fenced it, then the
 // process died before switchover). Reconciling again must NOT double the
-// rules.fencing entry — exactly one fence for the batch. This is an
-// end-to-end regression guard for the idempotent-prepend fix; it
-// should PASS on first run (the fix already landed).
+// rules.fencing entry — exactly one fence for the batch. End-to-end guard
+// for PrependFence's idempotency.
 func TestReconcileDynamic_ResumeAlreadyFencedNoDouble(t *testing.T) {
 	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
 	// Pre-seed kcp's prior fence for exactly this batch, as a live route would
@@ -657,9 +656,9 @@ func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 // run). The SWITCHOVER artifact must NOT carry that fence forward — the switched
 // state is unfenced for our topics — so a resumed migration reaches the SAME
 // clean end-state as an uninterrupted one. Operator-authored fences are a
-// separate concern and must survive (covered elsewhere). Regression guard for a
-// bug caught by the live resume suite 2026-09-23: reconcile built the switchover
-// from the fenced live base and left kcp's fence on the switched route.
+// separate concern and must survive (covered elsewhere). Without DropFence, a
+// switchover built from the fenced live base would keep kcp's fence on the
+// switched route.
 func TestReconcileDynamic_ResumeSwitchoverDropsKcpFence(t *testing.T) {
 	gw := dynGateway()
 	// kcp's prior fence for exactly this batch, as a live route presents it on

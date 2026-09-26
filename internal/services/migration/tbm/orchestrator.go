@@ -122,12 +122,12 @@ func NewTBMOrchestrator(
 		Dst:  StateInitialized,
 	})
 
-	// The FSM always starts at uninitialized on construction. There is no
-	// resume position: the command layer calls migplan.Reconcile live on
-	// every invocation and hands its fresh *migplan.Result to Execute, which
-	// walks canonicalWorkflow from the top and re-applies each step's
-	// artifact idempotently (the FenceYAML/SwitchoverYAML no-op guards
-	// make an already-complete migration a side-effect-free walk-through).
+	// The FSM always starts at uninitialized on construction: the command
+	// layer calls migplan.Reconcile live on every invocation and hands its
+	// *migplan.Result to Execute, which walks canonicalWorkflow from the top
+	// and re-applies each step's artifact idempotently (the
+	// FenceYAML/SwitchoverYAML no-op guards make an already-complete
+	// migration a side-effect-free walk-through).
 	orchestrator.fsm = fsm.NewFSM(
 		StateUninitialized,
 		events,
@@ -230,9 +230,8 @@ func (o *TBMOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.Event)
 }
 
 // afterEventCallback logs every committed transition as a single Info line,
-// mirroring migration.afterEventCallback. The FSM's own state (o.fsm.Current(),
-// which e.Dst mirrors) is authoritative in-process — there is no config field
-// to keep in sync.
+// mirroring migration.afterEventCallback. The FSM (o.fsm.Current(), which
+// e.Dst mirrors) is the only record of the run's state.
 func (o *TBMOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
 	slog.Info("tbm migration state advanced", "event", e.Event, "from", e.Src, "to", e.Dst, "migration_id", o.config.MigrationId)
 }

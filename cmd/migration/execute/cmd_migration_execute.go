@@ -39,18 +39,18 @@ var (
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
-There is no migration state file: every run reads the manifest and the live cluster
-state fresh, via migplan.Reconcile, and the FSM always starts at uninitialized. Each
-step's action is idempotent, so a migration already partway through cutover walks
-forward re-applying already-completed steps as no-ops and picking up wherever the live
-state says work remains. Policy defaults and credentials are read FRESH from the
+Every run reads the manifest and the live cluster state via migplan.Reconcile, and
+the FSM always starts at uninitialized. Each step's action is idempotent, so a
+migration already partway through cutover walks forward re-applying
+already-completed steps as no-ops and picking up wherever the live state says work
+remains. Policy defaults and credentials are read FRESH from the
 manifest on every run, so they can be varied between runs or overridden with flags.
 
 Each spec.defaultPolicies value can also be overridden for a single run with its flag
 (e.g. --detect-unrouted-producers-duration), without editing the manifest.
 
 If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
-from the live state, not from any persisted position.`
+from the live state.`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to the live
 // dependencies both branches share.
@@ -95,7 +95,7 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
-	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the configured value, falling back to the gateway default (9180).")
+	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses spec.defaultPolicies.gatewayConfigPort; 0 means the gateway default (9180).")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -133,11 +133,10 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	return filepath.Join(homeDir, ".kube", "config"), nil
 }
 
-// buildFreshMigrationConfig builds the MigrationConfig for a migration seen for
-// the first time — pure manifest projections, no live call.
-// Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are deliberately NOT set here:
-// they require migplan.Reconcile (a live call), which runs once the FSM reaches
-// the initialize transition.
+// buildFreshMigrationConfig builds a run's MigrationConfig from the manifest
+// alone — no live call. Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are not
+// set here: the FSM's initialize transition copies them in from the reconcile
+// result.
 func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
 	entry := g.Spec.Route.TopicGroup[0] // manifest validation guarantees exactly one entry
 	var topicPatterns []string
@@ -201,11 +200,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	// metadata.name identifies the migration and is its migration_id label.
 	id := g.Metadata.Name
 
-	// There is no migration state file: every run builds a fresh
-	// MigrationConfig straight from the manifest — pure manifest
-	// projections, no live call, no registration, no drift check. Live
-	// reconcile (below) is what observes actual cluster state and decides
-	// what remains outstanding.
+	// Build this run's MigrationConfig from the manifest (no live call); live
+	// reconcile (below) observes the cluster and decides what remains
+	// outstanding.
 	kubeConfigPathResolved, kerr := resolveKubeConfigPath(g)
 	if kerr != nil {
 		return kerr

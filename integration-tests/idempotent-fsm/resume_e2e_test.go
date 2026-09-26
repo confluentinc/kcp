@@ -82,8 +82,8 @@ func TestResume_InterruptAfterPromote(t *testing.T) {
 // Kill DURING promote (intra-step, killpoint.AfterPromoteAccepted): after a
 // promote request is accepted but before STOPPED is confirmed, leaving mirrors
 // PENDING_STOPPED. The resume must NOT re-promote the already-promoting mirror
-// (CC rejects that → fatal) — it must wait for STOPPED then switch. This is the
-// live proof of the PENDING_STOPPED resume fix. Slice tbm-topic-071..075.
+// (CC rejects that → fatal) — it must wait for STOPPED then switch. Slice
+// tbm-topic-071..075.
 func TestResume_InterruptDuringPromote(t *testing.T) {
 	e := newEnv()
 	topics := e.topicRange(71, 75)

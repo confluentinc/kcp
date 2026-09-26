@@ -3,8 +3,7 @@ package migration
 import "time"
 
 // MigrationConfig holds all domain configuration for a migration: pure data,
-// built fresh from the manifest and the reconcile result on every run, held in
-// memory only, and never written anywhere.
+// built from the manifest and the run's reconcile result.
 type MigrationConfig struct {
 	MigrationId string
 

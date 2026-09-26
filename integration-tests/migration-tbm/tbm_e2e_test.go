@@ -71,11 +71,9 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			require.NotContains(t, out, "panic", "execute must not panic")
 
 			// The real FSM must walk every transition through to switched for
-			// name — there is no state file any more to read
-			// CurrentState back from, so this is now proven the same way the
-			// rest of this test already does: the mirrors below reach STOPPED
-			// and the live route below is switched to the target domain,
-			// which cannot happen unless promote and switch both actually ran.
+			// name: the mirrors below reach STOPPED and the live route below
+			// is switched to the target domain, which cannot happen unless
+			// promote and switch both ran.
 			//
 			// A full batch run always reaches switched in one synchronous
 			// execute call, and switch legitimately clears the fence
@@ -196,13 +194,8 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	require.Contains(t, out, "Unrouted producers detected", "execute's narrative must show detection fired")
 	require.Contains(t, out, "Gateway unfenced", "execute's narrative must show the rollback completed")
 
-	// There is no state file any more to read the rolled-back FSM's
-	// CurrentState back from — and no persisted resume position for that
-	// assertion to matter to any more, either: every run starts from zero and
-	// reconciles live, so there is nothing left to "resume re-checks lag
-	// for real before re-fencing" against. What the abort_fence rollback must
-	// still guarantee observably is that neither promote nor switch ever ran,
-	// which the two checks below already prove directly against the live
+	// The abort_fence rollback must guarantee that neither promote nor
+	// switch ran; the two checks below prove that directly against the live
 	// cluster.
 	require.Falsef(t, routeSwitchedToTargetForAll(t, h, []string{topic}),
 		"a rolled-back batch must never reach switch — %s must not be routed to the target domain", topic)

@@ -31,11 +31,6 @@ func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp
 // claim than this test's own zero-topic-batch sub-test below, which proves
 // the COMMAND — not just the engine — completes cleanly when there is
 // nothing to migrate.
-//
-// The former "unwritable-state-file-fails-cleanly" sub-test is gone (Plan
-// 2e): it existed only to prove an unwritable --migration-state-file failed
-// cleanly, and that flag — and the early write it guarded — no longer
-// exist. Nothing observable survives that premise; there is no replacement.
 func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
@@ -49,13 +44,10 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	// Refused()-then-len(migratable)==0 split). By the time this runs,
 	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
 	// same suite) has already fully migrated batch-01's topics for real, so
-	// a fresh execute run against the same manifest — there is no state file
-	// any more, so this is a first-ever-looking run purely because
-	// migplan.Reconcile is called live, every time, against the manifest and
-	// the live cluster — sees this as a first-ever run and Reconcile really
-	// runs fresh — hits exactly this case. Every real transition (fence,
-	// promote, switch) must recognize it and no-op; this proves execute
-	// itself does, not just Decide.
+	// a fresh execute run against the same manifest reconciles live, finds
+	// nothing left to migrate, and hits exactly this case. Every real
+	// transition (fence, promote, switch) must recognize it and no-op; this
+	// proves execute itself does, not just Decide.
 	t.Run("zero-topic-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
 		routesBefore := gatewayRoutes(t, h)
 		mirrorsBefore := mirrorStatuses(t, h)
@@ -86,9 +78,8 @@ func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
 }
 
 // runKCP invokes the in-pod kcp binary's execute with only file-path args (no
-// secrets on argv) and returns the combined output. There is no
-// --migration-state-file any more: execute reads only the
-// manifest and live cluster state on every run.
+// secrets on argv) and returns the combined output. execute reads only the
+// manifest and live cluster state.
 func runKCP(t *testing.T, manifestPath string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), execTBMTimeout)

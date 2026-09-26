@@ -128,7 +128,7 @@ func loadLagGateway(t *testing.T, path string) *manifest.GatewayMigration {
 }
 
 // TestLagCheck_FlagSurfaceIsTwoFlags — --migration-yaml and --poll-interval,
-// nothing else. lag-check reads no persisted state.
+// nothing else.
 func TestLagCheck_FlagSurfaceIsTwoFlags(t *testing.T) {
 	cmd := NewMigrationLagCheckCmd()
 	var names []string
@@ -383,9 +383,8 @@ func TestLagCheck_SendsConfiguredAuthOnWire(t *testing.T) {
 	assert.Equal(t, "Bearer BEARER_WIRE_TOKEN", gotAuth)
 }
 
-// TestLagCheck_WorksBeforeInitHasEverRun — its standalone use is preserved: the
-// manifest can exist before any migration is registered, and lag-check reads no
-// state file.
+// TestLagCheck_WorksBeforeInitHasEverRun — lag-check needs only the manifest,
+// so it works before `kcp migration execute` has ever run.
 func TestLagCheck_WorksBeforeInitHasEverRun(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, nil))
 	_, _, err := buildLagCheckConfig(g)

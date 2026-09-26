@@ -1,7 +1,8 @@
 # Dynamic-mode gateway for the TBM hot-reload suite. setup.sh renders this into
 # .rendered/ (placeholder substitution) and applies the initial CR; the engine
-# (migplan.Reconcile) pulls it live and renders fence/switchover route edits that
-# the harness re-applies with a bumped spec.configId (hot reload, no pod roll).
+# (migplan.Reconcile) pulls it live and renders fence/switchover route edits,
+# which `kcp migration execute` patches onto the route with a fresh
+# spec.configId (hot reload, no pod roll).
 #
 # Why passthrough on BOTH legs even though destination-kafka is SASL_SSL:
 # no assertion in this suite sends client data-plane traffic THROUGH the gateway.
@@ -10,7 +11,7 @@
 # REST proxy. The gateway->broker upstream leg is never exercised. Declaring it
 # passthrough/PLAINTEXT keeps the CR structurally simple and sidesteps the known
 # dynamic-route swap-filter bug (cpc-gateway <=1.4.0-master-424 drops the per-leg
-# AuthSwap filter on dynamic routes; see ~/gateway-testing/CHANGES.md). The SASL_SSL
+# AuthSwap filter on dynamic routes). The SASL_SSL
 # destination still matters for the cluster-link / REST / mirror-promotion path,
 # which does not go through the gateway.
 #
@@ -32,7 +33,7 @@ spec:
     application: __GATEWAY_IMAGE__
     init: __INIT_IMAGE__
     pullPolicy: IfNotPresent
-  # The harness overwrites spec.configId on every apply. This starting revision is
+  # kcp sets a fresh spec.configId on every route patch. This starting revision is
   # deliberately NOT a value kcp would generate (kcp-<hex>) so a test asserting the
   # id changed cannot pass by coincidence.
   configId: tbm-initial

@@ -40,8 +40,8 @@ spec:
             end: 0
     # Pre-staged switchover target. Redundant auth requires this domain (and
     # migration-route's security.cluster block for it, below) to already be
-    # declared on the LIVE initial CR — checkRedundantAuthStaged proves that at
-    # `migration init`, before anything is fenced — so cutover is a pure
+    # declared on the LIVE initial CR — reconcile's static preconditions check
+    # that on every run, before anything is fenced — so cutover is a pure
     # streamingDomain field flip with no secret or auth change.
     - name: destination-kafka-cluster
       type: kafka
@@ -69,7 +69,8 @@ spec:
       # an unknown field. Every domain the route can be bound to needs its own
       # entry here, including the one it's bound to today: source's is a bare
       # passthrough, destination's is the pre-staged ("redundant") swap auth —
-      # see gateway.stagedAuthFor. Client identity never changes either way.
+      # see reconcile.stagedAuthFor (migplan/reconcile/staticpreconditions.go).
+      # Client identity never changes either way.
       security:
         client:
           authentication:

@@ -68,11 +68,10 @@ const (
 // dynamicConfig builds the MigrationConfig a dynamic-mode run drives — the
 // same pure manifest projection buildFreshMigrationConfig produces for f's
 // manifest, plus Mode and the fence/switchover/gateway artifacts a live
-// migplan.Reconcile would have produced for this fixture. There is no
-// migration state file to read any of this from any more, so a test
-// that needs to drive runDynamicBranch directly builds the config and its
-// matching *migplan.Result (dynamicResult) by hand. edit runs last, so a test
-// can vary a single field.
+// migplan.Reconcile would have produced for this fixture. A test that drives
+// runDynamicBranch directly builds the config and its matching
+// *migplan.Result (dynamicResult) by hand. edit runs last, so a test can vary
+// a single field.
 func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)

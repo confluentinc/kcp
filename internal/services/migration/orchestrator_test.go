@@ -384,7 +384,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 
 func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOffsetSyncPaused(t *testing.T) {
 	// The unfence CR applies cleanly but the gateway never converges to Ready.
-	// The abort_fence rollback must be cancelled — persisting initialized while
+	// The abort_fence rollback must be cancelled — landing at initialized while
 	// the gateway is still mid-rollout would misrepresent reality.
 	var waitCallCount int64
 	var sourceCallCount int64
@@ -1137,7 +1137,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T) {
 	// AE2 pin: the default flow's offset_sync_unchanged guarantee. Without the
 	// opt-in the run passes through offset_sync_paused to switched with zero
-	// AlterConfigs calls. (ListConfigs still runs once, in Initialize.)
+	// AlterConfigs calls.
 	var alterCalls int64
 
 	orch, _ := newHappyPathOrchestrator(t, nil)
@@ -1387,21 +1387,17 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 // --- AAO kill-point matrix ---
 //
-// Each TestAAO_<row> below corresponds to one row of the AAO kill-point
-// matrix (task-3-brief.md §1, in-scope rows only): it constructs, purely via
-// the fakes and a hand-built *migplan.Result, the live cluster state a kill
-// at that point would leave, drives one full from-zero Execute, and asserts
-// (a) it converges to switched and (b) a second Execute — fed the Result a
-// real migplan.Reconcile would return once nothing at all remains
-// (aaoDoneResult) — is a pure no-op: zero additional gateway patches, zero
-// additional PromoteMirrorTopics calls. No live-observation is added
-// anywhere: every row is expressed as fake behaviour plus a constructed
-// Result, and the FSM only ever consumes config.Topics/FenceYAML/
-// SwitchoverYAML — set once by Initialize from that Result — never anything
-// read live from the cluster to decide what to skip (see workflow.go's
-// Initialize and the three plan-driven no-op guards on
-// FenceGateway/PromoteTopics/SwitchGateway, all keyed on
-// len(config.Topics) == 0).
+// Each TestAAO_<row> below constructs, purely via the fakes and a hand-built
+// *migplan.Result, the live cluster state a kill at one point would leave,
+// drives one full from-zero Execute, and asserts (a) it converges to switched
+// and (b) a second Execute — fed the Result a real migplan.Reconcile would
+// return once nothing at all remains (aaoDoneResult) — is a pure no-op: zero
+// additional gateway patches, zero additional PromoteMirrorTopics calls. The
+// FSM only ever consumes config.Topics/FenceYAML/SwitchoverYAML — set by
+// Initialize from that Result — and never reads the live cluster to decide
+// what to skip (see workflow.go's Initialize and its plan-driven no-op guards:
+// FenceGateway on FenceYAML, PromoteTopics on Topics, SwitchGateway on
+// SwitchoverYAML).
 
 // aaoDoneResult builds the migplan.Result a real migplan.Reconcile returns
 // once nothing at all remains for AAO: no per-topic promote work (Topics)
@@ -1897,20 +1893,16 @@ func TestAAO_Layer2_KillInjection(t *testing.T) {
 	t.Skip("failure-injection harness not yet built")
 }
 
-// --- no state file, still idempotent ---
+// --- execute writes no files ---
 
-// TestOrchestrator_Execute_NoStateFileWritten is the finale: it
-// drives a full from-zero AAO run, and its idempotent second run once
-// reconcile reports nothing left, in a real temporary working directory —
-// mirroring TestAAO_S0_FreshFullRun's exact harness (newAAOKillPointOrchestrator)
-// and Result fixtures (aaoFullResult/aaoDoneResult) rather than inventing a
-// new one — and asserts that neither run ever creates a <name>-state.json,
-// or any other file, on disk. It guards the property directly — in the
-// directory a real `kcp migration execute` invocation would run in — rather
-// than trusting that the absence of code implies the absence of files. The idempotency half is already
-// covered thoroughly by the kill-point matrix above; asserting it again here
-// (zero additional patches/promotes on the second run) just confirms the
-// no-file guarantee holds across the same two-run shape those tests use.
+// TestOrchestrator_Execute_NoStateFileWritten drives a full from-zero AAO run,
+// and its idempotent second run once reconcile reports nothing left, in a real
+// temporary working directory — the same harness (newAAOKillPointOrchestrator)
+// and Result fixtures (aaoFullResult/aaoDoneResult) as TestAAO_S0_FreshFullRun
+// — and asserts that neither run writes any file there. The idempotency half
+// is covered by the kill-point matrix above; asserting it again here (zero
+// additional patches/promotes on the second run) confirms the no-file
+// guarantee holds across the same two-run shape.
 func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
 	dir := t.TempDir()
 	cwd, err := os.Getwd()
@@ -1943,11 +1935,8 @@ func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
 	assertNoFilesWritten(t, dir)
 }
 
-// assertNoFilesWritten fails if dir contains anything at all. In particular
-// this catches a "*-state.json" migration state file — the artifact this change
-// deleted entirely — reappearing by regression, but it deliberately checks
-// for ANY file: there is no longer any legitimate reason for a migration
-// execute run to write anything to its working directory.
+// assertNoFilesWritten fails if dir contains anything at all: a migration
+// execute run writes nothing to its working directory.
 func assertNoFilesWritten(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

@@ -21,7 +21,7 @@ import (
 // executeManifest is the canonical GatewayMigration. Every credentials slot is a
 // PATH; newFixture substitutes the SOURCE_CREDS / DEST_KAFKA_CREDS / LINK_CREDS
 // sentinels with real files it writes into the temp dir, so the resolvers read
-// them exactly as init/execute do at runtime.
+// them exactly as execute does at runtime.
 const executeManifest = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -76,10 +76,7 @@ type fixture struct {
 	dir          string
 }
 
-// newFixture writes a manifest (with the default credentials files). There is
-// no migration state file any more and no fenced or switchover CR
-// file — every one of those is derived fresh, from the manifest and live
-// reconcile, on every execute.
+// newFixture writes a manifest (with the default credentials files).
 func newFixture(t *testing.T, mutate func(string) string) fixture {
 	return newFixtureCreds(t, credOverrides{}, mutate)
 }
@@ -126,10 +123,8 @@ func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
 	return g
 }
 
-// freshConfig builds the MigrationConfig runMigrationExecute itself would
-// build for f's manifest — pure manifest projections, exactly as
-// buildFreshMigrationConfig produces on every run now that there is no
-// migration state file to read an existing entry from.
+// freshConfig builds the MigrationConfig runMigrationExecute builds for f's
+// manifest, via buildFreshMigrationConfig.
 func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migration.MigrationConfig) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
@@ -150,10 +145,9 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 	assert.Empty(t, cmd.Deprecated, "execute is not deprecated")
 }
 
-// TestExecute_VisibleFlagSurface — there is no migration state file any more
-// (--migration-state-file was dropped); what stays on the command line is the
-// manifest path and the per-policy overrides that vary a spec.defaultPolicies
-// value for a single run. --run-report is registered but hidden (a diagnostics
+// TestExecute_VisibleFlagSurface — the visible flags are the manifest path,
+// --dry-run and the per-policy overrides that vary a spec.defaultPolicies value
+// for a single run. --run-report is registered but hidden (a diagnostics
 // path whose only consumer is the performance rig), so it is asserted
 // separately rather than padding the advertised surface.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
@@ -204,8 +198,7 @@ func TestExecute_RequiresMigrationYaml(t *testing.T) {
 
 // --- reconcile runs on every invocation ---
 
-// TestExecute_AlwaysCallsReconcile proves every run reaches migplan.Reconcile:
-// there is no migration state file and no persisted position to skip it for.
+// TestExecute_AlwaysCallsReconcile proves every run reaches migplan.Reconcile.
 // The fixture's kubeconfig path does not exist, so Reconcile's live gateway
 // pull fails immediately and deterministically, surfacing through
 // runMigrationExecute's own wrap.
@@ -215,7 +208,7 @@ func TestExecute_AlwaysCallsReconcile(t *testing.T) {
 	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to produce the reconcile plan",
-		"every execute run must call migplan.Reconcile — there is no persisted position to resume from")
+		"every execute run must call migplan.Reconcile")
 }
 
 // --- policy is read fresh ---
@@ -657,9 +650,8 @@ func TestExecute_DryRun_ValidatesPolicyOverrides(t *testing.T) {
 		"an invalid override must be rejected before reconcile is attempted")
 }
 
-// TestExecute_DryRun_FailsAtReconcile proves --dry-run still reaches
-// migplan.Reconcile (and only that) — it runs no FSM transition and, with no
-// migration state file to touch in the first place, has nothing else to skip.
+// TestExecute_DryRun_FailsAtReconcile proves --dry-run reaches migplan.Reconcile
+// and nothing else — it runs no FSM transition.
 func TestExecute_DryRun_FailsAtReconcile(t *testing.T) {
 	f := newFixture(t, nil)
 

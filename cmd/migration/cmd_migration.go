@@ -16,7 +16,7 @@ func NewMigrationCmd() *cobra.Command {
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
 
-1. **Reconcile and validate** — every ` + "`kcp migration execute`" + ` run resolves whether the manifest's route is static or topic-based and validates the cluster link and gateway CRs live against the manifest and the current cluster state — no separate init step, and nothing is persisted between runs. ` + "`--dry-run`" + ` runs this validation alone and exits, touching no state.
+1. **Reconcile and validate** — every ` + "`kcp migration execute`" + ` run resolves whether the manifest's route is static or topic-based and validates the cluster link and gateway CRs live against the manifest and the current cluster state. ` + "`--dry-run`" + ` runs this validation alone and exits, touching no state.
 2. **Check Lags** — compare source and destination offsets until lag drops below the configured threshold.
 3. **Fence Gateway** — apply the fenced gateway CR to block traffic during cutover.
 4. **Pause Offset Sync** (static routes only) — with ` + "`spec.clusterLink.pauseConsumerOffsetSync`" + `, pause cluster-link consumer offset sync (passes through otherwise); on failure the fence is rolled back automatically. Topic-based (dynamic) migrations skip this step — see the note below.
@@ -26,7 +26,7 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 
 ` + "`spec.clusterLink.pauseConsumerOffsetSync`" + ` has no effect for a topic-based migration: a dynamic route requires consumer offset sync to be disabled, so a fresh run that sets it is refused up front when the manifest is reconciled.
 
-If execution is interrupted at any step, re-running ` + "`kcp migration execute`" + ` safely continues: there is no persisted position to resume from — every run re-derives the migration's state live from the manifest and the cluster, and re-applying an already-completed step is a no-op.
+If execution is interrupted at any step, re-running ` + "`kcp migration execute`" + ` safely continues: every run re-derives the migration's state live from the manifest and the cluster, and re-applying an already-completed step is a no-op.
 
 Supporting documentation:
 

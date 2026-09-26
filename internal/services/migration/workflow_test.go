@@ -499,8 +499,7 @@ func TestWorkflow_PromoteTopics_WaitsForStoppedStatus(t *testing.T) {
 // already mid-promotion, so the promote stage must WAIT for it to reach STOPPED
 // and never re-issue a promote on it (a re-promote of an already-promoting
 // mirror is rejected by CC → the loop would retry 3x then fail). Only the
-// genuinely migratable topic gets a promote request. Regression guard for the
-// resume-from-PENDING_STOPPED bug.
+// genuinely migratable topic gets a promote request.
 func TestWorkflow_PromoteTopics_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.T) {
 	gw := &mockGatewayService{}
 
@@ -1119,9 +1118,7 @@ spec:
 
 // On resume the captured CR is already fenced (the prior interrupted run fenced
 // it and reconcile re-pulls it live), so the switch must EXPLICITLY drop the
-// fence key — it cannot rely on the captured route being unfenced. Mirrors the
-// dynamic/TBM DropFence fix. Regression guard for the stale-fence-on-resume bug
-// caught by the live resume suite 2026-09-23.
+// fence key — it cannot rely on the captured route being unfenced.
 func TestDeriveSwitchRoutePatch_DropsFenceFromAlreadyFencedCapture(t *testing.T) {
 	const fencedCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway

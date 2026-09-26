@@ -204,8 +204,8 @@ func TestRunReport_FinishClosesAnOpenStage(t *testing.T) {
 	assert.Equal(t, RunOutcomeFailed, report.Outcome)
 }
 
-// TestRunReport_WrittenAt0600 keeps the report at the same permissions as the
-// migration state file it sits beside.
+// TestRunReport_WrittenAt0600 pins the report file's owner-only (0600)
+// permissions.
 func TestRunReport_WrittenAt0600(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not enforced on Windows")

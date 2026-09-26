@@ -247,7 +247,7 @@ KCP does not generate these files. You author the fenced and switchover variants
 
 Run once per migration group, before scheduling a cutover window. `--dry-run` validates the entire setup without changing anything: it confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No traffic is affected and nothing is changed at this step — re-run it as many times as needed while iterating on the manifest.
 
-When you run `kcp migration execute` for real (without `--dry-run`), it validates the manifest and live infrastructure and continues directly into the cutover. There is no separate registration or init step and no state file: every run reconciles live from the manifest and the current cluster state, so re-running after an interruption safely continues from wherever the live world already is.
+When you run `kcp migration execute` for real (without `--dry-run`), it validates the manifest and live infrastructure and continues directly into the cutover. Every run reconciles live from the manifest and the current cluster state, so re-running after an interruption safely continues from wherever the live world already is.
 
 Full flag reference: [`kcp migration execute --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/execute/)
 

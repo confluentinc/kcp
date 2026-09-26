@@ -101,12 +101,12 @@ Types 1–4 support both MSK and Apache Kafka; Type 4 is MSK-only.
 ### Migration execution
 
 `kcp migration execute` runs the full cutover as one finite state machine per
-migration — no separate `init` step and no persisted state: every run
-reconciles live from the manifest and the cluster and continues from wherever
-the live world already is; `--dry-run` runs only the feasibility check and
-exits. The bound route resolves each run, from the live gateway CR, to one of
-two strategies — named **AAO** and **TBM** throughout the codebase (comments,
-package/test names), and tied 1:1 to the Gateway CRD's own route mode
+migration. Every run reconciles live from the manifest and the cluster and
+continues from wherever the live world already is; `--dry-run` runs only the
+feasibility check and exits. The bound route resolves each run, from the live
+gateway CR, to one of two strategies — named **AAO** and **TBM** in the FSM
+packages (comments, package/test names; `cmd/migration/execute` calls them
+static and dynamic), and tied 1:1 to the Gateway CRD's own route mode
 (`RouteConfig.Mode`, carried as `MigrationConfig.Mode`):
 
 - **AAO** (All-At-Once, `mode: static`) — all topics cut over together.

@@ -1,10 +1,10 @@
 // Package tbm implements the FSM-driven orchestrator for the Topic-Batch
 // Migration (TBM) workflow. It reads and writes migration.MigrationConfig —
-// the same shape AAO's execute uses, built fresh from the manifest on every
-// run (there is no migration state file). The FSM engine itself (this
-// package's Actions/Orchestrator, its state/event constants) is a separate
-// implementation from internal/services/migration: each has its own state
-// machine, since TBM and AAO progress through genuinely different steps.
+// the same shape AAO's execute uses, built from the manifest on every run.
+// The FSM engine itself (this package's Actions/Orchestrator, its state/event
+// constants) is a separate implementation from internal/services/migration:
+// each has its own state machine, since TBM and AAO progress through
+// genuinely different steps.
 // Lower-level mechanics that are byte-for-byte identical between the two —
 // gateway CR apply/wait/verify (gateway.TransitionVerifier), the
 // source/destination offset sweep and unrouted-producer detection

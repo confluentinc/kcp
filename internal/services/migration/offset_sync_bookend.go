@@ -87,13 +87,11 @@ func restoreOffsetSync(
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
 // orchestrator.Execute returns an error and the operator opted into
-// offset-sync pausing (config.PauseConsumerOffsetSync). It deliberately does
-// NOT shape its wording from a state-file-derived signal — there is no
-// migration state file, no CurrentState, and no flipped marker — the
-// pause/restore bookends are idempotent applies with nothing to branch on, so
-// the guidance is a single generic reminder gated only on the
-// manifest-declared intent: verify the cluster link matches the declared
-// baseline before resuming normal operation.
+// offset-sync pausing (config.PauseConsumerOffsetSync). The pause/restore
+// bookends are idempotent applies with nothing to branch on, so the guidance
+// is a single generic reminder gated only on the manifest-declared intent:
+// verify the cluster link matches the declared baseline before resuming normal
+// operation.
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
