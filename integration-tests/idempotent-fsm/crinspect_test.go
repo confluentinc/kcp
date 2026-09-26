@@ -29,13 +29,24 @@ func findRoute(cr []byte, route string) map[string]any {
 	return nil
 }
 
+// staticBinding returns route r's singular streamingDomain when r is a static
+// route: one whose singular streamingDomain is named. CFK's Gateway CRD defaults
+// an unnamed singular streamingDomain onto every route, dynamic ones included, so
+// an unnamed one is not a static binding (the same rule as migplan's
+// resolveModeStructurally).
+func staticBinding(r map[string]any) (map[string]any, bool) {
+	sd, _ := r["streamingDomain"].(map[string]any)
+	name, _ := sd["name"].(string)
+	return sd, name != ""
+}
+
 // routeFences reports whether route r fences topic. Static: the whole route
 // carries a `fence` block. Dynamic: a blocked rules.fencing[] entry names the topic.
 func routeFences(r map[string]any, topic string) bool {
 	if r == nil {
 		return false
 	}
-	if _, static := r["streamingDomain"].(map[string]any); static {
+	if _, static := staticBinding(r); static {
 		_, hasFence := r["fence"]
 		return hasFence
 	}
@@ -60,7 +71,7 @@ func routeTargets(r map[string]any, destDomain, topic string) bool {
 	if r == nil {
 		return false
 	}
-	if sd, static := r["streamingDomain"].(map[string]any); static {
+	if sd, static := staticBinding(r); static {
 		return sd["name"] == destDomain
 	}
 	rules, _ := r["rules"].(map[string]any)

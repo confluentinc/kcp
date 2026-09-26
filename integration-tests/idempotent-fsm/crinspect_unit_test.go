@@ -1,6 +1,7 @@
 package idempotent_fsm_e2e
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -18,8 +19,18 @@ const (
 	dstDomain = "destination-domain"
 )
 
+// crdDefaultedStreamingDomain is the empty singular streamingDomain CFK's Gateway
+// CRD defaults onto every route when a CR is applied, dynamic routes included,
+// so a dynamic route read back from the cluster always carries it.
+const crdDefaultedStreamingDomain = `      streamingDomain:
+        name: ""
+        bootstrapServerId: ""
+`
+
 // dynamicCR wraps a dynamic route's `rules` body in a CR alongside a decoy route
 // of the same shape, so a lookup that ignored the route name would be caught.
+// The route is in the shape the cluster returns it: with the CRD-defaulted
+// singular streamingDomain.
 func dynamicCR(rules string) []byte {
 	return []byte(`apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
@@ -44,8 +55,14 @@ spec:
           bootstrapServerId: SOURCE
         - name: destination-domain
           bootstrapServerId: DESTINATION
-      rules:
+` + crdDefaultedStreamingDomain + `      rules:
 ` + rules)
+}
+
+// withoutCRDDefault drops the CRD-defaulted singular streamingDomain from a
+// dynamicCR, for a route as authored rather than as read back.
+func withoutCRDDefault(cr []byte) []byte {
+	return bytes.Replace(cr, []byte(crdDefaultedStreamingDomain), nil, 1)
 }
 
 // staticCR builds a CR whose static route is bound to domain, with extra
@@ -106,6 +123,10 @@ func TestRouteFences(t *testing.T) {
             blocked: true
 `), "t1", true},
 		{"dynamic route with no rules", dynamicCR(""), "t1", false},
+		{"dynamic fence, route without the CRD-defaulted streamingDomain", withoutCRDDefault(dynamicCR(`        fencing:
+          - topics: [t1]
+            blocked: true
+`)), "t1", true},
 
 		{"static pristine", staticCR(srcDomain, ""), "t1", false},
 		{"static fenced (whole route)", staticCR(srcDomain, `      fence:
@@ -161,6 +182,11 @@ func TestRouteTargets(t *testing.T) {
             blocked: true
 `), "t1", false},
 		{"dynamic route with no rules", dynamicCR(""), "t1", false},
+		{"dynamic switchover, route without the CRD-defaulted streamingDomain", withoutCRDDefault(dynamicCR(`        routing:
+          conditions:
+            - topics: [t1]
+              streamingDomain: destination-domain
+`)), "t1", true},
 
 		{"static pristine on source", staticCR(srcDomain, ""), "t1", false},
 		{"static fenced, still on source", staticCR(srcDomain, `      fence:
