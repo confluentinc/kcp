@@ -136,7 +136,10 @@ func TestLagCheck_FlagSurfaceIsTwoFlags(t *testing.T) {
 	assert.ElementsMatch(t, []string{"migration-yaml", "poll-interval"}, names)
 }
 
-func TestLagCheck_RetiredFlagsAreGone(t *testing.T) {
+// TestLagCheck_HasNoTopologyOrAuthFlags — the REST endpoint, cluster id, link
+// name and credentials come from the manifest, so lag-check has no flags for
+// them.
+func TestLagCheck_HasNoTopologyOrAuthFlags(t *testing.T) {
 	for _, flag := range []string{
 		"--rest-endpoint", "--cluster-id", "--cluster-link-name",
 		"--cluster-api-key", "--cluster-api-secret",
@@ -383,9 +386,9 @@ func TestLagCheck_SendsConfiguredAuthOnWire(t *testing.T) {
 	assert.Equal(t, "Bearer BEARER_WIRE_TOKEN", gotAuth)
 }
 
-// TestLagCheck_WorksBeforeInitHasEverRun — lag-check needs only the manifest,
-// so it works before `kcp migration execute` has ever run.
-func TestLagCheck_WorksBeforeInitHasEverRun(t *testing.T) {
+// TestLagCheck_WorksBeforeExecuteHasEverRun — lag-check needs only the
+// manifest, so it works before `kcp migration execute` has ever run.
+func TestLagCheck_WorksBeforeExecuteHasEverRun(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, nil))
 	_, _, err := buildLagCheckConfig(g)
 	require.NoError(t, err)

@@ -425,7 +425,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// independent of per-topic promote status, and reconcile can return an
 	// empty promote set (nothing left to promote) while still owing a fence —
 	// e.g. every topic already promoted to STOPPED but the switch not yet
-	// applied (matrix row A-S3). Gating on Topics there would silently skip
+	// applied. Gating on Topics there would silently skip
 	// the still-owed fence/switch.
 	if config.FenceYAML == "" {
 		s.reporter.Detail("No fence artifact in plan — nothing to fence")

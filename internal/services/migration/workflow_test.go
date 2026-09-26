@@ -1021,7 +1021,7 @@ func TestWorkflow_FenceGateway_NoFenceYAMLIsNoop(t *testing.T) {
 }
 
 // TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences pins the
-// matrix row A-S3 shape at the unit level: reconcile can return an empty
+// promoted-not-switched shape at the unit level: reconcile can return an empty
 // promote set (config.Topics == nil — every topic already promoted to
 // STOPPED) while a fence artifact is still present, because fence is a
 // whole-route action independent of per-topic promote status. Gating on
@@ -1311,10 +1311,11 @@ func TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop(t *testing.T) {
 }
 
 // TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches
-// pins the matrix row A-S3 shape at the unit level: reconcile can return an
-// empty promote set (config.Topics == nil — every topic already promoted to
-// STOPPED) while a switchover artifact is still present and owed, because
-// switch is a whole-route action independent of per-topic promote status.
+// pins the promoted-not-switched shape at the unit level: reconcile can
+// return an empty promote set (config.Topics == nil — every topic already
+// promoted to STOPPED) while a switchover artifact is still present and owed,
+// because switch is a whole-route action independent of per-topic promote
+// status.
 // Gating on Topics here is the exact production bug this guard rework
 // fixes: a kill right after the last topic's promote completes would
 // otherwise report the migration complete without ever switching the

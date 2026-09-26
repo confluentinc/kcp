@@ -170,11 +170,12 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
-// TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
-// manifest, and --migration-state-file itself is retired. The
-// per-policy override flags (--lag-threshold, --rollout-timeout, etc.) are NOT
-// here: they are the live surface, asserted by TestExecute_VisibleFlagSurface.
-func TestExecute_RetiredFlagsAreGone(t *testing.T) {
+// TestExecute_HasNoTopologyOrAuthFlags — topology and auth come from the
+// manifest, so execute has no flags for them, and no --migration-state-file.
+// The per-policy override flags (--lag-threshold, --rollout-timeout, etc.)
+// are NOT here: they are the live surface, asserted by
+// TestExecute_VisibleFlagSurface.
+func TestExecute_HasNoTopologyOrAuthFlags(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{
 		"--cluster-api-key", "--cluster-api-secret", "--aws-region",

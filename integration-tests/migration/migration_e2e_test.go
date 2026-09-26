@@ -31,7 +31,7 @@ import (
 const (
 	scenarioBaseline                   = "baseline"                      // TestMigrationE2E
 	scenarioPauseSyncHappy             = "pause-sync-happy"              // TestMigrationE2E_PauseOffsetSync_HappyPath
-	scenarioPauseSyncRefuses           = "pause-sync-refuses"            // TestMigrationE2E_PauseOffsetSync_ExecuteRefuses
+	scenarioPauseSyncStartsDisabled    = "pause-sync-starts-disabled"    // TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled
 	scenarioPauseSyncRogue             = "pause-sync-rogue"              // TestMigrationE2E_PauseOffsetSync_RogueProducerRollback
 	scenarioPauseSyncDrift             = "pause-sync-drift"              // TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes
 	scenarioPauseSyncDrain             = "pause-sync-drain"              // TestMigrationE2E_PauseOffsetSync_Drain
@@ -330,8 +330,9 @@ func runInPod(t *testing.T, cfg envConfig, timeout time.Duration, command ...str
 }
 
 // setClusterLinkConfig calls the in-pod setconfig helper to PUT a config
-// value on the cluster link. Used by ExecuteRefuses to flip the offset-sync
-// setting without depending on curl (busybox wget cannot do PUT).
+// value on the cluster link. Used by CompletesWhenLinkStartsDisabled to flip
+// the offset-sync setting without depending on curl (busybox wget cannot do
+// PUT).
 func setClusterLinkConfig(t *testing.T, cfg envConfig, name, value string) {
 	t.Helper()
 	out, err := runInPod(t, cfg, 30*time.Second,
@@ -1050,18 +1051,19 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 	})
 }
 
-// TestMigrationE2E_PauseOffsetSync_ExecuteRefuses proves execute completes even
-// when the cluster link's consumer.offset.sync.enable starts disabled:
-// static-route preconditions (CheckStaticPreconditions) do not check offset
-// sync, and the pause/restore bookends are manifest-driven idempotent applies
-// that never read the live link (workflow.go's PauseOffsetSync). The restore
-// bookend still returns the link to the declared baseline afterward.
+// TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled proves
+// execute completes even when the cluster link's consumer.offset.sync.enable
+// starts disabled: static-route preconditions (CheckStaticPreconditions) do
+// not check offset sync, and the pause/restore bookends are manifest-driven
+// idempotent applies that never read the live link (workflow.go's
+// PauseOffsetSync). The restore bookend still returns the link to the
+// declared baseline afterward.
 //
-// Runs against the "pause-sync-refuses" scenario, which gives this test
-// its own cluster link so flipping offset-sync to "false" does not leak
+// Runs against the "pause-sync-starts-disabled" scenario, which gives this
+// test its own cluster link so flipping offset-sync to "false" does not leak
 // into other tests.
-func TestMigrationE2E_PauseOffsetSync_ExecuteRefuses(t *testing.T) {
-	cfg := loadEnvConfig(t, scenarioPauseSyncRefuses)
+func TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled(t *testing.T) {
+	cfg := loadEnvConfig(t, scenarioPauseSyncStartsDisabled)
 
 	setClusterLinkConfig(t, cfg, "consumer.offset.sync.enable", "false")
 	t.Cleanup(func() {
@@ -1425,8 +1427,6 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 		require.NoError(t, err, "execute should succeed once the rogue producer is stopped")
 		assert.Contains(t, combined, "Pausing consumer.offset.sync",
 			"the retry must pause afresh")
-		assert.NotContains(t, combined, "already paused",
-			"the retry must not take the already-flipped skip path")
 		assert.Contains(t, combined, "Restoring consumer.offset.sync",
 			"the post-switchover restore bookend must run")
 

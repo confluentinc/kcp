@@ -1387,7 +1387,7 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 // --- AAO kill-point matrix ---
 //
-// Each TestAAO_<row> below constructs, purely via the fakes and a hand-built
+// Each kill-point test below constructs, purely via the fakes and a hand-built
 // *migplan.Result, the live cluster state a kill at one point would leave,
 // drives one full from-zero Execute, and asserts (a) it converges to switched
 // and (b) a second Execute — fed the Result a real migplan.Reconcile would
@@ -1432,19 +1432,19 @@ func aaoFullResult() *migplan.Result {
 }
 
 // newAAOKillPointOrchestrator is the shared builder behind every
-// TestAAO_<row> test. Unlike buildHappyPathOrchestrator's fixed "every topic
+// kill-point test. Unlike buildHappyPathOrchestrator's fixed "every topic
 // starts ACTIVE, only this run's own PromoteMirrorTopics call flips it to
-// STOPPED" mirror model, this lets a row seed which topics' mirrors are
+// STOPPED" mirror model, this lets a test seed which topics' mirrors are
 // ALREADY STOPPED before Execute ever runs — modelling exactly the live
 // state a kill at a mid/late-promote point would leave — and it records
 // every gateway-route patch and every PromoteMirrorTopics call (with its
-// topic list, in call order) so each row can assert on them directly,
+// topic list, in call order) so each test can assert on them directly,
 // including that a second Execute adds none.
 //
 // readyProgress, when non-empty, replaces the default (immediately
 // succeeding, no-progress-reported) WaitForGatewayReady fake with one that
 // reports each entry via onProgress, in order, before returning nil. This is
-// the harness's fake pod-waiter for the *u rows (A-S1u/A-S4u): the real
+// the harness's fake pod-waiter for the convergence-wait tests: the real
 // "poll until converged" loop lives entirely inside the production
 // K8sService this mock replaces, with nothing to hook in this harness, so
 // "waits for convergence, then proceeds" is modelled as the single mocked
@@ -1588,11 +1588,11 @@ func newAAOKillPointOrchestrator(
 	return orch, config, &patches, &promotes, &readyEvents
 }
 
-// TestAAO_S0_FreshFullRun covers matrix row A-S0: a pristine migration, never
+// TestAAO_FreshFullRun: a pristine migration, never
 // fenced, mirrors ACTIVE, every topic migratable. A from-zero walk must
 // fence, promote both topics, and switch — and a second run, once reconcile
 // reports nothing left, must be a pure no-op.
-func TestAAO_S0_FreshFullRun(t *testing.T) {
+func TestAAO_FreshFullRun(t *testing.T) {
 	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
@@ -1639,7 +1639,7 @@ func TestOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 	assert.Empty(t, *promoteCalls, "no promote occurred — interrupted before the promote stage")
 }
 
-// TestAAO_S1_AlreadyFencedNoReapply covers matrix row A-S1: the world a kill
+// TestAAO_AlreadyFencedNoReapply: the world a kill
 // right after fencing leaves. The FSM walks the whole workflow — there is no
 // live read that could tell this run "the
 // route is already fenced" apart from a fresh one, so FenceGateway's apply is
@@ -1649,7 +1649,7 @@ func TestOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 // mirrors that are still ACTIVE (nothing was promoted by the prior, killed
 // run) — landing at the same converged, idempotent-on-a-second-run place as
 // a fresh migration.
-func TestAAO_S1_AlreadyFencedNoReapply(t *testing.T) {
+func TestAAO_AlreadyFencedNoReapply(t *testing.T) {
 	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
@@ -1670,7 +1670,7 @@ func TestAAO_S1_AlreadyFencedNoReapply(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S1u_WaitsForConvergence covers matrix row A-S1u: fenced, but the
+// TestAAO_FenceWaitsForConvergence: fenced, but the
 // serving pods have not yet converged on the fenced config. There is no
 // separate "poll until ready" loop in this test harness to hook — that loop
 // lives entirely inside the production K8sService the gateway mock replaces
@@ -1681,7 +1681,7 @@ func TestAAO_S1_AlreadyFencedNoReapply(t *testing.T) {
 // simplest fake that both lets the wait return and still proves the step
 // observed an unconverged state — not reported done while unconverged —
 // before succeeding.
-func TestAAO_S1u_WaitsForConvergence(t *testing.T) {
+func TestAAO_FenceWaitsForConvergence(t *testing.T) {
 	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 
@@ -1711,16 +1711,15 @@ func TestAAO_S1u_WaitsForConvergence(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S2_MidPromoteMix covers matrix row A-S2: a kill mid-promotion,
+// TestAAO_MidPromoteMix: a kill mid-promotion,
 // where topic-a has already reached STOPPED (SwitchOnly, per
 // reconcile/rules.go's Classify) and topic-b is still ACTIVE. A real
 // migplan.Reconcile excludes topic-a from the promote set entirely — the
 // filtering is reconcile's job, done once, live — so the constructed Result
-// here lists only topic-b, exactly as the matrix row specifies ("result
-// Topics = the not-yet-STOPPED only"). This must drive PromoteTopics to
-// promote topic-b alone, never re-issuing PromoteMirrorTopics for the
-// already-STOPPED topic-a.
-func TestAAO_S2_MidPromoteMix(t *testing.T) {
+// here lists only topic-b. This must drive PromoteTopics to promote topic-b
+// alone, never re-issuing PromoteMirrorTopics for the already-STOPPED
+// topic-a.
+func TestAAO_MidPromoteMix(t *testing.T) {
 	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
 		t, []string{"topic-a"}, nil)
 
@@ -1751,24 +1750,16 @@ func TestAAO_S2_MidPromoteMix(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S3_PromotedNotSwitched covers matrix row A-S3: every mirror
-// already STOPPED (nothing left to promote) but the switch not yet applied.
-// A real migplan.Reconcile for this state returns Topics=[] but non-empty
-// FenceYAML/SwitchoverYAML (see internal/services/migplan/reconcile/
-// reconcile.go's reconcileStatic: its 'promote' set excludes SwitchOnly
-// topics, but its 'inflight' set — which gates whether Artifacts are built
-// at all — includes them). This was previously infeasible: FenceGateway and
-// SwitchGateway both no-op'd on the same len(config.Topics)==0 check
-// PromoteTopics correctly uses, so they would have BOTH incorrectly no-op'd
-// too, never applying the still-owed switch — a real correctness bug (a
-// kill right after the last topic's promote completes would report the
-// migration falsely complete without ever switching the gateway). Fixed by
-// giving Fence/Switch their own per-artifact no-op signal
-// (config.FenceYAML/config.SwitchoverYAML) instead of sharing Promote's
-// Topics-based one — see workflow.go's FenceGateway/SwitchGateway guard
-// comments. This test pins that fix: promote makes no call at all, but
+// TestAAO_PromotedNotSwitched: every mirror already STOPPED (nothing left to
+// promote) but the switch not yet applied. A real migplan.Reconcile for this
+// state returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (see
+// internal/services/migplan/reconcile/reconcile.go's reconcileStatic: its
+// 'promote' set excludes SwitchOnly topics, but its 'inflight' set — which
+// gates whether Artifacts are built at all — includes them). Fence and
+// Switch key their no-op on those artifacts, not on Topics (see workflow.go's
+// FenceGateway/SwitchGateway guards), so promote makes no call at all but
 // switch still applies and the run still converges.
-func TestAAO_S3_PromotedNotSwitched(t *testing.T) {
+func TestAAO_PromotedNotSwitched(t *testing.T) {
 	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
 		t, []string{"topic-a", "topic-b"}, nil)
 
@@ -1798,17 +1789,15 @@ func TestAAO_S3_PromotedNotSwitched(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S4u_SwitchWaitsForConvergence covers matrix row A-S4u: the switch
-// CR landed but the serving pods have not yet converged on it. Like A-S3,
-// this needs Topics=[] (nothing left to promote) with a non-empty
-// SwitchoverYAML for the switch to actually run — now feasible after the
-// per-artifact no-op fix (see TestAAO_S3_PromotedNotSwitched). The
-// convergence wait is faked the same way as TestAAO_S1u_
-// WaitsForConvergence: the mocked WaitForGatewayReady call itself reports a
-// not-yet-converged progress tick before its own converged return, since
-// there is no separate "poll until ready" loop in this harness to hook (see
-// newAAOKillPointOrchestrator's doc comment on readyProgress).
-func TestAAO_S4u_SwitchWaitsForConvergence(t *testing.T) {
+// TestAAO_SwitchWaitsForConvergence: the switch CR landed but the serving
+// pods have not yet converged on it. Like TestAAO_PromotedNotSwitched, this
+// needs Topics=[] (nothing left to promote) with a non-empty SwitchoverYAML
+// for the switch to actually run. The convergence wait is faked the same way
+// as TestAAO_FenceWaitsForConvergence: the mocked WaitForGatewayReady call
+// itself reports a not-yet-converged progress tick before its own converged
+// return, since there is no separate "poll until ready" loop in this harness
+// to hook (see newAAOKillPointOrchestrator's doc comment on readyProgress).
+func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
 	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 
@@ -1847,18 +1836,15 @@ func TestAAO_S4u_SwitchWaitsForConvergence(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S4_DoneIsNoop covers matrix row A-S4 — the important one: it pins
-// the deleted HasPendingWork short-circuit's replacement. Live state: fully
-// switched already, fence gone, every mirror STOPPED. A real
-// migplan.Reconcile classifies every topic Unchanged and returns a Result
-// with no artifacts at all (aaoDoneResult, mirroring reconcileStatic's
-// len(inflight)==0 early return): Topics, FenceYAML and SwitchoverYAML all
-// empty. Every one of Fence/Promote/Switch's plan-driven no-op guards (Task
-// 1, all keyed on len(config.Topics)==0) must fire — zero patches, zero
-// promotes — and the FSM still walks through every step to switched (Task
-// 2's every-step-visited contract) rather than needing any special-cased
+// TestAAO_DoneIsNoop — live state: fully switched already, fence gone, every
+// mirror STOPPED. A real migplan.Reconcile classifies every topic Unchanged
+// and returns a Result with no artifacts at all (aaoDoneResult, mirroring
+// reconcileStatic's len(inflight)==0 early return): Topics, FenceYAML and
+// SwitchoverYAML all empty. Every one of Fence/Promote/Switch's plan-driven
+// no-op guards must fire — zero patches, zero promotes — and the FSM still
+// walks through every step to switched rather than needing any special-cased
 // short-circuit to get there.
-func TestAAO_S4_DoneIsNoop(t *testing.T) {
+func TestAAO_DoneIsNoop(t *testing.T) {
 	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
 		t, []string{"topic-a", "topic-b"}, nil)
 
@@ -1878,32 +1864,23 @@ func TestAAO_S4_DoneIsNoop(t *testing.T) {
 	assert.Empty(t, *promoteCalls)
 }
 
-// TestAAO_S1p_OffsetSyncPaused would cover matrix row A-S1p (fenced, with
-// consumer offset sync paused). Deferred: offset-sync-paused coverage not yet added.
-func TestAAO_S1p_OffsetSyncPaused(t *testing.T) {
-	t.Skip("offset-sync-paused row not yet covered")
-}
-
-// TestAAO_Layer2_KillInjection would cover Layer 2 of the matrix — proving a
-// real kill at point P (via a failure-injection harness) actually leaves
-// live state S, rather than constructing S directly via fakes as every
-// Layer-1 row above does. Deferred: the failure-injection harness itself is
-// a later build-order item.
-func TestAAO_Layer2_KillInjection(t *testing.T) {
-	t.Skip("failure-injection harness not yet built")
+// TestAAO_OffsetSyncPaused would cover a kill while fenced with consumer
+// offset sync paused. Not yet written.
+func TestAAO_OffsetSyncPaused(t *testing.T) {
+	t.Skip("not yet written: a kill while fenced with consumer offset sync paused")
 }
 
 // --- execute writes no files ---
 
-// TestOrchestrator_Execute_NoStateFileWritten drives a full from-zero AAO run,
+// TestOrchestrator_Execute_WritesNoFiles drives a full from-zero AAO run,
 // and its idempotent second run once reconcile reports nothing left, in a real
 // temporary working directory — the same harness (newAAOKillPointOrchestrator)
-// and Result fixtures (aaoFullResult/aaoDoneResult) as TestAAO_S0_FreshFullRun
+// and Result fixtures (aaoFullResult/aaoDoneResult) as TestAAO_FreshFullRun
 // — and asserts that neither run writes any file there. The idempotency half
 // is covered by the kill-point matrix above; asserting it again here (zero
 // additional patches/promotes on the second run) confirms the no-file
 // guarantee holds across the same two-run shape.
-func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
+func TestOrchestrator_Execute_WritesNoFiles(t *testing.T) {
 	dir := t.TempDir()
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
@@ -1922,7 +1899,7 @@ func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
 
 	// Second, idempotent run: a fresh reconcile now reports nothing left at
 	// all (aaoDoneResult). No new gateway patch or promote call is issued —
-	// same contract TestAAO_S0_FreshFullRun pins — and still no file appears.
+	// same contract TestAAO_FreshFullRun pins — and still no file appears.
 	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
 	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
 	require.NoError(t, err)
