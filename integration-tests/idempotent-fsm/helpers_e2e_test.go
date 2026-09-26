@@ -45,11 +45,16 @@ const kcpBinary = "/workspace/kcp"
 // mismatch would surface as the interrupt never firing (the run completes),
 // which the resume tests catch by requiring a non-zero exit.
 const (
-	cpFenced          = "fenced"
-	cpPromoted        = "promoted"
-	cpSwitched        = "switched"
-	cpPromoteAccepted = killpoint.AfterPromoteAccepted // intra-step: accepted, not yet STOPPED
+	cpFenced           = "fenced"
+	cpOffsetSyncPaused = "offset_sync_paused" // static only
+	cpPromoted         = "promoted"
+	cpSwitched         = "switched"
+	cpPromoteAccepted  = killpoint.AfterPromoteAccepted // intra-step: accepted, not yet STOPPED
 )
+
+// offsetSyncEnableKey is the cluster-link config the static FSM's offset-sync
+// pause disables and its restore sets back to the declared baseline.
+const offsetSyncEnableKey = "consumer.offset.sync.enable"
 
 // executeTimeout bounds a single execute invocation (a full cutover incl.
 // gateway rollouts and mirror-STOPPED waits).
@@ -178,6 +183,23 @@ func (e *env) manifestPath(name string) string {
 // the rendered credential files setup.sh already staged. Returns the in-pod path.
 func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
 	t.Helper()
+	return e.renderManifest(t, name, topics, "")
+}
+
+// writeManifestPausingOffsetSync is writeManifest with
+// spec.clusterLink.pauseConsumerOffsetSync set, declaring an "enabled"
+// baseline — the static FSM then disables consumer.offset.sync.enable right
+// after fencing and restores it to enabled after switchover.
+func (e *env) writeManifestPausingOffsetSync(t *testing.T, name string, topics []string) string {
+	t.Helper()
+	return e.renderManifest(t, name, topics,
+		"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n")
+}
+
+// renderManifest writes the manifest for writeManifest and its variants;
+// clusterLinkExtra is appended verbatim to the spec.clusterLink block.
+func (e *env) renderManifest(t *testing.T, name string, topics []string, clusterLinkExtra string) string {
+	t.Helper()
 	var tb strings.Builder
 	for _, tp := range topics {
 		fmt.Fprintf(&tb, "          - %q\n", tp)
@@ -205,7 +227,7 @@ spec:
     bootstrapServers:
       - %q
     linkCredentials: /workspace/rendered/link-creds.yaml
-  gateway:
+%s  gateway:
     namespace: %q
     cr-name: %q
   route:
@@ -214,7 +236,7 @@ spec:
       - topics:
 %s    targetStreamingDomain: %q
 `, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
-		e.linkName, e.destBootstrap, e.namespace, e.gateway, e.route, tb.String(), e.destDomain)
+		e.linkName, e.destBootstrap, clusterLinkExtra, e.namespace, e.gateway, e.route, tb.String(), e.destDomain)
 
 	path := filepath.Join(e.renderedDir, name+".yaml")
 	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write generated manifest")
@@ -245,6 +267,17 @@ func (e *env) mirrorStatus(t *testing.T, ctx context.Context) map[string]string 
 		out[m.MirrorTopicName] = m.MirrorStatus
 	}
 	return out
+}
+
+// linkOffsetSync reads the live cluster link's consumer.offset.sync.enable value
+// ("true" or "false").
+func (e *env) linkOffsetSync(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	cfgs, err := e.linkSvc.ListConfigs(ctx, e.linkConfig())
+	require.NoError(t, err, "list cluster link configs")
+	v, ok := cfgs[offsetSyncEnableKey]
+	require.Truef(t, ok, "cluster link has no %s config", offsetSyncEnableKey)
+	return v
 }
 
 // runKCP execs the in-pod kcp binary as a local subprocess (this test already

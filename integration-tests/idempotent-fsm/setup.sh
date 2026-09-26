@@ -78,11 +78,11 @@ else
 fi
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-tbm-link}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
-# Each kill-point test promotes a disjoint 5-topic slice in 051..075 (see the
+# Each kill-point test promotes a disjoint 5-topic slice in 051..080 (see the
 # *_test.go files); promotion is irreversible, so all must exist AND be mirrored.
-# The pool runs 001..075, all mirrored; 001..050 are unused headroom.
-SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-75}"   # tbm-topic-001..075 on source
-MIRRORED_COUNT="${MIRRORED_COUNT:-75}"           # 001..075 all mirrored on the link
+# The pool runs 001..080, all mirrored; 001..050 are unused headroom.
+SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-80}"   # tbm-topic-001..080 on source
+MIRRORED_COUNT="${MIRRORED_COUNT:-80}"           # 001..080 all mirrored on the link
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —
 # the input for the "exists on target but is not a mirror" halt, which verdict.go
 # classifies only when a topic is onSource && MirrorNone && onTarget.
@@ -370,9 +370,16 @@ echo "  ✓ source topics created"
 # --- KafkaRestClass (shared) ---
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kafka-rest-class.yaml"
 
-# --- Cluster link mirroring 001..MIRRORED_COUNT, offset sync DISABLED ---
-# The resume tests require consumer.offset.sync.enable OFF on the link.
-echo "Creating cluster link ${CLUSTER_LINK_NAME} mirroring ${MIRRORED_COUNT} topics..."
+# --- Cluster link mirroring 001..MIRRORED_COUNT ---
+# consumer.offset.sync.enable: a dynamic route requires it OFF (a reconcile
+# precondition). A static route doesn't check it; the static suite starts it ON
+# so the offset-sync pause test can observe kcp disabling and restoring it.
+if [ "${GATEWAY_MODE}" = "static" ]; then
+  LINK_OFFSET_SYNC="true"
+else
+  LINK_OFFSET_SYNC="false"
+fi
+echo "Creating cluster link ${CLUSTER_LINK_NAME} mirroring ${MIRRORED_COUNT} topics (consumer.offset.sync.enable=${LINK_OFFSET_SYNC})..."
 LINK_CR="${RENDERED_DIR}/cluster-link.yaml"
 {
   cat <<EOF
@@ -394,7 +401,7 @@ EOF
   for i in $(seq 1 "${MIRRORED_COUNT}"); do printf '    - name: %s\n' "$(topic_name "$i")"; done
   cat <<EOF
   configs:
-    consumer.offset.sync.enable: "false"
+    consumer.offset.sync.enable: "${LINK_OFFSET_SYNC}"
 EOF
 } > "${LINK_CR}"
 kubectl --context "${PROFILE}" apply -f "${LINK_CR}"

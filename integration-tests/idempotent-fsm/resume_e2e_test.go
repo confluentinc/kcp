@@ -18,9 +18,18 @@ import (
 // destination, and NO stale fence. Every run's raw output and the before/after
 // world state are logged by the harness for human review.
 func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []string, assertPartial func(t *testing.T, ctx context.Context)) {
+	runResumeScenarioWith(t, e, checkpoint, name, topics, e.writeManifest, assertPartial, nil)
+}
+
+// runResumeScenarioWith is runResumeScenario with the manifest writer supplied
+// by the caller, plus an optional assertFinal run after the standard end-state
+// checks.
+func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics []string,
+	writeManifest func(t *testing.T, name string, topics []string) string,
+	assertPartial, assertFinal func(t *testing.T, ctx context.Context)) {
 	ctx := context.Background()
 	e.resetStaticRoute(t, ctx) // static: reclaim the whole route from any prior migration (no-op on dynamic)
-	mani := e.writeManifest(t, name, topics)
+	mani := writeManifest(t, name, topics)
 
 	e.snapshot(t, ctx, "BEFORE "+name+" (expect mirrors ACTIVE, route → source)", topics)
 
@@ -44,6 +53,9 @@ func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []s
 		require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED after the resumed migration completes", tp)
 		require.Truef(t, e.isSwitchedToTarget(t, afterCR, tp), "%s must be switched to the target domain after completion", tp)
 		require.Falsef(t, e.isFenced(t, afterCR, tp), "%s must NOT be fenced after completion — a switched route carries no kcp fence", tp)
+	}
+	if assertFinal != nil {
+		assertFinal(t, ctx)
 	}
 	t.Logf("\n✅ RESULT: interrupted at %q, re-run drove to completion (mirrors STOPPED, route switched, fence cleared).", checkpoint)
 }
@@ -111,4 +123,38 @@ func TestResume_InterruptAfterSwitch(t *testing.T) {
 			require.Falsef(t, e.isFenced(t, cr, tp), "%s must already be unfenced — switch cleared the fence", tp)
 		}
 	})
+}
+
+// Kill after the OFFSET-SYNC PAUSE (static only; the dynamic FSM has no pause
+// stage). The manifest sets spec.clusterLink.pauseConsumerOffsetSync with an
+// "enabled" baseline, so right after fencing the static FSM disables the link's
+// consumer.offset.sync.enable. Partial world = route fenced, mirrors still
+// ACTIVE, offset sync off. The resume must re-apply the pause, complete, and
+// restore offset sync to the baseline. setup.sh starts the static suite's link
+// with offset sync on, so both the pause and the restore are observable. Slice
+// tbm-topic-076..080.
+func TestResume_InterruptAfterOffsetSyncPause(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: the dynamic FSM has no offset-sync pause stage")
+	}
+	topics := e.topicRange(76, 80)
+	require.Equal(t, "true", e.linkOffsetSync(t, context.Background()),
+		"setup.sh must start the static suite's cluster link with consumer offset sync on")
+
+	runResumeScenarioWith(t, e, cpOffsetSyncPaused, "resume-offset-sync-pause", topics, e.writeManifestPausingOffsetSync,
+		func(t *testing.T, ctx context.Context) {
+			cr := e.readCR(t, ctx)
+			ms := e.mirrorStatus(t, ctx)
+			for _, tp := range topics {
+				require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — the pause runs after the fence step", tp)
+				require.Equalf(t, "ACTIVE", ms[tp], "%s must still be ACTIVE — interrupt happened before promote", tp)
+			}
+			require.Equal(t, "false", e.linkOffsetSync(t, ctx),
+				"the pause stage must have disabled consumer offset sync on the cluster link")
+		},
+		func(t *testing.T, ctx context.Context) {
+			require.Equal(t, "true", e.linkOffsetSync(t, ctx),
+				"the resumed run must restore consumer offset sync to the declared baseline (enabled)")
+		})
 }

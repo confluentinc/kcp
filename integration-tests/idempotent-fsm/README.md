@@ -28,10 +28,11 @@ and each topic's mirror status. Nothing is sent to `/dev/null`.
 
 ## Topic pool
 
-`setup.sh` seeds `tbm-topic-001..075`, all mirrored. Promotion is irreversible,
+`setup.sh` seeds `tbm-topic-001..080`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `051..075`: baseline `051..055`, after-fence `056..060`, after-promote
-`061..065`, after-switch `066..070`, during-promote `071..075`. On the dynamic
+in `051..080`: baseline `051..055`, after-fence `056..060`, after-promote
+`061..065`, after-switch `066..070`, during-promote `071..075`,
+after-offset-sync-pause `076..080` (static only). On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
 resets the route to source (`resetStaticRoute`).
 
@@ -60,6 +61,9 @@ make test-idempotent-fsm-teardown
 New suite (2026-09-23), local on `feat/idempotent-migration-fsm`. Covers **both
 routes** — dynamic/TBM and static/AAO (`GATEWAY_MODE=dynamic|static`) — across all
 five kill-points: baseline, after-fence, after-promote, during-promote
-(intra-promote / PENDING_STOPPED), after-switch. Env-var names are still
+(intra-promote / PENDING_STOPPED), after-switch — plus, on static,
+after-offset-sync-pause (`pauseConsumerOffsetSync` on; the static suite's link
+starts with consumer offset sync enabled so the pause and restore are
+observable). Env-var names are still
 `KCP_TBM_*` (inherited from the copied `migration-tbm` spine) pending a cosmetic
 rename.
