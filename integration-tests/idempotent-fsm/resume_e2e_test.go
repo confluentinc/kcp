@@ -158,3 +158,45 @@ func TestResume_InterruptAfterOffsetSyncPause(t *testing.T) {
 				"the resumed run must restore consumer offset sync to the declared baseline (enabled)")
 		})
 }
+
+// midBatchPromoteSize is TestResume_InterruptMidBatch's promote batch size: the
+// first promote request takes this many of the slice's topics, the rest stay
+// ACTIVE until a later batch.
+const midBatchPromoteSize = 2
+
+// Kill MID-BATCH: the manifest sets spec.defaultPolicies.promoteBatchSize, so
+// the first promote request takes midBatchPromoteSize of the 5 topics, and the
+// kill fires right after it is accepted (killpoint.AfterPromoteAccepted).
+// Partial world = route fenced, exactly midBatchPromoteSize mirrors promoting or
+// promoted (PENDING_STOPPED/STOPPED), the rest still ACTIVE. Reconcile gives
+// each topic its own verdict (AwaitStopped/SwitchOnly vs Migratable), so the
+// resume must finish the already-promoting mirrors without re-promoting them,
+// promote the ACTIVE ones, and switch all 5. Slice tbm-topic-081..085.
+func TestResume_InterruptMidBatch(t *testing.T) {
+	e := newEnv()
+	topics := e.topicRange(81, 85)
+	writeManifest := func(t *testing.T, name string, topics []string) string {
+		return e.writeManifestWithPromoteBatchSize(t, name, topics, midBatchPromoteSize)
+	}
+	runResumeScenarioWith(t, e, cpPromoteAccepted, "resume-mid-batch", topics, writeManifest,
+		func(t *testing.T, ctx context.Context) {
+			cr := e.readCR(t, ctx)
+			ms := e.mirrorStatus(t, ctx)
+			var promoting, active []string
+			for _, tp := range topics {
+				require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — promote runs after the fence step", tp)
+				switch ms[tp] {
+				case "PENDING_STOPPED", "STOPPED":
+					promoting = append(promoting, tp)
+				case "ACTIVE":
+					active = append(active, tp)
+				default:
+					t.Fatalf("%s: unexpected mirror status %q after the mid-batch interrupt", tp, ms[tp])
+				}
+			}
+			require.Lenf(t, promoting, midBatchPromoteSize,
+				"exactly one batch of %d must have been promoted before the kill, got %v", midBatchPromoteSize, promoting)
+			require.Lenf(t, active, len(topics)-midBatchPromoteSize,
+				"the rest of the slice must still be ACTIVE, got %v", active)
+		}, nil)
+}

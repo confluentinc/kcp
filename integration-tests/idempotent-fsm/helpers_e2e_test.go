@@ -183,7 +183,7 @@ func (e *env) manifestPath(name string) string {
 // the rendered credential files setup.sh already staged. Returns the in-pod path.
 func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
 	t.Helper()
-	return e.renderManifest(t, name, topics, "")
+	return e.renderManifest(t, name, topics, "", "")
 }
 
 // writeManifestPausingOffsetSync is writeManifest with
@@ -193,12 +193,22 @@ func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
 func (e *env) writeManifestPausingOffsetSync(t *testing.T, name string, topics []string) string {
 	t.Helper()
 	return e.renderManifest(t, name, topics,
-		"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n")
+		"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", "")
+}
+
+// writeManifestWithPromoteBatchSize is writeManifest with
+// spec.defaultPolicies.promoteBatchSize set, so the promote step submits at most
+// n topics per request and waits for each batch to reach STOPPED before the next.
+func (e *env) writeManifestWithPromoteBatchSize(t *testing.T, name string, topics []string, n int) string {
+	t.Helper()
+	return e.renderManifest(t, name, topics, "",
+		fmt.Sprintf("  defaultPolicies:\n    promoteBatchSize: %d\n", n))
 }
 
 // renderManifest writes the manifest for writeManifest and its variants;
-// clusterLinkExtra is appended verbatim to the spec.clusterLink block.
-func (e *env) renderManifest(t *testing.T, name string, topics []string, clusterLinkExtra string) string {
+// clusterLinkExtra is appended verbatim to the spec.clusterLink block and
+// specExtra to the end of spec.
+func (e *env) renderManifest(t *testing.T, name string, topics []string, clusterLinkExtra, specExtra string) string {
 	t.Helper()
 	var tb strings.Builder
 	for _, tp := range topics {
@@ -235,8 +245,9 @@ spec:
     topicGroup:
       - topics:
 %s    targetStreamingDomain: %q
-`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
-		e.linkName, e.destBootstrap, clusterLinkExtra, e.namespace, e.gateway, e.route, tb.String(), e.destDomain)
+%s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
+		e.linkName, e.destBootstrap, clusterLinkExtra, e.namespace, e.gateway, e.route, tb.String(), e.destDomain,
+		specExtra)
 
 	path := filepath.Join(e.renderedDir, name+".yaml")
 	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write generated manifest")

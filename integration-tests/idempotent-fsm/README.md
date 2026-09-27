@@ -20,19 +20,19 @@ into the runner pod, and runs the suite there.
 
 ## Tangible evidence
 
-Every test emits, via the harness, into `go test -v` output (captured to
-`.reports/<test>.log`): the live **world state before**, the **full raw kcp
+Every test emits, via the harness, into `go test -v` output (saved by `run.sh`
+to `.reports/<date>-<time>-<mode>[-<selector>].log`): the live **world state before**, the **full raw kcp
 output** of each run (never truncated; an interrupted run shows its non-zero
 exit), and the **world state after** — the gateway route's fence/routing rules
 and each topic's mirror status. Nothing is sent to `/dev/null`.
 
 ## Topic pool
 
-`setup.sh` seeds `tbm-topic-001..080`, all mirrored. Promotion is irreversible,
+`setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `051..080`: baseline `051..055`, after-fence `056..060`, after-promote
+in `051..085`: baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
-after-offset-sync-pause `076..080` (static only). On the dynamic
+after-offset-sync-pause `076..080` (static only), mid-batch `081..085`. On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
 resets the route to source (`resetStaticRoute`).
 
@@ -69,6 +69,8 @@ five kill-points: baseline, after-fence, after-promote, during-promote
 (intra-promote / PENDING_STOPPED), after-switch — plus, on static,
 after-offset-sync-pause (`pauseConsumerOffsetSync` on; the static suite's link
 starts with consumer offset sync enabled so the pause and restore are
-observable). Env-var names are still
+observable). Both modes also cover a mid-batch kill: with
+`promoteBatchSize: 2`, the run is killed after the first batch of 2 is
+accepted, leaving 2 mirrors promoting and 3 ACTIVE. Env-var names are still
 `KCP_TBM_*` (inherited from the copied `migration-tbm` spine) pending a cosmetic
 rename.
