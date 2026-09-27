@@ -13,9 +13,11 @@
 # tbm-rest-credentials Secret -> pod-spec env (see kcp-runner.yaml). It is NEVER
 # put on this kubectl exec argv. Only non-secret KCP_TBM_* vars are passed here.
 #
-# Every run's full output — build steps plus each test's before/after world
-# snapshots and raw kcp runs — is also saved to
-# .reports/<date>-<time>-<mode>[-<selector>].log (gitignored).
+# Every run is saved to .reports/<date>-<time>-<mode>/ (gitignored): run.log is
+# the whole run, and each migration test gets its own folder holding the
+# manifest it ran, a Markdown report per checkpoint (before.md,
+# after-interrupt.md, after-resume.md), kcp's raw output per run, and test.log
+# (its slice of run.log).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,11 +39,10 @@ RUN_SELECTOR=""
 [ -n "${1:-}" ] && RUN_SELECTOR="-test.run ${1}"
 GOTEST_FLAGS="${GOTEST_FLAGS:-}"
 
-REPORTS_DIR="${SCRIPT_DIR}/.reports"
-REPORT_SUFFIX=""
-[ -n "${1:-}" ] && REPORT_SUFFIX="-$(printf '%s' "${1}" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-60)"
-REPORT="${REPORTS_DIR}/$(date +%Y-%m-%d-%H%M%S)-${KCP_TBM_GATEWAY_MODE}${REPORT_SUFFIX}.log"
-mkdir -p "${REPORTS_DIR}"
+RUN_ID="$(date +%Y-%m-%d-%H%M%S)-${KCP_TBM_GATEWAY_MODE}"
+RUN_DIR="${SCRIPT_DIR}/.reports/${RUN_ID}"
+POD_RUN_DIR="/workspace/reports/${RUN_ID}"
+mkdir -p "${RUN_DIR}"
 
 main() {
   # main runs inside the tee pipeline below, where the caller's errexit is off;
@@ -89,6 +90,8 @@ main() {
   done
 
   echo ""
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${RUNNER}" -- mkdir -p "${POD_RUN_DIR}"
+
   echo "=== Running the idempotent-fsm suite in-cluster ==="
   # Only non-secret KCP_TBM_* are passed on the exec line. KCP_TBM_RENDERED_DIR is
   # rewritten to the in-pod path. The destination SASL user/password are already in
@@ -97,6 +100,7 @@ main() {
   kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${RUNNER}" -- env \
     KCP_TBM_NAMESPACE="${KCP_TBM_NAMESPACE}" \
     KCP_TBM_RENDERED_DIR="/workspace/rendered" \
+    KCP_TBM_REPORTS_DIR="${POD_RUN_DIR}" \
     KCP_TBM_GATEWAY_MODE="${KCP_TBM_GATEWAY_MODE}" \
     KCP_TBM_GATEWAY_NAME="${KCP_TBM_GATEWAY_NAME}" \
     KCP_TBM_ROUTE_NAME="${KCP_TBM_ROUTE_NAME}" \
@@ -112,10 +116,24 @@ main() {
     /workspace/idempotent-fsm-e2e.test -test.v ${RUN_SELECTOR} ${GOTEST_FLAGS}
 }
 
-# Output goes to the terminal and the report; the exit code is main's.
+# Output goes to the terminal and run.log; the exit code is main's.
 set +e
-main 2>&1 | tee "${REPORT}"
+main 2>&1 | tee "${RUN_DIR}/run.log"
 status=${PIPESTATUS[0]}
 set -e
-echo "Report saved: ${REPORT}"
+
+# Whatever the result, copy the tests' report folders out of the runner pod,
+# then give each folder its test's slice of run.log (from its `=== RUN` line to
+# its `--- PASS/FAIL/SKIP` line).
+if kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${RUNNER}" -- test -d "${POD_RUN_DIR}" 2>/dev/null; then
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${RUNNER}:${POD_RUN_DIR}/." "${RUN_DIR}/" >/dev/null ||
+    echo "WARN: could not copy the per-test reports out of ${RUNNER}" >&2
+fi
+for dir in "${RUN_DIR}"/*/; do
+  [ -d "${dir}" ] || continue
+  name="$(basename "${dir}")"
+  awk -v start="=== RUN   ${name}" -v end="^--- (PASS|FAIL|SKIP): ${name} " \
+    '$0 == start { on = 1 } on { print } on && $0 ~ end { exit }' "${RUN_DIR}/run.log" > "${dir}test.log"
+done
+echo "Reports saved: ${RUN_DIR}"
 exit "${status}"

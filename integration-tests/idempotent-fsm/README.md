@@ -20,11 +20,30 @@ into the runner pod, and runs the suite there.
 
 ## Tangible evidence
 
-Every test emits, via the harness, into `go test -v` output (saved by `run.sh`
-to `.reports/<date>-<time>-<mode>[-<selector>].log`): the live **world state before**, the **full raw kcp
-output** of each run (never truncated; an interrupted run shows its non-zero
-exit), and the **world state after** — the gateway route's fence/routing rules
-and each topic's mirror status. Nothing is sent to `/dev/null`.
+Every test emits, via the harness, into `go test -v` output: the live **world
+state before**, the **full raw kcp output** of each run (never truncated; an
+interrupted run shows its non-zero exit), and the **world state after** — the
+gateway route's fence/routing rules, each topic's mirror status, and the cluster
+link's `consumer.offset.sync.enable`. Nothing is sent to `/dev/null`.
+
+`run.sh` saves every run to `.reports/<date>-<time>-<mode>/` (gitignored):
+
+```
+.reports/2026-09-28-101500-static/
+├── run.log                          ← the whole run, including the helper checks
+└── TestResume_InterruptAfterFence/  ← one folder per migration test
+    ├── manifest.yaml                ← the manifest kcp ran with
+    ├── before.md                    ← checkpoint reports: gateway route (full CR
+    ├── after-interrupt.md           ←   collapsed), the test's mirror statuses, and
+    ├── after-resume.md              ←   consumer.offset.sync.enable
+    ├── kcp-run-1-interrupted.log    ← kcp's raw output, per run
+    ├── kcp-run-2-resume.log
+    └── test.log                     ← this test's slice of run.log
+```
+
+The baseline test's folder has `before.md`, `after.md`, `kcp-run-1-execute.log`
+and `kcp-run-2-dry-run.log` instead. The folders are copied out of the runner pod
+whether the tests pass or fail, so a failed test keeps everything it captured.
 
 ## Topic pool
 
@@ -56,10 +75,9 @@ make test-idempotent-fsm-run RUN=TestBaseline_FullMigrationCompletes
 make test-idempotent-fsm-teardown
 ```
 
-Every run prints its evidence — each test's before/after world snapshots and
-raw kcp runs — and `run.sh` also saves the whole output to
-`.reports/<date>-<time>-<mode>[-<selector>].log` (gitignored), printing the path
-at the end.
+Every run prints its evidence and `run.sh` saves it to
+`.reports/<date>-<time>-<mode>/` (see [Tangible evidence](#tangible-evidence)),
+printing the path at the end.
 
 ## Status
 

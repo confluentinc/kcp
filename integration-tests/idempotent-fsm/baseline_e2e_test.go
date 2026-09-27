@@ -28,19 +28,20 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	e.resetStaticRoute(t, ctx) // static: start from a pristine (source-bound, unfenced) route
 	topics := e.topicRange(51, 55)
 	mani := e.writeManifest(t, "baseline", topics)
+	e.saveManifest(t, mani)
 
-	e.snapshot(t, ctx, "BEFORE — pristine (expect mirrors ACTIVE, route → source-domain, fencing empty)", topics)
+	e.snapshot(t, ctx, "before", "BEFORE — pristine (expect mirrors ACTIVE, route → source-domain, fencing empty)", topics)
 
-	out, err := e.runKCP(t, "", "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCP(t, "kcp-run-1-execute.log", "", "migration", "execute", "--migration-yaml", mani)
 	require.NoError(t, err, "an uninterrupted execute must complete against the live gateway")
 	require.Contains(t, strings.ToLower(out), "migration complete", "execute must report completion")
 
-	e.snapshot(t, ctx, "AFTER execute (expect mirrors STOPPED, route → destination-domain, fencing cleared)", topics)
+	e.snapshot(t, ctx, "after", "AFTER execute (expect mirrors STOPPED, route → destination-domain, fencing cleared)", topics)
 
 	// Idempotency baseline: with the migration complete, a fresh reconcile must
 	// classify every topic Unchanged and plan zero work — the property every
 	// resume test relies on.
-	out2, err2 := e.runKCP(t, "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	out2, err2 := e.runKCP(t, "kcp-run-2-dry-run.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
 	require.NoError(t, err2, "a dry-run on a completed migration must succeed")
 	assert.Contains(t, out2, "0 to migrate", "a completed migration must plan zero further work")
 	assert.Contains(t, out2, "unchanged", "a completed migration's topics must classify as Unchanged")

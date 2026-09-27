@@ -80,6 +80,7 @@ type env struct {
 	saslUser          string
 	saslPassword      string
 	sourceBootstrap   string
+	reportsDir        string // in-pod folder for this run's per-test reports; "" = off
 
 	svc     *gateway.K8sService
 	linkSvc clusterlink.Service
@@ -103,6 +104,7 @@ func newEnv() *env {
 		saslUser:          os.Getenv("KCP_TBM_DEST_SASL_USER"),
 		saslPassword:      os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
 		sourceBootstrap:   os.Getenv("KCP_TBM_SOURCE_BOOTSTRAP"),
+		reportsDir:        os.Getenv("KCP_TBM_REPORTS_DIR"),
 
 		svc:     gateway.NewK8sService(""),
 		linkSvc: clusterlink.NewConfluentCloudService(http.DefaultClient),
@@ -145,7 +147,7 @@ func (e *env) resetStaticRoute(t *testing.T, ctx context.Context) {
 		"gateway must accept the route reset")
 
 	t.Logf("\n♻️  STATIC ROUTE RESET ▸ %q flipped back to source domain %q, fence dropped (next migration starts clean)", e.route, e.sourceDomain)
-	e.snapshot(t, ctx, "AFTER static route reset (expect route → source-domain, fence cleared)", nil)
+	e.snapshot(t, ctx, "", "AFTER static route reset (expect route → source-domain, fence cleared)", nil)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -294,9 +296,10 @@ func (e *env) linkOffsetSync(t *testing.T, ctx context.Context) string {
 // runKCP execs the in-pod kcp binary as a local subprocess (this test already
 // runs inside the cluster). When cancelAfter is non-empty it sets the killpoint
 // env var so the run cancels itself right after that checkpoint (simulating an
-// abrupt Ctrl-C); empty means a normal, uninterrupted run. Returns combined
-// stdout+stderr and the process error.
-func (e *env) runKCP(t *testing.T, cancelAfter string, args ...string) (string, error) {
+// abrupt Ctrl-C); empty means a normal, uninterrupted run. The command, its full
+// output and its exit result are also saved as reportName in the test's report
+// folder. Returns combined stdout+stderr and the process error.
+func (e *env) runKCP(t *testing.T, reportName, cancelAfter string, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), executeTimeout)
 	defer cancel()
@@ -320,31 +323,102 @@ func (e *env) runKCP(t *testing.T, cancelAfter string, args ...string) (string, 
 		"└─────────────────────────────────────────────────────────────────────────────┘\n"+
 		"%s\n"+
 		"───── process exit: err=%v ─────\n", desc, out, err)
+	e.saveReport(t, reportName, fmt.Sprintf("$ %s\n\n%s\n───── process exit: err=%v ─────\n", desc, out, err))
 	return string(out), err
 }
 
-// snapshot logs a tangible before/after picture of the live world for the given
-// topics: the gateway route's fence + routing rules (verbatim from the live CR)
-// and each topic's live mirror status. Called before and after every run so a
-// human reviewer can see exactly what changed.
-func (e *env) snapshot(t *testing.T, ctx context.Context, label string, topics []string) {
+// testReportDir is this test's folder in the run's reports dir, created on first
+// use; "" when reports are off (KCP_TBM_REPORTS_DIR unset).
+func (e *env) testReportDir(t *testing.T) string {
 	t.Helper()
-	rules := e.routeYAML(t, e.readCR(t, ctx))
+	if e.reportsDir == "" {
+		return ""
+	}
+	dir := filepath.Join(e.reportsDir, t.Name())
+	require.NoError(t, os.MkdirAll(dir, 0o755), "create the test's report folder")
+	return dir
+}
+
+// saveReport writes one file into the test's report folder; a no-op when
+// reports are off.
+func (e *env) saveReport(t *testing.T, name, content string) {
+	t.Helper()
+	dir := e.testReportDir(t)
+	if dir == "" {
+		return
+	}
+	require.NoErrorf(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644), "write report %s", name)
+}
+
+// saveManifest copies the manifest at path into the test's report folder as
+// manifest.yaml.
+func (e *env) saveManifest(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err, "read the generated manifest")
+	e.saveReport(t, "manifest.yaml", string(raw))
+}
+
+// offsetSyncForReport reads the cluster link's consumer.offset.sync.enable for
+// a checkpoint report without failing the test when it can't.
+func (e *env) offsetSyncForReport(ctx context.Context) string {
+	cfgs, err := e.linkSvc.ListConfigs(ctx, e.linkConfig())
+	if err != nil {
+		return "(unavailable: " + err.Error() + ")"
+	}
+	if v, ok := cfgs[offsetSyncEnableKey]; ok {
+		return v
+	}
+	return "(not set)"
+}
+
+// snapshot logs a tangible before/after picture of the live world for the given
+// topics: the gateway route's fence + routing rules (verbatim from the live CR),
+// each topic's live mirror status, and the cluster link's
+// consumer.offset.sync.enable. Called before and after every run so a human
+// reviewer can see exactly what changed. When report is non-empty the same
+// picture, plus the full gateway CR, is saved as <report>.md in the test's
+// report folder.
+func (e *env) snapshot(t *testing.T, ctx context.Context, report, label string, topics []string) {
+	t.Helper()
+	cr := e.readCR(t, ctx)
+	rules := e.routeYAML(t, cr)
 	ms := e.mirrorStatus(t, ctx)
+	offsetSync := e.offsetSyncForReport(ctx)
+	status := func(tp string) string {
+		if s := ms[tp]; s != "" {
+			return s
+		}
+		return "<no-mirror>"
+	}
 	var mb strings.Builder
 	for _, tp := range topics {
-		s := ms[tp]
-		if s == "" {
-			s = "<no-mirror>"
-		}
-		fmt.Fprintf(&mb, "      %s: %s\n", tp, s)
+		fmt.Fprintf(&mb, "      %s: %s\n", tp, status(tp))
 	}
 	t.Logf("\n"+
 		"╔═══════════════════════════════════════════════════════════════════════════════╗\n"+
 		"║ WORLD STATE ▸ %s\n"+
 		"╚═══════════════════════════════════════════════════════════════════════════════╝\n"+
-		"  gateway route %q rules (live CR):\n%s\n  mirror status:\n%s",
-		label, e.route, indentLines(rules, "      "), mb.String())
+		"  gateway route %q rules (live CR):\n%s\n  mirror status:\n%s"+
+		"  cluster link %s: %s\n",
+		label, e.route, indentLines(rules, "      "), mb.String(), offsetSyncEnableKey, offsetSync)
+
+	if report == "" {
+		return
+	}
+	var md strings.Builder
+	fmt.Fprintf(&md, "# %s\n\n", label)
+	fmt.Fprintf(&md, "`%s` · captured %s\n\n", t.Name(), time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&md, "## Gateway route `%s`\n\n```yaml\n%s\n```\n\n", e.route, strings.TrimRight(rules, "\n"))
+	fmt.Fprintf(&md, "<details>\n<summary>Full Gateway CR <code>%s/%s</code></summary>\n\n```yaml\n%s\n```\n\n</details>\n\n",
+		e.namespace, e.gateway, strings.TrimRight(string(cr), "\n"))
+	md.WriteString("## Mirror topics\n\n| Topic | Status |\n|---|---|\n")
+	for _, tp := range topics {
+		fmt.Fprintf(&md, "| `%s` | %s |\n", tp, status(tp))
+	}
+	fmt.Fprintf(&md, "\n## Cluster link `%s`\n\n| Config | Value |\n|---|---|\n| `%s` | `%s` |\n",
+		e.linkName, offsetSyncEnableKey, offsetSync)
+	e.saveReport(t, report+".md", md.String())
 }
 
 // routeObj returns the suite's route from a gateway CR (nil if absent).
