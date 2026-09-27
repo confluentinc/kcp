@@ -8,7 +8,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // RolloutMechanism names how a gateway config change reached the pods, as
@@ -64,7 +63,7 @@ var gatewayRollConfirmationWindow = 10 * time.Second
 // decided to replace the pods" that holds even when the roll starts and
 // finishes between two polls.
 func (s *K8sService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build config: %w", err)
 	}

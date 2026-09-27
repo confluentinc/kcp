@@ -14,7 +14,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // defaultKafkaVersion mirrors the version the other migrate/scan admin builders
@@ -203,7 +202,7 @@ func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConf
 // buildGatewaySource does. gateway.K8sService itself does not expose a
 // clientset (each of its methods builds one internally, ad hoc, from its own
 // kubeConfigPath — see internal/services/gateway/gateway.go), so this
-// mirrors that same clientcmd.BuildConfigFromFlags + kubernetes.NewForConfig
+// mirrors that same gateway.RESTConfig + kubernetes.NewForConfig
 // pattern directly rather than hand-rolling a new one. Built unconditionally
 // (mirroring every other provider builder here) even for a dynamic-route
 // manifest, which will simply never invoke it — see engine.go's Run.
@@ -212,7 +211,7 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 	if err != nil {
 		return nil, err
 	}
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config, err := gateway.RESTConfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}

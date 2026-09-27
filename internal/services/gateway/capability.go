@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // CustomResourceDefinition coordinates, used to inspect what the *installed*
@@ -179,7 +178,7 @@ func (c Capability) InjectsConfigID() bool {
 // the live cluster. port is the port serving GET /config; 0 selects
 // DefaultGatewayConfigPort.
 func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to build config: %w", err)
 	}
