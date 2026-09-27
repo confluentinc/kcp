@@ -49,12 +49,17 @@ Make targets wrap the scripts:
 # one-time (minutes): stand up the profile, gateway, link, topic pool
 GATEWAY_MODE=dynamic make test-idempotent-fsm-setup
 
-# run one test (or all); output is the report
+# run one test (or all)
 make test-idempotent-fsm-run RUN=TestBaseline_FullMigrationCompletes
 
 # when done
 make test-idempotent-fsm-teardown
 ```
+
+Every run prints its evidence — each test's before/after world snapshots and
+raw kcp runs — and `run.sh` also saves the whole output to
+`.reports/<date>-<time>-<mode>[-<selector>].log` (gitignored), printing the path
+at the end.
 
 ## Status
 
