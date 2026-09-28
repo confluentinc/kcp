@@ -276,6 +276,10 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
+		if step.Event == EventInitialize {
+			// A fresh registration has no topics until initialize runs.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
 		o.runReport.StageEnded(o.config.CurrentState)
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
