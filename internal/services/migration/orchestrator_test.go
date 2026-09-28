@@ -1311,7 +1311,7 @@ func TestOrchestrator_Execute_RerunOverPausedLink_ReappliesPauseIdempotently(t *
 	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
 }
 
-// captureStdout mirrors captureStderr (offset_sync_bookend_test.go) for the
+// captureStdout mirrors captureStderr (offset_sync_test.go) for the
 // reporter's progress stream.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
