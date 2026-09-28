@@ -79,7 +79,7 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
 	if len(toMigrate) == 0 {
-		return &Plan{Report: report, Mode: "dynamic"} // nothing to do; artifacts nil (no-op)
+		return &Plan{Report: report, Mode: "dynamic", NothingToDo: true}
 	}
 
 	// Build both artifacts from one pristine copy of the operator's rules, so the
@@ -202,7 +202,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		(len(toMigrate) > 0 || offsetSyncEnabled != in.OffsetSyncBaselineEnabled)
 	if len(toMigrate) == 0 {
 		report.RestoreOffsetSync = restoreOffsetSync
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: "static", NothingToDo: !restoreOffsetSync}
 	}
 
 	fenceFragment, err := BuildFenceFragment()

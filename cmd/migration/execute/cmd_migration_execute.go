@@ -43,7 +43,9 @@ Every run reads the manifest and the live cluster state via migplan.Reconcile, a
 the FSM always starts at uninitialized. Each step's action is idempotent, so a
 migration already partway through cutover walks forward re-applying
 already-completed steps as no-ops and picking up wherever the live state says work
-remains. Policy defaults and credentials are read FRESH from the
+remains. When reconcile finds nothing left to do (every topic already migrated and
+no consumer offset-sync restore owed), no state machine runs and execute reports
+that. Policy defaults and credentials are read FRESH from the
 manifest on every run, so they can be varied between runs or overridden with flags.
 
 Each spec.defaultPolicies value can also be overridden for a single run with its flag
@@ -222,6 +224,20 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
+	return executePlan(cmd, g, &config, reconcileResult, deps, runReport)
+}
+
+// executePlan acts on this run's reconcile result: it refuses what reconcile
+// refused, runs nothing when reconcile found nothing to do, and otherwise hands
+// the result to the route mode's state machine.
+func executePlan(
+	cmd *cobra.Command,
+	g *manifest.GatewayMigration,
+	config *migration.MigrationConfig,
+	reconcileResult *migplan.Result,
+	deps executorDependencies,
+	runReportPath string,
+) error {
 	if reconcileResult.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
 	}
@@ -237,13 +253,21 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 			g.Spec.Route.Name)
 	}
 
+	// Nothing to do: every topic is already migrated and no offset-sync
+	// restore is owed. No state machine runs and no service is built.
+	if reconcileResult.NothingToDo {
+		slog.Info("✅ nothing to do: no topic in the migration still needs migrating", "migration_id", config.MigrationId)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s — nothing to do: no topic in it still needs migrating\n", config.MigrationId)
+		return nil
+	}
+
 	switch mode {
 	case "dynamic":
-		return runDynamicBranch(cmd, g, &config, reconcileResult, deps)
+		return runDynamicBranch(cmd, g, config, reconcileResult, deps)
 	default:
 		// "static", and any value not yet recognized as dynamic — the static
 		// path is the safe default.
-		return runStaticBranch(cmd, g, &config, reconcileResult, deps, runReport)
+		return runStaticBranch(cmd, g, config, reconcileResult, deps, runReportPath)
 	}
 }
 

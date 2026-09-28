@@ -39,6 +39,10 @@ type Result struct {
 	// after the switch. Can be true with no topic left to migrate.
 	RestoreOffsetSync bool
 
+	// NothingToDo is reconcile.Plan.NothingToDo: not refused, no topic left to
+	// migrate and no offset-sync restore owed, so the run executes nothing.
+	NothingToDo bool
+
 	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
 	// server-managed metadata (managedFields, resourceVersion, uid,
 	// creationTimestamp, generation, status — see migplan/gatewayfile.go's
@@ -171,7 +175,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 
 func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
-		GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics
 		r.AwaitStopped = plan.Artifacts.AwaitStopped

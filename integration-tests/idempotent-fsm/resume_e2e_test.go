@@ -17,16 +17,16 @@ import (
 // reaches the clean, complete end-state — mirrors STOPPED, route switched to
 // destination, and NO stale fence. Every run's raw output and the before/after
 // world state are logged by the harness for human review.
-func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []string, assertPartial func(t *testing.T, ctx context.Context)) {
-	runResumeScenarioWith(t, e, checkpoint, name, topics, e.writeManifest, assertPartial, nil)
+func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []string, assertPartial func(t *testing.T, ctx context.Context)) (resumeOut string) {
+	return runResumeScenarioWith(t, e, checkpoint, name, topics, e.writeManifest, assertPartial, nil)
 }
 
 // runResumeScenarioWith is runResumeScenario with the manifest writer supplied
 // by the caller, plus an optional assertFinal run after the standard end-state
-// checks.
+// checks. Both return the resume run's output.
 func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics []string,
 	writeManifest func(t *testing.T, name string, topics []string) string,
-	assertPartial, assertFinal func(t *testing.T, ctx context.Context)) {
+	assertPartial, assertFinal func(t *testing.T, ctx context.Context)) (resumeOut string) {
 	ctx := context.Background()
 	e.resetStaticRoute(t, ctx) // static: reclaim the whole route from any prior migration (no-op on dynamic)
 	mani := writeManifest(t, name, topics)
@@ -59,6 +59,7 @@ func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics
 		assertFinal(t, ctx)
 	}
 	t.Logf("\n✅ RESULT: interrupted at %q, re-run drove to completion (mirrors STOPPED, route switched, fence cleared).", checkpoint)
+	return out2
 }
 
 // Kill after FENCE: the Migratable resume path. Partial world = route fenced,
@@ -112,13 +113,13 @@ func TestResume_InterruptDuringPromote(t *testing.T) {
 // Kill after SWITCH: the Unchanged resume path. The interrupt fires once the
 // migration is effectively complete (route switched, fence cleared, mirrors
 // STOPPED) but before the success banner (and, on static, before the
-// offset-sync restore stage, a pass-through here with the pause off); the
-// re-run must be a clean no-op that still reports completion. Slice
-// tbm-topic-066..070.
+// offset-sync restore stage, a pass-through here with the pause off). The
+// re-run's reconcile finds nothing to do, so it runs no state machine and
+// still reports completion. Slice tbm-topic-066..070.
 func TestResume_InterruptAfterSwitch(t *testing.T) {
 	e := newEnv()
 	topics := e.topicRange(66, 70)
-	runResumeScenario(t, e, cpSwitched, "resume-switch", topics, func(t *testing.T, ctx context.Context) {
+	resumeOut := runResumeScenario(t, e, cpSwitched, "resume-switch", topics, func(t *testing.T, ctx context.Context) {
 		cr := e.readCR(t, ctx)
 		ms := e.mirrorStatus(t, ctx)
 		for _, tp := range topics {
@@ -126,6 +127,7 @@ func TestResume_InterruptAfterSwitch(t *testing.T) {
 			require.Falsef(t, e.isFenced(t, cr, tp), "%s must already be unfenced — switch cleared the fence", tp)
 		}
 	})
+	requireNothingToDo(t, resumeOut)
 }
 
 // Kill after the OFFSET-SYNC PAUSE (static only; the dynamic FSM has no pause
@@ -166,8 +168,9 @@ func TestResume_InterruptAfterOffsetSyncPause(t *testing.T) {
 // has landed but the restore stage has not run, so the partial world is route
 // switched, mirrors STOPPED, fence cleared, and consumer offset sync still off.
 // The re-run's reconcile finds every topic migrated but the link still paused,
-// so it owes the restore alone: the resume must set offset sync back to the
-// declared baseline (enabled). Slice tbm-topic-046..050.
+// so it owes the restore alone: the resume is not nothing-to-do, runs the state
+// machine and sets offset sync back to the declared baseline (enabled). Slice
+// tbm-topic-046..050.
 func TestResume_InterruptAfterSwitch_OffsetSyncPaused(t *testing.T) {
 	e := newEnv()
 	if e.mode != "static" {
@@ -177,7 +180,7 @@ func TestResume_InterruptAfterSwitch_OffsetSyncPaused(t *testing.T) {
 	require.Equal(t, "true", e.linkOffsetSync(t, context.Background()),
 		"setup.sh must start the static suite's cluster link with consumer offset sync on")
 
-	runResumeScenarioWith(t, e, cpSwitched, "resume-switch-offset-sync-paused", topics, e.writeManifestPausingOffsetSync,
+	resumeOut := runResumeScenarioWith(t, e, cpSwitched, "resume-switch-offset-sync-paused", topics, e.writeManifestPausingOffsetSync,
 		func(t *testing.T, ctx context.Context) {
 			cr := e.readCR(t, ctx)
 			ms := e.mirrorStatus(t, ctx)
@@ -193,6 +196,7 @@ func TestResume_InterruptAfterSwitch_OffsetSyncPaused(t *testing.T) {
 			require.Equal(t, "true", e.linkOffsetSync(t, ctx),
 				"the resumed run must restore consumer offset sync to the declared baseline (enabled)")
 		})
+	requireStateMachineRan(t, resumeOut)
 }
 
 // midBatchPromoteSize is TestResume_InterruptMidBatch's promote batch size: the

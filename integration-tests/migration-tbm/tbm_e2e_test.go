@@ -113,6 +113,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "a steady-state re-run refuses nothing: %v", res.Reasons)
 		require.Empty(t, res.PromoteTopics, "a steady-state re-run migrates nothing")
+		require.True(t, res.NothingToDo, "a steady-state re-run has nothing to do")
 		require.Lenf(t, res.Report.Unchanged, h.e.successHi,
 			"every batch-selected topic must classify Unchanged at steady state")
 	})
@@ -129,6 +130,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "an already-migrated member must not halt the batch: %v", res.Reasons)
 		require.Equal(t, []string{fresh}, res.PromoteTopics, "only the not-yet-migrated member is promoted")
+		require.False(t, res.NothingToDo, "a batch with a not-yet-migrated member has work to do")
 		require.NotEmpty(t, res.FenceYAML)
 		require.NotEmpty(t, res.SwitchoverYAML)
 		require.Truef(t, unchangedTopics(res.Report)[already], "%s must classify Unchanged", already)

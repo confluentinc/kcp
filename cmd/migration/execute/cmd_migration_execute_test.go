@@ -9,10 +9,15 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -659,4 +664,115 @@ func TestExecute_DryRun_FailsAtReconcile(t *testing.T) {
 	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
 	require.Error(t, err, "reconcile fails deterministically against the fixture's unreachable kubeconfig")
 	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
+}
+
+// --- executePlan: acting on the reconcile result ---
+
+// serviceBuilds counts how many times each downstream service was built — the
+// first thing either state machine's branch does, so zero builds means no
+// state machine ran.
+type serviceBuilds struct {
+	offsets, gateway, clusterLink int
+}
+
+func (b *serviceBuilds) total() int { return b.offsets + b.gateway + b.clusterLink }
+
+// countingDeps wraps base so every service build is counted in b.
+func countingDeps(base executorDependencies, b *serviceBuilds) executorDependencies {
+	return executorDependencies{
+		offsets: func(g *manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
+			b.offsets++
+			return base.offsets(g)
+		},
+		gateway: func(g *manifest.GatewayMigration) (gateway.Service, error) {
+			b.gateway++
+			return base.gateway(g)
+		},
+		clusterLink: func(g *manifest.GatewayMigration) (clusterlink.Service, error) {
+			b.clusterLink++
+			return base.clusterLink(g)
+		},
+	}
+}
+
+// runExecutePlan drives executePlan for f's manifest with res standing in for
+// this run's live reconcile, returning the command's stdout.
+func runExecutePlan(t *testing.T, f fixture, res *migplan.Result, deps executorDependencies) (string, error) {
+	t.Helper()
+	g, config := freshConfig(t, f)
+	var out strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	err := executePlan(cmd, g, config, res, deps, "")
+	return out.String(), err
+}
+
+// A nothing-to-do result runs no state machine in either mode: no downstream
+// service is even built, and the run reports completion with nothing to do.
+func TestExecutePlan_NothingToDo_RunsNoStateMachine(t *testing.T) {
+	for _, mode := range []string{"static", "dynamic"} {
+		t.Run(mode, func(t *testing.T) {
+			var builds serviceBuilds
+			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
+
+			out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+			require.NoError(t, err)
+			assert.Zero(t, builds.total(), "no service may be built when there is nothing to do")
+			assert.Contains(t, out, "Migration completed: msk-prod-to-cc-batch-1")
+			assert.Contains(t, out, "nothing to do")
+		})
+	}
+}
+
+// Promoted but not switched: nothing is left to promote, but the switch is
+// still owed, so the state machine runs.
+func TestExecutePlan_PromotedNotSwitched_RunsTheStateMachine(t *testing.T) {
+	cases := map[string]*migplan.Result{
+		"static": staticResult([]string{}),
+		"dynamic": {Route: "migration-route", PromoteTopics: []string{}, FenceYAML: dynamicFenceYAML,
+			SwitchoverYAML: dynamicSwitchoverYAML, GatewayYAML: dynamicRouteGatewayYAML, Mode: "dynamic"},
+	}
+	for mode, res := range cases {
+		t.Run(mode, func(t *testing.T) {
+			var builds serviceBuilds
+
+			out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+			require.NoError(t, err)
+			assert.NotZero(t, builds.total(), "the state machine must run to apply the owed switch")
+			assert.Contains(t, out, "Migration completed: msk-prod-to-cc-batch-1")
+			assert.NotContains(t, out, "nothing to do")
+		})
+	}
+}
+
+// Every topic migrated but an offset-sync restore still owed: the state
+// machine runs, and its only write is the restore.
+func TestExecutePlan_RestoreOnly_RunsTheStateMachine(t *testing.T) {
+	var builds serviceBuilds
+	rec := &alterRecordingClusterLink{}
+	res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, GatewayYAML: staticRouteGatewayYAML,
+		Mode: "static", RestoreOffsetSync: true}
+
+	out, err := runExecutePlan(t, pausingFixture(t), res, countingDeps(stubDeps(nil, rec), &builds))
+
+	require.NoError(t, err)
+	assert.NotZero(t, builds.total(), "the state machine must run to apply the owed restore")
+	assert.NotContains(t, out, "nothing to do")
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Equal(t, []string{"true"}, rec.set, "the only write is the restore to the enabled baseline")
+}
+
+// A refused result is an error, and nothing runs.
+func TestExecutePlan_Refused_RunsNothing(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Mode: "static", Refused: true, Reasons: []string{"t1: not found on the source"}}
+
+	_, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "t1: not found on the source")
+	assert.Zero(t, builds.total())
 }

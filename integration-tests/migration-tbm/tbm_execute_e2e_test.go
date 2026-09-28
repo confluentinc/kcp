@@ -45,9 +45,9 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
 	// same suite) has already fully migrated batch-01's topics for real, so
 	// a fresh execute run against the same manifest reconciles live, finds
-	// nothing left to migrate, and hits exactly this case. Every real
-	// transition (fence, promote, switch) must recognize it and no-op; this
-	// proves execute itself does, not just Decide.
+	// nothing left to migrate, and hits exactly this case. Reconcile reports
+	// nothing to do, so execute runs no state machine; this proves execute
+	// itself does, not just Decide.
 	t.Run("zero-topic-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
 		routesBefore := gatewayRoutes(t, h)
 		mirrorsBefore := mirrorStatuses(t, h)
@@ -55,6 +55,8 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 		out, err := runKCP(t, manifestPath)
 		require.NoErrorf(t, err, "execute must exit 0 against an already-migrated batch:\n%s", out)
 		require.NotContains(t, out, "panic", "execute must not panic")
+		require.Contains(t, out, "nothing to do: no topic in it still needs migrating", "execute must report nothing to do")
+		require.NotContains(t, out, "Initializing TBM migration", "no state machine may run when there is nothing to do")
 
 		// Zero topics to migrate: every real transition finds nothing to do,
 		// so neither the gateway route nor any mirror may have moved.

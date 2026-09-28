@@ -119,6 +119,19 @@ func TestNewResult(t *testing.T) {
 	if ok.RestoreOffsetSync {
 		t.Error("RestoreOffsetSync must be false when the report does not owe a restore")
 	}
+	if ok.NothingToDo {
+		t.Error("a plan with artifacts must not be NothingToDo")
+	}
+
+	// nothing to do: the plan's verdict is carried onto the Result as-is.
+	noop := newResult(&reconcile.Plan{
+		Report:      reconcile.Report{Unchanged: []reconcile.TopicVerdict{{Topic: "a"}}},
+		NothingToDo: true,
+		Mode:        "dynamic",
+	})
+	if !noop.NothingToDo || noop.Refused {
+		t.Errorf("NothingToDo=%v Refused=%v, want true/false", noop.NothingToDo, noop.Refused)
+	}
 
 	// a restore owed with no topic left: no artifacts, but the verdict is carried.
 	restore := newResult(&reconcile.Plan{

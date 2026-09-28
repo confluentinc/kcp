@@ -782,3 +782,103 @@ func TestReconcileDynamic_NeverRestoresOffsetSync(t *testing.T) {
 		t.Fatal("a dynamic route must never owe an offset-sync restore")
 	}
 }
+
+// TestReconcileNothingToDo pins the one verdict that lets the caller skip the
+// whole run: NothingToDo is true only when the run is not refused and no topic
+// is left to migrate. A promoted-but-not-switched batch has no topic to promote
+// but still owes the switch, so it is not nothing-to-do.
+func TestReconcileNothingToDo(t *testing.T) {
+	type tc struct {
+		name     string
+		selected []string
+		pattern  string
+		source   []string
+		mirrors  map[string]MirrorState
+		switched bool // the route already sends the batch to the target
+		want     bool
+	}
+	cases := []tc{
+		{name: "every topic already migrated", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}, switched: true, want: true},
+		{name: "selector matches no source topic", pattern: "nomatch-.*", source: []string{"t1"}, want: true},
+		{name: "fresh batch", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}},
+		{name: "mixed resume batch", selected: []string{"t1", "t2", "t3"}, source: []string{"t1", "t2", "t3"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}},
+		{name: "promoted, not switched", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}},
+		{name: "promotion in flight", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorPending, "t2": MirrorPending}},
+		{name: "refused", selected: []string{"t1", "missing"}, source: []string{"t1"},
+			mirrors: map[string]MirrorState{"t1": MirrorActive}},
+	}
+	gateways := map[string]func(switched bool, topics []string) *GatewayConfig{
+		"dynamic": func(switched bool, topics []string) *GatewayConfig {
+			gw := dynGateway()
+			if switched {
+				gw.Route.Rules = map[string]any{"routing": map[string]any{
+					"coordination": map[string]any{"group": "msk"},
+					"conditions":   []any{map[string]any{"topics": toAny(topics), "streamingDomain": "cc"}},
+					"default":      "msk",
+				}}
+			}
+			return gw
+		},
+		"static": func(switched bool, _ []string) *GatewayConfig {
+			gw := staticGateway()
+			if switched {
+				route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+				route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+			}
+			return gw
+		},
+	}
+	for mode, gateway := range gateways {
+		for _, c := range cases {
+			t.Run(mode+"/"+c.name, func(t *testing.T) {
+				in := ReconcileInput{Topics: c.selected, Route: "migration-route", TargetDomain: "cc"}
+				if c.pattern != "" {
+					in.TopicPatterns = []string{c.pattern}
+				}
+				p := Reconcile(in, gateway(c.switched, c.selected), c.source, c.source, c.mirrors, false, ClusterIDs{}, nil, "")
+				if p.Mode != mode {
+					t.Fatalf("Mode = %q, want %q", p.Mode, mode)
+				}
+				if p.NothingToDo != c.want {
+					t.Fatalf("NothingToDo = %v, want %v (report %+v)", p.NothingToDo, c.want, p.Report)
+				}
+				if p.NothingToDo && p.Artifacts != nil {
+					t.Fatal("a nothing-to-do plan must carry no artifacts")
+				}
+			})
+		}
+	}
+}
+
+func toAny(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// TestReconcileStatic_RestoreOwedIsNotNothingToDo: every topic is migrated,
+// but the link's consumer offset sync is still paused against an enabled
+// baseline, so the run still owes the restore and is not nothing-to-do.
+func TestReconcileStatic_RestoreOwedIsNotNothingToDo(t *testing.T) {
+	gw := staticGateway()
+	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+	in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
+		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
+
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, false, ClusterIDs{}, nil, "")
+
+	if !p.Report.RestoreOffsetSync {
+		t.Fatal("the paused link must owe a restore")
+	}
+	if p.NothingToDo {
+		t.Fatal("a run that owes an offset-sync restore is not nothing-to-do")
+	}
+}

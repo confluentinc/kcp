@@ -52,6 +52,31 @@ const (
 	cpPromoteAccepted  = killpoint.AfterPromoteAccepted // intra-step: accepted, not yet STOPPED
 )
 
+// nothingToDoLine is what execute prints when reconcile finds nothing to do, in
+// which case no state machine runs; fsmStartBanner is the first step banner both
+// state machines print ("Initializing migration..." / "Initializing TBM
+// migration..."), so its presence means a state machine ran.
+const (
+	nothingToDoLine = "nothing to do: no topic in it still needs migrating"
+	fsmStartBanner  = "Initializing"
+)
+
+// requireNothingToDo asserts an execute run found nothing to do and ran no
+// state machine.
+func requireNothingToDo(t *testing.T, out string) {
+	t.Helper()
+	require.Contains(t, out, nothingToDoLine, "execute must report nothing to do")
+	require.NotContains(t, out, fsmStartBanner, "no state machine may run when there is nothing to do")
+}
+
+// requireStateMachineRan asserts an execute run had work and ran its state
+// machine.
+func requireStateMachineRan(t *testing.T, out string) {
+	t.Helper()
+	require.Contains(t, out, fsmStartBanner, "the state machine must run when there is work left")
+	require.NotContains(t, out, nothingToDoLine, "a run with work left must not report nothing to do")
+}
+
 // offsetSyncEnableKey is the cluster-link config the static FSM's offset-sync
 // pause disables and its restore sets back to the declared baseline.
 const offsetSyncEnableKey = "consumer.offset.sync.enable"

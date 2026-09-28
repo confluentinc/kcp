@@ -17,7 +17,7 @@ This manifest drives an imperative, resumable state machine:
   - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. Nothing is changed and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to a no-op, and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
+Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to nothing to do — `execute` then runs no state machine and reports that — and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
 **Resume an interrupted migration with the same topic set (dynamic routes).**
 On a dynamic route, kcp recognises the fence it added by its exact topic set.

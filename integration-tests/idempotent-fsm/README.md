@@ -41,8 +41,9 @@ link's `consumer.offset.sync.enable`. Nothing is sent to `/dev/null`.
     └── test.log                     ← this test's slice of run.log
 ```
 
-The baseline test's folder has `before.md`, `after.md`, `kcp-run-1-execute.log`
-and `kcp-run-2-dry-run.log` instead. The folders are copied out of the runner pod
+The baseline test's folder has `before.md`, `after.md`, `kcp-run-1-execute.log`,
+`kcp-run-2-dry-run.log` and `kcp-run-3-rerun.log` (a re-run of the completed
+migration, which finds nothing to do) instead. The folders are copied out of the runner pod
 whether the tests pass or fail, so a failed test keeps everything it captured.
 
 ## Topic pool

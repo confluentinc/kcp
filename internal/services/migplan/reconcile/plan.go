@@ -124,6 +124,11 @@ type Plan struct {
 	Report    Report
 	Artifacts *Artifacts // nil when refused OR when no topic is left to migrate
 
+	// NothingToDo is true when the run is not refused and has no work at all:
+	// no topic left to migrate and no offset-sync restore owed. The caller
+	// then runs no state machine.
+	NothingToDo bool
+
 	// GatewayYAML is the whole gateway CR the plan was computed against,
 	// cleaned of server-managed metadata by the provider layer (see
 	// migplan/gatewayfile.go's cleanGatewayDoc). Set even on a refusal (the

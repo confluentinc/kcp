@@ -14,8 +14,10 @@ import (
 // TestBaseline_FullMigrationCompletes proves the happy path end-to-end against
 // the live gateway and validates the whole pipeline (run.sh → runner pod →
 // execute → live reconcile → fence → promote → switch). It is the control for
-// every resume test: an UNinterrupted run completes, and a completed migration
-// re-reconciles to a no-op (the baseline of idempotency).
+// every resume test: an UNinterrupted run completes, a completed migration
+// re-reconciles to zero work, and re-running execute on it finds nothing to do,
+// runs no state machine and leaves the gateway CR untouched (the baseline of
+// idempotency).
 //
 // Reserved slice: tbm-topic-051..055. Promotion is irreversible, so this
 // consumes those topics for the life of the env (one-shot per standup).
@@ -46,5 +48,13 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	assert.Contains(t, out2, "0 to migrate", "a completed migration must plan zero further work")
 	assert.Contains(t, out2, "unchanged", "a completed migration's topics must classify as Unchanged")
 
-	t.Logf("\n✅ RESULT: uninterrupted migration completed; re-reconcile is a clean no-op (idempotent baseline).")
+	// Re-running execute on the completed migration: reconcile finds nothing to
+	// do, so no state machine runs and the gateway CR is not touched.
+	crBefore := e.readCR(t, ctx)
+	out3, err3 := e.runKCP(t, "kcp-run-3-rerun.log", "", "migration", "execute", "--migration-yaml", mani)
+	require.NoError(t, err3, "re-running execute on a completed migration must succeed")
+	requireNothingToDo(t, out3)
+	require.Equal(t, string(crBefore), string(e.readCR(t, ctx)), "a nothing-to-do run must not touch the gateway CR")
+
+	t.Logf("\n✅ RESULT: uninterrupted migration completed; re-reconcile plans zero work and a re-run finds nothing to do (idempotent baseline).")
 }
