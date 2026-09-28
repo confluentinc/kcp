@@ -35,6 +35,7 @@ func runTBMBranch(
 	state migration.MigrationState,
 	stateFile string,
 	reconcileResult *migplan.Result,
+	runReportPath string,
 	buildOffsets offsetProvidersFunc,
 	buildGateway gatewayServiceFunc,
 	buildClusterLink clusterLinkServiceFunc,
@@ -93,10 +94,23 @@ func runTBMBranch(
 		GatewayConfigPort:               config.GatewayConfigPort,
 	}
 
+	// Stamped on the way out whatever the outcome, mirroring MigrationExecutor.Run:
+	// a run that failed or never converged is a result worth recording.
+	runReport := migration.NewRunReportRecorder(
+		runReportPath,
+		config.MigrationId,
+		len(config.Topics),
+		int64(g.Spec.DefaultPolicies.LagThreshold),
+		config.CurrentState,
+	)
+	orchestrator.SetRunReportRecorder(runReport)
+	var execErr error
+	defer func() { runReport.Finish(config.CurrentState, execErr) }()
+
 	restAuth := restCreds.Authenticator()
-	if err := orchestrator.Execute(ctx, reconcileResult, int64(g.Spec.DefaultPolicies.LagThreshold),
-		g.Spec.DefaultPolicies.DetectUnroutedProducersDuration, restAuth); err != nil {
-		return fmt.Errorf("failed to execute migration: %w", err)
+	if execErr = orchestrator.Execute(ctx, reconcileResult, int64(g.Spec.DefaultPolicies.LagThreshold),
+		g.Spec.DefaultPolicies.DetectUnroutedProducersDuration, restAuth); execErr != nil {
+		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}
 
 	cmd.Printf("✅ Migration completed: %s\n", config.MigrationId)
