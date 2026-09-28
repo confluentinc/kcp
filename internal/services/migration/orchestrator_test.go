@@ -2043,12 +2043,6 @@ func TestAAO_RestoreOwedAfterSwitch(t *testing.T) {
 	assert.Equal(t, []string{"true"}, *alters, "with no restore owed, the re-run sets nothing")
 }
 
-// TestAAO_OffsetSyncPaused would cover a kill while fenced with consumer
-// offset sync paused. Not yet written.
-func TestAAO_OffsetSyncPaused(t *testing.T) {
-	t.Skip("not yet written: a kill while fenced with consumer offset sync paused")
-}
-
 // --- execute writes no files ---
 
 // TestOrchestrator_Execute_WritesNoFiles drives a full from-zero AAO run,

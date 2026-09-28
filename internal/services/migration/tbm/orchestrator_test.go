@@ -271,8 +271,8 @@ func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) 
 // would return once nothing is left, killPointDoneResult) is a pure no-op —
 // zero additional gateway patches, zero additional PromoteMirrorTopics
 // calls. Mirrors internal/services/migration/orchestrator_test.go's AAO
-// kill-point section exactly in shape; TBM has no offset-sync stage, so it
-// has no counterpart to TestAAO_OffsetSyncPaused.
+// kill-point section exactly in shape, minus the offset-sync rows: TBM has no
+// offset-sync stage.
 //
 // No live-observation is added anywhere: every row is expressed as fake
 // behaviour plus a constructed Result, and the FSM only ever consumes
