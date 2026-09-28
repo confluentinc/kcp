@@ -227,7 +227,13 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		}
 		slog.Debug("executing migration step", "step", step.Description)
 		o.runReport.StageStarted(step.Event, step.FromState, step.ToState)
-		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+		// Test-only failure hook: fails this step in place of its action when
+		// killpoint.FailEnvVar names it. nil in production.
+		err := killpoint.FailAt(step.Event)
+		if err == nil {
+			err = o.fsm.Event(ctx, step.Event, params)
+		}
+		if err != nil {
 			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
@@ -249,6 +255,10 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	return nil
 }
 
+// rollbackForbiddenReason is why a pre-promote failure keeps the fence when
+// reconcile forbade a rollback (MigrationConfig.RollbackAllowed false).
+const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
+
 // handleStepFailure maps a failed workflow step to its compensating rollback.
 // While the fence is up and nothing is promoted yet — the states abort_fence
 // can leave — ANY halting error rolls back: unfence (onAbortFence), then restore
@@ -268,6 +278,10 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// left its pre-fence state and there is no edge to travel back along. Only
 	// the cluster needs putting right.
 	if errors.Is(stepErr, ErrFenceUnconfirmed) {
+		if !o.config.RollbackAllowed {
+			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			return stepFailure
+		}
 		return o.restoreAfterUnconfirmedFence(ctx, stepFailure)
 	}
 
@@ -291,6 +305,10 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	reason := strings.ToUpper(step.Description[:1]) + step.Description[1:] + " failed"
 	if errors.Is(stepErr, ErrUnroutedProducers) {
 		reason = "Unrouted producers detected"
+	}
+	if !o.config.RollbackAllowed {
+		o.reporter.warn("%s — keeping the fence: %s", reason, rollbackForbiddenReason)
+		return stepFailure
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 

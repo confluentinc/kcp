@@ -29,8 +29,8 @@ type Result struct {
 	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
 	PromoteTopics  []string // topics that must still reach STOPPED before switch (Migratable + AwaitStopped); exclude AwaitStopped before promoting. SwitchOnly topics are migrated but absent here
 	AwaitStopped   []string // subset of PromoteTopics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
-	FenceYAML      string   // the whole rules: block, fenced
-	SwitchoverYAML string   // the whole rules: block, switched over
+	FenceYAML      string   // dynamic: the whole rules: block, fenced; static: the {fence: …} block
+	SwitchoverYAML string   // dynamic: the whole rules: block, switched over; static: the whole switched {route: …}
 	Refused        bool     // true ⇔ infeasible; the three above are empty
 	Reasons        []string // why, when Refused (failed checks + blocked topics)
 
@@ -38,6 +38,14 @@ type Result struct {
 	// must set the link's consumer offset sync back to the manifest's baseline
 	// after the switch. Can be true with no topic left to migrate.
 	RestoreOffsetSync bool
+
+	// RollbackFenceYAML is the route as a pre-promote rollback leaves it: the
+	// start-of-run route with kcp's fence for this batch taken out (dynamic:
+	// the whole rules: block; static: the whole {route: …}). RollbackAllowed
+	// is false once any topic in the batch is promoted or promoting, and then
+	// the run must not roll back at all.
+	RollbackFenceYAML string
+	RollbackAllowed   bool
 
 	// NothingToDo is reconcile.Plan.NothingToDo: not refused, no topic left to
 	// migrate and no offset-sync restore owed, so the run executes nothing.
@@ -58,9 +66,9 @@ type Result struct {
 
 	// Mode is the route mode this plan was reconciled under ("dynamic" or
 	// "static"), mirroring reconcile.Plan.Mode — so a caller knows how to
-	// interpret FenceYAML/SwitchoverYAML: a rules: fragment for dynamic, a
-	// fence/streamingDomain block fragment for static — both meaning "splice
-	// this onto the named route," never "apply this as the whole CR."
+	// interpret the artifacts (see reconcile.Plan.Mode): whole rules: blocks
+	// for dynamic; a {fence: …} block and whole {route: …} documents for
+	// static. Each applies to the named route, never as the whole CR.
 	Mode string
 }
 
@@ -181,6 +189,8 @@ func newResult(plan *reconcile.Plan) *Result {
 		r.AwaitStopped = plan.Artifacts.AwaitStopped
 		r.FenceYAML = string(plan.Artifacts.FenceRules)
 		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
+		r.RollbackFenceYAML = string(plan.Artifacts.RollbackFenceRules)
+		r.RollbackAllowed = plan.Artifacts.RollbackAllowed
 	}
 	if r.Refused {
 		for _, p := range plan.Report.Preconditions {

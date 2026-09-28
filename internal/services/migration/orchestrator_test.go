@@ -58,6 +58,8 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		Mode:                "static",
 		FenceYAML:           testFenceYAML,
 		SwitchoverYAML:      testSwitchoverYAML,
+		RollbackFenceYAML:   testRollbackFenceYAML,
+		RollbackAllowed:     true,
 	}
 
 	// Default mock implementations. The gateway CR must be a real routed gateway
@@ -201,6 +203,9 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 
@@ -219,6 +224,8 @@ func resultFromConfig(config *MigrationConfig) *migplan.Result {
 		Mode:           config.Mode,
 
 		RestoreOffsetSync: config.RestoreOffsetSync,
+		RollbackFenceYAML: config.RollbackFenceYAML,
+		RollbackAllowed:   config.RollbackAllowed,
 	}
 }
 
@@ -1052,6 +1059,140 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		"restore must never start before gateway readiness confirms")
 }
 
+// testFencedCR is testInitialCR as a resumed run pulls it after a killed run
+// fenced the route: the fence is already on it.
+const testFencedCR = testInitialCR + "      fence:\n        scope: ALL\n        errorCode: BROKER_NOT_AVAILABLE\n"
+
+// TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence: a resumed run
+// starts from a route an earlier, killed run already fenced, so the gateway CR
+// it pulls at the start carries the fence. When that run hits a pre-promote
+// failure (here, unrouted producers), the rollback must apply reconcile's
+// rollback route (unfenced), not re-apply the fenced CR it pulled.
+func TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			patches = append(patches, rp)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.GatewayYAML = testFencedCR
+	config.DetectUnroutedProducersDuration = time.Millisecond
+
+	var sourceCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCalls, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+	orch.actions.destinationOffset = caughtUpDestination()
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, StateInitialized, orch.fsm.Current())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, patches, 2, "the fence, then the rollback")
+	rollback := patches[1]
+	assert.Empty(t, rollback.Field, "the rollback replaces the whole route")
+	route, ok := rollback.Value.(map[string]any)
+	require.True(t, ok, "rollback value is %T", rollback.Value)
+	assert.NotContains(t, route, "fence", "the rollback must leave the route unfenced: %v", route)
+}
+
+// TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence: reconcile found
+// part of the batch already promoted (a resume), so a pre-promote failure must
+// not unfence — that would send the promoted topics' clients back to the
+// source. The run fails with the fence still up, and says why.
+func TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.RollbackAllowed = false
+	config.DetectUnroutedProducersDuration = time.Millisecond
+
+	var sourceCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCalls, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+	orch.actions.destinationOffset = caughtUpDestination()
+
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	out := buf.String()
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&patches), "the fence only — no rollback patch")
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(), "the FSM stays where the failure left it")
+	assert.Contains(t, out, "keeping the fence", "the run must say it is not unfencing")
+	assert.NotContains(t, out, "Gateway unfenced", "nothing was unfenced")
+}
+
+// TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence:
+// an unconfirmed fence is normally compensated by restoring the unfenced
+// route, but with part of the batch already promoted that restore would send
+// its clients back to the source. It is skipped, and the run fails.
+func TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.RollbackAllowed = false
+
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	out := buf.String()
+
+	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&patches), "the fence only — no restoring apply")
+	assert.Contains(t, out, "keeping the fence")
+}
+
+// TestOrchestrator_Execute_FailureHookFailsTheStep: with the test-only failure
+// hook naming verify_fence, that step fails the way a real failure would — the
+// run takes the same rollback path, unfencing and landing at initialized.
+func TestOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&patches), "the fence, then the rollback")
+	assert.Equal(t, StateInitialized, orch.fsm.Current())
+}
+
 // TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized
 // replaces the former pair of ListConfigs-fail / AlterConfigs-fail rollback
 // tests: restore no longer calls ListConfigs at all (it is a single
@@ -1541,6 +1682,9 @@ func aaoFullResult() *migplan.Result {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 
@@ -1599,6 +1743,8 @@ func newAAOKillPointOrchestrator(
 		Mode:                "static",
 		FenceYAML:           testFenceYAML,
 		SwitchoverYAML:      testSwitchoverYAML,
+		RollbackFenceYAML:   testRollbackFenceYAML,
+		RollbackAllowed:     true,
 	}
 
 	var mu sync.Mutex
@@ -1843,6 +1989,10 @@ func TestAAO_MidPromoteMix(t *testing.T) {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
 	}
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, midResult)
@@ -1883,6 +2033,10 @@ func TestAAO_PromotedNotSwitched(t *testing.T) {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
 	}
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)
@@ -1924,6 +2078,10 @@ func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
 	}
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)

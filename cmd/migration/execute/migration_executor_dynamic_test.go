@@ -56,13 +56,15 @@ spec:
           default: source
 `
 
-// dynamicFenceYAML / dynamicSwitchoverYAML are the mutually-consistent rules:
-// fragments a live migplan.Reconcile would produce, so the fence/switch
-// transitions can graft them onto dynamicRouteGatewayYAML's migration-route
-// and succeed against the stub gateway.
+// dynamicFenceYAML / dynamicSwitchoverYAML / dynamicRollbackFenceYAML are the
+// mutually-consistent rules: fragments a live migplan.Reconcile would produce,
+// so the fence, switch and rollback transitions can graft them onto
+// dynamicRouteGatewayYAML's migration-route and succeed against the stub
+// gateway.
 const (
-	dynamicFenceYAML      = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n"
-	dynamicSwitchoverYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n"
+	dynamicFenceYAML         = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n"
+	dynamicSwitchoverYAML    = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n"
+	dynamicRollbackFenceYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n"
 )
 
 // dynamicConfig builds the MigrationConfig a dynamic-mode run drives — the
@@ -99,6 +101,9 @@ func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 		SwitchoverYAML: config.SwitchoverYAML,
 		GatewayYAML:    config.GatewayYAML,
 		Mode:           config.Mode,
+
+		RollbackFenceYAML: dynamicRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 

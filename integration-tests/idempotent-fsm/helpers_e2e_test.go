@@ -326,15 +326,40 @@ func (e *env) linkOffsetSync(t *testing.T, ctx context.Context) string {
 // folder. Returns combined stdout+stderr and the process error.
 func (e *env) runKCP(t *testing.T, reportName, cancelAfter string, args ...string) (string, error) {
 	t.Helper()
+	var seam *testSeam
+	if cancelAfter != "" {
+		seam = &testSeam{env: killpoint.EnvVar + "=" + cancelAfter, effect: "simulated abrupt exit"}
+	}
+	return e.runKCPWith(t, reportName, seam, args...)
+}
+
+// runKCPFailingAt is runKCP with the test-only failure hook set to failAt (a
+// workflow step such as "verify_fence"): that step fails the way a real failure
+// of it would, instead of running.
+func (e *env) runKCPFailingAt(t *testing.T, reportName, failAt string, args ...string) (string, error) {
+	t.Helper()
+	return e.runKCPWith(t, reportName, &testSeam{env: killpoint.FailEnvVar + "=" + failAt, effect: "simulated step failure"}, args...)
+}
+
+// testSeam is one of kcp's test-only environment switches (see the killpoint
+// package) set on a single run.
+type testSeam struct {
+	env    string // NAME=value
+	effect string // what it does to the run, for the logs
+}
+
+// runKCPWith runs kcp with seam (nil for a normal run) in its environment.
+func (e *env) runKCPWith(t *testing.T, reportName string, seam *testSeam, args ...string) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), executeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kcpBinary, args...)
 	cmd.Env = os.Environ()
 	desc := "kcp " + strings.Join(args, " ")
-	if cancelAfter != "" {
-		cmd.Env = append(cmd.Env, killpoint.EnvVar+"="+cancelAfter)
-		desc += "    [" + killpoint.EnvVar + "=" + cancelAfter + " → simulated abrupt exit]"
+	if seam != nil {
+		cmd.Env = append(cmd.Env, seam.env)
+		desc += "    [" + seam.env + " → " + seam.effect + "]"
 	}
 	out, err := cmd.CombinedOutput()
 

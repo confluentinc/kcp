@@ -209,7 +209,8 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Rollback states**:
 
-- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD — and does this automatically when fence verification detects producers bypassing the gateway or the offset-sync pause fails, restoring any paused offset sync in the same rollback. Re-running execute resumes from the lag checks.
+- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD — and does this automatically when any step fails while the gateway is blocked and nothing is promoted yet (for example, fence verification detects producers bypassing the gateway, or the offset-sync pause fails), restoring any paused offset sync in the same rollback. This holds for a resumed run too: the rollback removes the block the interrupted run left. Re-running execute resumes from the lag checks.
+- A failure on a resumed run where part of the migration is already promoted: KCP keeps the gateway blocked rather than unblocking, since unblocking would send the promoted topics' clients back to the source. Resolve the failure and re-run execute to complete the migration.
 - Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
 - Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.
 

@@ -1,17 +1,24 @@
-// Package killpoint is a test-only interruption seam for the migration FSMs.
+// Package killpoint holds the migration FSMs' two test-only seams.
 //
-// It lets a live resume test deterministically simulate an abrupt kcp exit
-// (Ctrl-C / lost network / power loss) at a chosen point, by cancelling the run
-// context after a named checkpoint. The mechanism is exactly the real
+// The kill point lets a live resume test deterministically simulate an abrupt
+// kcp exit (Ctrl-C / lost network / power loss) at a chosen point, by cancelling
+// the run context after a named checkpoint. The mechanism is exactly the real
 // interruption path — a context cancellation — so nothing bespoke is exercised.
 //
-// It is inert unless the environment variable is set to a checkpoint name, so
-// it never fires in production. The env var is a per-invocation switch the e2e
-// harness sets on the kcp process it is about to interrupt; a normal run never
-// sets it.
+// The failure hook makes a named workflow step fail instead of running, so a
+// live test can drive a step failure (and the rollback it triggers)
+// deterministically. The step fails through the same handling a real failure of
+// that step takes.
+//
+// Both are inert unless their environment variable is set, so they never fire
+// in production. Each env var is a per-invocation switch the e2e harness sets on
+// the kcp process under test; a normal run never sets them.
 package killpoint
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
 
 // EnvVar names the checkpoint after which the run should cancel itself. When
 // unset (the production default) the seam is inert. The value is a checkpoint
@@ -31,4 +38,18 @@ const AfterPromoteAccepted = "promote_accepted"
 func ShouldCancelAfter(checkpoint string) bool {
 	want := os.Getenv(EnvVar)
 	return want != "" && want == checkpoint
+}
+
+// FailEnvVar names the workflow step (an FSM event such as "verify_fence") the
+// failure hook fails. When unset (the production default) the hook is inert.
+const FailEnvVar = "KCP_TEST_FAIL_AT"
+
+// FailAt returns an error when FailEnvVar names step, and nil otherwise. The
+// FSMs call it as each step starts; a non-nil error fails the step in place of
+// its action.
+func FailAt(step string) error {
+	if want := os.Getenv(FailEnvVar); want != "" && want == step {
+		return fmt.Errorf("test failure hook: %s failed (%s=%s)", step, FailEnvVar, want)
+	}
+	return nil
 }

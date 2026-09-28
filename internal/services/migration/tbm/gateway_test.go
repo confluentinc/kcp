@@ -147,14 +147,15 @@ spec:
 
 func testTBMConfig() *migration.MigrationConfig {
 	return &migration.MigrationConfig{
-		MigrationId:    "tbm-1",
-		K8sNamespace:   "confluent",
-		InitialCrName:  "gateway-initial",
-		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
-		GatewayYAML:    testGatewayYAML,
-		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
-		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+		MigrationId:       "tbm-1",
+		K8sNamespace:      "confluent",
+		InitialCrName:     "gateway-initial",
+		Route:             "migration-route",
+		Topics:            []string{"t1.order"},
+		GatewayYAML:       testGatewayYAML,
+		FenceYAML:         "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
+		SwitchoverYAML:    "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 }
 
@@ -170,8 +171,16 @@ func realisticReconcileResult() *migplan.Result {
 		GatewayYAML:    testGatewayYAML,
 		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
 		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
+
+// testRollbackFenceYAML is the rollback target reconcile returns for
+// testGatewayYAML's route: its rules with kcp's fence taken out, which leaves
+// the routing block alone.
+const testRollbackFenceYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n"
 
 func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	var gotRP gateway.RoutePatch
@@ -563,7 +572,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
 }
 
-func TestTBMActions_UnfenceGateway_PatchesRouteToCapturedSnapshotVerbatim(t *testing.T) {
+func TestTBMActions_UnfenceGateway_SetsRulesToTheReconciledRollbackTarget(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
@@ -577,12 +586,11 @@ func TestTBMActions_UnfenceGateway_PatchesRouteToCapturedSnapshotVerbatim(t *tes
 
 	err := actions.unfenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, config.Route, gotRP.RouteName, "PatchGatewayRoute must have been called")
-	assert.Equal(t, "", gotRP.Field, "unfence must whole-route replace, not set a single field")
 
-	expectedRoute, err := gateway.RouteObject([]byte(testGatewayYAML), config.Route)
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
 	require.NoError(t, err)
-	assert.Equal(t, expectedRoute, gotRP.Value, "unfence must restore config.Route to exactly its captured state in config.GatewayYAML, with nothing grafted onto it and no re-cleaning (migplan already cleans it once, centrally)")
+	assert.Equal(t, gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: want}, gotRP,
+		"unfence must set the route's rules to reconcile's rollback target, unchanged — never the start-of-run CR")
 }
 
 func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {

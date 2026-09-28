@@ -32,13 +32,15 @@ spec:
       endpoint: gateway:9595
 `
 
-// testFenceYAML and testSwitchoverYAML are the small, route-agnostic fragments
-// migplan.Reconcile returns for a static route (see MigrationConfig.FenceYAML/
-// SwitchoverYAML's doc comment) — paired with testInitialCR's one route named
-// migration-route.
+// testFenceYAML, testSwitchoverYAML and testRollbackFenceYAML are what
+// migplan.Reconcile returns for a static route (see MigrationConfig's doc
+// comments), paired with testInitialCR's one route named migration-route: the
+// {fence: …} block, the whole switched {route: …} and the whole rolled-back
+// {route: …}.
 const (
-	testFenceYAML      = "fence:\n  scope: ALL\n  errorCode: BROKER_NOT_AVAILABLE\n"
-	testSwitchoverYAML = "streamingDomain:\n  name: confluent-cloud\n  bootstrapServerId: SASL_PLAIN\n"
+	testFenceYAML         = "fence:\n  scope: ALL\n  errorCode: BROKER_NOT_AVAILABLE\n"
+	testSwitchoverYAML    = "route:\n  name: migration-route\n  endpoint: gateway:9595\n  streamingDomain:\n    name: confluent-cloud\n    bootstrapServerId: SASL_PLAIN\n"
+	testRollbackFenceYAML = "route:\n  name: migration-route\n  endpoint: gateway:9595\n"
 )
 
 // testReconcileResult returns the migplan.Result Initialize expects to
@@ -52,6 +54,9 @@ func testReconcileResult() *migplan.Result {
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 
@@ -1071,48 +1076,9 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	assert.Equal(t, "confluent-cloud", domain["name"], "the patch must carry the target streaming domain")
 }
 
-// TestDeriveSwitchRoutePatch_WholeRouteReplaceDropsFence proves the switch is a
-// whole-route replace onto the captured (unfenced) route with streamingDomain
-// flipped to the target — not a single-field write. A field-only streamingDomain
-// patch would flip the domain but leave the fence FenceGateway added earlier in
-// place, completing a migration whose gateway is still fenced (the regression the
-// e2e "Gateway CR must not have fence config" assertions caught). Mirrors
-// deriveUnfenceRoutePatch, which replaces the whole route for the same reason.
-func TestDeriveSwitchRoutePatch_WholeRouteReplaceDropsFence(t *testing.T) {
-	// A captured route carrying the source domain, so the test proves the domain
-	// is overwritten as well as that no fence survives.
-	const capturedCR = `apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: gw-1
-spec:
-  routes:
-    - name: migration-route
-      endpoint: gateway:9595
-      streamingDomain:
-        name: source-kafka-cluster
-`
-	config := &MigrationConfig{GatewayYAML: capturedCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
-
-	rp, err := deriveSwitchRoutePatch(config)
-	require.NoError(t, err)
-
-	assert.Equal(t, "migration-route", rp.RouteName)
-	assert.Equal(t, "", rp.Field, "switch must whole-route replace so the fence key is dropped")
-	route, ok := rp.Value.(map[string]any)
-	require.True(t, ok, "switch patch value must be the route object")
-	_, hasFence := route["fence"]
-	assert.False(t, hasFence, "the switched route must not carry a fence key")
-	domain, ok := route["streamingDomain"].(map[string]any)
-	require.True(t, ok, "the switched route must carry a streamingDomain")
-	assert.Equal(t, "confluent-cloud", domain["name"], "the source domain must be overwritten with the target")
-}
-
-// On resume the captured CR is already fenced (the prior interrupted run fenced
-// it and reconcile re-pulls it live), so the switch must EXPLICITLY drop the
-// fence key — it cannot rely on the captured route being unfenced.
-func TestDeriveSwitchRoutePatch_DropsFenceFromAlreadyFencedCapture(t *testing.T) {
-	const fencedCR = `apiVersion: platform.confluent.io/v1beta1
+// testFencedCaptureCR is a start-of-run CR a resumed run pulls: the route is
+// still fenced by the interrupted run and bound to the source domain.
+const testFencedCaptureCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
   name: gw-1
@@ -1121,24 +1087,41 @@ spec:
     - name: migration-route
       endpoint: gateway:9595
       fence:
-        topics:
-          - topic-a
-          - topic-b
+        scope: ALL
+        errorCode: BROKER_NOT_AVAILABLE
       streamingDomain:
         name: source-kafka-cluster
 `
-	config := &MigrationConfig{GatewayYAML: fencedCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
+
+// TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute: the switch replaces the
+// whole route with reconcile's switched route exactly as given. Reconcile has
+// already removed the fence from it, so the start-of-run CR — fenced on a
+// resume — plays no part.
+func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
+	config := &MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
 
 	rp, err := deriveSwitchRoutePatch(config)
 	require.NoError(t, err)
 
-	route, ok := rp.Value.(map[string]any)
-	require.True(t, ok, "switch patch value must be the route object")
-	_, hasFence := route["fence"]
-	assert.False(t, hasFence, "switch must drop the fence even when the captured route was already fenced (resume)")
-	domain, ok := route["streamingDomain"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "confluent-cloud", domain["name"], "the source domain must still be overwritten with the target")
+	want, err := gateway.FragmentValue([]byte(testSwitchoverYAML), "route")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, rp,
+		"the switch must replace the whole route with reconcile's switched route, unchanged")
+}
+
+// TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute: the rollback
+// replaces the whole route with reconcile's rollback route exactly as given —
+// never the start-of-run CR, which on a resume is still fenced.
+func TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute(t *testing.T) {
+	config := &MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+
+	rp, err := deriveUnfenceRoutePatch(config)
+	require.NoError(t, err)
+
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, rp,
+		"the rollback must replace the whole route with reconcile's rollback route, unchanged")
 }
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
@@ -1351,7 +1334,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route"}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1378,7 +1361,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route"}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1588,7 +1571,7 @@ func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
 // a whole-route replace (Field == "") straight off the migplan-captured CR,
 // with no re-cleaning of its own (migplan already cleaned server-managed
 // metadata once, centrally — see migplan/gatewayfile.go's cleanGatewayDoc).
-func TestWorkflow_UnfenceGateway_PatchesRouteVerbatim(t *testing.T) {
+func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
@@ -1596,34 +1579,20 @@ func TestWorkflow_UnfenceGateway_PatchesRouteVerbatim(t *testing.T) {
 			return configID, nil
 		},
 	}
-	cl := &mockClusterLinkService{}
-
-	wf := NewMigrationActions(gw, cl)
-	const cleanedGatewayYAML = `apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: my-gw
-  namespace: confluent
-spec:
-  routes:
-    - name: migration-route
-      endpoint: gateway:9595
-`
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		GatewayYAML:   cleanedGatewayYAML,
-		Route:         "migration-route",
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testFencedCaptureCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
-	err := wf.unfenceGateway(context.Background(), config)
+	require.NoError(t, wf.unfenceGateway(context.Background(), config))
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
 	require.NoError(t, err)
-	assert.Equal(t, "migration-route", gotRP.RouteName)
-	assert.Equal(t, "", gotRP.Field, "unfence must whole-route replace, not set a single field")
-	route, ok := gotRP.Value.(map[string]any)
-	require.True(t, ok, "unfence patch value must be the route object")
-	assert.Equal(t, "migration-route", route["name"])
-	assert.Equal(t, "gateway:9595", route["endpoint"])
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, gotRP,
+		"unfence must replace the whole route with reconcile's rollback route, not the start-of-run CR")
 }
 
 func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
@@ -1645,10 +1614,11 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		GatewayYAML:   testInitialCR,
-		Route:         "migration-route",
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testInitialCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1669,10 +1639,11 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		GatewayYAML:   testInitialCR,
-		Route:         "migration-route",
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testInitialCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)

@@ -118,6 +118,13 @@ type Artifacts struct {
 	AwaitStopped    []string
 	FenceRules      []byte // → fence-rules.yaml (whole rules block)
 	SwitchoverRules []byte // → switchover-rules.yaml (whole rules block)
+
+	// RollbackFenceRules is the route as a rollback leaves it: the
+	// start-of-run route with kcp's fence for this batch taken out.
+	RollbackFenceRules []byte
+	// RollbackAllowed is true when a pre-promote failure may roll back
+	// (unfence): no topic in the batch is promoted or promoting yet.
+	RollbackAllowed bool
 }
 
 type Plan struct {
@@ -137,9 +144,11 @@ type Plan struct {
 	GatewayYAML string
 
 	// Mode is the route mode this plan was reconciled under ("dynamic" or
-	// "static"), so a caller knows how to interpret Artifacts.FenceRules/
-	// SwitchoverRules: a rules: fragment for dynamic, a fence/streamingDomain
-	// block fragment for static — both meaning "splice this onto the named
-	// route," never "apply this as the whole CR."
+	// "static"), so a caller knows how to interpret the artifacts. Dynamic:
+	// every one is a whole rules: block, set on the named route's rules.
+	// Static: FenceRules is a {fence: …} block set on the named route;
+	// SwitchoverRules and RollbackFenceRules are a whole {route: …} that
+	// replaces the named route (both remove the fence, which a field patch
+	// cannot). Never "apply this as the whole CR."
 	Mode string
 }

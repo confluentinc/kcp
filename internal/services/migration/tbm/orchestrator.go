@@ -172,7 +172,13 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
-		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+		// Test-only failure hook: fails this step in place of its action when
+		// killpoint.FailEnvVar names it. nil in production.
+		err := killpoint.FailAt(step.Event)
+		if err == nil {
+			err = o.fsm.Event(ctx, step.Event, params)
+		}
+		if err != nil {
 			return o.handleStepFailure(ctx, step, err)
 		}
 		o.reporter.stepDone()
@@ -214,6 +220,10 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	reason := strings.ToUpper(step.Description[:1]) + step.Description[1:] + " failed"
 	if errors.Is(stepErr, ErrUnroutedProducers) {
 		reason = "Unrouted producers detected"
+	}
+	if !o.config.RollbackAllowed {
+		o.reporter.warn("%s — keeping the fence: part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch", reason)
+		return stepFailure
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 

@@ -50,7 +50,8 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `046..085`: after-switch with the offset-sync pause on `046..050` (static
+in `036..085`: rollback on a mid-batch resume `036..040`, rollback on a resume
+`041..045`, after-switch with the offset-sync pause on `046..050` (static
 only), baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
 after-offset-sync-pause `076..080` (static only), mid-batch `081..085`. On the dynamic
@@ -92,6 +93,10 @@ restore owed to the resume (`pauseConsumerOffsetSync` on; the static suite's
 link starts with consumer offset sync enabled so the pause and restore are
 observable). Both modes also cover a mid-batch kill: with
 `promoteBatchSize: 2`, the run is killed after the first batch of 2 is
-accepted, leaving 2 mirrors promoting and 3 ACTIVE. Env-var names are still
+accepted, leaving 2 mirrors promoting and 3 ACTIVE. Two rollback tests
+(`rollback_e2e_test.go`) fail the resume's `verify_fence` step with the test-only
+failure hook (`KCP_TEST_FAIL_AT`): after a kill at the fence the rollback must
+lift the interrupted run's fence; after a mid-batch kill it must keep the fence,
+and a plain re-run then completes. Env-var names are still
 `KCP_TBM_*` (inherited from the copied `migration-tbm` spine) pending a cosmetic
 rename.

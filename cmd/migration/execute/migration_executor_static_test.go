@@ -28,9 +28,9 @@ import (
 // downstream services stubbed through executorDependencies (stubDeps) and the live
 // migplan.Reconcile (which cannot run in-process) replaced by staticResult.
 
-// staticRouteGatewayYAML and the two fragments are the shapes migplan.Reconcile
-// returns for a static route: a route-level fence block, and a streamingDomain
-// flip for the switchover.
+// staticRouteGatewayYAML and the artifacts below are the shapes migplan.Reconcile
+// returns for a static route: a route-level fence block, the whole switched
+// route, and the whole route as a rollback leaves it.
 const staticRouteGatewayYAML = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
@@ -46,8 +46,9 @@ spec:
 `
 
 const (
-	staticFenceYAML      = "fence:\n  scope: ALL\n  errorCode: BROKER_NOT_AVAILABLE\n"
-	staticSwitchoverYAML = "streamingDomain:\n  name: confluent-cloud\n  bootstrapServerId: sasl-plain\n"
+	staticFenceYAML         = "fence:\n  scope: ALL\n  errorCode: BROKER_NOT_AVAILABLE\n"
+	staticSwitchoverYAML    = "route:\n  name: migration-route\n  endpoint: kafka-gw.example.com:9092\n  streamingDomain:\n    name: confluent-cloud\n    bootstrapServerId: sasl-plain\n"
+	staticRollbackFenceYAML = "route:\n  name: migration-route\n  endpoint: kafka-gw.example.com:9092\n  streamingDomain:\n    name: source\n    bootstrapServerId: sasl-scram\n"
 )
 
 // staticResult is the stand-in for the *migplan.Result a live
@@ -60,6 +61,9 @@ func staticResult(topics []string) *migplan.Result {
 		SwitchoverYAML: staticSwitchoverYAML,
 		GatewayYAML:    staticRouteGatewayYAML,
 		Mode:           "static",
+
+		RollbackFenceYAML: staticRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 

@@ -908,3 +908,120 @@ func TestReconcileStatic_RestoreOwedIsNotNothingToDo(t *testing.T) {
 		t.Fatal("a run that owes an offset-sync restore is not nothing-to-do")
 	}
 }
+
+// resumeFencedRules is a dynamic route's rules as a resumed run pulls them: the
+// operator's own fence on ops.maintenance, plus kcp's fence for the batch
+// [t1, t2] from the killed run.
+func resumeFencedRules() map[string]any {
+	return map[string]any{
+		"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"},
+		"fencing": []any{
+			map[string]any{"topics": []any{"t1", "t2"}, "blocked": true},
+			map[string]any{"topics": []any{"ops.maintenance"}, "blocked": true},
+		},
+	}
+}
+
+// TestReconcileDynamic_RollbackFence: the rollback target is the start-of-run
+// rules with kcp's fence for this batch taken out — on a resume that removes
+// the killed run's fence and keeps the operator's; on a fresh run there is no
+// kcp fence, so it is the start-of-run rules unchanged.
+func TestReconcileDynamic_RollbackFence(t *testing.T) {
+	t.Run("resume", func(t *testing.T) {
+		gw := dynGateway()
+		gw.Route.Rules = resumeFencedRules()
+		in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+		p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"},
+			map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+		if p.Artifacts == nil {
+			t.Fatalf("expected a plan, got %+v", p.Report)
+		}
+		assertSetEqual(t, "rollback fence topics", rulesFencingTopics(t, p.Artifacts.RollbackFenceRules), []string{"ops.maintenance"})
+		if !strings.Contains(string(p.Artifacts.RollbackFenceRules), "routing:") {
+			t.Fatalf("the rollback target keeps the operator's routing:\n%s", p.Artifacts.RollbackFenceRules)
+		}
+		if strings.Contains(string(p.Artifacts.RollbackFenceRules), "conditions:") {
+			t.Fatalf("the rollback target must not route anything to the target:\n%s", p.Artifacts.RollbackFenceRules)
+		}
+	})
+	t.Run("fresh", func(t *testing.T) {
+		gw := dynGateway()
+		in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+		p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+		base, _ := ParseRules(dynGateway().Route.Rules)
+		want, _ := base.Serialize()
+		if string(p.Artifacts.RollbackFenceRules) != string(want) {
+			t.Fatalf("on a fresh run the rollback target is the start-of-run rules:\ngot:\n%s\nwant:\n%s", p.Artifacts.RollbackFenceRules, want)
+		}
+	})
+}
+
+// TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes: a static
+// route's switch and rollback both remove the fence, which a route patch can
+// only do by replacing the whole route, so both are whole start-of-run routes
+// without the fence — the switch bound to the target, the rollback to the
+// source.
+func TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes(t *testing.T) {
+	for _, fenced := range []bool{true, false} {
+		t.Run(fmt.Sprintf("start-of-run route fenced=%v", fenced), func(t *testing.T) {
+			gw := staticGateway()
+			if fenced {
+				gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
+			}
+			in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+			p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+			if p.Artifacts == nil {
+				t.Fatalf("expected a plan, got %+v", p.Report)
+			}
+
+			sw := routeArtifact(t, p.Artifacts.SwitchoverRules)
+			if _, has := sw["fence"]; has {
+				t.Fatalf("the switched route must carry no fence:\n%s", p.Artifacts.SwitchoverRules)
+			}
+			if sw["streamingDomain"].(map[string]any)["name"] != "cc" || sw["security"] == nil {
+				t.Fatalf("the switched route binds the target and keeps staged auth:\n%s", p.Artifacts.SwitchoverRules)
+			}
+
+			rb := routeArtifact(t, p.Artifacts.RollbackFenceRules)
+			if _, has := rb["fence"]; has {
+				t.Fatalf("the rolled-back route must carry no fence:\n%s", p.Artifacts.RollbackFenceRules)
+			}
+			if rb["streamingDomain"].(map[string]any)["name"] != "msk" || rb["security"] == nil {
+				t.Fatalf("the rolled-back route stays on the source and keeps staged auth:\n%s", p.Artifacts.RollbackFenceRules)
+			}
+		})
+	}
+}
+
+// TestReconcile_RollbackAllowed: a rollback unfences the batch, which is only
+// safe while nothing in it is promoted — once a mirror is promoted (or
+// promoting), sending its clients back to the source would split them from the
+// target. So RollbackAllowed is true only when no topic is SwitchOnly or
+// AwaitStopped.
+func TestReconcile_RollbackAllowed(t *testing.T) {
+	cases := []struct {
+		name    string
+		mirrors map[string]MirrorState
+		want    bool
+	}{
+		{"fresh", map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, true},
+		{"one promoted", map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, false},
+		{"one promoting", map[string]MirrorState{"t1": MirrorPending, "t2": MirrorActive}, false},
+		{"all promoted", map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}, false},
+	}
+	gateways := map[string]func() *GatewayConfig{"dynamic": dynGateway, "static": staticGateway}
+	for mode, gateway := range gateways {
+		for _, c := range cases {
+			t.Run(mode+"/"+c.name, func(t *testing.T) {
+				in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+				p := Reconcile(in, gateway(), []string{"t1", "t2"}, []string{"t1", "t2"}, c.mirrors, false, ClusterIDs{}, nil, "")
+				if p.Artifacts == nil {
+					t.Fatalf("expected a plan, got %+v", p.Report)
+				}
+				if p.Artifacts.RollbackAllowed != c.want {
+					t.Fatalf("RollbackAllowed = %v, want %v", p.Artifacts.RollbackAllowed, c.want)
+				}
+			})
+		}
+	}
+}

@@ -97,14 +97,21 @@ type MigrationConfig struct {
 	// the manifest (not from migplan.Result, which does not carry it).
 	TargetDomain string
 
-	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
-	// migplan.Reconcile returns (a {fence: {...}} block, a
-	// {streamingDomain: {...}} block for a static route), set each run from the
-	// reconcile result. Applied by splicing onto Route's fence/
-	// streamingDomain key in GatewayYAML (see gateway.ReplaceRouteFenceObj/
-	// ReplaceRouteStreamingDomainObj) rather than the old whole-CR mutation.
-	FenceYAML      string
-	SwitchoverYAML string
+	// FenceYAML, SwitchoverYAML and RollbackFenceYAML are the route shapes
+	// migplan.Reconcile returns, set each run from the reconcile result and
+	// applied as given. For a static route: FenceYAML is a {fence: …} block set
+	// on Route; SwitchoverYAML (the switched route) and RollbackFenceYAML (the
+	// route as a rollback leaves it, the start-of-run route with the fence
+	// taken out) are whole {route: …} documents that replace Route. For a
+	// dynamic route each is a whole rules: block set on Route's rules.
+	FenceYAML         string
+	SwitchoverYAML    string
+	RollbackFenceYAML string
+
+	// RollbackAllowed is set each run from the reconcile result: true when a
+	// pre-promote failure may roll back (unfence), i.e. no topic in the batch
+	// is promoted or promoting yet.
+	RollbackAllowed bool
 
 	// Mode is the route mode migplan resolved this migration under ("static" for
 	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.

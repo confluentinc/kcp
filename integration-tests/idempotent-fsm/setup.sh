@@ -78,9 +78,9 @@ else
 fi
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-tbm-link}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
-# Each kill-point test promotes a disjoint 5-topic slice in 046..085 (see the
+# Each kill-point test promotes a disjoint 5-topic slice in 036..085 (see the
 # *_test.go files); promotion is irreversible, so all must exist AND be mirrored.
-# The pool runs 001..085, all mirrored; 001..045 are unused headroom.
+# The pool runs 001..085, all mirrored; 001..035 are unused headroom.
 SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-85}"   # tbm-topic-001..085 on source
 MIRRORED_COUNT="${MIRRORED_COUNT:-85}"           # 001..085 all mirrored on the link
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —

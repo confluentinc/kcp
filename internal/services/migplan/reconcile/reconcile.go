@@ -107,6 +107,17 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	switchover.DropFence(toMigrate)
 	switchover.PrependCondition(toMigrate, view.TargetDomain)
 
+	// The rollback target is the start-of-run rules with kcp's fence for this
+	// batch taken out: the start-of-run rules themselves on a fresh run; on a
+	// resume, without the fence the interrupted run left (operator fences are
+	// preserved).
+	rollback, err := base.Clone()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback rules clone", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
+	rollback.DropFence(toMigrate)
+
 	fenceBytes, err := fence.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules serialize", err.Error()))
@@ -115,6 +126,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	switchBytes, err := switchover.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover rules serialize", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
+	rollbackBytes, err := rollback.Serialize()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback rules serialize", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
@@ -129,7 +145,8 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	sort.Strings(promoteSorted)
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
-	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report)}}
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
@@ -210,9 +227,14 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		report.Preconditions = append(report.Preconditions, fail("fence fragment builds", err.Error()))
 		return &Plan{Report: report, Mode: "static"}
 	}
-	switchoverFragment, err := BuildSwitchoverFragment(in.TargetDomain, view.BootstrapServerID)
+	switchoverRoute, err := BuildSwitchoverRoute(gw.Route.Raw, in.TargetDomain, view.BootstrapServerID)
 	if err != nil {
-		report.Preconditions = append(report.Preconditions, fail("switchover fragment builds", err.Error()))
+		report.Preconditions = append(report.Preconditions, fail("switchover route builds", err.Error()))
+		return &Plan{Report: report, Mode: "static"}
+	}
+	rollbackRoute, err := BuildRollbackFenceRoute(gw.Route.Raw)
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback route builds", err.Error()))
 		return &Plan{Report: report, Mode: "static"}
 	}
 
@@ -221,7 +243,8 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	sort.Strings(promoteSorted)
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
-	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
+	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report)}}
 }
 
 // Reconcile is the single entry point for both route-mode strategies. It
@@ -239,6 +262,15 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
 	}
 	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
+}
+
+// rollbackAllowed reports whether a pre-promote failure may roll the batch back
+// (unfence it): only while no topic in it is promoted (SwitchOnly) or promoting
+// (AwaitStopped). Once a mirror is promoted it no longer replicates, so sending
+// its clients back to the source would split them from the target; the run
+// must go forward instead.
+func rollbackAllowed(report Report) bool {
+	return len(report.SwitchOnly) == 0 && len(report.AwaitStopped) == 0
 }
 
 // topicsOf flattens the Topic field of one or more verdict buckets into a single

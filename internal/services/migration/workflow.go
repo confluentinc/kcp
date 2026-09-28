@@ -264,6 +264,8 @@ func (s *MigrationActions) Initialize(
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.RestoreOffsetSync = res.RestoreOffsetSync
+	config.RollbackFenceYAML = res.RollbackFenceYAML
+	config.RollbackAllowed = res.RollbackAllowed
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
@@ -587,7 +589,7 @@ func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gateway.ReplaceRouteStreamingDomainObj(base, config.Route, []byte(config.SwitchoverYAML))
+	return gateway.ReplaceRouteObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
 // deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
@@ -602,50 +604,36 @@ func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) 
 	return gateway.RoutePatch{RouteName: config.Route, Field: "fence", Value: v}, nil
 }
 
-// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: a
-// whole-route replace (Field == "") of config.Route with its captured
-// (unfenced) shape from config.GatewayYAML, streamingDomain flipped to
-// config.SwitchoverYAML's target. It is a whole-route replace, not a
-// single-key streamingDomain write, for the same reason as
-// deriveUnfenceRoutePatch — the switch happens from the fenced state and must
-// drop the fence key, and a field-level "add" can only overwrite a key, never
-// remove one. Grafting onto the captured route (which carries the pre-staged
-// redundant auth for the target domain, checked by migplan.Reconcile) yields
-// unfenced + target-domain + target-auth in one patch.
+// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: reconcile's
+// switched route (config.SwitchoverYAML) — unfenced, bound to the target
+// domain, carrying the route's pre-staged target auth — replacing config.Route
+// whole.
 func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	domain, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "streamingDomain")
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	route["streamingDomain"] = domain
-	// The switched state is unfenced: drop any fence the captured route carries.
-	// On a first run the captured route is pristine (no-op); on a resume it is
-	// already fenced (the prior run fenced it, reconcile re-pulled it live), and
-	// the whole-route replace would otherwise leave that fence on the switched
-	// route — a completed migration whose gateway is still fenced.
-	delete(route, "fence")
-	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+	return wholeRoutePatch(config, config.SwitchoverYAML)
 }
 
-// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
-// its captured state in config.GatewayYAML — a whole-route replace (Field ==
-// "") rather than a single-key mutation, since unfence removes the fence key
-// entirely instead of overwriting it.
+// deriveUnfenceRoutePatch builds the RoutePatch a rollback applies: reconcile's
+// rollback route (config.RollbackFenceYAML) — the start-of-run route with the
+// fence taken out — replacing config.Route whole.
 func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
+	return wholeRoutePatch(config, config.RollbackFenceYAML)
+}
+
+// wholeRoutePatch is the RoutePatch replacing config.Route with artifact's
+// {route: …} exactly as reconcile built it. The static switch and rollback both
+// remove the fence, which a single-field patch cannot, so both replace the
+// whole route.
+func wholeRoutePatch(config *MigrationConfig, artifact string) (gateway.RoutePatch, error) {
+	route, err := gateway.FragmentValue([]byte(artifact), "route")
 	if err != nil {
 		return gateway.RoutePatch{}, err
 	}
 	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
 }
 
-// unfenceGateway patches config.Route back to its captured state in the
-// gateway CR snapshot migplan captured (config.GatewayYAML) to restore normal
-// traffic, then waits for the operator to report the gateway Ready at the
+// unfenceGateway replaces config.Route with reconcile's rollback route
+// (config.RollbackFenceYAML, the start-of-run route with the fence taken out)
+// to restore normal traffic, then waits for the operator to report the gateway Ready at the
 // restored spec — the same convergence check FenceGateway uses. Without the
 // wait we would report traffic restored while pods are still cycling, and
 // miss rollout failures entirely.

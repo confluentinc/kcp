@@ -90,10 +90,12 @@ func TestNewResult(t *testing.T) {
 	ok := newResult(&reconcile.Plan{
 		Report: reconcile.Report{Migratable: []reconcile.TopicVerdict{{Topic: "a"}}},
 		Artifacts: &reconcile.Artifacts{
-			PromoteTopics:   []string{"a", "b"},
-			AwaitStopped:    []string{"b"},
-			FenceRules:      []byte("fence-yaml"),
-			SwitchoverRules: []byte("switch-yaml"),
+			PromoteTopics:      []string{"a", "b"},
+			AwaitStopped:       []string{"b"},
+			FenceRules:         []byte("fence-yaml"),
+			SwitchoverRules:    []byte("switch-yaml"),
+			RollbackFenceRules: []byte("rollback-fence-yaml"),
+			RollbackAllowed:    true,
 		},
 		GatewayYAML: "gw-yaml",
 		Mode:        "static",
@@ -101,8 +103,11 @@ func TestNewResult(t *testing.T) {
 	if ok.Refused {
 		t.Error("a plan with artifacts must not be Refused")
 	}
-	if ok.FenceYAML != "fence-yaml" || ok.SwitchoverYAML != "switch-yaml" {
-		t.Errorf("artifact strings = %q / %q", ok.FenceYAML, ok.SwitchoverYAML)
+	if ok.FenceYAML != "fence-yaml" || ok.SwitchoverYAML != "switch-yaml" || ok.RollbackFenceYAML != "rollback-fence-yaml" {
+		t.Errorf("artifact strings = %q / %q / %q", ok.FenceYAML, ok.SwitchoverYAML, ok.RollbackFenceYAML)
+	}
+	if !ok.RollbackAllowed {
+		t.Error("RollbackAllowed must mirror the plan's")
 	}
 	if ok.GatewayYAML != "gw-yaml" {
 		t.Errorf("GatewayYAML = %q, want gw-yaml", ok.GatewayYAML)
@@ -157,7 +162,7 @@ func TestNewResult(t *testing.T) {
 	if !ref.Refused {
 		t.Error("a refused plan must have Refused=true")
 	}
-	if ref.FenceYAML != "" || len(ref.PromoteTopics) != 0 {
+	if ref.FenceYAML != "" || ref.RollbackFenceYAML != "" || ref.RollbackAllowed || len(ref.PromoteTopics) != 0 {
 		t.Error("a refused plan must carry no artifacts")
 	}
 	if ref.GatewayYAML != "gw-yaml" {

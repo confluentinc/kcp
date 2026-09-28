@@ -158,21 +158,124 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(), "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
 
-	// testGatewayYAML's migration-route already carries a rules.routing block
-	// before any fence — only FenceYAML's "fencing" key is grafted on top of
-	// it (see realisticReconcileResult's FenceYAML). So the unfenced route's
-	// rules must still have routing (never removed) and must NOT have
-	// fencing (the thing the rollback undoes) — not "no rules at all".
-	assert.Equal(t, "", lastRP.Field, "the unfence rollback must whole-route replace, not set a single field")
-	route, ok := lastRP.Value.(map[string]interface{})
-	require.True(t, ok)
-	rules, ok := route["rules"].(map[string]interface{})
-	require.True(t, ok, "the unfenced route must still carry its original rules.routing block")
+	// The rollback sets the route's rules to reconcile's rollback target:
+	// testGatewayYAML's rules.routing block, never removed, and no fencing (the
+	// thing the rollback undoes) — not "no rules at all".
+	assert.Equal(t, "rules", lastRP.Field, "the rollback sets the route's rules, like the fence and the switch")
+	rules, ok := lastRP.Value.(map[string]interface{})
+	require.True(t, ok, "the rollback value must be the rules block")
 	_, hasFencing := rules["fencing"]
 	assert.False(t, hasFencing, "the unfenced route must not carry the fencing block the rollback is undoing")
 	_, hasRouting := rules["routing"]
 	assert.True(t, hasRouting, "the unfenced route must still have the routing block testGatewayYAML always had")
 
+}
+
+// testFencedGatewayYAML is testGatewayYAML as a resumed run pulls it after a
+// killed run fenced t1.order: kcp's fencing entry is already on the route.
+const testFencedGatewayYAML = testGatewayYAML + "        fencing:\n          - topics: [\"t1.order\"]\n            blocked: true\n"
+
+// TestTBMOrchestrator_Execute_RollbackOnResume_RemovesTheFence: a resumed run
+// starts from a route an earlier, killed run already fenced, so the gateway CR
+// it pulls at the start carries kcp's fencing entry. When that run hits a
+// pre-promote failure (here, unrouted producers), the rollback must leave the
+// route unfenced, not re-apply the fence it pulled.
+func TestTBMOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) {
+	var lastRP gateway.RoutePatch
+	var call int32
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			lastRP = rp
+			return "", nil
+		},
+	}
+	sourceOffset := &mockOffsetProvider{
+		// wait_for_lags's sweep and verify_fence's baseline hold at 1000; the
+		// post-window snapshot rises (a producer bypassing the gateway).
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt32(&call, 1) <= 2 {
+				return map[int32]int64{0: 1000}, nil
+			}
+			return map[int32]int64{0: 1500}, nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-resume-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	res := realisticReconcileResult()
+	res.GatewayYAML = testFencedGatewayYAML
+	err := orchestrator.Execute(context.Background(), res, 10, 5*time.Millisecond, clusterlink.BasicAuth{})
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, StateInitialized, orchestrator.fsm.Current())
+	assert.Equal(t, "rules", lastRP.Field, "the rollback sets the route's rules")
+	rules, ok := lastRP.Value.(map[string]interface{})
+	require.True(t, ok)
+	assert.NotContains(t, rules, "fencing", "the rollback must leave the route unfenced: %v", rules)
+	assert.Contains(t, rules, "routing", "the rollback keeps the operator's routing block")
+}
+
+// TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence: reconcile found
+// part of the batch already promoted (a resume), so a pre-promote failure must
+// not unfence — that would send the promoted topics' clients back to the
+// source. The run fails with the fence still up, and says why.
+func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	var applyCount int
+	var call int32
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+			applyCount++
+			return "", nil
+		},
+	}
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt32(&call, 1) <= 2 {
+				return map[int32]int64{0: 1000}, nil
+			}
+			return map[int32]int64{0: 1500}, nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-no-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+
+	res := realisticReconcileResult()
+	res.RollbackAllowed = false
+	err := orchestrator.Execute(context.Background(), res, 10, 5*time.Millisecond, clusterlink.BasicAuth{})
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, 1, applyCount, "the fence only — no rollback patch")
+	assert.Equal(t, StateFenced, orchestrator.fsm.Current(), "the FSM stays where the failure left it")
+	assert.Contains(t, out.String(), "keeping the fence", "the run must say it is not unfencing")
+	assert.NotContains(t, out.String(), "removing fence", "nothing is unfenced")
+}
+
+// TestTBMOrchestrator_Execute_FailureHookFailsTheStep: with the test-only
+// failure hook naming verify_fence, that step fails the way a real failure
+// would — the run takes the same rollback path, unfencing and landing at
+// initialized.
+func TestTBMOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
+	var applyCount int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+			applyCount++
+			return "", nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-fail-hook", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+	assert.Equal(t, 2, applyCount, "the fence, then the rollback")
+	assert.Equal(t, StateInitialized, orchestrator.fsm.Current())
 }
 
 func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
@@ -225,7 +328,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(),
 		"a halting error while fenced and pre-promote must abort_fence back to initialized")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence unfence applies once more")
-	assert.Equal(t, "", lastRP.Field, "the unfence must be a whole-route replace")
+	assert.Equal(t, "rules", lastRP.Field, "the rollback sets the route's rules")
 }
 
 func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) {
@@ -319,6 +422,9 @@ func killPointFullResult(topics []string) *migplan.Result {
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
 		Mode:           "dynamic",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
 

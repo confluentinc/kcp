@@ -116,6 +116,8 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
+	config.RollbackFenceYAML = res.RollbackFenceYAML
+	config.RollbackAllowed = res.RollbackAllowed
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	// Persist the resolved route mode, mirroring AAO's Initialize exactly.
@@ -285,10 +287,9 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	return nil
 }
 
-// unfenceGateway patches config.Route back to its captured state in the
-// gateway CR snapshot migplan captured (config.GatewayYAML) — a whole-route
-// replace, the exact inverse of Fence's rules graft (deriveUnfenceRoutePatch).
-// Called only by onAbortFence, on a verify_fence detection.
+// unfenceGateway sets config.Route's rules to reconcile's rollback target
+// (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
+// batch taken out). Called only by onAbortFence.
 //
 // Calls ensureGatewayCapability first, exactly like Fence does: a process
 // that resumes directly at verify_fence (Fence already completed in an
