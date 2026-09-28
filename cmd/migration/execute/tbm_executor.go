@@ -94,8 +94,7 @@ func runTBMBranch(
 		GatewayConfigPort:               config.GatewayConfigPort,
 	}
 
-	// Stamped on the way out whatever the outcome, mirroring MigrationExecutor.Run:
-	// a run that failed or never converged is a result worth recording.
+	// Finish is deferred so failed runs are recorded too.
 	runReport := migration.NewRunReportRecorder(
 		runReportPath,
 		config.MigrationId,

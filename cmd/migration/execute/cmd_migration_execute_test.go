@@ -192,8 +192,6 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 // into the config file; what stays on the command line is the manifest path,
 // the state file (now optional, defaults to <metadata.name>-state.json), the id override,
 // and the per-policy overrides that vary a spec.defaultPolicies value for a single run.
-// The run report is enabled by the KCP_RUN_REPORT env var, not a flag, so it has
-// no place here — see TestExecute_RetiredFlagsAreGone.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -211,10 +209,9 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 }
 
 // TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
-// manifest, and the hidden --run-report flag was replaced by the KCP_RUN_REPORT
-// env var. The per-policy override flags (--lag-threshold, --rollout-timeout,
-// etc.) are NOT here: they are the live surface, asserted by
-// TestExecute_VisibleFlagSurface.
+// manifest (and --run-report became KCP_RUN_REPORT). The per-policy override
+// flags (--lag-threshold, --rollout-timeout, etc.) are NOT here: they are the
+// live surface, asserted by TestExecute_VisibleFlagSurface.
 func TestExecute_RetiredFlagsAreGone(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{

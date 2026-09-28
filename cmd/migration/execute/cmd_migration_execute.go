@@ -36,18 +36,9 @@ var (
 	gatewayConfigPortOverride               int
 )
 
-// runReportEnvVar names the environment variable that turns on the per-stage
-// run report (carried over from #408's --run-report flag). Its value is the
-// path the report is written to; unset or empty writes no report.
-//
-// It is an env var rather than a flag or a manifest policy field: the path is a
-// per-run, machine-specific output location — operational, not versioned
-// desired state — and keeping it off the command line means the migration
-// performance rig (its first consumer) sets it once in the environment it
-// already builds rather than threading it through every invocation. It is
-// intended to become user-facing, since the natural audience for per-stage
-// timings is someone rehearsing their own migration, but stays undocumented
-// in --help pending schema validation by the rig.
+// runReportEnvVar, when set, is the path execute writes its per-stage run
+// report to. An env var, not a manifest field: it's a per-run output location,
+// not desired state. Undocumented until the perf rig validates the schema.
 const runReportEnvVar = "KCP_RUN_REPORT"
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
@@ -288,8 +279,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		}
 	}
 
-	// The run report is an execute-time diagnostics path, not part of the
-	// manifest; both branches record it the same way.
 	runReportPath := os.Getenv(runReportEnvVar)
 
 	switch mode {

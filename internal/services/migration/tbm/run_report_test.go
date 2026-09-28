@@ -16,9 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The TBM orchestrator shares migration.RunReportRecorder with the AAO one, so
-// these tests only prove the TBM Execute loop calls it at the right points; the
-// recorder's own behaviour is covered in internal/services/migration.
+// These cover the TBM wiring only; the recorder is tested in internal/services/migration.
 
 func readTBMRunReport(t *testing.T, path string) migration.RunReport {
 	t.Helper()
@@ -37,8 +35,7 @@ func tbmStageEvents(report migration.RunReport) []string {
 	return events
 }
 
-// attachRecorder wires a recorder onto o the way cmd/migration/execute does,
-// returning it (for the test to Finish) and the path it writes to.
+// attachRecorder wires a recorder onto o as cmd/migration/execute does.
 func attachRecorder(t *testing.T, o *TBMOrchestrator, config *migration.MigrationConfig) (*migration.RunReportRecorder, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "run-report.json")
@@ -48,9 +45,8 @@ func attachRecorder(t *testing.T, o *TBMOrchestrator, config *migration.Migratio
 	return recorder, path
 }
 
-// TestTBMRunReport_FullWorkflow — a fresh registration (no topics until
-// initialize reconciles them) walks every canonical step; each is recorded in
-// order with the edge it traversed, and the topic count is the reconciled one.
+// TestTBMRunReport_FullWorkflow — a fresh registration records every step in
+// order, with the reconciled topic count.
 func TestTBMRunReport_FullWorkflow(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateUninitialized)
 	recorder, path := attachRecorder(t, orchestrator, config)
@@ -59,8 +55,6 @@ func TestTBMRunReport_FullWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	recorder.Finish(config.CurrentState, nil)
 
-	// Surface the artifact itself, as the AAO test does: `go test -v -run
-	// TestTBMRunReport_FullWorkflow` shows what a dynamic-mode run emits.
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	t.Logf("run report:\n%s", raw)
@@ -79,13 +73,12 @@ func TestTBMRunReport_FullWorkflow(t *testing.T) {
 		assert.False(t, stage.Failed, "stage %s failed", stage.Event)
 	}
 	assert.Empty(t, report.SkippedStages)
-	assert.Equal(t, 1, report.Topics, "the count must be the one initialize reconciled, not the zero the recorder started with")
+	assert.Equal(t, 1, report.Topics, "reconciled count, not the initial zero")
 	assert.Equal(t, StateSwitched, report.FinalState)
 	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
 }
 
-// TestTBMRunReport_ResumeListsSkippedStages — steps the migration had already
-// passed are named in SkippedStages, and only the steps that ran are timed.
+// TestTBMRunReport_ResumeListsSkippedStages — passed-over steps go in SkippedStages.
 func TestTBMRunReport_ResumeListsSkippedStages(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateLagsOk)
 	recorder, path := attachRecorder(t, orchestrator, config)
@@ -99,8 +92,7 @@ func TestTBMRunReport_ResumeListsSkippedStages(t *testing.T) {
 	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
 }
 
-// TestTBMRunReport_FailedStageIsRecorded — a step that fails is recorded as a
-// failed stage carrying its error, and the run's outcome is failed.
+// TestTBMRunReport_FailedStageIsRecorded — a failing step is recorded with its error.
 func TestTBMRunReport_FailedStageIsRecorded(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateUninitialized)
 	orchestrator.actions.gatewayService.(*mockGatewayService).waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {

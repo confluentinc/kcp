@@ -182,11 +182,7 @@ func NewTBMOrchestrator(
 	return orchestrator
 }
 
-// SetRunReportRecorder attaches a run-report recorder, which records per-stage
-// timings as Execute walks the workflow. A nil recorder (the default) disables
-// reporting. Mirrors migration.MigrationOrchestrator.SetRunReportRecorder: the
-// two FSMs share the recorder and its report schema, so a consumer timing a run
-// reads the same document whichever mode the route resolved to.
+// SetRunReportRecorder attaches a run-report recorder; nil (the default) disables it.
 func (o *TBMOrchestrator) SetRunReportRecorder(r *migration.RunReportRecorder) {
 	o.runReport = r
 }
@@ -207,10 +203,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
-	// Stage timings are taken around fsm.Event rather than on the FSM's
-	// before/after callbacks, for the same reason as the AAO loop: the named
-	// before_<EVENT> callback (where the work happens) runs before the general
-	// before_event one, so before_event cannot mark a stage's start.
+	// Stages are timed around fsm.Event, not in FSM callbacks (see the AAO loop).
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
 			slog.Debug("skipping already-completed tbm step", "step", step.Description, "event", step.Event)
@@ -228,9 +221,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			return o.handleStepFailure(ctx, step, err)
 		}
 		if step.Event == EventInitialize {
-			// Initialize is where a freshly registered migration's topics are
-			// first reconciled into config.Topics; the recorder was built
-			// before that and holds a count of zero.
+			// A fresh registration has no topics until initialize runs.
 			o.runReport.SetTopics(len(o.config.Topics))
 		}
 		o.runReport.StageEnded(o.config.CurrentState)

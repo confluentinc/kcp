@@ -295,10 +295,8 @@ func TestExecute_DynamicMode_DispatchesToTBMOrchestrator(t *testing.T) {
 		"a dynamic-mode resume must walk the TBM FSM all the way to switched")
 }
 
-// TestExecute_DynamicMode_KCPRunReportEnvWritesReport — KCP_RUN_REPORT turns the
-// per-stage report on for a dynamic-mode run, end to end through the command.
-// (A static-mode run cannot be driven this far in-process — see the negative
-// control below — so its recorder wiring is covered in internal/services/migration.)
+// TestExecute_DynamicMode_KCPRunReportEnvWritesReport — static mode can't run
+// this far in-process, so its wiring is tested in internal/services/migration.
 func TestExecute_DynamicMode_KCPRunReportEnvWritesReport(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeDynamicState(t, migration.StateInitialized, nil)
