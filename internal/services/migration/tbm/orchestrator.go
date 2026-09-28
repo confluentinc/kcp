@@ -95,6 +95,7 @@ type TBMOrchestrator struct {
 	migrationState *migration.MigrationState
 	stateFilePath  string
 	reporter       *reporter
+	runReport      *migration.RunReportRecorder // per-stage timings; nil when not requested
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
@@ -181,6 +182,15 @@ func NewTBMOrchestrator(
 	return orchestrator
 }
 
+// SetRunReportRecorder attaches a run-report recorder, which records per-stage
+// timings as Execute walks the workflow. A nil recorder (the default) disables
+// reporting. Mirrors migration.MigrationOrchestrator.SetRunReportRecorder: the
+// two FSMs share the recorder and its report schema, so a consumer timing a run
+// reads the same document whichever mode the route resolved to.
+func (o *TBMOrchestrator) SetRunReportRecorder(r *migration.RunReportRecorder) {
+	o.runReport = r
+}
+
 // Execute runs the full TBM workflow from the current state, skipping any
 // already-completed steps so a re-run resumes. res is the reconcile plan the
 // caller already computed live for this manifest; onInitialize consumes it.
@@ -197,9 +207,14 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
+	// Stage timings are taken around fsm.Event rather than on the FSM's
+	// before/after callbacks, for the same reason as the AAO loop: the named
+	// before_<EVENT> callback (where the work happens) runs before the general
+	// before_event one, so before_event cannot mark a stage's start.
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
 			slog.Debug("skipping already-completed tbm step", "step", step.Description, "event", step.Event)
+			o.runReport.StageSkipped(step.Event)
 			continue
 		}
 
@@ -207,9 +222,18 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
+		o.runReport.StageStarted(step.Event, step.FromState, step.ToState)
 		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err)
 		}
+		if step.Event == EventInitialize {
+			// Initialize is where a freshly registered migration's topics are
+			// first reconciled into config.Topics; the recorder was built
+			// before that and holds a count of zero.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
+		o.runReport.StageEnded(o.config.CurrentState)
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
