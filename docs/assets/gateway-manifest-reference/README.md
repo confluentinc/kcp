@@ -114,7 +114,7 @@ destination (test/lab only).
 | `name`                    | string     | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
 | `bootstrapServers`        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
 | `linkCredentials`         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](#rest-credentials-specclusterlinklinkcredentials) below.  |
-| `pauseConsumerOffsetSync` | bool       | no       | `false` | Static routes only. Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `consumerOffsetSyncBaseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. |
+| `pauseConsumerOffsetSync` | bool       | no       | `false` | Static routes only; a dynamic route refuses it. Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `consumerOffsetSyncBaseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. |
 | `consumerOffsetSyncBaseline` | string | when pausing | — | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
 
 **Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
@@ -185,9 +185,9 @@ dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
 the manifest. `kcp migration execute` resolves the mode from the live gateway CR
 each run and dispatches to the matching engine and FSM — AAO's for static routes,
-TBM's for dynamic. A dynamic-mode migration refuses
-`spec.clusterLink.pauseConsumerOffsetSync`: a dynamic route requires consumer
-offset sync to be disabled.
+TBM's for dynamic. Reconcile refuses
+`spec.clusterLink.pauseConsumerOffsetSync` on a dynamic route, so `--dry-run`
+reports it too: a dynamic route requires consumer offset sync to be disabled.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.

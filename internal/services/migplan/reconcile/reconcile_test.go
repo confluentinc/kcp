@@ -769,17 +769,43 @@ func TestReconcileStatic_RestoreOffsetSync(t *testing.T) {
 	}
 }
 
-// TestReconcileDynamic_NeverRestoresOffsetSync: a dynamic route has no
-// offset-sync pause, so it never owes a restore.
-func TestReconcileDynamic_NeverRestoresOffsetSync(t *testing.T) {
-	in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
-		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
-	p := Reconcile(in, dynGateway(), []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
-	if p.Mode != "dynamic" {
-		t.Fatalf("Mode = %q, want dynamic", p.Mode)
-	}
-	if p.Report.RestoreOffsetSync {
-		t.Fatal("a dynamic route must never owe an offset-sync restore")
+// TestReconcileDynamic_RefusesOffsetSyncPause: a dynamic route requires the
+// link's consumer offset sync to be off, so there is nothing to pause. A
+// manifest that asks for the pause is refused on the "offset-sync pause not
+// requested" precondition and owes no restore; without it the precondition
+// passes.
+func TestReconcileDynamic_RefusesOffsetSyncPause(t *testing.T) {
+	for _, pause := range []bool{true, false} {
+		t.Run(fmt.Sprintf("pause=%v", pause), func(t *testing.T) {
+			in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
+				PauseConsumerOffsetSync: pause, OffsetSyncBaselineEnabled: true}
+			p := Reconcile(in, dynGateway(), []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+
+			if p.Mode != "dynamic" {
+				t.Fatalf("Mode = %q, want dynamic", p.Mode)
+			}
+			var found *PreconditionResult
+			for i := range p.Report.Preconditions {
+				if p.Report.Preconditions[i].Name == "offset-sync pause not requested" {
+					found = &p.Report.Preconditions[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("no %q precondition in %+v", "offset-sync pause not requested", p.Report.Preconditions)
+			}
+			if found.OK == pause {
+				t.Fatalf("precondition OK = %v with pause=%v: %+v", found.OK, pause, *found)
+			}
+			if p.Report.Refused() != pause {
+				t.Fatalf("Refused = %v, want %v", p.Report.Refused(), pause)
+			}
+			if pause && !strings.Contains(found.Detail, "pauseConsumerOffsetSync") {
+				t.Fatalf("the refusal must name the manifest field, got %q", found.Detail)
+			}
+			if p.Report.RestoreOffsetSync || p.NothingToDo {
+				t.Fatalf("RestoreOffsetSync=%v NothingToDo=%v, want false/false", p.Report.RestoreOffsetSync, p.NothingToDo)
+			}
+		})
 	}
 }
 

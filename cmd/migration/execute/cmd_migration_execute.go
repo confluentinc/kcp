@@ -227,9 +227,10 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	return executePlan(cmd, g, &config, reconcileResult, deps, runReport)
 }
 
-// executePlan acts on this run's reconcile result: it refuses what reconcile
-// refused, runs nothing when reconcile found nothing to do, and otherwise hands
-// the result to the route mode's state machine.
+// executePlan acts on this run's reconcile result and makes no decision of its
+// own: it refuses what reconcile refused, runs nothing when reconcile found
+// nothing to do, and otherwise hands the result to the route mode's state
+// machine.
 func executePlan(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
@@ -241,17 +242,6 @@ func executePlan(
 	if reconcileResult.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
 	}
-	mode := reconcileResult.Mode
-
-	// Pause-offset-sync has no effect for a topic-based (dynamic)
-	// migration — the dynamic FSM has no offset_sync_paused state at all. A
-	// dynamic route requires consumer offset sync to be disabled, so
-	// pausing it is contradictory; refuse rather than silently ignore.
-	if pauseOffsetSyncRefusedForDynamic(mode, g) {
-		return fmt.Errorf(
-			"spec.clusterLink.pauseConsumerOffsetSync is not supported for a topic-based (dynamic) route %q: a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest",
-			g.Spec.Route.Name)
-	}
 
 	// Nothing to do: every topic is already migrated and no offset-sync
 	// restore is owed. No state machine runs and no service is built.
@@ -261,7 +251,7 @@ func executePlan(
 		return nil
 	}
 
-	switch mode {
+	switch reconcileResult.Mode {
 	case "dynamic":
 		return runDynamicBranch(cmd, g, config, reconcileResult, deps)
 	default:
@@ -299,18 +289,6 @@ func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []an
 		"hot_reload_timeout", p.HotReloadTimeout,
 		"gateway_config_port", p.GatewayConfigPort,
 	}
-}
-
-// pauseOffsetSyncRefusedForDynamic reports whether spec.clusterLink.
-// pauseConsumerOffsetSync is set on a manifest that resolved to a topic-based
-// (dynamic) migration, where the field has no effect — the dynamic FSM has no
-// offset_sync_paused state. It is the guard for the refusal
-// runMigrationExecute makes after reconcile; a static
-// route honors the field, so this is false for one. Factored out so the
-// decision can be unit-tested without a live migplan.Reconcile — the only path
-// that reaches the refusal through the command.
-func pauseOffsetSyncRefusedForDynamic(mode string, g *manifest.GatewayMigration) bool {
-	return mode == "dynamic" && g.Spec.ClusterLink.PauseConsumerOffsetSync
 }
 
 // applyPolicyOverrides replaces each default that the operator set explicitly on

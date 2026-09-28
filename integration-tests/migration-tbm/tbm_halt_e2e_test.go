@@ -98,6 +98,15 @@ func TestHaltScenarios(t *testing.T) {
 			"preconditions=%+v", res.Report.Preconditions)
 	})
 
+	// The manifest asks for the offset-sync pause, which a dynamic route has no
+	// use for: its link runs with consumer offset sync off.
+	t.Run("offset-sync-pause-requested", func(t *testing.T) {
+		res := h.Decide(t, h.loadManifest(t, "halt-offset-sync-pause-requested.yaml"))
+		assertRefusedNoArtifacts(t, res)
+		require.Truef(t, hasFailedPrecondition(res.Report, "offset-sync pause not requested"),
+			"preconditions=%+v", res.Report.Preconditions)
+	})
+
 	// An invalid anchored-RE2 topicPatterns is refused at manifest load
 	// (validateTopicGroup) rather than crashing or escaping a Go regexp error.
 	t.Run("bad-selector", func(t *testing.T) {

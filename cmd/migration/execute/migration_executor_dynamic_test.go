@@ -208,24 +208,3 @@ func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *t
 		"--gateway-config-port must reach config.GatewayConfigPort before the dynamic capability probe")
 	assert.Equal(t, 9999, config.GatewayConfigPort)
 }
-
-// --- refusal decision (pauseConsumerOffsetSync on a dynamic route) ---
-
-// TestPauseOffsetSyncRefusedForDynamic pins the exact refusal decision
-// runMigrationExecute makes: a pauseConsumerOffsetSync manifest is refused for
-// a dynamic route and permitted for a static one (which honors the field).
-// That branch is unreachable through the command in-process (it needs a live
-// migplan.Reconcile), so the decision is factored into
-// pauseOffsetSyncRefusedForDynamic and asserted directly here.
-func TestPauseOffsetSyncRefusedForDynamic(t *testing.T) {
-	set := &manifest.GatewayMigration{}
-	set.Spec.ClusterLink.PauseConsumerOffsetSync = true
-	unset := &manifest.GatewayMigration{}
-
-	assert.True(t, pauseOffsetSyncRefusedForDynamic("dynamic", set),
-		"a dynamic route with pauseConsumerOffsetSync set must be refused")
-	assert.False(t, pauseOffsetSyncRefusedForDynamic("dynamic", unset),
-		"nothing to refuse when the field is unset")
-	assert.False(t, pauseOffsetSyncRefusedForDynamic("static", set),
-		"a static route honors pauseConsumerOffsetSync — no refusal")
-}

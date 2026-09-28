@@ -134,6 +134,15 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, fail("consumer offset sync disabled on link", "consumer offset sync is enabled on the cluster link; disable it for a dynamic-route migration"))
 	}
 
+	// A dynamic route runs with the link's consumer offset sync off, so there is
+	// nothing to pause: a manifest asking for the pause is a contradiction.
+	if !in.PauseConsumerOffsetSync {
+		res = append(res, pass("offset-sync pause not requested"))
+	} else {
+		res = append(res, fail("offset-sync pause not requested",
+			"spec.clusterLink.pauseConsumerOffsetSync is set, but a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest"))
+	}
+
 	// Cluster identity: the clusters we read must be the migration's real source
 	// and destination. An empty id (destination omits source_cluster_id, or the
 	// metadata could not be read) can't prove a mismatch, so it passes.
