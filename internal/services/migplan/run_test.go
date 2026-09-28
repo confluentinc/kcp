@@ -29,6 +29,35 @@ func TestBuildReconcileInput(t *testing.T) {
 	if len(in.Topics) != 2 || len(in.TopicPatterns) != 1 {
 		t.Errorf("topics/patterns = %v / %v", in.Topics, in.TopicPatterns)
 	}
+	if in.PauseConsumerOffsetSync {
+		t.Error("PauseConsumerOffsetSync must be false when the manifest does not opt in")
+	}
+}
+
+func TestBuildReconcileInput_CarriesOffsetSyncPause(t *testing.T) {
+	for _, c := range []struct {
+		baseline    string
+		wantEnabled bool
+	}{
+		{manifest.OffsetSyncBaselineEnabled, true},
+		{manifest.OffsetSyncBaselineDisabled, false},
+	} {
+		t.Run(c.baseline, func(t *testing.T) {
+			g := gm("migration-route", "cc", []manifest.TopicGroupEntry{{Topics: strs("a")}})
+			g.Spec.ClusterLink.PauseConsumerOffsetSync = true
+			g.Spec.ClusterLink.ConsumerOffsetSyncBaseline = c.baseline
+			in, err := buildReconcileInput(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !in.PauseConsumerOffsetSync {
+				t.Error("PauseConsumerOffsetSync must carry the manifest's opt-in")
+			}
+			if in.OffsetSyncBaselineEnabled != c.wantEnabled {
+				t.Errorf("OffsetSyncBaselineEnabled = %v, want %v", in.OffsetSyncBaselineEnabled, c.wantEnabled)
+			}
+		})
+	}
 }
 
 func TestBuildReconcileInputValidation(t *testing.T) {
@@ -86,6 +115,21 @@ func TestNewResult(t *testing.T) {
 	}
 	if ok.Mode != "static" {
 		t.Errorf("Mode = %q, want static (must mirror plan.Mode)", ok.Mode)
+	}
+	if ok.RestoreOffsetSync {
+		t.Error("RestoreOffsetSync must be false when the report does not owe a restore")
+	}
+
+	// a restore owed with no topic left: no artifacts, but the verdict is carried.
+	restore := newResult(&reconcile.Plan{
+		Report: reconcile.Report{Unchanged: []reconcile.TopicVerdict{{Topic: "a"}}, RestoreOffsetSync: true},
+		Mode:   "static",
+	})
+	if !restore.RestoreOffsetSync || restore.Refused {
+		t.Errorf("RestoreOffsetSync=%v Refused=%v, want true/false", restore.RestoreOffsetSync, restore.Refused)
+	}
+	if restore.FenceYAML != "" || restore.SwitchoverYAML != "" || len(restore.PromoteTopics) != 0 {
+		t.Error("a restore-only plan must carry no fence, switchover or promote work")
 	}
 
 	// refused: nil artifacts, Refused true, reasons from failed checks + fail-fast,

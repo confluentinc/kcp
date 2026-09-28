@@ -49,7 +49,8 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `051..085`: baseline `051..055`, after-fence `056..060`, after-promote
+in `046..085`: after-switch with the offset-sync pause on `046..050` (static
+only), baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
 after-offset-sync-pause `076..080` (static only), mid-batch `081..085`. On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
@@ -85,8 +86,9 @@ New suite (2026-09-23), local on `feat/idempotent-migration-fsm`. Covers **both
 routes** — dynamic/TBM and static/AAO (`GATEWAY_MODE=dynamic|static`) — across all
 five kill-points: baseline, after-fence, after-promote, during-promote
 (intra-promote / PENDING_STOPPED), after-switch — plus, on static,
-after-offset-sync-pause (`pauseConsumerOffsetSync` on; the static suite's link
-starts with consumer offset sync enabled so the pause and restore are
+after-offset-sync-pause and after-switch with the pause on, which leaves the
+restore owed to the resume (`pauseConsumerOffsetSync` on; the static suite's
+link starts with consumer offset sync enabled so the pause and restore are
 observable). Both modes also cover a mid-batch kill: with
 `promoteBatchSize: 2`, the run is killed after the first batch of 2 is
 accepted, leaving 2 mirrors promoting and 3 ACTIVE. Env-var names are still

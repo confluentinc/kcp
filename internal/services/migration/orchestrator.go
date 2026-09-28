@@ -42,19 +42,17 @@ type WorkflowStep struct {
 // canonicalWorkflow is the single source of truth for the migration workflow
 // sequence — the ordered forward transitions the FSM walks on execute.
 //
-// Two deliberate modelling choices are intentionally NOT represented here:
-//   - The offset-sync RESTORE bookend runs OUTSIDE the FSM, after execute, by
-//     the command layer (see offset_sync_bookend.go), because the restore must
-//     run even when the run aborts or ctx is cancelled. The pause half lives
-//     inside the FSM as the pause_offset_sync stage — a pass-through when the
-//     operator did not opt in — so it fires at the latest safe moment (right
-//     after fencing) instead of stretching the paused window across the run.
-//   - There is no terminal/failed state. A step failure cancels its transition
-//     (e.Cancel) and leaves the FSM at the last good state for the rest of the
-//     run. Every run's FSM starts at uninitialized (see
-//     NewMigrationOrchestrator) and walks forward, re-applying each step's
-//     artifact idempotently. abort_fence ({fenced, offset_sync_paused} →
-//     initialized) is the only mid-run rollback.
+// The consumer offset-sync pause and restore are stages of their own, each a
+// pass-through when there is nothing to do: pause_offset_sync fires right after
+// fencing (the latest safe moment, rather than stretching the paused window
+// across the run) and restore_offset_sync after the switch.
+//
+// There is deliberately no terminal/failed state. A step failure cancels its
+// transition (e.Cancel) and leaves the FSM at the last good state for the rest
+// of the run. Every run's FSM starts at uninitialized (see
+// NewMigrationOrchestrator) and walks forward, re-applying each step's artifact
+// idempotently. abort_fence ({fenced, offset_sync_paused} → initialized) is the
+// only mid-run rollback.
 var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
@@ -63,15 +61,17 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventVerifyFence, "verifying gateway fence", StateOffsetSyncPaused, StateFenceVerified},
 	{EventPromote, "promoting topics", StateFenceVerified, StatePromoted},
 	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched},
+	{EventRestoreOffsetSync, "restoring consumer offset sync", StateSwitched, StateOffsetSyncRestored},
 }
 
 // stepHeaders maps a forward workflow event to the banner the Execute loop
 // prints as it walks canonicalWorkflow. Kept separate from canonicalWorkflow so
 // the FSM edge definitions carry no presentation. abort_fence is deliberately
 // absent: it is a compensation fired from handleStepFailure, not a forward loop
-// step, and its messaging is owned by onAbortFence. pause_offset_sync is also
-// absent: a fixed "Pausing..." banner would mislead on the pass-through path,
-// so PauseOffsetSync owns its own banner-or-skip-line output.
+// step, and its messaging is owned by onAbortFence. pause_offset_sync and
+// restore_offset_sync are also absent: a fixed banner would mislead on their
+// pass-through paths, so PauseOffsetSync and RestoreOffsetSync each own their
+// banner-or-skip-line output.
 var stepHeaders = map[string]string{
 	EventInitialize:  "🔍 Initializing migration...",
 	EventWaitForLags: "⏳ Checking replication lags...",
@@ -153,8 +153,9 @@ func NewMigrationOrchestrator(
 	// migplan.Reconcile on every invocation and hands its *migplan.Result to
 	// Execute, which walks canonicalWorkflow from the top and re-applies each
 	// step's artifact idempotently (the plan-driven no-op guards — Fence on
-	// FenceYAML, Promote on Topics, Switch on SwitchoverYAML — make an
-	// already-complete migration a side-effect-free walk-through).
+	// FenceYAML, Promote on Topics, Switch on SwitchoverYAML, Restore on
+	// RestoreOffsetSync — make an already-complete migration a side-effect-free
+	// walk-through).
 	//
 	// Action callbacks are registered per-event (before_<EVENT>), not per-state
 	// (leave_<STATE>), so each is single-purpose. This matters for the fenced
@@ -164,18 +165,19 @@ func NewMigrationOrchestrator(
 		StateUninitialized,
 		events,
 		fsm.Callbacks{
-			"before_event":                   orchestrator.beforeEventCallback,
-			"after_event":                    orchestrator.afterEventCallback,
-			"enter_state":                    orchestrator.enterStateCallback,
-			"leave_state":                    orchestrator.leaveStateCallback,
-			"before_" + EventInitialize:      orchestrator.onInitialize,
-			"before_" + EventWaitForLags:     orchestrator.onWaitForLags,
-			"before_" + EventFence:           orchestrator.onFence,
-			"before_" + EventPauseOffsetSync: orchestrator.onPauseOffsetSync,
-			"before_" + EventVerifyFence:     orchestrator.onVerifyFence,
-			"before_" + EventPromote:         orchestrator.onPromote,
-			"before_" + EventAbortFence:      orchestrator.onAbortFence,
-			"before_" + EventSwitch:          orchestrator.onSwitch,
+			"before_event":                     orchestrator.beforeEventCallback,
+			"after_event":                      orchestrator.afterEventCallback,
+			"enter_state":                      orchestrator.enterStateCallback,
+			"leave_state":                      orchestrator.leaveStateCallback,
+			"before_" + EventInitialize:        orchestrator.onInitialize,
+			"before_" + EventWaitForLags:       orchestrator.onWaitForLags,
+			"before_" + EventFence:             orchestrator.onFence,
+			"before_" + EventPauseOffsetSync:   orchestrator.onPauseOffsetSync,
+			"before_" + EventVerifyFence:       orchestrator.onVerifyFence,
+			"before_" + EventPromote:           orchestrator.onPromote,
+			"before_" + EventAbortFence:        orchestrator.onAbortFence,
+			"before_" + EventSwitch:            orchestrator.onSwitch,
+			"before_" + EventRestoreOffsetSync: orchestrator.onRestoreOffsetSync,
 		},
 	)
 
@@ -464,6 +466,18 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 // onSwitch runs the switch transition: delegates to workflow SwitchGateway.
 func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 	if err := o.actions.SwitchGateway(ctx, o.config); err != nil {
+		e.Cancel(err)
+	}
+}
+
+// onRestoreOffsetSync runs the restore_offset_sync transition: delegates to
+// RestoreOffsetSync, which sets cluster-link consumer offset sync back to the
+// baseline when the plan owes a restore and passes through otherwise. A
+// failure cancels the transition, leaving the FSM at switched for a re-run to
+// retry.
+func (o *MigrationOrchestrator) onRestoreOffsetSync(ctx context.Context, e *fsm.Event) {
+	p := execParamsFromEvent(e)
+	if err := o.actions.RestoreOffsetSync(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }

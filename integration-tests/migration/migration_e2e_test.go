@@ -862,7 +862,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	// This is purely advisory: it produces a log line showing the observed
 	// true→false→true sequence when timing permits, but a fast FSM run may
 	// not catch the disabled window. The deterministic check is on the
-	// bookend's stdout lines (asserted below). The goroutine uses the Soft
+	// pause and restore steps' stdout lines (asserted below). The goroutine uses the Soft
 	// variant because require.NoError on the parent *testing.T is unsafe
 	// from a non-test goroutine — transient wget/JSON errors are swallowed
 	// locally instead of crashing the test.
@@ -904,7 +904,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 		require.NoError(t, err, "kcp migration execute failed")
 
 		// require.NoError above implies switched;
-		// bookend_ran_and_final_state_restored below proves the pause and
+		// pause_and_restore_ran_and_final_state_restored below proves the pause and
 		// restore ran (their stdout lines, and the live cluster link's
 		// config.enable ending back at true).
 		assert.Contains(t, stdout, fmt.Sprintf("Migration completed: %s", opts.MetadataName),
@@ -925,24 +925,24 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	t.Logf("observed cluster-link config sequence during execute (advisory): %v", seen)
 
 	// --- Step 3: deterministic assertions ---
-	t.Run("bookend_ran_and_final_state_restored", func(t *testing.T) {
-		// The pause stage and restore bookend print these lines
+	t.Run("pause_and_restore_ran_and_final_state_restored", func(t *testing.T) {
+		// The pause and restore stages print these lines
 		// unconditionally when they run. They are durable evidence that the
 		// disable→restore cycle ran, without depending on poll timing
 		// landing inside the FSM window.
 		assert.Contains(t, executeStdout, "Pausing consumer.offset.sync",
 			"execute stdout must show the pause stage ran")
 		assert.Contains(t, executeStdout, "Restoring consumer.offset.sync",
-			"execute stdout must show the restore bookend ran")
+			"execute stdout must show the restore stage ran")
 
 		// The pause is an FSM stage that fires AFTER fencing — stdout order
-		// pins the re-timing (previously the disable ran before the FSM).
+		// pins it.
 		fenceIdx := strings.Index(executeStdout, "Fencing gateway")
 		pauseIdx := strings.Index(executeStdout, "Pausing consumer.offset.sync")
 		require.NotEqual(t, -1, fenceIdx, "execute stdout must show the fence step")
 		require.NotEqual(t, -1, pauseIdx, "execute stdout must show the pause stage")
 		assert.Less(t, fenceIdx, pauseIdx,
-			"the pause must fire after fencing, not as a pre-FSM bookend")
+			"the pause must fire after fencing")
 
 		// And the live cluster link must be back to enable=true.
 		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
@@ -1054,10 +1054,9 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 // TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled proves
 // execute completes even when the cluster link's consumer.offset.sync.enable
 // starts disabled: static-route preconditions (CheckStaticPreconditions) do
-// not check offset sync, and the pause/restore bookends are manifest-driven
-// idempotent applies that never read the live link (workflow.go's
-// PauseOffsetSync). The restore bookend still returns the link to the
-// declared baseline afterward.
+// not check offset sync, and the pause is a manifest-driven idempotent apply
+// that never reads the live link (workflow.go's PauseOffsetSync). The restore
+// stage still returns the link to the declared baseline afterward.
 //
 // Runs against the "pause-sync-starts-disabled" scenario, which gives this
 // test its own cluster link so flipping offset-sync to "false" does not leak
@@ -1098,7 +1097,7 @@ func TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled(t *testing
 		"the live precondition check is gone (Task 1):\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 
 	assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
-		"the restore bookend must still bring the link to the declared baseline (enabled), regardless of how it started")
+		"the restore stage must still bring the link to the declared baseline (enabled), regardless of how it started")
 }
 
 // TestMigrationE2E_PauseOffsetSync_RestoresFilters was removed:
@@ -1315,7 +1314,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 // cluster link.
 //
 // (This test used to also assert consumer.offset.group.filters round-tripped;
-// dropped because restoreOffsetSync now only sets consumer.offset.sync.enable
+// dropped because the restore only sets consumer.offset.sync.enable
 // and never touches filters — see RestoresFilters above.)
 //
 // Phase A: execute runs with spec.clusterLink.pauseConsumerOffsetSync while a
@@ -1428,7 +1427,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 		assert.Contains(t, combined, "Pausing consumer.offset.sync",
 			"the retry must pause afresh")
 		assert.Contains(t, combined, "Restoring consumer.offset.sync",
-			"the post-switchover restore bookend must run")
+			"the post-switchover restore stage must run")
 
 		// require.NoError above implies switched; final_state_restored below
 		// proves the restore (the live cluster link's config.enable ending
@@ -1449,8 +1448,8 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 // an out-of-band change to the link's consumer.offset.sync.enable while
 // execute is running neither refuses nor rolls back the migration: the pause
 // stage is a manifest-driven idempotent SET (it never reads the live link),
-// the run completes to switched, and the post-switchover restore bookend
-// still returns the link to the declared baseline.
+// the run completes, and the post-switchover restore stage still returns the
+// link to the declared baseline.
 //
 // Runs against the "pause-sync-drift" scenario — its own dedicated source
 // topic, cluster link, and gateway CR provisioned by setup.sh — so flipping
@@ -1502,7 +1501,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T)
 	// from a non-test goroutine — so its result is reported back over a
 	// channel and asserted on the main goroutine after execute returns.
 	t.Run("drift_during_run_does_not_block_completion", func(t *testing.T) {
-		// The drift must land before the restore bookend, or the final
+		// The drift must land before the restore stage, or the final
 		// restored-to-true assertion would fail. The 10s unrouted-producer
 		// window (verify_fence, between pause and restore) guarantees that.
 		const driftDelay = 3 * time.Second
@@ -1521,7 +1520,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T)
 
 		require.NoErrorf(t, err, "execute must succeed despite a mid-run drift:\n%s", combined)
 		assert.Contains(t, combined, "Pausing consumer.offset.sync", "the pause stage must still run")
-		assert.Contains(t, combined, "Restoring consumer.offset.sync", "the post-switchover restore bookend must run")
+		assert.Contains(t, combined, "Restoring consumer.offset.sync", "the post-switchover restore stage must run")
 		assert.NotContains(t, combined, "refused", "the pause stage no longer performs a live drift check")
 	})
 

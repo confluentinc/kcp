@@ -81,12 +81,10 @@ func (rec *callRecorder) assertAltered(t *testing.T, name, value string) {
 }
 
 // ---------------------------------------------------------------------------
-// RestoreOffsetSync — baseline-driven idempotent restore. Covers AE1 (happy
-// path to both baseline values), the no-op when pause was never requested,
-// and soft-fail on AlterConfigs failure. The diff/marker/ListConfigs model
-// this replaces (snapshot vs. live-state comparison, toggle-ordering,
-// PauseConsumerOffsetSyncFlipped) is gone: restore is now a single idempotent
-// SET driven entirely by config.PauseConsumerOffsetSync/ConsumerOffsetSyncBaseline.
+// RestoreOffsetSync — the restore_offset_sync step. Plan-driven: it runs only
+// when reconcile found a restore owed (config.RestoreOffsetSync), applies one
+// idempotent SET of consumer.offset.sync.enable to the declared baseline, and
+// never reads the live link. A failed SET fails the step, so a re-run retries it.
 // ---------------------------------------------------------------------------
 
 func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
@@ -100,9 +98,10 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 				ClusterLinkName:            "link-1",
 				PauseConsumerOffsetSync:    true,
 				ConsumerOffsetSyncBaseline: tc.baseline,
+				RestoreOffsetSync:          true,
 			}
 
-			RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
+			require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
 			rec.assertAltered(t, offsetSyncEnableKey, tc.want)
 			rec.assertNoListConfigs(t)
 		})
@@ -110,37 +109,36 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 }
 
 func TestRestoreOffsetSync_UnsetBaselineDefaultsToEnabled(t *testing.T) {
-	// An empty/unset baseline (never declared, or a pre-2b manifest) restores
-	// to enabled — the historical default behaviour.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true}
+	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
+	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertAltered(t, offsetSyncEnableKey, "true")
 }
 
-func TestRestoreOffsetSync_NoPauseIsNoop(t *testing.T) {
+func TestRestoreOffsetSync_NotInPlanIsNoop(t *testing.T) {
+	// The pause is opted in, but reconcile found the link already at its
+	// baseline: nothing to restore, and no call to the link.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
+	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: false}
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
+	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertNoCalls(t)
 }
 
-func TestRestoreOffsetSync_IdempotentRegardlessOfWhetherPauseLanded(t *testing.T) {
-	// Unlike the old marker-gated model, restore no longer asks whether the
-	// pause bookend actually flipped anything — it always re-applies the
-	// baseline when the operator opted into pausing. Re-running (a retry, a
-	// second rollback attempt) is simply a repeat idempotent SET.
+func TestRestoreOffsetSync_ReappliesTheSameSet(t *testing.T) {
+	// A re-run applies the same idempotent SET again.
 	cl, rec := newFakeClusterLink()
 	cfg := &MigrationConfig{
 		ClusterLinkName:            "link-1",
 		PauseConsumerOffsetSync:    true,
 		ConsumerOffsetSyncBaseline: manifest.OffsetSyncBaselineEnabled,
+		RestoreOffsetSync:          true,
 	}
+	actions := NewMigrationActions(nil, cl)
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
+	require.NoError(t, actions.RestoreOffsetSync(context.Background(), cfg, nil))
+	require.NoError(t, actions.RestoreOffsetSync(context.Background(), cfg, nil))
 	require.Len(t, rec.alterConfigs, 2, "each call re-applies the same idempotent SET")
 	assert.Equal(t, "true", rec.alterConfigs[0].Value)
 	assert.Equal(t, "true", rec.alterConfigs[1].Value)
@@ -169,52 +167,35 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
-func TestRestoreOffsetSync_AlterFails_SoftFailNoError(t *testing.T) {
-	// R13: restore failure is soft — no panic, no error return (the function
-	// takes no error to propagate).
+func TestRestoreOffsetSync_AlterFails_ReturnsError(t *testing.T) {
 	cl, rec := newFailingAlterClusterLink(fmt.Errorf("503 unavailable"))
-	cfg := &MigrationConfig{
-		ClusterLinkName:         "link-soft",
-		PauseConsumerOffsetSync: true,
-	}
+	cfg := &MigrationConfig{ClusterLinkName: "link-hard", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
-	out := captureStderr(t, func() {
-		RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
-	})
+	err := NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil)
 
+	require.Error(t, err, "a failed restore must fail the step so a re-run retries it")
 	require.Len(t, rec.alterConfigs, 1, "the AlterConfigs attempt happened")
-	assert.Contains(t, out, "link-soft", "remediation message names the cluster link")
-	assert.Contains(t, out, offsetSyncEnableKey, "remediation message names the key")
+	assert.Contains(t, err.Error(), "link-hard", "the error names the cluster link")
+	assert.Contains(t, err.Error(), offsetSyncEnableKey, "the error names the key")
+	assert.Contains(t, err.Error(), "503 unavailable", "the error carries the cause")
 }
 
-// TestRestoreOffsetSync_ParentCtxCancelled_StillRestores verifies the
-// soft-fail semantic survives parent-ctx cancellation. The migration may
-// complete successfully and only then have its ctx cancelled (signal arriving
-// between Execute returning and the bookend running, future caller that
-// cancels on completion, etc.). RestoreOffsetSync must use a fresh ctx so the
-// AlterConfigs PUT actually runs.
-func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
-	var ctxErrAtCall error
-	rec := &callRecorder{}
+// TestRestoreOffsetSync_CancelledCtx_ReturnsError: the restore runs on the
+// run's own context, so a Ctrl-C before or during it fails the step (the FSM
+// stays at switched) and the re-run retries it.
+func TestRestoreOffsetSync_CancelledCtx_ReturnsError(t *testing.T) {
 	mock := &mockClusterLinkService{
-		alterConfigsFn: func(ctx context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
-			ctxErrAtCall = ctx.Err()
-			rec.alterConfigs = append(rec.alterConfigs, alts...)
-			return nil
+		alterConfigsFn: func(ctx context.Context, _ clusterlink.Config, _ []clusterlink.ConfigAlteration) error {
+			return ctx.Err()
 		},
 	}
-	cfg := &MigrationConfig{
-		ClusterLinkName:         "link-1",
-		PauseConsumerOffsetSync: true,
-	}
+	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
-	parentCtx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	RestoreOffsetSync(parentCtx, mock, clusterlink.Config{}, cfg)
-
-	require.Len(t, rec.alterConfigs, 1, "AlterConfigs must be called even when parent ctx is cancelled")
-	assert.NoError(t, ctxErrAtCall, "AlterConfigs must receive a non-cancelled ctx at the moment of call (soft-fail intent)")
+	err := NewMigrationActions(nil, mock).RestoreOffsetSync(ctx, cfg, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 // ---------------------------------------------------------------------------

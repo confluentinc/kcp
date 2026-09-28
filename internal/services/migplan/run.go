@@ -34,6 +34,11 @@ type Result struct {
 	Refused        bool     // true ⇔ infeasible; the three above are empty
 	Reasons        []string // why, when Refused (failed checks + blocked topics)
 
+	// RestoreOffsetSync is reconcile.Report.RestoreOffsetSync: a static run
+	// must set the link's consumer offset sync back to the manifest's baseline
+	// after the switch. Can be true with no topic left to migrate.
+	RestoreOffsetSync bool
+
 	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
 	// server-managed metadata (managedFields, resourceVersion, uid,
 	// creationTimestamp, generation, status — see migplan/gatewayfile.go's
@@ -165,7 +170,8 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 }
 
 func newResult(plan *reconcile.Plan) *Result {
-	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
+		GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics
 		r.AwaitStopped = plan.Artifacts.AwaitStopped
@@ -255,6 +261,9 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		Route:           r.Name,
 		TargetDomain:    r.TargetStreamingDomain,
 		TargetClusterID: g.Spec.Target.ClusterID,
+
+		PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
 	}, nil
 }
 

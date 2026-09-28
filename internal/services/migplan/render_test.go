@@ -151,6 +151,26 @@ func TestRenderReport_ResumeOnlyIsActionable(t *testing.T) {
 	}
 }
 
+// TestRenderReport_RestoreOnlyIsActionable: every topic is already migrated but
+// an offset-sync restore is still owed, so the plan has work and names it.
+func TestRenderReport_RestoreOnlyIsActionable(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		Unchanged:         []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.Unchanged}},
+		RestoreOffsetSync: true,
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{ArtifactNote: "plan ready"})
+	out := buf.String()
+
+	if strings.Contains(out, "nothing to do") {
+		t.Errorf("a plan that owes an offset-sync restore must not render \"nothing to do\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "offset-sync restore") || !strings.Contains(out, "(plan ready)") {
+		t.Errorf("the footer must name the owed restore and reach the actionable branch; got:\n%s", out)
+	}
+}
+
 // TestRenderReport_SwitchOnlyWarningNotDoublePrinted proves a shadow warning
 // attached to a SwitchOnly topic (mirroring how reconcile.go's
 // shadowWarnings(toMigrate, ...) attaches warnings to SwitchOnly/AwaitStopped

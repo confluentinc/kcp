@@ -142,9 +142,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 // refusal logic is needed. Unlike dynamic mode, there is no shadow-warning
 // concept (no per-topic routing conditions exist to shadow) and no
 // rules-size guardrail (the fragments are a few dozen bytes, never
-// realistically oversized).
+// realistically oversized). It alone decides whether the run owes an
+// offset-sync restore (Report.RestoreOffsetSync), from the manifest's pause
+// opt-in and baseline and the link's live offsetSyncEnabled.
 func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
+	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	report := Report{}
 
@@ -193,7 +195,13 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	if report.Refused() {
 		return &Plan{Report: report, Mode: "static"}
 	}
+	// A restore is owed when the pause is opted in and either this run pauses
+	// (a cutover is in flight) or an earlier run's pause was never restored
+	// (the link's live offset sync still differs from the baseline).
+	restoreOffsetSync := in.PauseConsumerOffsetSync &&
+		(len(toMigrate) > 0 || offsetSyncEnabled != in.OffsetSyncBaselineEnabled)
 	if len(toMigrate) == 0 {
+		report.RestoreOffsetSync = restoreOffsetSync
 		return &Plan{Report: report, Mode: "static"}
 	}
 
@@ -208,6 +216,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		return &Plan{Report: report, Mode: "static"}
 	}
 
+	report.RestoreOffsetSync = restoreOffsetSync
 	promoteSorted := append([]string(nil), promote...)
 	sort.Strings(promoteSorted)
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
@@ -227,7 +236,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
-		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets, secretCheckSkipped)
+		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
 	}
 	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
 }

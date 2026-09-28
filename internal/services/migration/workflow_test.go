@@ -148,14 +148,6 @@ func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
 	assert.Empty(t, config.Route, "a refused plan must not mutate config")
 }
 
-// Note: the former "PauseConsumerOffsetSync precondition tests (U2)" suite
-// pinned Initialize's live-cluster-link precondition (refuse-if-not-enabled)
-// and its ClusterLinkConfigs pre-disable snapshot capture. Both are removed —
-// Initialize no longer calls ListConfigs at all, and PauseOffsetSync/
-// restoreOffsetSync are now manifest+plan-driven idempotent applies that never
-// read the live cluster link to decide anything (see offset_sync_bookend_test.go
-// for their coverage).
-
 // ===========================================================================
 // CheckLags tests
 // ===========================================================================

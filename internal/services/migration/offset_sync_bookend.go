@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -10,85 +11,42 @@ import (
 
 const offsetSyncEnableKey = "consumer.offset.sync.enable"
 
-// bookendCallTimeout bounds the single AlterConfigs PUT the pause/restore
-// bookends each make.
-const bookendCallTimeout = 30 * time.Second
+// offsetSyncCallTimeout bounds the single AlterConfigs PUT each offset-sync step
+// makes.
+const offsetSyncCallTimeout = 30 * time.Second
 
-// RestoreOffsetSync runs the post-execute restore bookend: an idempotent
-// AlterConfigs SET that re-applies the operator's declared baseline
-// (config.ConsumerOffsetSyncBaseline). Soft-failure semantics: an
-// AlterConfigs failure prints a remediation message to stderr but does NOT
-// propagate an error, because the switchover itself succeeded (R13).
-//
-// The ctx argument is accepted for symmetry with the pause bookend but the
-// network call uses a fresh background ctx with a per-call timeout. The
-// restore must run even when the parent ctx is already cancelled (e.g. a
-// signal arrived between orchestrator.Execute returning and the bookend
-// firing) — that is the case the soft-fail semantic exists for.
-func RestoreOffsetSync(
-	_ context.Context,
-	cl clusterlink.Service,
-	clCfg clusterlink.Config,
-	config *MigrationConfig,
-) {
-	restoreOffsetSync(cl, clCfg, config, "Migration completed but")
-}
-
-// restoreOffsetSync is the shared restore engine behind the post-switchover
-// bookend (RestoreOffsetSync) and the abort_fence rollback
-// (MigrationActions.restoreOffsetSyncAfterRollback). The situation prefix
-// keeps the operator-facing remediation wording honest about which flow the
-// restore failed in ("Migration completed but" vs "Gateway unfenced but").
-//
-// Manifest- and plan-driven only: it never reads the live cluster link to
-// decide anything — no ListConfigs, no diff, no marker. It is a no-op unless
-// the operator opted into pausing (config.PauseConsumerOffsetSync), and
-// otherwise always applies a single idempotent SET of
-// consumer.offset.sync.enable to the declared baseline
+// setOffsetSyncBaseline applies one idempotent AlterConfigs SET of
+// consumer.offset.sync.enable to config's declared baseline
 // (config.ConsumerOffsetSyncBaseline: "disabled" -> "false", anything else,
-// including "enabled" or unset, -> "true"), whether or not the pause bookend
-// actually ran or landed. Re-running it (a retry, a second rollback attempt)
-// simply re-applies the same SET.
-func restoreOffsetSync(
+// including "enabled" or unset, -> "true") and returns the value it set.
+// Manifest-driven only: it never reads the live cluster link, so re-running it
+// (a retry, a resume) simply re-applies the same SET. Shared by the
+// restore_offset_sync step and the abort_fence rollback.
+func setOffsetSyncBaseline(
+	ctx context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
 	config *MigrationConfig,
-	situation string,
-) {
-	if !config.PauseConsumerOffsetSync {
-		return
-	}
-
+) (string, error) {
 	want := "true"
 	if config.ConsumerOffsetSyncBaseline == manifest.OffsetSyncBaselineDisabled {
 		want = "false"
 	}
 
-	r := newReporter()
-	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
-
-	callCtx, cancel := context.WithTimeout(context.Background(), bookendCallTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, offsetSyncCallTimeout)
 	defer cancel()
 	if err := cl.AlterConfigs(callCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: want, Operation: clusterlink.OperationSet},
 	}); err != nil {
-		r.Remediation(
-			"%s failed to set %s=%s on cluster link %q (%v) — re-apply manually.",
-			situation,
-			offsetSyncEnableKey,
-			want,
-			config.ClusterLinkName,
-			err,
-		)
-		return
+		return want, fmt.Errorf("failed to set %s=%s on cluster link %q: %w", offsetSyncEnableKey, want, config.ClusterLinkName, err)
 	}
-	r.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+	return want, nil
 }
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
 // orchestrator.Execute returns an error and the operator opted into
-// offset-sync pausing (config.PauseConsumerOffsetSync). The pause/restore
-// bookends are idempotent applies with nothing to branch on, so the guidance
+// offset-sync pausing (config.PauseConsumerOffsetSync). The pause and restore
+// steps are idempotent applies with nothing to branch on, so the guidance
 // is a single generic reminder gated only on the manifest-declared intent:
 // verify the cluster link matches the declared baseline before resuming normal
 // operation.
@@ -100,7 +58,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 		return
 	}
 	newReporter().Remediation(
-		"Migration execute failed (%v).\n   If offset-sync pause was applied on cluster link %q, verify %s matches your declared baseline (spec.clusterLink.consumerOffsetSyncBaseline) before resuming normal operation.\n   Re-run `kcp migration execute` to retry — the pause/restore bookends are idempotent — or re-apply manually.",
+		"Migration execute failed (%v).\n   If offset-sync pause was applied on cluster link %q, verify %s matches your declared baseline (spec.clusterLink.consumerOffsetSyncBaseline) before resuming normal operation.\n   Re-run `kcp migration execute` to resume — the pause and restore steps are idempotent — or re-apply manually.",
 		execErr,
 		config.ClusterLinkName,
 		offsetSyncEnableKey,
@@ -108,8 +66,8 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 }
 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration
-// config plus a runtime REST Authenticator. Centralized here so the bookend
-// callers in cmd/migration/execute don't duplicate the field layout. auth
+// config plus a runtime REST Authenticator, shared by the offset-sync pause,
+// restore and rollback so none duplicates the field layout. auth
 // carries whichever REST auth form the manifest resolved — basic, bearer or
 // mtls — not only the api_key/api_secret pair BasicAuth wraps.
 func BuildClusterLinkConfig(config *MigrationConfig, auth clusterlink.Authenticator) clusterlink.Config {

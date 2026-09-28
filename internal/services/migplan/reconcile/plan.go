@@ -86,6 +86,13 @@ type Report struct {
 	AwaitStopped  []TopicVerdict // resume: promotion in flight, await STOPPED then switch
 	FailFast      []TopicVerdict
 	Warnings      []string
+
+	// RestoreOffsetSync is true when this static run must set the link's
+	// consumer offset sync back to the manifest's baseline after the switch:
+	// the pause is opted in and either this run pauses (a cutover is in
+	// flight) or the link's live offset sync still differs from the baseline.
+	// Never true for a refused run or a dynamic route.
+	RestoreOffsetSync bool
 }
 
 // Refused reports whether the run must emit no artifacts: any failed
@@ -115,7 +122,7 @@ type Artifacts struct {
 
 type Plan struct {
 	Report    Report
-	Artifacts *Artifacts // nil when refused OR when nothing is migratable (a no-op)
+	Artifacts *Artifacts // nil when refused OR when no topic is left to migrate
 
 	// GatewayYAML is the whole gateway CR the plan was computed against,
 	// cleaned of server-managed metadata by the provider layer (see

@@ -3,8 +3,8 @@ package execute
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/spf13/cobra"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +69,14 @@ func staticResult(topics []string) *migplan.Result {
 // editGateway, when non-nil, stands in for a CLI policy override.
 func runStaticBranchWithConfig(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps executorDependencies) error {
 	t.Helper()
+	_, err := runStaticBranchWithResult(t, f, staticResult(topics), editGateway, runReportPath, deps)
+	return err
+}
+
+// runStaticBranchWithResult is runStaticBranchWithConfig with the stand-in
+// reconcile result supplied by the caller, returning the branch's stdout.
+func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, editGateway func(*manifest.GatewayMigration), runReportPath string, deps executorDependencies) (string, error) {
+	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	if editGateway != nil {
 		editGateway(g)
@@ -77,9 +85,11 @@ func runStaticBranchWithConfig(t *testing.T, f fixture, topics []string, editGat
 	require.NoError(t, err)
 	config := buildFreshMigrationConfig(g, g.Metadata.Name, kubeConfigPath)
 
+	var out strings.Builder
 	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	return runStaticBranch(cmd, g, &config, staticResult(topics), deps, runReportPath)
+	cmd.SetOut(&out)
+	err = runStaticBranch(cmd, g, &config, res, deps, runReportPath)
+	return out.String(), err
 }
 
 func TestExecute_StaticMode_RunsToCompletionOnStubbedServices(t *testing.T) {
@@ -158,7 +168,7 @@ func TestExecute_StaticMode_WritesRunReport(t *testing.T) {
 	var report migration.RunReport
 	require.NoError(t, json.Unmarshal(raw, &report))
 
-	assert.Equal(t, migration.StateSwitched, report.FinalState)
+	assert.Equal(t, migration.StateOffsetSyncRestored, report.FinalState)
 	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
 	var events []string
 	for _, s := range report.Stages {
@@ -167,15 +177,17 @@ func TestExecute_StaticMode_WritesRunReport(t *testing.T) {
 	assert.Equal(t, []string{
 		migration.EventInitialize, migration.EventWaitForLags, migration.EventFence,
 		migration.EventPauseOffsetSync, migration.EventVerifyFence, migration.EventPromote, migration.EventSwitch,
+		migration.EventRestoreOffsetSync,
 	}, events)
 }
 
 // alterRecordingClusterLink records the value of every consumer.offset.sync.enable
-// AlterConfigs sets, in call order.
+// AlterConfigs sets, in call order, and fails a SET to failValue when set.
 type alterRecordingClusterLink struct {
 	stubClusterLinkServiceImpl
-	mu  sync.Mutex
-	set []string
+	mu        sync.Mutex
+	set       []string
+	failValue string
 }
 
 func (r *alterRecordingClusterLink) AlterConfigs(_ context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
@@ -184,24 +196,63 @@ func (r *alterRecordingClusterLink) AlterConfigs(_ context.Context, _ clusterlin
 	for _, a := range alts {
 		if a.Name == "consumer.offset.sync.enable" {
 			r.set = append(r.set, a.Value)
+			if r.failValue != "" && a.Value == r.failValue {
+				return fmt.Errorf("503 alter boom")
+			}
 		}
 	}
 	return nil
 }
 
-// With pauseConsumerOffsetSync, the pause runs inside the FSM and the
-// post-execute bookend in Run restores the declared baseline afterwards.
-func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
+// pausingFixture is the default fixture with spec.clusterLink opting into the
+// offset-sync pause against an enabled baseline.
+func pausingFixture(t *testing.T) fixture {
 	const anchor = "    name: msk-to-cc\n"
-	f := newFixture(t, func(doc string) string {
+	return newFixture(t, func(doc string) string {
 		require.Contains(t, doc, anchor)
 		return strings.Replace(doc, anchor, anchor+"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)
 	})
+}
+
+// With pauseConsumerOffsetSync and a restore in the plan, the pause and the
+// restore both run inside the FSM: offset sync is disabled after the fence and
+// set back to the declared baseline after the switch.
+func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 	rec := &alterRecordingClusterLink{}
-	require.NoError(t, runStaticBranchWithConfig(t, f, []string{"t1.order"}, nil, "", stubDeps(nil, rec)))
+	res := staticResult([]string{"t1.order"})
+	res.RestoreOffsetSync = true
+	_, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, "", stubDeps(nil, rec))
+	require.NoError(t, err)
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	assert.Equal(t, []string{"false", "true"}, rec.set,
-		"the pause stage disables offset sync, then Run's bookend restores the declared baseline")
+		"the pause stage disables offset sync, then the restore stage sets the declared baseline")
+}
+
+// The restore is the plan's call: with the pause opted in but no restore in
+// the plan, nothing after the FSM sets offset sync back.
+func TestExecute_StaticMode_RestoresOnlyWhenThePlanOwesIt(t *testing.T) {
+	rec := &alterRecordingClusterLink{}
+	_, err := runStaticBranchWithResult(t, pausingFixture(t), staticResult([]string{"t1.order"}), nil, "", stubDeps(nil, rec))
+	require.NoError(t, err)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Equal(t, []string{"false"}, rec.set, "only the pause; no restore the plan did not ask for")
+}
+
+// A failed restore fails the run: execute returns an error and does not report
+// the migration completed, so the operator re-runs it and the re-run retries
+// the restore.
+func TestExecute_StaticMode_RestoreFailureFailsTheRun(t *testing.T) {
+	rec := &alterRecordingClusterLink{failValue: "true"}
+	res := staticResult([]string{"t1.order"})
+	res.RestoreOffsetSync = true
+	out, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, "", stubDeps(nil, rec))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restoring consumer offset sync")
+	assert.Contains(t, err.Error(), "503 alter boom")
+	assert.NotContains(t, out, "Migration completed", "a failed restore must not report the migration completed")
 }

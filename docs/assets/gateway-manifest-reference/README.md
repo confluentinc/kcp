@@ -114,7 +114,8 @@ destination (test/lab only).
 | `name`                    | string     | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
 | `bootstrapServers`        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
 | `linkCredentials`         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](#rest-credentials-specclusterlinklinkcredentials) below.  |
-| `pauseConsumerOffsetSync` | bool       | no       | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
+| `pauseConsumerOffsetSync` | bool       | no       | `false` | Static routes only. Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `consumerOffsetSyncBaseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. |
+| `consumerOffsetSyncBaseline` | string | when pausing | — | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
 
 **Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
 authenticates a direct Kafka-protocol connection to the destination

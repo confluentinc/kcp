@@ -4,14 +4,15 @@ package migration
 
 // FSM State constants
 const (
-	StateUninitialized    = "uninitialized"
-	StateInitialized      = "initialized"
-	StateLagsOk           = "lags_ok"
-	StateFenced           = "fenced"
-	StateOffsetSyncPaused = "offset_sync_paused"
-	StateFenceVerified    = "fence_verified"
-	StatePromoted         = "promoted"
-	StateSwitched         = "switched"
+	StateUninitialized      = "uninitialized"
+	StateInitialized        = "initialized"
+	StateLagsOk             = "lags_ok"
+	StateFenced             = "fenced"
+	StateOffsetSyncPaused   = "offset_sync_paused"
+	StateFenceVerified      = "fence_verified"
+	StatePromoted           = "promoted"
+	StateSwitched           = "switched"
+	StateOffsetSyncRestored = "offset_sync_restored"
 )
 
 // FSM Event constants
@@ -27,6 +28,11 @@ const (
 	EventVerifyFence     = "verify_fence"
 	EventPromote         = "promote"
 	EventSwitch          = "switch"
+	// EventRestoreOffsetSync sets cluster-link consumer offset sync back to
+	// the manifest's baseline after the switch, when the plan owes a restore.
+	// Otherwise the transition still fires as a pass-through, like
+	// pause_offset_sync.
+	EventRestoreOffsetSync = "restore_offset_sync"
 	// EventAbortFence rolls back to initialized when the pause_offset_sync
 	// step fails (from fenced) or the verify_fence step detects unrouted
 	// producers (from offset_sync_paused); the transition itself unfences

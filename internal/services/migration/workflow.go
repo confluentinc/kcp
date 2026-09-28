@@ -244,14 +244,9 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 
 // Initialize captures the migplan-derived artifacts onto config. Mirrors
 // TBMActions.Initialize's shape (check res.Refused, copy fields) — everything
-// migplan.Reconcile already validated (staged-auth/secret existence,
-// cluster-link topic classification) is NOT re-checked here.
-//
-// This no longer resolves an AAO-specific PauseConsumerOffsetSync precondition
-// against the live cluster link: the pause/restore bookends are now plan- and
-// manifest-driven idempotent applies (see PauseOffsetSync, restoreOffsetSync)
-// that never read the live link to decide anything, so there is nothing left
-// here to validate or snapshot against it.
+// migplan.Reconcile already decided (staged-auth/secret existence, cluster-link
+// topic classification, whether an offset-sync restore is owed) is NOT
+// re-checked here.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
@@ -268,6 +263,7 @@ func (s *MigrationActions) Initialize(
 	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
+	config.RestoreOffsetSync = res.RestoreOffsetSync
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
@@ -741,7 +737,7 @@ func (s *MigrationActions) PauseOffsetSync(
 
 	// Idempotent: re-applying enable=false on a resume or retry is a no-op
 	// AlterConfigs against the cluster link.
-	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	alterCtx, alterCancel := context.WithTimeout(ctx, offsetSyncCallTimeout)
 	defer alterCancel()
 	if err := s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
@@ -753,19 +749,60 @@ func (s *MigrationActions) PauseOffsetSync(
 	return nil
 }
 
-// restoreOffsetSyncAfterRollback restores the consumer.offset.* config, as
-// the second half of the abort_fence rollback. Soft-fail: the unfence already
-// succeeded and a restore error must not undo it. Manifest- and plan-driven
-// only (see restoreOffsetSync): it is unconditional on
-// config.PauseConsumerOffsetSync, never on whether a prior pause actually
+// restoreOffsetSyncAfterRollback sets consumer.offset.sync.enable back to the
+// declared baseline, as the second half of the abort_fence rollback.
+// Soft-fail: the unfence already succeeded, the run is already failing with
+// the step error that triggered the rollback, and a restore error must not
+// undo the unfence, so a failure prints manual remediation instead. Gated only
+// on config.PauseConsumerOffsetSync, never on whether a prior pause actually
 // landed, so it is safe to call even when the pause failed before its own
-// AlterConfigs.
+// AlterConfigs. It runs on a fresh context: the rollback only fires while the
+// run's context is still live, and the restore must not be cut short by a
+// signal arriving after the unfence.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
 ) {
-	clCfg := BuildClusterLinkConfig(config, restAuth)
-	restoreOffsetSync(s.clusterLinkService, clCfg, config, "Gateway unfenced but")
+	if !config.PauseConsumerOffsetSync {
+		return
+	}
+	r := newReporter()
+	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	want, err := setOffsetSyncBaseline(context.Background(), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
+	if err != nil {
+		r.Remediation("Gateway unfenced but %v — re-apply manually.", err)
+		return
+	}
+	r.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+}
+
+// RestoreOffsetSync runs the restore_offset_sync stage, the last in the
+// workflow: when reconcile found a restore owed (config.RestoreOffsetSync), it
+// applies an idempotent AlterConfigs SET of consumer.offset.sync.enable to the
+// declared baseline; otherwise it passes through so the FSM still records
+// offset_sync_restored. Plan- and manifest-driven only: it never reads the
+// live cluster link. A failed SET fails the step and leaves the FSM at
+// switched. The switch has landed, so nothing rolls back; a re-run, whose
+// reconcile still finds the restore owed, retries it.
+func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+	if !config.RestoreOffsetSync {
+		if !config.PauseConsumerOffsetSync {
+			slog.Debug("⏭️ consumer offset sync pause not requested, nothing to restore")
+			s.reporter.Detail("Offset-sync pause not requested — nothing to restore")
+		} else {
+			slog.Debug("⏭️ consumer offset sync already at its baseline, nothing to restore")
+			s.reporter.Detail("Consumer offset sync already at its baseline — nothing to restore")
+		}
+		return nil
+	}
+
+	s.reporter.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	want, err := setOffsetSyncBaseline(ctx, s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
+	if err != nil {
+		return err
+	}
+	s.reporter.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+	return nil
 }
 
 // VerifyFence verifies the fence held: source offsets must be stable, because

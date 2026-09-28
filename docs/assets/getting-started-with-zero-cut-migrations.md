@@ -272,7 +272,7 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
+Performs the cutover in seven automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
 
 | Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
@@ -282,6 +282,7 @@ Performs the cutover in six automatic phases. The operation is resumable: if int
 | **Verify fence**      | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped) | Still retrying                                                          |
 | **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
 | **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
+| **Restore offset sync** | With the offset-sync pause on, sets cluster-link consumer offset sync back to its declared baseline; skipped otherwise. If it fails, or the run stops before it, re-running execute performs it | On CC                                                                   |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
 

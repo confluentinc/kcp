@@ -15,6 +15,14 @@ type ReconcileInput struct {
 	// TargetClusterID is the operator's declared destination cluster
 	// (spec.target.clusterId), checked against the cluster we actually read.
 	TargetClusterID string
+	// PauseConsumerOffsetSync is the manifest's opt-in
+	// (spec.clusterLink.pauseConsumerOffsetSync) to pause the link's consumer
+	// offset sync during a static cutover.
+	PauseConsumerOffsetSync bool
+	// OffsetSyncBaselineEnabled is the manifest's declared baseline for the
+	// link's consumer offset sync (spec.clusterLink.consumerOffsetSyncBaseline):
+	// true for "enabled", false for "disabled".
+	OffsetSyncBaselineEnabled bool
 }
 
 // ClusterIDs carries the live cluster identities gathered by the I/O layer, used

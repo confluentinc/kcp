@@ -237,7 +237,7 @@ func TestReconcileStatic_ResumeMixedBatch(t *testing.T) {
 	targetTopics := []string{"t1", "t2", "t3"}
 	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
 
-	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ClusterIDs{}, nil, "")
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{}, nil, "")
 
 	if plan.Report.Refused() {
 		t.Fatalf("resume plan refused, want a plan: %+v", plan.Report)
@@ -694,7 +694,7 @@ func TestReconcileStatic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
 	targetTopics := []string{"t1", "t2", "t3"}
 	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
 
-	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ClusterIDs{}, nil, "")
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{}, nil, "")
 
 	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
@@ -711,4 +711,74 @@ func TestReconcileDynamic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
 
 	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
+}
+
+// TestReconcileStatic_RestoreOffsetSync pins when a static run owes an
+// offset-sync restore: only with the pause opted in, and then either because
+// this run pauses (a cutover is in flight) or because an earlier run's pause
+// was never restored (the link's live offset sync still differs from the
+// declared baseline). A refused run owes nothing.
+func TestReconcileStatic_RestoreOffsetSync(t *testing.T) {
+	type tc struct {
+		name            string
+		pause           bool
+		baselineEnabled bool
+		linkEnabled     bool
+		switched        bool // every topic already migrated
+		refused         bool
+		want            bool
+	}
+	cases := []tc{
+		{name: "pause not requested, cutover in flight", pause: false, baselineEnabled: true, linkEnabled: true, want: false},
+		{name: "pause not requested, link left off", pause: false, baselineEnabled: true, linkEnabled: false, switched: true, want: false},
+		{name: "cutover in flight", pause: true, baselineEnabled: true, linkEnabled: true, want: true},
+		{name: "migrated, link at its enabled baseline", pause: true, baselineEnabled: true, linkEnabled: true, switched: true, want: false},
+		{name: "migrated, link still paused", pause: true, baselineEnabled: true, linkEnabled: false, switched: true, want: true},
+		{name: "migrated, link at its disabled baseline", pause: true, baselineEnabled: false, linkEnabled: false, switched: true, want: false},
+		{name: "migrated, link enabled against a disabled baseline", pause: true, baselineEnabled: false, linkEnabled: true, switched: true, want: true},
+		{name: "refused", pause: true, baselineEnabled: true, linkEnabled: false, refused: true, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gw := staticGateway()
+			mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}
+			if c.switched {
+				route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+				route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+				mirrors = map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}
+			}
+			selected := []string{"t1", "t2"}
+			if c.refused {
+				selected = append(selected, "missing")
+			}
+			in := ReconcileInput{Topics: selected, Route: "migration-route", TargetDomain: "cc",
+				PauseConsumerOffsetSync: c.pause, OffsetSyncBaselineEnabled: c.baselineEnabled}
+
+			p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"}, mirrors, c.linkEnabled, ClusterIDs{}, nil, "")
+
+			if p.Mode != "static" {
+				t.Fatalf("Mode = %q, want static", p.Mode)
+			}
+			if p.Report.Refused() != c.refused {
+				t.Fatalf("Refused = %v, want %v: %+v", p.Report.Refused(), c.refused, p.Report)
+			}
+			if p.Report.RestoreOffsetSync != c.want {
+				t.Fatalf("RestoreOffsetSync = %v, want %v", p.Report.RestoreOffsetSync, c.want)
+			}
+		})
+	}
+}
+
+// TestReconcileDynamic_NeverRestoresOffsetSync: a dynamic route has no
+// offset-sync pause, so it never owes a restore.
+func TestReconcileDynamic_NeverRestoresOffsetSync(t *testing.T) {
+	in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
+		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
+	p := Reconcile(in, dynGateway(), []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+	if p.Mode != "dynamic" {
+		t.Fatalf("Mode = %q, want dynamic", p.Mode)
+	}
+	if p.Report.RestoreOffsetSync {
+		t.Fatal("a dynamic route must never owe an offset-sync restore")
+	}
 }

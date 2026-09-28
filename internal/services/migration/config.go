@@ -44,10 +44,14 @@ type MigrationConfig struct {
 	// consumer.offset.sync.enable on the cluster link (manifest
 	// spec.clusterLink.consumerOffsetSyncBaseline: "enabled" or "disabled"),
 	// read from the manifest each run — never from the live cluster link. The
-	// pause/restore bookends apply this value as an idempotent AlterConfigs SET
-	// rather than diffing against a live snapshot, so neither depends on data
-	// read back from the cluster link.
+	// restore_offset_sync step and the abort_fence rollback apply this value
+	// as an idempotent AlterConfigs SET.
 	ConsumerOffsetSyncBaseline string
+
+	// RestoreOffsetSync is set each run from the reconcile result: true when
+	// the restore_offset_sync step must set consumer.offset.sync.enable back
+	// to ConsumerOffsetSyncBaseline after the switch.
+	RestoreOffsetSync bool
 
 	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
 	// safety check that verifies source offsets are not still increasing before

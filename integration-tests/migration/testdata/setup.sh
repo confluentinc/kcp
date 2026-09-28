@@ -556,7 +556,7 @@ rm -f "${SCRIPT_DIR}/.kcp-linux" "${SCRIPT_DIR}/.producer-linux" "${SCRIPT_DIR}/
 
 # --- Block CFK reconciliation on the cluster links ---
 # From here on the links are pure REST-managed fixtures: the tests (and kcp's
-# own pause/restore bookends) flip consumer.offset.* configs out-of-band via
+# own pause and restore steps) flip consumer.offset.* configs out-of-band via
 # the REST proxy, while each ClusterLink CR keeps declaring
 # consumer.offset.sync.enable: "true". Left to its own devices CFK re-asserts
 # the declared configs on reconcile, racing the tests — the drift scenario saw

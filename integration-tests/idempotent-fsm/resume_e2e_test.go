@@ -111,8 +111,10 @@ func TestResume_InterruptDuringPromote(t *testing.T) {
 
 // Kill after SWITCH: the Unchanged resume path. The interrupt fires once the
 // migration is effectively complete (route switched, fence cleared, mirrors
-// STOPPED) but before the success banner; the re-run must be a clean no-op that
-// still reports completion. Slice tbm-topic-066..070.
+// STOPPED) but before the success banner (and, on static, before the
+// offset-sync restore stage, a pass-through here with the pause off); the
+// re-run must be a clean no-op that still reports completion. Slice
+// tbm-topic-066..070.
 func TestResume_InterruptAfterSwitch(t *testing.T) {
 	e := newEnv()
 	topics := e.topicRange(66, 70)
@@ -153,6 +155,39 @@ func TestResume_InterruptAfterOffsetSyncPause(t *testing.T) {
 			}
 			require.Equal(t, "false", e.linkOffsetSync(t, ctx),
 				"the pause stage must have disabled consumer offset sync on the cluster link")
+		},
+		func(t *testing.T, ctx context.Context) {
+			require.Equal(t, "true", e.linkOffsetSync(t, ctx),
+				"the resumed run must restore consumer offset sync to the declared baseline (enabled)")
+		})
+}
+
+// Kill after the SWITCH with the OFFSET-SYNC PAUSE on (static only). The switch
+// has landed but the restore stage has not run, so the partial world is route
+// switched, mirrors STOPPED, fence cleared, and consumer offset sync still off.
+// The re-run's reconcile finds every topic migrated but the link still paused,
+// so it owes the restore alone: the resume must set offset sync back to the
+// declared baseline (enabled). Slice tbm-topic-046..050.
+func TestResume_InterruptAfterSwitch_OffsetSyncPaused(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: the dynamic FSM has no offset-sync pause stage")
+	}
+	topics := e.topicRange(46, 50)
+	require.Equal(t, "true", e.linkOffsetSync(t, context.Background()),
+		"setup.sh must start the static suite's cluster link with consumer offset sync on")
+
+	runResumeScenarioWith(t, e, cpSwitched, "resume-switch-offset-sync-paused", topics, e.writeManifestPausingOffsetSync,
+		func(t *testing.T, ctx context.Context) {
+			cr := e.readCR(t, ctx)
+			ms := e.mirrorStatus(t, ctx)
+			for _, tp := range topics {
+				require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED — switch already ran", tp)
+				require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched — the interrupt came after the switch", tp)
+				require.Falsef(t, e.isFenced(t, cr, tp), "%s must already be unfenced — switch cleared the fence", tp)
+			}
+			require.Equal(t, "false", e.linkOffsetSync(t, ctx),
+				"offset sync must still be paused — the interrupt came before the restore stage")
 		},
 		func(t *testing.T, ctx context.Context) {
 			require.Equal(t, "true", e.linkOffsetSync(t, ctx),

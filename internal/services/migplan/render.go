@@ -131,12 +131,15 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
 	}
 	parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
+	if r.RestoreOffsetSync {
+		parts = append(parts, "offset-sync restore")
+	}
 
 	var outcome string
 	switch {
 	case r.Refused():
 		outcome = red.Sprint("(refused — no artifacts)")
-	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0:
+	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync:
 		outcome = faint.Sprint("(nothing to do)")
 	default:
 		note := v.ArtifactNote

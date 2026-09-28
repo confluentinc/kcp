@@ -79,7 +79,7 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.Equal(t, config.MigrationId, report.MigrationId)
 	assert.Equal(t, len(config.Topics), report.Topics)
 	assert.Equal(t, int64(42), report.LagThreshold)
-	assert.Equal(t, StateSwitched, report.FinalState)
+	assert.Equal(t, StateOffsetSyncRestored, report.FinalState)
 	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 	assert.Empty(t, report.Error)
 
