@@ -57,13 +57,13 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 			res := h.Decide(t, g)
 			require.Falsef(t, res.Refused, "batch %s must be migratable: %v", name, res.Reasons)
-			require.Lenf(t, res.Topics, perBatch, "batch %s must select %d migratable topics", name, perBatch)
+			require.Lenf(t, res.PromoteTopics, perBatch, "batch %s must select %d migratable topics", name, perBatch)
 			require.NotEmpty(t, res.FenceYAML)
 			require.NotEmpty(t, res.SwitchoverYAML)
-			for _, tp := range res.Topics {
+			for _, tp := range res.PromoteTopics {
 				require.Falsef(t, fenced[tp], "topic %s appeared in more than one batch", tp)
 			}
-			batchTopics := append([]string(nil), res.Topics...)
+			batchTopics := append([]string(nil), res.PromoteTopics...)
 
 			manifestPath := h.e.manifestPath(name + ".yaml")
 			out, err := runKCP(t, manifestPath)
@@ -112,7 +112,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 		g := h.manifestForTopics(t, "batch-01.yaml", h.e.topicRange(1, h.e.successHi))
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "a steady-state re-run refuses nothing: %v", res.Reasons)
-		require.Empty(t, res.Topics, "a steady-state re-run migrates nothing")
+		require.Empty(t, res.PromoteTopics, "a steady-state re-run migrates nothing")
 		require.Lenf(t, res.Report.Unchanged, h.e.successHi,
 			"every batch-selected topic must classify Unchanged at steady state")
 	})
@@ -128,7 +128,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "an already-migrated member must not halt the batch: %v", res.Reasons)
-		require.Equal(t, []string{fresh}, res.Topics, "only the not-yet-migrated member is promoted")
+		require.Equal(t, []string{fresh}, res.PromoteTopics, "only the not-yet-migrated member is promoted")
 		require.NotEmpty(t, res.FenceYAML)
 		require.NotEmpty(t, res.SwitchoverYAML)
 		require.Truef(t, unchangedTopics(res.Report)[already], "%s must classify Unchanged", already)
@@ -165,7 +165,7 @@ func TestUnroutedProducerDetection(t *testing.T) {
 
 	res := h.Decide(t, g)
 	require.Falsef(t, res.Refused, "topic %s must be migratable: %v", topic, res.Reasons)
-	require.Equal(t, []string{topic}, res.Topics)
+	require.Equal(t, []string{topic}, res.PromoteTopics)
 
 	// The repo enforces a 10s floor on a nonzero detectUnroutedProducersDuration
 	// (internal/manifest/gateway.go's minDetectUnroutedProducersDuration) — also

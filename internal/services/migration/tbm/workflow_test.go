@@ -109,7 +109,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
+		PromoteTopics:  []string{"t1.order"},
 		AwaitStopped:   []string{"t1.order"},
 		FenceYAML:      "rules:\n  fenced: true\n",
 		SwitchoverYAML: "rules:\n  switched: true\n",
@@ -120,7 +120,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 	require.NoError(t, actions.Initialize(context.Background(), config, res))
 
 	assert.Equal(t, res.Route, config.Route)
-	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.PromoteTopics, config.Topics)
 	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)

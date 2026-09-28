@@ -100,11 +100,12 @@ func (r Report) Refused() bool {
 }
 
 type Artifacts struct {
-	// Topics is the in-flight set (Migratable + AwaitStopped) that must reach
-	// STOPPED before the switch → topics.json. Exclude AwaitStopped before
-	// issuing promote calls.
-	Topics []string
-	// AwaitStopped is the subset of Topics already mid-promotion
+	// PromoteTopics are the topics that must still reach STOPPED before the
+	// switch (Migratable + AwaitStopped) → topics.json. Exclude AwaitStopped
+	// before issuing promote calls. SwitchOnly topics are already STOPPED, so
+	// they are migrated this run but absent here.
+	PromoteTopics []string
+	// AwaitStopped is the subset of PromoteTopics already mid-promotion
 	// (PENDING_STOPPED) on resume: the FSM waits for these to reach STOPPED
 	// rather than re-promoting an already-promoting mirror.
 	AwaitStopped    []string

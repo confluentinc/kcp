@@ -55,7 +55,7 @@ const (
 func staticResult(topics []string) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         topics,
+		PromoteTopics:  topics,
 		FenceYAML:      staticFenceYAML,
 		SwitchoverYAML: staticSwitchoverYAML,
 		GatewayYAML:    staticRouteGatewayYAML,

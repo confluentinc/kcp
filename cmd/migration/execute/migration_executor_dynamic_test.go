@@ -94,7 +94,7 @@ func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig
 func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         config.Topics,
+		PromoteTopics:  config.Topics,
 		FenceYAML:      config.FenceYAML,
 		SwitchoverYAML: config.SwitchoverYAML,
 		GatewayYAML:    config.GatewayYAML,

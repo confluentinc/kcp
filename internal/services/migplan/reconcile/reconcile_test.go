@@ -139,7 +139,7 @@ func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
 	if plan.Artifacts == nil {
 		t.Fatal("Artifacts nil, want a resume plan")
 	}
-	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	// fence/switchover rules must name all three (t1 via SwitchOnly, t2 Await, t3 Migratable)
 	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2", "t3"})
 	assertRulesSwitchTopics(t, plan.Artifacts.SwitchoverRules, []string{"t1", "t2", "t3"})
@@ -218,8 +218,8 @@ func TestReconcileDynamic_AllSwitchOnly(t *testing.T) {
 	if plan.Artifacts == nil {
 		t.Fatal("Artifacts nil, want an actionable switch-only plan")
 	}
-	if len(plan.Artifacts.Topics) != 0 {
-		t.Fatalf("promote list = %v, want empty (nothing left to promote)", plan.Artifacts.Topics)
+	if len(plan.Artifacts.PromoteTopics) != 0 {
+		t.Fatalf("promote list = %v, want empty (nothing left to promote)", plan.Artifacts.PromoteTopics)
 	}
 	assertSetEqual(t, "switch-only", topicsOf(plan.Report.SwitchOnly), []string{"t1", "t2"})
 	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2"})
@@ -245,7 +245,7 @@ func TestReconcileStatic_ResumeMixedBatch(t *testing.T) {
 	if plan.Artifacts == nil {
 		t.Fatal("Artifacts nil, want a resume plan")
 	}
-	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	if !strings.Contains(string(plan.Artifacts.FenceRules), "fence:") {
 		t.Fatalf("FenceRules = %q, want a fence fragment", plan.Artifacts.FenceRules)
 	}
@@ -277,8 +277,8 @@ func TestReconcileHappyPath(t *testing.T) {
 	if p.Artifacts == nil {
 		t.Fatal("expected artifacts")
 	}
-	if len(p.Artifacts.Topics) != 2 {
-		t.Fatalf("promote list = %v, want 2 topics", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 2 {
+		t.Fatalf("promote list = %v, want 2 topics", p.Artifacts.PromoteTopics)
 	}
 	// invariant: the topic still classifies Migratable (a pre-existing operator
 	// fencing block must not change routing/verdict).
@@ -487,8 +487,8 @@ func TestReconcileStaticHappyPath(t *testing.T) {
 	if p.Artifacts == nil {
 		t.Fatal("expected artifacts")
 	}
-	if len(p.Artifacts.Topics) != 1 || p.Artifacts.Topics[0] != "team-a.orders" {
-		t.Fatalf("promote list = %v, want [team-a.orders]", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 1 || p.Artifacts.PromoteTopics[0] != "team-a.orders" {
+		t.Fatalf("promote list = %v, want [team-a.orders]", p.Artifacts.PromoteTopics)
 	}
 	if !strings.Contains(string(p.Artifacts.FenceRules), "fence:") {
 		t.Fatalf("FenceRules = %q, want a fence fragment", p.Artifacts.FenceRules)
@@ -575,8 +575,8 @@ func TestReconcileStaticTopicPatterns(t *testing.T) {
 	if p.Report.Refused() {
 		t.Fatalf("expected success, refused with %+v", p.Report)
 	}
-	if len(p.Artifacts.Topics) != 2 {
-		t.Fatalf("promote list = %v, want 2 topics (team-b.other must not match)", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 2 {
+		t.Fatalf("promote list = %v, want 2 topics (team-b.other must not match)", p.Artifacts.PromoteTopics)
 	}
 }
 
@@ -696,7 +696,7 @@ func TestReconcileStatic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
 
 	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ClusterIDs{}, nil, "")
 
-	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
 }
 
@@ -709,6 +709,6 @@ func TestReconcileDynamic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
 
 	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
 
-	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
 	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
 }

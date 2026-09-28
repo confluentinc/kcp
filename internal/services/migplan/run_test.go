@@ -61,7 +61,7 @@ func TestNewResult(t *testing.T) {
 	ok := newResult(&reconcile.Plan{
 		Report: reconcile.Report{Migratable: []reconcile.TopicVerdict{{Topic: "a"}}},
 		Artifacts: &reconcile.Artifacts{
-			Topics:          []string{"a", "b"},
+			PromoteTopics:   []string{"a", "b"},
 			AwaitStopped:    []string{"b"},
 			FenceRules:      []byte("fence-yaml"),
 			SwitchoverRules: []byte("switch-yaml"),
@@ -78,8 +78,8 @@ func TestNewResult(t *testing.T) {
 	if ok.GatewayYAML != "gw-yaml" {
 		t.Errorf("GatewayYAML = %q, want gw-yaml", ok.GatewayYAML)
 	}
-	if len(ok.Topics) != 2 || len(ok.Reasons) != 0 {
-		t.Errorf("topics=%v reasons=%v", ok.Topics, ok.Reasons)
+	if len(ok.PromoteTopics) != 2 || len(ok.Reasons) != 0 {
+		t.Errorf("topics=%v reasons=%v", ok.PromoteTopics, ok.Reasons)
 	}
 	if len(ok.AwaitStopped) != 1 || ok.AwaitStopped[0] != "b" {
 		t.Errorf("AwaitStopped = %v, want [b] (the resume await subset must map onto the Result)", ok.AwaitStopped)
@@ -100,7 +100,7 @@ func TestNewResult(t *testing.T) {
 	if !ref.Refused {
 		t.Error("a refused plan must have Refused=true")
 	}
-	if ref.FenceYAML != "" || len(ref.Topics) != 0 {
+	if ref.FenceYAML != "" || len(ref.PromoteTopics) != 0 {
 		t.Error("a refused plan must carry no artifacts")
 	}
 	if ref.GatewayYAML != "gw-yaml" {

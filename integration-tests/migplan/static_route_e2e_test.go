@@ -42,8 +42,8 @@ func TestStaticRouteHappyPathLive(t *testing.T) {
 	}
 
 	wantTopics := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
-	if !reflect.DeepEqual(plan.Artifacts.Topics, wantTopics) {
-		t.Errorf("Artifacts.Topics = %v, want %v", plan.Artifacts.Topics, wantTopics)
+	if !reflect.DeepEqual(plan.Artifacts.PromoteTopics, wantTopics) {
+		t.Errorf("Artifacts.PromoteTopics = %v, want %v", plan.Artifacts.PromoteTopics, wantTopics)
 	}
 
 	fence := parseFragment(t, plan.Artifacts.FenceRules)

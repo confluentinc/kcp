@@ -153,8 +153,8 @@ func TestRenderReport_ResumeOnlyIsActionable(t *testing.T) {
 
 // TestRenderReport_SwitchOnlyWarningNotDoublePrinted proves a shadow warning
 // attached to a SwitchOnly topic (mirroring how reconcile.go's
-// shadowWarnings(inflight, ...) attaches warnings to SwitchOnly/AwaitStopped
-// topics too, since inflight includes them) renders exactly once — on the
+// shadowWarnings(toMigrate, ...) attaches warnings to SwitchOnly/AwaitStopped
+// topics too, since toMigrate includes them) renders exactly once — on the
 // topic's own line — and is not also re-printed as a trailing "unattached"
 // warning.
 func TestRenderReport_SwitchOnlyWarningNotDoublePrinted(t *testing.T) {

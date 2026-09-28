@@ -18,7 +18,7 @@ func assertRefusedNoArtifacts(t *testing.T, res *migplan.Result) {
 	require.True(t, res.Refused, "the engine must refuse this batch")
 	require.Empty(t, res.FenceYAML, "a refused run must emit no fence artifact")
 	require.Empty(t, res.SwitchoverYAML, "a refused run must emit no switchover artifact")
-	require.Empty(t, res.Topics, "a refused run must promote no topics")
+	require.Empty(t, res.PromoteTopics, "a refused run must promote no topics")
 }
 
 // decideRaw runs the engine against the live gateway without the harness's
@@ -48,7 +48,7 @@ func TestPromotedNotSwitchedResumesAsSwitchOnly(t *testing.T) {
 	require.Len(t, res.Report.SwitchOnly, 1)
 	require.Equal(t, reserved, res.Report.SwitchOnly[0].Topic)
 	require.Empty(t, res.Report.FailFast)
-	require.Empty(t, res.Topics, "an already-STOPPED mirror must not be promoted again")
+	require.Empty(t, res.PromoteTopics, "an already-STOPPED mirror must not be promoted again")
 	require.Empty(t, res.AwaitStopped)
 	require.Contains(t, res.SwitchoverYAML, reserved, "the switchover must route the promoted topic")
 	require.Contains(t, res.SwitchoverYAML, g.Spec.Route.TargetStreamingDomain, "…to the target domain")

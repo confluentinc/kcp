@@ -189,14 +189,14 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 // two-topic default — so a test that drives a full run through PromoteTopics
 // sees ListMirrorTopics (built from the same resolved topic set at
 // construction) agree with config.Topics after Initialize overwrites it from
-// res.Topics.
+// res.PromoteTopics.
 func uninitializedReconcileResult(topics []string) *migplan.Result {
 	if len(topics) == 0 {
 		topics = []string{"topic-a", "topic-b"}
 	}
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         topics,
+		PromoteTopics:  topics,
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -211,7 +211,7 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 func resultFromConfig(config *MigrationConfig) *migplan.Result {
 	return &migplan.Result{
 		Route:          config.Route,
-		Topics:         config.Topics,
+		PromoteTopics:  config.Topics,
 		AwaitStopped:   config.AwaitStopped,
 		FenceYAML:      config.FenceYAML,
 		SwitchoverYAML: config.SwitchoverYAML,
@@ -1403,16 +1403,16 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 // once nothing at all remains for AAO: no per-topic promote work (Topics)
 // and no gateway-level work either (FenceYAML/SwitchoverYAML empty too) —
 // see internal/services/migplan/reconcile/reconcile.go's reconcileStatic,
-// whose `len(inflight) == 0` early return leaves Plan.Artifacts nil and
+// whose `len(toMigrate) == 0` early return leaves Plan.Artifacts nil and
 // therefore every one of these three fields empty on the resulting Result.
 // This is the constructed Result every row's second ("must now be a no-op")
 // Execute call below is driven with.
 func aaoDoneResult() *migplan.Result {
 	return &migplan.Result{
-		Route:       "migration-route",
-		Topics:      []string{},
-		Mode:        "static",
-		GatewayYAML: testInitialCR,
+		Route:         "migration-route",
+		PromoteTopics: []string{},
+		Mode:          "static",
+		GatewayYAML:   testInitialCR,
 		// FenceYAML/SwitchoverYAML deliberately left "" — nothing in flight.
 	}
 }
@@ -1423,7 +1423,7 @@ func aaoDoneResult() *migplan.Result {
 func aaoFullResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"topic-a", "topic-b"},
+		PromoteTopics:  []string{"topic-a", "topic-b"},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -1725,7 +1725,7 @@ func TestAAO_MidPromoteMix(t *testing.T) {
 
 	midResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"topic-b"},
+		PromoteTopics:  []string{"topic-b"},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -1754,7 +1754,7 @@ func TestAAO_MidPromoteMix(t *testing.T) {
 // promote) but the switch not yet applied. A real migplan.Reconcile for this
 // state returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (see
 // internal/services/migplan/reconcile/reconcile.go's reconcileStatic: its
-// 'promote' set excludes SwitchOnly topics, but its 'inflight' set — which
+// 'promote' set excludes SwitchOnly topics, but its 'toMigrate' set — which
 // gates whether Artifacts are built at all — includes them). Fence and
 // Switch key their no-op on those artifacts, not on Topics (see workflow.go's
 // FenceGateway/SwitchGateway guards), so promote makes no call at all but
@@ -1765,7 +1765,7 @@ func TestAAO_PromotedNotSwitched(t *testing.T) {
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{},
+		PromoteTopics:  []string{},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -1806,7 +1806,7 @@ func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{},
+		PromoteTopics:  []string{},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -1839,7 +1839,7 @@ func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
 // TestAAO_DoneIsNoop — live state: fully switched already, fence gone, every
 // mirror STOPPED. A real migplan.Reconcile classifies every topic Unchanged
 // and returns a Result with no artifacts at all (aaoDoneResult, mirroring
-// reconcileStatic's len(inflight)==0 early return): Topics, FenceYAML and
+// reconcileStatic's len(toMigrate)==0 early return): Topics, FenceYAML and
 // SwitchoverYAML all empty. Every one of Fence/Promote/Switch's plan-driven
 // no-op guards must fire — zero patches, zero promotes — and the FSM still
 // walks through every step to switched rather than needing any special-cased

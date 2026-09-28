@@ -90,7 +90,7 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 
 	require.NoError(t, orchestrator.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{}))
 
-	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.PromoteTopics, config.Topics)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
@@ -314,7 +314,7 @@ const killPointSwitchoverYAML = `rules:
 func killPointFullResult(topics []string) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         topics,
+		PromoteTopics:  topics,
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
@@ -325,15 +325,15 @@ func killPointFullResult(topics []string) *migplan.Result {
 // killPointDoneResult builds the migplan.Result a real migplan.Reconcile
 // returns once nothing at all remains for this batch: no per-topic promote
 // work (Topics) and no gateway-level work either (FenceYAML/SwitchoverYAML
-// empty too) — mirrors reconcileDynamic's own "nothing inflight" outcome.
+// empty too) — mirrors reconcileDynamic's own "nothing to migrate" outcome.
 // This is the constructed Result every row's second ("must now be a no-op")
 // Execute call below is driven with.
 func killPointDoneResult() *migplan.Result {
 	return &migplan.Result{
-		Route:       "migration-route",
-		Topics:      []string{},
-		GatewayYAML: testGatewayYAML,
-		Mode:        "dynamic",
+		Route:         "migration-route",
+		PromoteTopics: []string{},
+		GatewayYAML:   testGatewayYAML,
+		Mode:          "dynamic",
 		// FenceYAML/SwitchoverYAML deliberately left "" — nothing in flight.
 	}
 }
@@ -569,7 +569,7 @@ func TestTBM_MidPromoteMix(t *testing.T) {
 
 	midResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"t2.payment"},
+		PromoteTopics:  []string{"t2.payment"},
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
@@ -656,7 +656,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 
 	res := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         allTopics,            // both are in-flight (must reach STOPPED before switch)
+		PromoteTopics:  allTopics,            // both are still to migrate (must reach STOPPED before switch)
 		AwaitStopped:   []string{"t1.order"}, // t1 is already promoting (PENDING_STOPPED)
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
@@ -683,7 +683,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 // TestTBM_PromotedNotSwitched: every mirror already STOPPED (nothing left to
 // promote) but the switch not yet applied. A real migplan.Reconcile for this
 // state returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (reconcile's
-// promote set excludes already-stopped topics, but its inflight set — which
+// promote set excludes already-stopped topics, but its toMigrate set — which
 // gates whether artifacts are built at all — still includes them, since the
 // switch is still owed). Fence and Switch key their no-op on those artifacts,
 // not on Topics, so Promote makes no call at all but Switch still applies and
@@ -695,7 +695,7 @@ func TestTBM_PromotedNotSwitched(t *testing.T) {
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{},
+		PromoteTopics:  []string{},
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
@@ -736,7 +736,7 @@ func TestTBM_SwitchWaitsForConvergence(t *testing.T) {
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{},
+		PromoteTopics:  []string{},
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
@@ -798,7 +798,7 @@ func TestTBM_DoneIsNoop(t *testing.T) {
 // TestTBM_MultiBatchComposite: a multi-batch composite where t0.legacy is a
 // wholly separate, already-fully-migrated batch — Unchanged by reconcile (it
 // never appears in Topics/FenceYAML/SwitchoverYAML at all, unlike
-// TestTBM_MidPromoteMix's t1.order, which is still part of the same inflight
+// TestTBM_MidPromoteMix's t1.order, which is still part of the same toMigrate
 // plan), its mirror STOPPED from the very start of this run —
 // while t1.order/t2.payment are a second, still-migratable batch in the same
 // Result. This must converge the active batch to switched while never

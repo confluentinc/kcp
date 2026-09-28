@@ -264,14 +264,14 @@ func (s *MigrationActions) Initialize(
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
 
-	config.Topics = res.Topics
+	config.Topics = res.PromoteTopics
 	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
-	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
+	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
 	// moment to resolve it for anymore (execute is the only command), and

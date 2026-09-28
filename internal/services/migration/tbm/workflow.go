@@ -112,7 +112,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
 
-	config.Topics = res.Topics
+	config.Topics = res.PromoteTopics
 	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
@@ -127,7 +127,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	// cmd/migration/execute's runMigrationExecute.
 	config.Mode = res.Mode
 
-	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
+	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
 	return nil
 }
 

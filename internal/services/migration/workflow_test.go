@@ -47,7 +47,7 @@ const (
 func testReconcileResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"topic-a", "topic-b", "topic-c"},
+		PromoteTopics:  []string{"topic-a", "topic-b", "topic-c"},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -130,7 +130,7 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
-	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.PromoteTopics, config.Topics)
 	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.Mode, config.Mode)
 }

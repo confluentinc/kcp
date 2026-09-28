@@ -32,7 +32,7 @@ import (
 // TestReconcileSwitchOnlyLive: resume.switchonly is STOPPED on the link but the
 // default gateway routes it to source (msk). The engine must classify it
 // SWITCH-ONLY and emit artifacts that switch it WITHOUT promoting it again —
-// so the promote set (Artifacts.Topics) is empty while the switchover routes it
+// so the promote set (Artifacts.PromoteTopics) is empty while the switchover routes it
 // to the target.
 func TestReconcileSwitchOnlyLive(t *testing.T) {
 	eng := newLiveEngine(t) // default fixture: routing defaults to source (msk)
@@ -58,11 +58,11 @@ func TestReconcileSwitchOnlyLive(t *testing.T) {
 	}
 
 	if plan.Artifacts == nil {
-		t.Fatal("switch-only is in-flight (needs switching), so Artifacts must be non-nil")
+		t.Fatal("switch-only is still to migrate (needs switching), so Artifacts must be non-nil")
 	}
 	// Already STOPPED ⇒ nothing to promote: the promote set must be empty.
-	if len(plan.Artifacts.Topics) != 0 {
-		t.Errorf("Artifacts.Topics (promote set) must be empty for a switch-only topic, got %v", plan.Artifacts.Topics)
+	if len(plan.Artifacts.PromoteTopics) != 0 {
+		t.Errorf("Artifacts.PromoteTopics (promote set) must be empty for a switch-only topic, got %v", plan.Artifacts.PromoteTopics)
 	}
 	if len(plan.Artifacts.AwaitStopped) != 0 {
 		t.Errorf("Artifacts.AwaitStopped must be empty (nothing is PENDING), got %v", plan.Artifacts.AwaitStopped)
