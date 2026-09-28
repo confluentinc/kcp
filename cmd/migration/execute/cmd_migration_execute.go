@@ -34,12 +34,12 @@ var (
 	consumerOffsetSyncDrainDurationOverride time.Duration
 	hotReloadTimeoutOverride                time.Duration
 	gatewayConfigPortOverride               int
-	// runReport is the diagnostics knob carried over from #408. It stays a flag
-	// rather than a manifest policy field: the path is a per-run, machine-specific
-	// output location — operational, not versioned desired state — and the
-	// external migration performance rig (its only consumer) drives it this way.
-	runReport string
 )
+
+// runReportEnvVar, when set, is the path execute writes its per-stage run
+// report to. An env var, not a manifest field: it's a per-run output location,
+// not desired state. Undocumented until the perf rig validates the schema.
+const runReportEnvVar = "KCP_RUN_REPORT"
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
@@ -109,15 +109,6 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
 	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the persisted value, falling back to the gateway default (9180).")
-
-	// Hidden pending schema validation by the migration performance rig, its
-	// first consumer; intended to become user-facing, since the natural audience
-	// for per-stage timings is someone rehearsing their own migration. It is a
-	// flag, not a manifest policy field, because the path is a per-run output
-	// location rather than versioned desired state. PreRunE's BindEnvToFlags also
-	// binds it to the RUN_REPORT env var.
-	cmd.Flags().StringVar(&runReport, "run-report", "", "Write per-stage migration timings to <path> as JSON.")
-	_ = cmd.Flags().MarkHidden("run-report")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 	return cmd
@@ -288,9 +279,11 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		}
 	}
 
+	runReportPath := os.Getenv(runReportEnvVar)
+
 	switch mode {
 	case "dynamic":
-		return runTBMBranch(cmd, g, config, *state, migrationStateFile, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+		return runTBMBranch(cmd, g, config, *state, migrationStateFile, reconcileResult, runReportPath, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
 	default:
 		// "static", and any value not yet recognized as dynamic — matches
 		// today's behavior for every migration this codebase has ever
@@ -299,9 +292,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		if err != nil {
 			return err
 		}
-		// run-report is an execute-time diagnostics path, not part of the
-		// manifest; carry it straight from the flag onto the opts.
-		opts.RunReportPath = runReport
+		opts.RunReportPath = runReportPath
 		return NewMigrationExecutor(opts).Run()
 	}
 }

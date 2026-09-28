@@ -3,7 +3,10 @@ package execute
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -290,6 +293,35 @@ func TestExecute_DynamicMode_DispatchesToTBMOrchestrator(t *testing.T) {
 	cfg := persistedConfig(t, f)
 	assert.Equal(t, migration.StateSwitched, cfg.CurrentState,
 		"a dynamic-mode resume must walk the TBM FSM all the way to switched")
+}
+
+// TestExecute_DynamicMode_KCPRunReportEnvWritesReport — static mode can't run
+// this far in-process, so its wiring is tested in internal/services/migration.
+func TestExecute_DynamicMode_KCPRunReportEnvWritesReport(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeDynamicState(t, migration.StateInitialized, nil)
+	reportPath := filepath.Join(t.TempDir(), "kcp-run-report.json")
+	t.Setenv(runReportEnvVar, reportPath)
+
+	_, err := runExecuteWithTBMDeps(t, stubOffsetProviders, stubGatewayService, stubClusterLinkService,
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(reportPath)
+	require.NoError(t, err, "KCP_RUN_REPORT must produce a report on a dynamic-mode run")
+	var report migration.RunReport
+	require.NoError(t, json.Unmarshal(raw, &report))
+
+	assert.Equal(t, "msk-prod-to-cc-batch-1", report.MigrationId)
+	assert.Equal(t, 1, report.Topics)
+	assert.Equal(t, []string{tbm.EventInitialize}, report.SkippedStages)
+	var events []string
+	for _, s := range report.Stages {
+		events = append(events, s.Event)
+	}
+	assert.Equal(t, []string{tbm.EventWaitForLags, tbm.EventFence, tbm.EventVerifyFence, tbm.EventPromote, tbm.EventSwitch}, events)
+	assert.Equal(t, tbm.StateSwitched, report.FinalState)
+	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
 }
 
 // TestExecute_StaticModeSetup_DoesNotReachSwitchedWithTBMStubs is the negative

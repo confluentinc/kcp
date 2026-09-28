@@ -95,6 +95,7 @@ type TBMOrchestrator struct {
 	migrationState *migration.MigrationState
 	stateFilePath  string
 	reporter       *reporter
+	runReport      *migration.RunReportRecorder // per-stage timings; nil when not requested
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
@@ -181,6 +182,11 @@ func NewTBMOrchestrator(
 	return orchestrator
 }
 
+// SetRunReportRecorder attaches a run-report recorder; nil (the default) disables it.
+func (o *TBMOrchestrator) SetRunReportRecorder(r *migration.RunReportRecorder) {
+	o.runReport = r
+}
+
 // Execute runs the full TBM workflow from the current state, skipping any
 // already-completed steps so a re-run resumes. res is the reconcile plan the
 // caller already computed live for this manifest; onInitialize consumes it.
@@ -197,9 +203,11 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
+	// Stages are timed around fsm.Event, not in FSM callbacks (see the AAO loop).
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
 			slog.Debug("skipping already-completed tbm step", "step", step.Description, "event", step.Event)
+			o.runReport.StageSkipped(step.Event)
 			continue
 		}
 
@@ -207,9 +215,16 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
+		o.runReport.StageStarted(step.Event, step.FromState, step.ToState)
 		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err)
 		}
+		if step.Event == EventInitialize {
+			// A fresh registration has no topics until initialize runs.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
+		o.runReport.StageEnded(o.config.CurrentState)
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}

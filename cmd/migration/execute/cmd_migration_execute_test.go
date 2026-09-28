@@ -192,8 +192,6 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 // into the config file; what stays on the command line is the manifest path,
 // the state file (now optional, defaults to <metadata.name>-state.json), the id override,
 // and the per-policy overrides that vary a spec.defaultPolicies value for a single run.
-// --run-report is registered but hidden (a diagnostics path whose only consumer is
-// the performance rig), so it is asserted separately rather than padding the advertised surface.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -208,22 +206,19 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
 		"hot-reload-timeout", "gateway-config-port", "dry-run",
 	}, visible)
-
-	runReport := cmd.Flags().Lookup("run-report")
-	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
-	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
 // TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
-// manifest. The per-policy override flags (--lag-threshold, --rollout-timeout,
-// etc.) are NOT here: they are the live surface, asserted by
-// TestExecute_VisibleFlagSurface.
+// manifest (and --run-report became KCP_RUN_REPORT). The per-policy override
+// flags (--lag-threshold, --rollout-timeout, etc.) are NOT here: they are the
+// live surface, asserted by TestExecute_VisibleFlagSurface.
 func TestExecute_RetiredFlagsAreGone(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{
 		"--cluster-api-key", "--cluster-api-secret", "--aws-region",
 		"--sasl-scram-mechanism", "--use-sasl-iam",
 		"--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
+		"--run-report",
 	} {
 		t.Run(flag, func(t *testing.T) {
 			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
