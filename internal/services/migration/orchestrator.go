@@ -277,9 +277,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			return o.handleStepFailure(ctx, step, err, params)
 		}
 		if step.Event == EventInitialize {
-			// Initialize is where a freshly registered migration's topics are
-			// first reconciled into config.Topics; the recorder was built
-			// before that and holds a count of zero.
+			// A fresh registration has no topics until initialize runs.
 			o.runReport.SetTopics(len(o.config.Topics))
 		}
 		o.runReport.StageEnded(o.config.CurrentState)

@@ -109,9 +109,7 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
 }
 
-// TestRunReport_SetTopicsRewritesReport verifies SetTopics replaces the count
-// and flushes immediately, so a run killed before its next stage still leaves
-// the corrected count on disk.
+// TestRunReport_SetTopicsRewritesReport — SetTopics flushes the new count immediately.
 func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 	recorder := NewRunReportRecorder(reportPath, "migration-1", 0, 0, StateUninitialized)
@@ -122,16 +120,12 @@ func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	assert.Equal(t, 7, readRunReport(t, reportPath).Topics)
 }
 
-// TestRunReport_FreshRegistrationRecordsReconciledTopics is the register-and-run
-// case: the command layer builds a fresh config with no topics (they are only
-// reconciled at the initialize transition), so the recorder starts with a count
-// of zero. The report must still end with the count initialize produced.
+// TestRunReport_FreshRegistrationRecordsReconciledTopics — the recorder starts
+// at zero topics; the report must end with the count initialize reconciled.
 func TestRunReport_FreshRegistrationRecordsReconciledTopics(t *testing.T) {
 	topics := []string{"topic-a", "topic-b", "topic-c"}
 	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, topics)
-	// Mirror buildFreshMigrationConfig: a newly registered migration has no
-	// topics until initialize reconciles them.
-	config.Topics = nil
+	config.Topics = nil // as buildFreshMigrationConfig leaves it
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
