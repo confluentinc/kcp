@@ -104,8 +104,8 @@ func NewRunReportRecorder(path, migrationId string, topics int, lagThreshold int
 	// Written immediately, before any stage runs. The first stage of a loaded migration is
 	// lag checking, which has no convergence bound — so a caller that imposes a deadline
 	// and kills the process may do so before ANY stage completes. Without this the file
-	// would never exist and the report would be indistinguishable from "the flag was never
-	// passed", when in fact it says something specific: the run died waiting on its first
+	// would never exist and the report would be indistinguishable from "KCP_RUN_REPORT was
+	// never set", when in fact it says something specific: the run died waiting on its first
 	// stage. Observed on a real run that was killed after 18 minutes in wait_for_lags.
 	r.flush()
 	return r
