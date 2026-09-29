@@ -104,6 +104,9 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	require.NoError(t, actions.Switch(ctx, config))
 }
 
+// TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig: Initialize
+// copies every plan field of the reconcile result onto the run's config, which
+// starts empty, so a missing copy leaves that field empty and fails here.
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
 	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
@@ -115,20 +118,25 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 		SwitchoverYAML: "rules:\n  switched: true\n",
 		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
 		Mode:           "dynamic",
+
+		RollbackFenceYAML: "rules:\n  rolled-back: true\n",
+		RollbackAllowed:   true,
+		FencedAtStart:     true,
+		MigrateTopics:     []string{"t1.order", "t2.switch-only"},
 	}
 
 	require.NoError(t, actions.Initialize(context.Background(), config, res))
 
-	assert.Equal(t, res.Route, config.Route)
 	assert.Equal(t, res.PromoteTopics, config.Topics)
 	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.Equal(t, res.RollbackFenceYAML, config.RollbackFenceYAML)
+	assert.True(t, config.RollbackAllowed, "RollbackAllowed")
+	assert.True(t, config.FencedAtStart, "FencedAtStart")
+	assert.Equal(t, res.MigrateTopics, config.MigrateTopics)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
-	// Mode must be persisted, mirroring AAO's Initialize: the unified `execute`
-	// dispatcher reads config.Mode on resume, so an interrupted dynamic
-	// migration that dropped Mode here would be re-dispatched to the static
-	// (AAO) branch on its next run.
+	assert.Equal(t, res.Route, config.Route)
 	assert.Equal(t, res.Mode, config.Mode)
 }
 

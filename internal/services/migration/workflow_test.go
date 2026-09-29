@@ -111,6 +111,9 @@ func TestWorkflow_Initialize_RefusedResult(t *testing.T) {
 // to delegate — tested directly against MigrationActions.Initialize, with no
 // FSM involved, since Execute()'s canonicalWorkflow loop already exercises
 // the same call end-to-end (see TestOrchestrator_Execute_FullWorkflow).
+// TestActions_Initialize_ThreadsReconcileResult: Initialize copies every plan
+// field of the reconcile result onto the run's config, which starts empty, so
+// a missing copy leaves that field empty and fails here.
 func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -127,16 +130,24 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	config := &MigrationConfig{MigrationId: "test-migration-1"}
 	res := testReconcileResult()
 	res.AwaitStopped = []string{"await-me"}
+	res.MigrateTopics = []string{"topic-a", "topic-b", "topic-c", "switch-only"}
+	res.RestoreOffsetSync = true
+	res.FencedAtStart = true
 
 	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 	require.NoError(t, err)
 
-	assert.Equal(t, res.Route, config.Route)
-	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
-	assert.Equal(t, res.FenceYAML, config.FenceYAML)
-	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
 	assert.Equal(t, res.PromoteTopics, config.Topics)
 	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
+	assert.Equal(t, res.FenceYAML, config.FenceYAML)
+	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.True(t, config.RestoreOffsetSync, "RestoreOffsetSync")
+	assert.Equal(t, res.RollbackFenceYAML, config.RollbackFenceYAML)
+	assert.True(t, config.RollbackAllowed, "RollbackAllowed")
+	assert.True(t, config.FencedAtStart, "FencedAtStart")
+	assert.Equal(t, res.MigrateTopics, config.MigrateTopics)
+	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
+	assert.Equal(t, res.Route, config.Route)
 	assert.Equal(t, res.Mode, config.Mode)
 }
 
