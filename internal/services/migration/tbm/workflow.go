@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 )
@@ -41,12 +42,9 @@ type TBMActions struct {
 	gatewayCapability gateway.Capability
 	// capabilityResolved is true once gatewayCapability has actually been
 	// resolved against the live cluster this process — see
-	// ensureGatewayCapability in gateway.go. Deliberately NOT persisted to
-	// TBMConfig/the state file: a new process always starts false and
-	// re-resolves fresh the first time Fence or Switch needs it, which is
-	// exactly the correctness property this field exists to provide (a run
-	// resuming directly at switch, with fence already done in an earlier
-	// process, must not silently use an unresolved zero-value capability).
+	// ensureGatewayCapability in gateway.go. It starts false in every
+	// process, so the first of Fence or Switch to need the capability
+	// resolves it and neither step ever acts on the unresolved zero value.
 	capabilityResolved bool
 	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
 	// deadline.
@@ -114,9 +112,13 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
 
-	config.Topics = res.Topics
+	config.Topics = res.PromoteTopics
+	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
+	config.RollbackFenceYAML = res.RollbackFenceYAML
+	config.RollbackAllowed = res.RollbackAllowed
+	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	// Persist the resolved route mode, mirroring AAO's Initialize exactly.
@@ -128,7 +130,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	// cmd/migration/execute's runMigrationExecute.
 	config.Mode = res.Mode
 
-	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
+	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
 	return nil
 }
 
@@ -251,13 +253,11 @@ func formatLag64(n int64) string {
 // — it just returns an error, leaving the FSM at lags_ok; re-running
 // execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
-	// config.Topics is empty whenever migplan.Reconcile's Result was a
-	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
-	// see reconcile.go: Refused() is checked first, then len(migratable)==0 is
-	// a separate, distinct success path for an already-migrated/steady-state
-	// batch). config.FenceYAML is then "", which deriveFenceRoutePatch cannot
-	// parse. Mirrors WaitForLags's identical guard.
-	if len(config.Topics) == 0 {
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is nothing
+	// to fence this run. Keyed on config.FenceYAML, NOT config.Topics: Topics (the
+	// promote set) can be empty while a fence is still owed for an all-promoted
+	// batch awaiting switchover. Gating on Topics would silently skip that fence.
+	if config.FenceYAML == "" {
 		a.reporter.Success("No topics to fence")
 		return nil
 	}
@@ -288,10 +288,9 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	return nil
 }
 
-// unfenceGateway patches config.Route back to its captured state in the
-// gateway CR snapshot migplan captured (config.GatewayYAML) — a whole-route
-// replace, the exact inverse of Fence's rules graft (deriveUnfenceRoutePatch).
-// Called only by onAbortFence, on a verify_fence detection.
+// unfenceGateway sets config.Route's rules to reconcile's rollback target
+// (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
+// batch taken out). Called only by onAbortFence.
 //
 // Calls ensureGatewayCapability first, exactly like Fence does: a process
 // that resumes directly at verify_fence (Fence already completed in an
@@ -323,9 +322,10 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 }
 
 // VerifyFence runs the verify_fence transition: verifies the fence held by
-// checking that source offsets are stable across detectUnroutedProducersDuration
-// — an increasing offset after fencing means a producer bypassing the gateway
-// and writing directly to the source cluster. When detection is disabled
+// checking that the source offsets of every topic the batch migrates
+// (config.MigrateTopics, already-promoted ones included) are stable across
+// detectUnroutedProducersDuration — an increasing offset after fencing means a
+// producer bypassing the gateway and writing directly to the source cluster. When detection is disabled
 // (detectUnroutedProducersDuration <= 0) the step succeeds immediately so the
 // FSM still records fence_verified. Mirrors migration.MigrationActions.VerifyFence,
 // except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
@@ -338,7 +338,7 @@ func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		return nil
 	}
 
-	if err := a.detectUnroutedProducers(ctx, config.Topics, detectUnroutedProducersDuration); err != nil {
+	if err := a.detectUnroutedProducers(ctx, config.MigrateTopics, detectUnroutedProducersDuration); err != nil {
 		return err
 	}
 	a.reporter.Success("Source offsets stable — no unrouted producers detected")
@@ -383,6 +383,17 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 	awaitingStop := make(map[string]bool)
 	for _, topic := range config.Topics {
 		remaining[topic] = true
+	}
+	// Resume seeding: topics reconcile classified AwaitStopped are already
+	// mid-promotion (PENDING_STOPPED) from an earlier run. Seed them into
+	// awaitingStop so the first pass confirms them via ListMirrorTopics and
+	// waits for STOPPED, rather than re-issuing a promote on an already-
+	// promoting mirror (which CC rejects → 3 retries → fatal). They still count
+	// toward remaining, so the switch stays blocked until they reach STOPPED.
+	for _, topic := range config.AwaitStopped {
+		if remaining[topic] {
+			awaitingStop[topic] = true
+		}
 	}
 	sweepFailures := 0
 
@@ -528,6 +539,16 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			}
 		}
 
+		// Test-only intra-promote kill-point: topics were just accepted
+		// (error_code 0) but are not yet confirmed STOPPED — a real abrupt exit
+		// here leaves them PENDING_STOPPED. Returns a plain error (not
+		// ErrUnroutedProducers → handleStepFailure does not roll back), so the
+		// partial world is left intact for a resume. No-op in production.
+		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
+		}
+
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", a.promotePollInterval)
 		select {
 		case <-ctx.Done():
@@ -549,11 +570,13 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 // compensating rollback on failure — a failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
-	// config.Topics is empty whenever migplan.Reconcile's Result was a
-	// legitimate "nothing to migrate" outcome — see Fence's identical guard
-	// for the full explanation. config.SwitchoverYAML is then "", which
-	// deriveSwitchRoutePatch cannot parse.
-	if len(config.Topics) == 0 {
+	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
+	// nothing to switch this run. Read the plan (config.SwitchoverYAML), never
+	// the live cluster. Deliberately NOT keyed on config.Topics — see Fence's
+	// identical guard for the full explanation: Topics is the promote set and
+	// can be empty (all-promoted batch) while a switch is still owed
+	// (config.SwitchoverYAML non-empty).
+	if config.SwitchoverYAML == "" {
 		a.reporter.Success("No topics to switch")
 		return nil
 	}

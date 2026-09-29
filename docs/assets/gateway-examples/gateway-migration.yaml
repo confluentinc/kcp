@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/gatewaymigration.schema.json
 #
-# The declarative form of a `kcp migration` run. One file replaces the topology
-# and auth flags that used to be repeated across `init` and `execute`.
+# The declarative form of a `kcp migration` run: the topology, auth and policy
+# for one migration, read fresh on every run.
 #
-#   kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration execute --migration-yaml gateway-migration.yaml
 #   kcp migration lag-check --migration-yaml gateway-migration.yaml
 #
 # Paths in this file resolve relative to the PROCESS working directory, not to
@@ -18,9 +18,7 @@ apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 
 metadata:
-  # THE migration identity — unique per state file, and written into the state
-  # file's migration_id. Pre-existing uuid-keyed migrations keep working and
-  # stay addressable with `--migration-id`.
+  # The migration identity, used as its migration_id label in logs and output.
   name: msk-prod-to-cc-batch-1
 
 spec:
@@ -71,13 +69,21 @@ spec:
     #   bearer: { token: ... }                        (MDS/RBAC)
     #   mtls:   { client_cert: ..., client_key: ... }
     linkCredentials: /etc/kcp/link-creds.yaml
-    # Disable the link's consumer.offset.sync.enable during apply and restore it
-    # after switchover. Requires the link to currently have it enabled.
+    # Static routes only; a dynamic route refuses it. Disable the link's
+    # consumer.offset.sync.enable right after the fence, and set it back to
+    # consumerOffsetSyncBaseline after the switch. A run that stops before that
+    # restore leaves it owed, and re-running execute performs it.
     pauseConsumerOffsetSync: true
+    # The state consumer.offset.sync.enable was in BEFORE this migration started
+    # ("enabled" or "disabled"). Required when pauseConsumerOffsetSync is set,
+    # since a resumed run cannot observe the pre-migration value itself. kcp sets
+    # sync back to this value after the switch, or when a failure before promote
+    # rolls the migration back.
+    consumerOffsetSyncBaseline: enabled
 
   gateway:
     namespace: confluent
-    # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
+    # kubeconfig: ~/.kube/config          # optional (unset: in-cluster in a pod, else ~/.kube/config); a leading ~/ IS expanded
     cr-name: gateway-initial # a Kubernetes object NAME, read live
 
   # route names the route to fence/switch, the streaming domain it switches to,

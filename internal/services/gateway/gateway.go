@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Kubernetes resource constants
@@ -86,7 +85,7 @@ func NewK8sService(kubeConfigPath string) *K8sService {
 
 // GetGatewayYAML retrieves the gateway resource as YAML
 func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
 	}
@@ -119,7 +118,7 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 
 // CheckPermissions checks if the user has the required Kubernetes permissions
 func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to build config: %w", err)
 	}
@@ -172,7 +171,7 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 // narrow JSON Patch has nothing to fall back to. The returned string is the
 // configId the API server stored (empty when none sent).
 func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to build config: %w", err)
 	}
@@ -227,7 +226,7 @@ func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, nam
 // PatchGatewayConfigID stamps spec.configId alone on the gateway as a JSON Patch
 // for the hot-reload capability check. Returns the stored configId.
 func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to build config: %w", err)
 	}
@@ -373,7 +372,7 @@ func isFatalGatewayConditionReason(reason string) bool {
 // turns that hang into a fast, actionable error carrying the operator's own
 // message.
 func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
 	}
@@ -579,7 +578,7 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
 func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
 	}
@@ -625,7 +624,7 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 // baselineGeneration is the Deployment's metadata.generation captured before the
 // apply, via GetGatewayDeploymentGeneration.
 func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
 	}
@@ -798,7 +797,7 @@ func isPodReady(pod *corev1.Pod) bool {
 // rewrite the pod template". Comparing generations answers that even when the
 // roll starts and finishes between two polls.
 func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
 	}

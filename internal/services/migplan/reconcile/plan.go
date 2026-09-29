@@ -8,6 +8,8 @@ const (
 	Migratable Verdict = iota
 	Unchanged
 	FailFast
+	SwitchOnly   // resume: already promoted (STOPPED) but not yet switched → switch only
+	AwaitStopped // resume: promotion in flight (PENDING_STOPPED) → await STOPPED, then switch
 )
 
 func (v Verdict) String() string {
@@ -18,6 +20,10 @@ func (v Verdict) String() string {
 		return "unchanged"
 	case FailFast:
 		return "fail-fast"
+	case SwitchOnly:
+		return "switch-only"
+	case AwaitStopped:
+		return "await-stopped"
 	default:
 		return "unknown"
 	}
@@ -29,7 +35,8 @@ const (
 	MirrorNone    MirrorState = iota // topic is not a mirror on the link
 	MirrorActive                     // ACTIVE — mirroring
 	MirrorStopped                    // STOPPED — promoted
-	MirrorBad                        // any other/transient status (PENDING, FAILED, …)
+	MirrorBad                        // genuine failure / unexpected status (FAILED, PAUSED, …) — refuse
+	MirrorPending                    // PENDING_STOPPED — promotion in flight toward STOPPED; await
 )
 
 func (m MirrorState) String() string {
@@ -42,6 +49,8 @@ func (m MirrorState) String() string {
 		return "stopped"
 	case MirrorBad:
 		return "bad"
+	case MirrorPending:
+		return "pending"
 	default:
 		return "unknown"
 	}
@@ -73,8 +82,17 @@ type Report struct {
 	Preconditions []PreconditionResult
 	Migratable    []TopicVerdict
 	Unchanged     []TopicVerdict
+	SwitchOnly    []TopicVerdict // resume: already promoted, needs switching only
+	AwaitStopped  []TopicVerdict // resume: promotion in flight, await STOPPED then switch
 	FailFast      []TopicVerdict
 	Warnings      []string
+
+	// RestoreOffsetSync is true when this static run must set the link's
+	// consumer offset sync back to the manifest's baseline after the switch:
+	// the pause is opted in and either this run pauses (a cutover is in
+	// flight) or the link's live offset sync still differs from the baseline.
+	// Never true for a refused run or a dynamic route.
+	RestoreOffsetSync bool
 }
 
 // Refused reports whether the run must emit no artifacts: any failed
@@ -89,14 +107,38 @@ func (r Report) Refused() bool {
 }
 
 type Artifacts struct {
-	Topics          []string // -> topics.json (cluster-link promote input)
-	FenceRules      []byte   // -> fence-rules.yaml (whole rules block)
-	SwitchoverRules []byte   // -> switchover-rules.yaml (whole rules block)
+	// PromoteTopics are the topics that must still reach STOPPED before the
+	// switch (Migratable + AwaitStopped) → topics.json. Exclude AwaitStopped
+	// before issuing promote calls. SwitchOnly topics are already STOPPED, so
+	// they are migrated this run but absent here.
+	PromoteTopics []string
+	// AwaitStopped is the subset of PromoteTopics already mid-promotion
+	// (PENDING_STOPPED) on resume: the FSM waits for these to reach STOPPED
+	// rather than re-promoting an already-promoting mirror.
+	AwaitStopped    []string
+	FenceRules      []byte // → fence-rules.yaml (whole rules block)
+	SwitchoverRules []byte // → switchover-rules.yaml (whole rules block)
+
+	// RollbackFenceRules is the route as a rollback leaves it: the
+	// start-of-run route with kcp's fence for this batch taken out.
+	RollbackFenceRules []byte
+	// RollbackAllowed is true when a pre-promote failure may roll back
+	// (unfence): no topic in the batch is promoted or promoting yet.
+	RollbackAllowed bool
+	// MigrateTopics is every topic this run migrates (Migratable +
+	// AwaitStopped + SwitchOnly), sorted: the topics the fence check watches
+	// for producers writing straight to the source.
+	MigrateTopics []string
 }
 
 type Plan struct {
 	Report    Report
-	Artifacts *Artifacts // nil when refused OR when nothing is migratable (a no-op)
+	Artifacts *Artifacts // nil when refused OR when no topic is left to migrate
+
+	// NothingToDo is true when the run is not refused and has no work at all:
+	// no topic left to migrate and no offset-sync restore owed. The caller
+	// then runs no state machine.
+	NothingToDo bool
 
 	// GatewayYAML is the whole gateway CR the plan was computed against,
 	// cleaned of server-managed metadata by the provider layer (see
@@ -106,9 +148,11 @@ type Plan struct {
 	GatewayYAML string
 
 	// Mode is the route mode this plan was reconciled under ("dynamic" or
-	// "static"), so a caller knows how to interpret Artifacts.FenceRules/
-	// SwitchoverRules: a rules: fragment for dynamic, a fence/streamingDomain
-	// block fragment for static — both meaning "splice this onto the named
-	// route," never "apply this as the whole CR."
+	// "static"), so a caller knows how to interpret the artifacts. Dynamic:
+	// every one is a whole rules: block, set on the named route's rules.
+	// Static: FenceRules is a {fence: …} block set on the named route;
+	// SwitchoverRules and RollbackFenceRules are a whole {route: …} that
+	// replaces the named route (both remove the fence, which a field patch
+	// cannot). Never "apply this as the whole CR."
 	Mode string
 }

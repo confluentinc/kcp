@@ -1,0 +1,19 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: KRaftController
+metadata:
+  name: destination-kraftcontroller
+  namespace: confluent
+spec:
+  replicas: 1
+  image:
+    application: docker.io/confluentinc/cp-server:8.1.2
+    init: confluentinc/confluent-init-container:3.2.1
+  dataVolumeCapacity: 5Gi
+  podTemplate:
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"

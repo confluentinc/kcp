@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,6 +31,230 @@ func fencingSection(t *testing.T, raw []byte) string {
 	return string(b)
 }
 
+// assertSetEqual compares two string slices for equality ignoring order.
+func assertSetEqual(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	gotSet := toSet(got)
+	wantSet := toSet(want)
+	if len(gotSet) != len(wantSet) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+	for w := range wantSet {
+		if _, ok := gotSet[w]; !ok {
+			t.Fatalf("%s = %v, want %v", label, got, want)
+		}
+	}
+}
+
+// rulesFencingTopics/rulesSwitchTopics flatten every entry under
+// rules.fencing[].topics / rules.routing.conditions[].topics respectively,
+// across all entries in the serialized artifact (not just the prepended
+// batch entry), since a batch may share the block with operator entries.
+func rulesFencingTopics(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	rules, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("serialized artifact must have a top-level rules: key, got: %s", raw)
+	}
+	fencing, _ := rules["fencing"].([]any)
+	var out []string
+	for _, e := range fencing {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		topics, _ := entry["topics"].([]any)
+		for _, top := range topics {
+			if s, ok := top.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+func rulesSwitchTopics(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	rules, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("serialized artifact must have a top-level rules: key, got: %s", raw)
+	}
+	routing, _ := rules["routing"].(map[string]any)
+	conditions, _ := routing["conditions"].([]any)
+	var out []string
+	for _, e := range conditions {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		topics, _ := entry["topics"].([]any)
+		for _, top := range topics {
+			if s, ok := top.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// assertRulesFenceTopics asserts the serialized fence rules block's
+// rules.fencing[].topics entries (across all entries) equal want, ignoring order.
+func assertRulesFenceTopics(t *testing.T, raw []byte, want []string) {
+	t.Helper()
+	assertSetEqual(t, "fence topics", rulesFencingTopics(t, raw), want)
+}
+
+// assertRulesSwitchTopics asserts the serialized switchover rules block's
+// rules.routing.conditions[].topics entries (across all entries) equal want,
+// ignoring order.
+func assertRulesSwitchTopics(t *testing.T, raw []byte, want []string) {
+	t.Helper()
+	assertSetEqual(t, "switch topics", rulesSwitchTopics(t, raw), want)
+}
+
+// TestReconcileDynamic_ResumeMixedBatch: a batch where t1 is already promoted
+// (STOPPED, still routed ->source) and only needs switching, t2 is mid-promote
+// (PENDING_STOPPED) and must await STOPPED then switch, and t3 is fresh
+// (ACTIVE) and needs the full promote+switch. Must NOT refuse; must plan to
+// promote only t2+t3 (t1 is already STOPPED), and switch/fence all three.
+func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
+	// fence/switchover rules must name all three (t1 via SwitchOnly, t2 Await, t3 Migratable)
+	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2", "t3"})
+	assertRulesSwitchTopics(t, plan.Artifacts.SwitchoverRules, []string{"t1", "t2", "t3"})
+
+	if len(plan.Report.SwitchOnly) != 1 || plan.Report.SwitchOnly[0].Topic != "t1" {
+		t.Fatalf("expected t1 classified SwitchOnly, got %+v", plan.Report.SwitchOnly)
+	}
+	if len(plan.Report.AwaitStopped) != 1 || plan.Report.AwaitStopped[0].Topic != "t2" {
+		t.Fatalf("expected t2 classified AwaitStopped, got %+v", plan.Report.AwaitStopped)
+	}
+	if len(plan.Report.Migratable) != 1 || plan.Report.Migratable[0].Topic != "t3" {
+		t.Fatalf("expected t3 classified Migratable, got %+v", plan.Report.Migratable)
+	}
+}
+
+// TestReconcileDynamic_ResumeAlreadyFencedNoDouble: a resume where the live
+// route is ALREADY fenced for the batch (a prior run fenced it, then the
+// process died before switchover). Reconciling again must NOT double the
+// rules.fencing entry — exactly one fence for the batch. End-to-end guard
+// for PrependFence's idempotency.
+func TestReconcileDynamic_ResumeAlreadyFencedNoDouble(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	// Pre-seed kcp's prior fence for exactly this batch, as a live route would
+	// present it on resume (fenced but not yet switched).
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topics": []any{"t1", "t2", "t3"}, "blocked": true}}
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume-into-fenced plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	// The produced fence rules must carry exactly ONE fencing entry for the batch.
+	var parsed map[string]any
+	if err := yaml.Unmarshal(plan.Artifacts.FenceRules, &parsed); err != nil {
+		t.Fatalf("parsing FenceRules: %v", err)
+	}
+	rules, _ := parsed["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	blockedForBatch := 0
+	for _, e := range fencing {
+		m, _ := e.(map[string]any)
+		if b, _ := m["blocked"].(bool); b {
+			blockedForBatch++
+		}
+	}
+	if blockedForBatch != 1 {
+		t.Fatalf("blocked fence entries = %d, want 1 (no doubling on resume): %s", blockedForBatch, plan.Artifacts.FenceRules)
+	}
+	// And it still names the whole batch.
+	assertSetEqual(t, "fence topics", rulesFencingTopics(t, plan.Artifacts.FenceRules), []string{"t1", "t2", "t3"})
+}
+
+// TestReconcileDynamic_AllSwitchOnly is the headline resume case: every topic
+// in the batch is already promoted (STOPPED) and awaiting only the switch —
+// promote (Migratable ∪ AwaitStopped) is empty, but the batch is not a no-op:
+// it still must fence + switch both topics.
+func TestReconcileDynamic_AllSwitchOnly(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2"}
+	targetTopics := []string{"t1", "t2"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("all-SwitchOnly plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want an actionable switch-only plan")
+	}
+	if len(plan.Artifacts.PromoteTopics) != 0 {
+		t.Fatalf("promote list = %v, want empty (nothing left to promote)", plan.Artifacts.PromoteTopics)
+	}
+	assertSetEqual(t, "switch-only", topicsOf(plan.Report.SwitchOnly), []string{"t1", "t2"})
+	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2"})
+	assertRulesSwitchTopics(t, plan.Artifacts.SwitchoverRules, []string{"t1", "t2"})
+}
+
+// TestReconcileStatic_ResumeMixedBatch is the static-route counterpart:
+// Topics == {t2,t3} (promote input), and the static fence/switchover
+// fragments are still produced (whole-route, unchanged shape) even though
+// the batch is a resume mix.
+func TestReconcileStatic_ResumeMixedBatch(t *testing.T) {
+	gw := staticGateway() // route bound to msk (source), not yet switched -> RoutesToTarget=false
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{}, nil, "")
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
+	if !strings.Contains(string(plan.Artifacts.FenceRules), "fence:") {
+		t.Fatalf("FenceRules = %q, want a fence fragment", plan.Artifacts.FenceRules)
+	}
+	if !strings.Contains(string(plan.Artifacts.SwitchoverRules), "streamingDomain:") {
+		t.Fatalf("SwitchoverRules = %q, want a streamingDomain fragment", plan.Artifacts.SwitchoverRules)
+	}
+}
+
 func TestReconcileHappyPath(t *testing.T) {
 	gw := dynGateway()
 	gw.Route.Rules = map[string]any{
@@ -53,8 +278,8 @@ func TestReconcileHappyPath(t *testing.T) {
 	if p.Artifacts == nil {
 		t.Fatal("expected artifacts")
 	}
-	if len(p.Artifacts.Topics) != 2 {
-		t.Fatalf("promote list = %v, want 2 topics", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 2 {
+		t.Fatalf("promote list = %v, want 2 topics", p.Artifacts.PromoteTopics)
 	}
 	// invariant: the topic still classifies Migratable (a pre-existing operator
 	// fencing block must not change routing/verdict).
@@ -263,8 +488,8 @@ func TestReconcileStaticHappyPath(t *testing.T) {
 	if p.Artifacts == nil {
 		t.Fatal("expected artifacts")
 	}
-	if len(p.Artifacts.Topics) != 1 || p.Artifacts.Topics[0] != "team-a.orders" {
-		t.Fatalf("promote list = %v, want [team-a.orders]", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 1 || p.Artifacts.PromoteTopics[0] != "team-a.orders" {
+		t.Fatalf("promote list = %v, want [team-a.orders]", p.Artifacts.PromoteTopics)
 	}
 	if !strings.Contains(string(p.Artifacts.FenceRules), "fence:") {
 		t.Fatalf("FenceRules = %q, want a fence fragment", p.Artifacts.FenceRules)
@@ -351,40 +576,33 @@ func TestReconcileStaticTopicPatterns(t *testing.T) {
 	if p.Report.Refused() {
 		t.Fatalf("expected success, refused with %+v", p.Report)
 	}
-	if len(p.Artifacts.Topics) != 2 {
-		t.Fatalf("promote list = %v, want 2 topics (team-b.other must not match)", p.Artifacts.Topics)
+	if len(p.Artifacts.PromoteTopics) != 2 {
+		t.Fatalf("promote list = %v, want 2 topics (team-b.other must not match)", p.Artifacts.PromoteTopics)
 	}
 }
 
 func TestReconcileStaticNoopWhenAlreadySwitched(t *testing.T) {
-	// DEVIATION FROM BRIEF (documented in task-6-report.md): the brief's
-	// original version of this test asserted `!p.Report.Refused()`, expecting
-	// the run to reach per-topic classification and land Unchanged. But
-	// CheckStaticPreconditions (Task 4, already committed, out of this
-	// task's scope) has its own locked-in, separately-tested behavior
-	// (TestStaticPreconditionsRoutesToTargetWhenAlreadyBound in
-	// staticpreconditions_test.go) that fails the "route is not already
-	// bound to the target domain" precondition whenever routesToTarget is
-	// true — which this scenario's setup requires, since Classify's
-	// Unchanged verdict itself needs routesToTarget==true. So a re-run
-	// against an already-switched static route can never reach
-	// classification: it is refused at the precondition gate instead, with
-	// no artifacts either way. reconcileStatic deliberately adds no logic to
-	// suppress that refusal (see reconcileStatic's doc comment / design doc
-	// decision 8: "no new refusal logic is needed"), so this test asserts
-	// the real, correct outcome — refused, no artifacts — rather than the
-	// brief's original (unreachable) expectation.
+	// Idempotency: a re-run against an already-switched static route (route bound
+	// to the target, mirrors STOPPED) must be a clean NO-OP — matching dynamic's
+	// Unchanged behavior — not a refusal. This reverses the original decision-8
+	// "refuse when already bound" stance after the live static resume suite showed
+	// it broke re-run idempotency (a completed migration refused instead of
+	// no-op'ing) and the kill-after-switch resume. The already-bound route is a
+	// valid done-state the classifier lands as Unchanged; there is nothing to do.
 	gw := staticGateway()
 	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
 	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"} // already switched
 	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
 	p := Reconcile(in, gw, []string{"team-a.orders"}, []string{"team-a.orders"},
 		map[string]MirrorState{"team-a.orders": MirrorStopped}, false, ClusterIDs{}, nil, "")
-	if !p.Report.Refused() {
-		t.Fatalf("a re-run against an already-switched static route is refused at the precondition gate (see comment above), got: %+v", p.Report)
+	if p.Report.Refused() {
+		t.Fatalf("a re-run against an already-switched static route must be a clean no-op, not refused: %+v", p.Report)
 	}
 	if p.Artifacts != nil {
-		t.Fatal("a refused re-run must produce no artifacts")
+		t.Fatal("a completed (already-switched) migration must produce no artifacts — nothing to do")
+	}
+	if len(p.Report.Unchanged) != 1 || p.Report.Unchanged[0].Topic != "team-a.orders" {
+		t.Fatalf("the already-switched topic must classify Unchanged, got %+v", p.Report.Unchanged)
 	}
 }
 
@@ -432,5 +650,401 @@ func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 	p := Reconcile(in, gw, []string{"team-a.orders"}, []string{"team-a.orders"}, map[string]MirrorState{"team-a.orders": MirrorActive}, false, ClusterIDs{}, nil, "")
 	if p.Mode != "dynamic" {
 		t.Fatalf("Mode = %q, want dynamic", p.Mode)
+	}
+}
+
+// On resume the live route already carries kcp's fence (from the interrupted
+// run). The SWITCHOVER artifact must NOT carry that fence forward — the switched
+// state is unfenced for our topics — so a resumed migration reaches the SAME
+// clean end-state as an uninterrupted one. Operator-authored fences are a
+// separate concern and must survive (covered elsewhere). Without DropFence, a
+// switchover built from the fenced live base would keep kcp's fence on the
+// switched route.
+func TestReconcileDynamic_ResumeSwitchoverDropsKcpFence(t *testing.T) {
+	gw := dynGateway()
+	// kcp's prior fence for exactly this batch, as a live route presents it on
+	// resume (fenced but not yet switched).
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topics": []any{"t1", "t2", "t3"}, "blocked": true}}
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(plan.Artifacts.SwitchoverRules, &parsed); err != nil {
+		t.Fatalf("parsing SwitchoverRules: %v", err)
+	}
+	rules, _ := parsed["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	for _, e := range fencing {
+		if isKcpFenceFor(e, []string{"t1", "t2", "t3"}) {
+			t.Fatalf("switchover must drop kcp's own fence on switch, but it is still present:\n%s", plan.Artifacts.SwitchoverRules)
+		}
+	}
+}
+
+func TestReconcileStatic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
+	gw := staticGateway()
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{}, nil, "")
+
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
+	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
+}
+
+func TestReconcileDynamic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
+	gw := dynGateway()
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	assertSetEqual(t, "promote", plan.Artifacts.PromoteTopics, []string{"t2", "t3"})
+	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
+}
+
+// TestReconcileStatic_RestoreOffsetSync pins when a static run owes an
+// offset-sync restore: only with the pause opted in, and then either because
+// this run pauses (a cutover is in flight) or because an earlier run's pause
+// was never restored (the link's live offset sync still differs from the
+// declared baseline). A refused run owes nothing.
+func TestReconcileStatic_RestoreOffsetSync(t *testing.T) {
+	type tc struct {
+		name            string
+		pause           bool
+		baselineEnabled bool
+		linkEnabled     bool
+		switched        bool // every topic already migrated
+		refused         bool
+		want            bool
+	}
+	cases := []tc{
+		{name: "pause not requested, cutover in flight", pause: false, baselineEnabled: true, linkEnabled: true, want: false},
+		{name: "pause not requested, link left off", pause: false, baselineEnabled: true, linkEnabled: false, switched: true, want: false},
+		{name: "cutover in flight", pause: true, baselineEnabled: true, linkEnabled: true, want: true},
+		{name: "migrated, link at its enabled baseline", pause: true, baselineEnabled: true, linkEnabled: true, switched: true, want: false},
+		{name: "migrated, link still paused", pause: true, baselineEnabled: true, linkEnabled: false, switched: true, want: true},
+		{name: "migrated, link at its disabled baseline", pause: true, baselineEnabled: false, linkEnabled: false, switched: true, want: false},
+		{name: "migrated, link enabled against a disabled baseline", pause: true, baselineEnabled: false, linkEnabled: true, switched: true, want: true},
+		{name: "refused", pause: true, baselineEnabled: true, linkEnabled: false, refused: true, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gw := staticGateway()
+			mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}
+			if c.switched {
+				route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+				route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+				mirrors = map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}
+			}
+			selected := []string{"t1", "t2"}
+			if c.refused {
+				selected = append(selected, "missing")
+			}
+			in := ReconcileInput{Topics: selected, Route: "migration-route", TargetDomain: "cc",
+				PauseConsumerOffsetSync: c.pause, OffsetSyncBaselineEnabled: c.baselineEnabled}
+
+			p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"}, mirrors, c.linkEnabled, ClusterIDs{}, nil, "")
+
+			if p.Mode != "static" {
+				t.Fatalf("Mode = %q, want static", p.Mode)
+			}
+			if p.Report.Refused() != c.refused {
+				t.Fatalf("Refused = %v, want %v: %+v", p.Report.Refused(), c.refused, p.Report)
+			}
+			if p.Report.RestoreOffsetSync != c.want {
+				t.Fatalf("RestoreOffsetSync = %v, want %v", p.Report.RestoreOffsetSync, c.want)
+			}
+		})
+	}
+}
+
+// TestReconcileDynamic_RefusesOffsetSyncPause: a dynamic route requires the
+// link's consumer offset sync to be off, so there is nothing to pause. A
+// manifest that asks for the pause is refused on the "offset-sync pause not
+// requested" precondition and owes no restore; without it the precondition
+// passes.
+func TestReconcileDynamic_RefusesOffsetSyncPause(t *testing.T) {
+	for _, pause := range []bool{true, false} {
+		t.Run(fmt.Sprintf("pause=%v", pause), func(t *testing.T) {
+			in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
+				PauseConsumerOffsetSync: pause, OffsetSyncBaselineEnabled: true}
+			p := Reconcile(in, dynGateway(), []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+
+			if p.Mode != "dynamic" {
+				t.Fatalf("Mode = %q, want dynamic", p.Mode)
+			}
+			var found *PreconditionResult
+			for i := range p.Report.Preconditions {
+				if p.Report.Preconditions[i].Name == "offset-sync pause not requested" {
+					found = &p.Report.Preconditions[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("no %q precondition in %+v", "offset-sync pause not requested", p.Report.Preconditions)
+			}
+			if found.OK == pause {
+				t.Fatalf("precondition OK = %v with pause=%v: %+v", found.OK, pause, *found)
+			}
+			if p.Report.Refused() != pause {
+				t.Fatalf("Refused = %v, want %v", p.Report.Refused(), pause)
+			}
+			if pause && !strings.Contains(found.Detail, "pauseConsumerOffsetSync") {
+				t.Fatalf("the refusal must name the manifest field, got %q", found.Detail)
+			}
+			if p.Report.RestoreOffsetSync || p.NothingToDo {
+				t.Fatalf("RestoreOffsetSync=%v NothingToDo=%v, want false/false", p.Report.RestoreOffsetSync, p.NothingToDo)
+			}
+		})
+	}
+}
+
+// TestReconcileNothingToDo pins the one verdict that lets the caller skip the
+// whole run: NothingToDo is true only when the run is not refused and no topic
+// is left to migrate. A promoted-but-not-switched batch has no topic to promote
+// but still owes the switch, so it is not nothing-to-do.
+func TestReconcileNothingToDo(t *testing.T) {
+	type tc struct {
+		name     string
+		selected []string
+		pattern  string
+		source   []string
+		mirrors  map[string]MirrorState
+		switched bool // the route already sends the batch to the target
+		want     bool
+	}
+	cases := []tc{
+		{name: "every topic already migrated", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}, switched: true, want: true},
+		{name: "selector matches no source topic", pattern: "nomatch-.*", source: []string{"t1"}, want: true},
+		{name: "fresh batch", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}},
+		{name: "mixed resume batch", selected: []string{"t1", "t2", "t3"}, source: []string{"t1", "t2", "t3"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}},
+		{name: "promoted, not switched", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}},
+		{name: "promotion in flight", selected: []string{"t1", "t2"}, source: []string{"t1", "t2"},
+			mirrors: map[string]MirrorState{"t1": MirrorPending, "t2": MirrorPending}},
+		{name: "refused", selected: []string{"t1", "missing"}, source: []string{"t1"},
+			mirrors: map[string]MirrorState{"t1": MirrorActive}},
+	}
+	gateways := map[string]func(switched bool, topics []string) *GatewayConfig{
+		"dynamic": func(switched bool, topics []string) *GatewayConfig {
+			gw := dynGateway()
+			if switched {
+				gw.Route.Rules = map[string]any{"routing": map[string]any{
+					"coordination": map[string]any{"group": "msk"},
+					"conditions":   []any{map[string]any{"topics": toAny(topics), "streamingDomain": "cc"}},
+					"default":      "msk",
+				}}
+			}
+			return gw
+		},
+		"static": func(switched bool, _ []string) *GatewayConfig {
+			gw := staticGateway()
+			if switched {
+				route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+				route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+			}
+			return gw
+		},
+	}
+	for mode, gateway := range gateways {
+		for _, c := range cases {
+			t.Run(mode+"/"+c.name, func(t *testing.T) {
+				in := ReconcileInput{Topics: c.selected, Route: "migration-route", TargetDomain: "cc"}
+				if c.pattern != "" {
+					in.TopicPatterns = []string{c.pattern}
+				}
+				p := Reconcile(in, gateway(c.switched, c.selected), c.source, c.source, c.mirrors, false, ClusterIDs{}, nil, "")
+				if p.Mode != mode {
+					t.Fatalf("Mode = %q, want %q", p.Mode, mode)
+				}
+				if p.NothingToDo != c.want {
+					t.Fatalf("NothingToDo = %v, want %v (report %+v)", p.NothingToDo, c.want, p.Report)
+				}
+				if p.NothingToDo && p.Artifacts != nil {
+					t.Fatal("a nothing-to-do plan must carry no artifacts")
+				}
+			})
+		}
+	}
+}
+
+func toAny(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// TestReconcileStatic_RestoreOwedIsNotNothingToDo: every topic is migrated,
+// but the link's consumer offset sync is still paused against an enabled
+// baseline, so the run still owes the restore and is not nothing-to-do.
+func TestReconcileStatic_RestoreOwedIsNotNothingToDo(t *testing.T) {
+	gw := staticGateway()
+	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+	in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc",
+		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
+
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, false, ClusterIDs{}, nil, "")
+
+	if !p.Report.RestoreOffsetSync {
+		t.Fatal("the paused link must owe a restore")
+	}
+	if p.NothingToDo {
+		t.Fatal("a run that owes an offset-sync restore is not nothing-to-do")
+	}
+}
+
+// resumeFencedRules is a dynamic route's rules as a resumed run pulls them: the
+// operator's own fence on ops.maintenance, plus kcp's fence for the batch
+// [t1, t2] from the killed run.
+func resumeFencedRules() map[string]any {
+	return map[string]any{
+		"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"},
+		"fencing": []any{
+			map[string]any{"topics": []any{"t1", "t2"}, "blocked": true},
+			map[string]any{"topics": []any{"ops.maintenance"}, "blocked": true},
+		},
+	}
+}
+
+// TestReconcileDynamic_RollbackFence: the rollback target is the start-of-run
+// rules with kcp's fence for this batch taken out — on a resume that removes
+// the killed run's fence and keeps the operator's; on a fresh run there is no
+// kcp fence, so it is the start-of-run rules unchanged.
+func TestReconcileDynamic_RollbackFence(t *testing.T) {
+	t.Run("resume", func(t *testing.T) {
+		gw := dynGateway()
+		gw.Route.Rules = resumeFencedRules()
+		in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+		p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"},
+			map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+		if p.Artifacts == nil {
+			t.Fatalf("expected a plan, got %+v", p.Report)
+		}
+		assertSetEqual(t, "rollback fence topics", rulesFencingTopics(t, p.Artifacts.RollbackFenceRules), []string{"ops.maintenance"})
+		if !strings.Contains(string(p.Artifacts.RollbackFenceRules), "routing:") {
+			t.Fatalf("the rollback target keeps the operator's routing:\n%s", p.Artifacts.RollbackFenceRules)
+		}
+		if strings.Contains(string(p.Artifacts.RollbackFenceRules), "conditions:") {
+			t.Fatalf("the rollback target must not route anything to the target:\n%s", p.Artifacts.RollbackFenceRules)
+		}
+	})
+	t.Run("fresh", func(t *testing.T) {
+		gw := dynGateway()
+		in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+		p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+		base, _ := ParseRules(dynGateway().Route.Rules)
+		want, _ := base.Serialize()
+		if string(p.Artifacts.RollbackFenceRules) != string(want) {
+			t.Fatalf("on a fresh run the rollback target is the start-of-run rules:\ngot:\n%s\nwant:\n%s", p.Artifacts.RollbackFenceRules, want)
+		}
+	})
+}
+
+// TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes: a static
+// route's switch and rollback both remove the fence, which a route patch can
+// only do by replacing the whole route, so both are whole start-of-run routes
+// without the fence — the switch bound to the target, the rollback to the
+// source.
+func TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes(t *testing.T) {
+	for _, fenced := range []bool{true, false} {
+		t.Run(fmt.Sprintf("start-of-run route fenced=%v", fenced), func(t *testing.T) {
+			gw := staticGateway()
+			if fenced {
+				gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
+			}
+			in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+			p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+			if p.Artifacts == nil {
+				t.Fatalf("expected a plan, got %+v", p.Report)
+			}
+
+			sw := routeArtifact(t, p.Artifacts.SwitchoverRules)
+			if _, has := sw["fence"]; has {
+				t.Fatalf("the switched route must carry no fence:\n%s", p.Artifacts.SwitchoverRules)
+			}
+			if sw["streamingDomain"].(map[string]any)["name"] != "cc" || sw["security"] == nil {
+				t.Fatalf("the switched route binds the target and keeps staged auth:\n%s", p.Artifacts.SwitchoverRules)
+			}
+
+			rb := routeArtifact(t, p.Artifacts.RollbackFenceRules)
+			if _, has := rb["fence"]; has {
+				t.Fatalf("the rolled-back route must carry no fence:\n%s", p.Artifacts.RollbackFenceRules)
+			}
+			if rb["streamingDomain"].(map[string]any)["name"] != "msk" || rb["security"] == nil {
+				t.Fatalf("the rolled-back route stays on the source and keeps staged auth:\n%s", p.Artifacts.RollbackFenceRules)
+			}
+		})
+	}
+}
+
+// TestReconcile_RollbackAllowed: a rollback unfences the batch, which is only
+// safe while nothing in it is promoted — once a mirror is promoted (or
+// promoting), sending its clients back to the source would split them from the
+// target. So RollbackAllowed is true only when no topic is SwitchOnly or
+// AwaitStopped.
+func TestReconcile_RollbackAllowed(t *testing.T) {
+	cases := []struct {
+		name    string
+		mirrors map[string]MirrorState
+		want    bool
+	}{
+		{"fresh", map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, true},
+		{"one promoted", map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, false},
+		{"one promoting", map[string]MirrorState{"t1": MirrorPending, "t2": MirrorActive}, false},
+		{"all promoted", map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}, false},
+	}
+	gateways := map[string]func() *GatewayConfig{"dynamic": dynGateway, "static": staticGateway}
+	for mode, gateway := range gateways {
+		for _, c := range cases {
+			t.Run(mode+"/"+c.name, func(t *testing.T) {
+				in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+				p := Reconcile(in, gateway(), []string{"t1", "t2"}, []string{"t1", "t2"}, c.mirrors, false, ClusterIDs{}, nil, "")
+				if p.Artifacts == nil {
+					t.Fatalf("expected a plan, got %+v", p.Report)
+				}
+				if p.Artifacts.RollbackAllowed != c.want {
+					t.Fatalf("RollbackAllowed = %v, want %v", p.Artifacts.RollbackAllowed, c.want)
+				}
+			})
+		}
+	}
+}
+
+// TestReconcile_MigrateTopics: the fence check watches every topic the run
+// migrates — including the already-promoted (SwitchOnly) ones, whose mirrors no
+// longer copy from the source, so a write straight to their source would be
+// lost — while PromoteTopics holds only the ones still to promote.
+func TestReconcile_MigrateTopics(t *testing.T) {
+	gateways := map[string]func() *GatewayConfig{"dynamic": dynGateway, "static": staticGateway}
+	for mode, gateway := range gateways {
+		t.Run(mode, func(t *testing.T) {
+			in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+			mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+			p := Reconcile(in, gateway(), []string{"t1", "t2", "t3"}, []string{"t1", "t2", "t3"}, mirrors, false, ClusterIDs{}, nil, "")
+			if p.Artifacts == nil {
+				t.Fatalf("expected a plan, got %+v", p.Report)
+			}
+			if !reflect.DeepEqual(p.Artifacts.MigrateTopics, []string{"t1", "t2", "t3"}) {
+				t.Fatalf("MigrateTopics = %v, want every topic in the batch, sorted", p.Artifacts.MigrateTopics)
+			}
+			assertSetEqual(t, "promote", p.Artifacts.PromoteTopics, []string{"t2", "t3"})
+		})
 	}
 }

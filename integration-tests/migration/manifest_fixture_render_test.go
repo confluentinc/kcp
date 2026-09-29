@@ -232,6 +232,7 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	opts := baselineOpts()
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 
 	rendered, err := renderGatewayMigration(opts)
 	require.NoError(t, err)
@@ -239,6 +240,7 @@ func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
 	assert.True(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
+	assert.Equal(t, "enabled", g.Spec.ClusterLink.ConsumerOffsetSyncBaseline)
 }
 
 // TestRenderCredentialFiles_ValuesCannotInjectYAML is the abuse case for the

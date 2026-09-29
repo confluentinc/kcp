@@ -40,11 +40,17 @@ func hotReloadConfig() *MigrationConfig {
 		InitialCrName: "gw-1",
 		// A real routed CR: FenceGateway's deriveFencedCRYAML splices FenceYAML
 		// onto Route, which needs spec.routes to contain it.
-		GatewayYAML:    "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n",
-		Route:          "migration-route",
-		Mode:           "static",
-		FenceYAML:      testFenceYAML,
-		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:       "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n",
+		Route:             "migration-route",
+		Mode:              "static",
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
+		RollbackFenceYAML: testRollbackFenceYAML,
+		// Non-empty so FenceGateway/SwitchGateway's plan-driven no-op guard
+		// (config.FenceYAML == "" / config.SwitchoverYAML == "") does not
+		// short-circuit these tests before they reach the hot-reload/configId
+		// behaviour under test.
+		Topics: []string{"topic-a", "topic-b", "topic-c"},
 	}
 }
 

@@ -110,6 +110,115 @@ func TestRenderReportSkippedPrecondition(t *testing.T) {
 	}
 }
 
+// TestRenderReport_ResumeBuckets proves the resume verdicts (SwitchOnly,
+// AwaitStopped) render with their own glyph/status word and are counted in
+// the footer.
+func TestRenderReport_ResumeBuckets(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		SwitchOnly:   []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.SwitchOnly}},
+		AwaitStopped: []reconcile.TopicVerdict{{Topic: "t2", Verdict: reconcile.AwaitStopped}},
+	}
+	var b strings.Builder
+	RenderReport(&b, r, RenderView{})
+	out := b.String()
+	for _, want := range []string{"t1", "t2", "switch", "awaiting", "1 to switch", "1 awaiting promotion"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderReport_ResumeOnlyIsActionable proves a plan with ONLY resume work
+// (SwitchOnly/AwaitStopped topics, zero Migratable) is actionable, not "nothing
+// to do" — there IS a switch/await to perform, so it must reach the same
+// artifact-note footer branch a Migratable-only plan does.
+func TestRenderReport_ResumeOnlyIsActionable(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		SwitchOnly:   []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.SwitchOnly}},
+		AwaitStopped: []reconcile.TopicVerdict{{Topic: "t2", Verdict: reconcile.AwaitStopped}},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{ArtifactNote: "artifacts → ./out"})
+	out := buf.String()
+
+	if strings.Contains(out, "nothing to do") {
+		t.Errorf("a resume-only plan (SwitchOnly/AwaitStopped) has actionable work and must not render \"nothing to do\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "(artifacts → ./out)") {
+		t.Errorf("a resume-only plan must reach the actionable artifact-note footer branch; got:\n%s", out)
+	}
+}
+
+// TestRenderReport_RestoreOnlyIsActionable: every topic is already migrated but
+// an offset-sync restore is still owed, so the plan has work and names it.
+func TestRenderReport_RestoreOnlyIsActionable(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		Unchanged:         []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.Unchanged}},
+		RestoreOffsetSync: true,
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{ArtifactNote: "plan ready"})
+	out := buf.String()
+
+	if strings.Contains(out, "nothing to do") {
+		t.Errorf("a plan that owes an offset-sync restore must not render \"nothing to do\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "offset-sync restore") || !strings.Contains(out, "(plan ready)") {
+		t.Errorf("the footer must name the owed restore and reach the actionable branch; got:\n%s", out)
+	}
+}
+
+// TestRenderReport_SwitchOnlyWarningNotDoublePrinted proves a shadow warning
+// attached to a SwitchOnly topic (mirroring how reconcile.go's
+// shadowWarnings(toMigrate, ...) attaches warnings to SwitchOnly/AwaitStopped
+// topics too, since toMigrate includes them) renders exactly once — on the
+// topic's own line — and is not also re-printed as a trailing "unattached"
+// warning.
+func TestRenderReport_SwitchOnlyWarningNotDoublePrinted(t *testing.T) {
+	color.NoColor = true
+	warning := `existing condition for "t1" (-> msk) is now shadowed`
+	r := reconcile.Report{
+		SwitchOnly: []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.SwitchOnly}},
+		Warnings:   []string{warning},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{})
+	out := buf.String()
+
+	if !strings.Contains(out, warning) {
+		t.Fatalf("output missing warning %q:\n%s", warning, out)
+	}
+	if n := strings.Count(out, warning); n != 1 {
+		t.Errorf("warning %q must appear exactly once (attached to its SwitchOnly topic line), got %d occurrences:\n%s", warning, n, out)
+	}
+}
+
+// TestRenderReport_AwaitStoppedWarningNotDoublePrinted mirrors
+// TestRenderReport_SwitchOnlyWarningNotDoublePrinted for the AwaitStopped
+// bucket: a shadow warning naming an AwaitStopped topic must render exactly
+// once, not once on the topic line and again as a trailing "unattached" note.
+func TestRenderReport_AwaitStoppedWarningNotDoublePrinted(t *testing.T) {
+	color.NoColor = true
+	warning := `existing condition for "t2" (-> msk) is now shadowed`
+	r := reconcile.Report{
+		AwaitStopped: []reconcile.TopicVerdict{{Topic: "t2", Verdict: reconcile.AwaitStopped}},
+		Warnings:     []string{warning},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{})
+	out := buf.String()
+
+	if !strings.Contains(out, warning) {
+		t.Fatalf("output missing warning %q:\n%s", warning, out)
+	}
+	if n := strings.Count(out, warning); n != 1 {
+		t.Errorf("warning %q must appear exactly once (attached to its AwaitStopped topic line), got %d occurrences:\n%s", warning, n, out)
+	}
+}
+
 // TestRenderReportSuccessAndVerbose: all ready ⇒ success footer with the artifact
 // note; --verbose adds the per-topic facts sub-line.
 func TestRenderReportSuccessAndVerbose(t *testing.T) {
