@@ -36,12 +36,13 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The dynamic-routing gateway build. 1.4.0-master-430 is the dynamic-routing
-# build this suite is validated against. Native-arch tag so the gateway pod
-# needs no emulation; only the operator image is amd64-only.
+# The dynamic-routing gateway build. 1.4.0-master-461 is published for both
+# architectures, so a local (arm64) run and CI (amd64) run the same gateway code;
+# the native-arch tag means the gateway pod needs no emulation. Only the operator
+# image is amd64-only.
 case "$(uname -m)" in
-  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-430-arm64" ;;
-  *) GATEWAY_TAG_DEFAULT="1.4.0-master-424-amd64" ;;
+  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-461-arm64" ;;
+  *) GATEWAY_TAG_DEFAULT="1.4.0-master-461-amd64" ;;
 esac
 GATEWAY_TAG="${GATEWAY_TAG:-${GATEWAY_TAG_DEFAULT}}"
 GATEWAY_IMAGE="${GATEWAY_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/cpc-gateway:${GATEWAY_TAG}}"
@@ -151,7 +152,7 @@ topic_name() { printf '%s%03d' "${TOPIC_PREFIX}" "$1"; }
 echo "=== KCP idempotent-fsm E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
-echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, hot reload)"
+echo "Gateway image:  ${GATEWAY_IMAGE} (${GATEWAY_MODE} mode)"
 echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored"
 echo ""
 

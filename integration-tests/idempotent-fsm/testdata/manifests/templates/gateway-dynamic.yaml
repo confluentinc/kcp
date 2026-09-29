@@ -99,10 +99,11 @@ spec:
           # engine's OwnerRoute resolves "on source" via a condition and never needs
           # routing.default. This threads the needle between two incompatible schemas:
           # the CFK 0.1838.0 CRD forbids routing.default (it models the fallback as
-          # unmatchedTopics), while this gateway app build (cpc-gateway 1.4.0-master-430)
-          # forbids unmatchedTopics (it wants default). Using conditions only avoids
-          # both. The engine's switchover prepends per-batch conditions ahead of this
-          # one (first-match-wins), so migrated topics resolve to the target.
+          # unmatchedTopics), while the gateway app (cpc-gateway 1.4.0-master-430,
+          # where this was checked) forbids unmatchedTopics (it wants default). Using
+          # conditions only avoids both. The engine's switchover prepends per-batch
+          # conditions ahead of this one (first-match-wins), so migrated topics
+          # resolve to the target.
           conditions:
             - topicPatterns: [".*"]
               streamingDomain: source-domain
