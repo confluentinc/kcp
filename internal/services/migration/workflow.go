@@ -813,6 +813,14 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 		return nil
 	}
 
+	// Plan-driven no-op: reconcile left no topic to migrate (a run that owes
+	// only the offset-sync restore), so there is no source to watch. Read the
+	// plan (config.MigrateTopics), never the live cluster.
+	if len(config.MigrateTopics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to check for unrouted producers")
+		return nil
+	}
+
 	if s.sourceOffset == nil {
 		return fmt.Errorf("source offset service is required for unrouted producer detection")
 	}

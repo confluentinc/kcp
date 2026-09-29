@@ -1521,6 +1521,28 @@ func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
 		"offset providers should not be consulted when detection is disabled")
 }
 
+// TestWorkflow_VerifyFence_NothingToMigrate_SkipsTheWindow: a run that owes only
+// the offset-sync restore has no topic to watch, so the check returns at once
+// instead of waiting out the detection window over nothing.
+func TestWorkflow_VerifyFence_NothingToMigrate_SkipsTheWindow(t *testing.T) {
+	offsetProvider := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return map[string]map[int32]int64{}, nil
+		},
+	}
+	wf := NewMigrationActionsWithOffsets(&mockGatewayService{}, &mockClusterLinkService{}, offsetProvider, offsetProvider)
+	config := &MigrationConfig{
+		MigrateTopics:                   nil,
+		DetectUnroutedProducersDuration: time.Hour,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := wf.VerifyFence(ctx, config)
+
+	require.NoError(t, err, "with no topic to watch the check must not wait out the window")
+}
+
 func TestWorkflow_VerifyFence_NilOffsetServices(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}
