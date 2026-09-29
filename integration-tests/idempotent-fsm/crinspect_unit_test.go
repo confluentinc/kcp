@@ -145,6 +145,55 @@ func TestRouteFences(t *testing.T) {
 	}
 }
 
+// operatorProduceFence is an operator's produce-only fence over [t1, t2]: kcp's
+// topics and blocked: true, plus a trafficType kcp never writes.
+const operatorProduceFence = `          - trafficType: PRODUCE
+            topics: [t1, t2]
+            blocked: true
+`
+
+func TestHasKcpFence(t *testing.T) {
+	cases := []struct {
+		name string
+		cr   []byte
+		want bool
+	}{
+		{"kcp fence", dynamicCR("        fencing:\n          - topics: [t1, t2]\n            blocked: true\n"), true},
+		{"kcp fence, topics in another order", dynamicCR("        fencing:\n          - topics: [t2, t1]\n            blocked: true\n"), true},
+		{"kcp fence after the operator's", dynamicCR("        fencing:\n" + operatorProduceFence + "          - topics: [t1, t2]\n            blocked: true\n"), true},
+		{"operator's produce-only fence on the same topics", dynamicCR("        fencing:\n" + operatorProduceFence), false},
+		{"fence over a wider topic set", dynamicCR("        fencing:\n          - topics: [t1, t2, t3]\n            blocked: true\n"), false},
+		{"fence over a narrower topic set", dynamicCR("        fencing:\n          - topics: [t1]\n            blocked: true\n"), false},
+		{"unblocked entry", dynamicCR("        fencing:\n          - topics: [t1, t2]\n            blocked: false\n"), false},
+		{"pristine", dynamicCR(pristineRules), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasKcpFence(findRoute(tc.cr, testRoute), []string{"t1", "t2"}))
+		})
+	}
+}
+
+func TestCountFencingEntry(t *testing.T) {
+	op := map[string]any{"trafficType": "PRODUCE", "topics": []any{"t1", "t2"}, "blocked": true}
+	cases := []struct {
+		name string
+		cr   []byte
+		want int
+	}{
+		{"present once, beside kcp's fence", dynamicCR("        fencing:\n          - topics: [t1, t2]\n            blocked: true\n" + operatorProduceFence), 1},
+		{"present twice", dynamicCR("        fencing:\n" + operatorProduceFence + operatorProduceFence), 2},
+		{"only kcp's fence", dynamicCR("        fencing:\n          - topics: [t1, t2]\n            blocked: true\n"), 0},
+		{"same topics, other traffic type", dynamicCR("        fencing:\n          - trafficType: CONSUME\n            topics: [t1, t2]\n            blocked: true\n"), 0},
+		{"pristine", dynamicCR(pristineRules), 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, countFencingEntry(findRoute(tc.cr, testRoute), op))
+		})
+	}
+}
+
 func TestRouteTargets(t *testing.T) {
 	cases := []struct {
 		name  string

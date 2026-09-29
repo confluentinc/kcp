@@ -5,6 +5,7 @@
 package idempotent_fsm_e2e
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -80,6 +81,60 @@ func routeTargets(r map[string]any, destDomain, topic string) bool {
 	for _, c := range conditions {
 		cm, _ := c.(map[string]any)
 		if cm["streamingDomain"] == destDomain && listsTopic(cm, topic) {
+			return true
+		}
+	}
+	return false
+}
+
+// fencingEntries returns a dynamic route r's rules.fencing entries.
+func fencingEntries(r map[string]any) []map[string]any {
+	rules, _ := r["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	out := make([]map[string]any, 0, len(fencing))
+	for _, fe := range fencing {
+		if fm, ok := fe.(map[string]any); ok {
+			out = append(out, fm)
+		}
+	}
+	return out
+}
+
+// countFencingEntry counts route r's rules.fencing entries equal to want.
+func countFencingEntry(r, want map[string]any) int {
+	n := 0
+	for _, fm := range fencingEntries(r) {
+		if reflect.DeepEqual(fm, want) {
+			n++
+		}
+	}
+	return n
+}
+
+// hasKcpFence reports whether route r carries kcp's own fence for exactly
+// topics: an entry with only topics (the same set) and blocked: true, the shape
+// reconcile writes. An entry over the same topics that sets anything else is
+// not kcp's.
+func hasKcpFence(r map[string]any, topics []string) bool {
+	for _, fm := range fencingEntries(r) {
+		if len(fm) != 2 {
+			continue
+		}
+		if blocked, _ := fm["blocked"].(bool); !blocked {
+			continue
+		}
+		listed, _ := fm["topics"].([]any)
+		if len(listed) != len(topics) {
+			continue
+		}
+		all := true
+		for _, tp := range topics {
+			if !listsTopic(fm, tp) {
+				all = false
+				break
+			}
+		}
+		if all {
 			return true
 		}
 	}
