@@ -77,7 +77,7 @@ const (
 func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := resolveKubeConfigPath(g)
+	kubeConfigPath, err := g.KubeconfigPath()
 	require.NoError(t, err)
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
 	cfg.Mode = "dynamic"

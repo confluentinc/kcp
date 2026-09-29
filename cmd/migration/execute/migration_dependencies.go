@@ -163,11 +163,10 @@ func newKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
 	return client.NewKafkaClient(conn.BootstrapServers, region, authOpt)
 }
 
-// buildGatewayService opens a real gateway.Service against the resolved
-// kubeconfig (spec.gateway.kubeconfig, else in-cluster in a pod, else
-// ~/.kube/config — see resolveKubeConfigPath).
+// buildGatewayService opens a real gateway.Service against the manifest's
+// kubeconfig (see manifest.GatewayMigration.KubeconfigPath for its default).
 func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) {
-	kubeconfig, err := resolveKubeConfigPath(g)
+	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {
 		return nil, err
 	}

@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,7 +87,7 @@ func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, edi
 	if editGateway != nil {
 		editGateway(g)
 	}
-	kubeConfigPath, err := resolveKubeConfigPath(g)
+	kubeConfigPath, err := g.KubeconfigPath()
 	require.NoError(t, err)
 	config := buildFreshMigrationConfig(g, g.Metadata.Name, kubeConfigPath)
 

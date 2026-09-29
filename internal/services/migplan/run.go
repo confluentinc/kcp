@@ -213,7 +213,8 @@ func newResult(plan *reconcile.Plan) *Result {
 
 // buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
 // read from Kubernetes by namespace + cr-name via the existing gateway service,
-// using the manifest's kubeconfig (a leading ~/ is expanded).
+// using the manifest's kubeconfig (see manifest.GatewayMigration.KubeconfigPath
+// for its default).
 func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConfigSource, error) {
 	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {

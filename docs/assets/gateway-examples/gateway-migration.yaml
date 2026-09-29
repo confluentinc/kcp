@@ -80,7 +80,7 @@ spec:
 
   gateway:
     namespace: confluent
-    # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
+    # kubeconfig: ~/.kube/config          # optional (unset: in-cluster in a pod, else ~/.kube/config); a leading ~/ IS expanded
     cr-name: gateway-initial # a Kubernetes object NAME, read live
 
   # route names the route to fence/switch, the streaming domain it switches to,

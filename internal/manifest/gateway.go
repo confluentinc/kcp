@@ -136,7 +136,7 @@ type Gateway struct {
 	Namespace string `yaml:"namespace" json:"namespace"`
 	// Kubeconfig is the one field in the manifest where a leading ~/ is
 	// expanded — nothing else in the repo expands ~, and client-go's loader
-	// does not either.
+	// does not either. Unset, it defaults as KubeconfigPath describes.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
 	// from the cluster at init. The route to fence and the domain it switches to
@@ -480,10 +480,19 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	return g.Spec.ClusterLink.LinkCredentials.ResolveTarget()
 }
 
-// KubeconfigPath returns spec.gateway.kubeconfig with a leading ~/ expanded.
+// KubeconfigPath returns the kubeconfig every Kubernetes client kcp builds from
+// this manifest uses: spec.gateway.kubeconfig with a leading ~/ expanded, or,
+// when it is unset, the empty path inside a pod (client-go then uses the pod's
+// in-cluster service account) and ~/.kube/config anywhere else.
 func (g *GatewayMigration) KubeconfigPath() (string, error) {
 	p := g.Spec.Gateway.Kubeconfig
-	if p == "" || !strings.HasPrefix(p, "~/") {
+	if p == "" {
+		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+			return "", nil
+		}
+		p = "~/.kube/config"
+	}
+	if !strings.HasPrefix(p, "~/") {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()

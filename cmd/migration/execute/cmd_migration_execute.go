@@ -3,8 +3,6 @@ package execute
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -112,29 +110,6 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	return cmd
 }
 
-// resolveKubeConfigPath applies the ~/.kube/config default. spec.gateway.
-// kubeconfig is the one manifest field where a leading ~/ is expanded.
-func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
-	p, err := g.KubeconfigPath()
-	if err != nil {
-		return "", err
-	}
-	if p != "" {
-		return p, nil
-	}
-	// Unset: prefer in-cluster config when running inside a pod (an empty path
-	// makes client-go use the in-cluster service account), else fall back to the
-	// developer's ~/.kube/config, so both branches run in-cluster.
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		return "", nil
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home directory: %w", err)
-	}
-	return filepath.Join(homeDir, ".kube", "config"), nil
-}
-
 // buildFreshMigrationConfig builds a run's MigrationConfig from the manifest
 // alone — no live call. Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are not
 // set here: the FSM's initialize transition copies them in from the reconcile
@@ -205,7 +180,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	// Build this run's MigrationConfig from the manifest (no live call); live
 	// reconcile (below) observes the cluster and decides what remains
 	// outstanding.
-	kubeConfigPathResolved, kerr := resolveKubeConfigPath(g)
+	kubeConfigPathResolved, kerr := g.KubeconfigPath()
 	if kerr != nil {
 		return kerr
 	}

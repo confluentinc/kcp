@@ -1,10 +1,15 @@
 package migplan
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func gm(name, target string, tgs []manifest.TopicGroupEntry) *manifest.GatewayMigration {
@@ -178,4 +183,59 @@ func TestNewResult(t *testing.T) {
 	if ref.Reasons[0] != "route is dynamic: is static" || ref.Reasons[1] != "x: not on the cluster link" {
 		t.Errorf("reasons = %v", ref.Reasons)
 	}
+}
+
+// homeWithFakeKubeconfig points $HOME at a temp dir whose .kube/config names an
+// unreachable API server, and marks the process as not in a pod, so a client
+// built from the home kubeconfig fails to connect rather than to configure.
+func homeWithFakeKubeconfig(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".kube"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".kube", "config"), []byte(`apiVersion: v1
+kind: Config
+clusters:
+- name: fake
+  cluster:
+    server: https://127.0.0.1:1
+contexts:
+- name: fake
+  context: {cluster: fake, user: fake}
+current-context: fake
+users:
+- name: fake
+  user: {token: fake}
+`), 0o600))
+	t.Setenv("HOME", home)
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+}
+
+// TestBuildGatewaySource_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig: with
+// spec.gateway.kubeconfig unset outside a pod, reconcile's gateway pull uses
+// ~/.kube/config — it reaches for the API server named there — instead of
+// failing to build a client at all.
+func TestBuildGatewaySource_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig(t *testing.T) {
+	homeWithFakeKubeconfig(t)
+	g := &manifest.GatewayMigration{}
+	g.Spec.Gateway.Namespace = "confluent"
+	g.Spec.Gateway.CrName = "my-gateway"
+
+	src, err := buildGatewaySource(g, "migration-route")
+	require.NoError(t, err)
+	_, err = src.Load(context.Background())
+
+	require.Error(t, err, "the fake API server is unreachable")
+	assert.NotContains(t, err.Error(), "no configuration has been provided", "the home kubeconfig must be used")
+	assert.Contains(t, err.Error(), "127.0.0.1:1", "the client must call the API server named in ~/.kube/config")
+}
+
+// TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig:
+// the same default for reconcile's staged-secret check.
+func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig(t *testing.T) {
+	homeWithFakeKubeconfig(t)
+	g := &manifest.GatewayMigration{}
+	g.Spec.Gateway.Namespace = "confluent"
+
+	_, err := buildSecretExistenceChecker(g)
+	require.NoError(t, err, "building the checker from ~/.kube/config must succeed")
 }

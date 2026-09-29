@@ -133,7 +133,7 @@ func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
 func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migration.MigrationConfig) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := resolveKubeConfigPath(g)
+	kubeConfigPath, err := g.KubeconfigPath()
 	require.NoError(t, err)
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
 	return g, &cfg
@@ -589,7 +589,7 @@ func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := resolveKubeConfigPath(g)
+	kubeConfigPath, err := g.KubeconfigPath()
 	require.NoError(t, err)
 
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
@@ -610,33 +610,6 @@ func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
 	assert.Empty(t, cfg.FenceYAML)
 	assert.Empty(t, cfg.Mode)
-}
-
-func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
-	t.Setenv("KUBERNETES_SERVICE_HOST", "") // not in a pod → developer default
-	f := newFixture(t, nil)
-	g := loadGateway(t, f.manifestPath)
-
-	kubeConfigPath, err := resolveKubeConfigPath(g)
-	require.NoError(t, err)
-
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(home, ".kube", "config"), kubeConfigPath)
-}
-
-func TestResolveKubeConfigPath_InClusterWhenInPod(t *testing.T) {
-	// Running inside a pod (KUBERNETES_SERVICE_HOST set) with an unset manifest
-	// kubeconfig must resolve to in-cluster config (empty path → client-go
-	// in-cluster), matching the dynamic branch — not the developer's ~/.kube/config, which does
-	// not exist in a pod.
-	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
-	f := newFixture(t, nil)
-	g := loadGateway(t, f.manifestPath)
-
-	kubeConfigPath, err := resolveKubeConfigPath(g)
-	require.NoError(t, err)
-	assert.Equal(t, "", kubeConfigPath, "an unset kubeconfig in a pod must resolve to in-cluster (empty path)")
 }
 
 // --- --dry-run ---

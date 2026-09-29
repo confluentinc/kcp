@@ -146,7 +146,7 @@ the strict decode with an unknown-field error.
 | Field        | Type   | Required | Notes                                                                                               |
 | ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------- |
 | `namespace`  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                 |
-| `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
+| `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. Unset: the pod's in-cluster service account when kcp runs in a pod, `~/.kube/config` otherwise. |
 | `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on each `execute` run, not a file path. |
 
 ## `spec.route`
@@ -343,7 +343,7 @@ Key rules, beyond required/optional per field above:
 | `spec.clusterLink.linkCredentials`                        | path           | yes                                                    | —                                            | file path; `api_key`/`api_secret`, `basic`, `bearer`, or `mtls` |
 | `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
-| `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |
+| `spec.gateway.kubeconfig`                                 | string         | no                                                     | in-cluster in a pod, else `~/.kube/config`   | `~/` expanded                                                |
 | `spec.gateway.cr-name`                                    | string         | yes                                                    | —                                            | K8s object name                                              |
 | `spec.route.name`                                         | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
 | `spec.route.topicGroup`                                   | list           | yes                                                    | —                                            | exactly one entry                                           |

@@ -628,10 +628,27 @@ func TestGateway_KubeconfigTildeIsExpanded(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
 }
 
-func TestGateway_KubeconfigEmptyStaysEmpty(t *testing.T) {
+// TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig: an unset
+// spec.gateway.kubeconfig outside a pod resolves to ~/.kube/config, for every
+// Kubernetes client kcp builds from the manifest.
+func TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "") // not in a pod
 	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
 	require.NoError(t, err)
-	assert.Empty(t, got)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
+}
+
+// TestGateway_KubeconfigUnsetInAPodIsInCluster: in a pod an unset
+// spec.gateway.kubeconfig resolves to the empty path, which client-go reads as
+// the pod's in-cluster service account — ~/.kube/config does not exist there.
+func TestGateway_KubeconfigUnsetInAPodIsInCluster(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
+	require.NoError(t, err)
+	assert.Empty(t, got, "an unset kubeconfig in a pod must resolve to in-cluster (empty path)")
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
