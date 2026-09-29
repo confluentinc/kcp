@@ -107,11 +107,12 @@ spec:
     # topicGroup pairs the topic selection(s) that migrate on this route.
     # Exactly one entry today — one route, one migration per file.
     #
-    # topics is a flat list of LITERAL topic names, exact-matched against the
-    # link's active mirror topics — not globs. topicPatterns is a list of
-    # anchored full-match regular expressions (RE2). At least one of the two is
-    # REQUIRED; both may be set (their union is used). To cut over EVERY active
-    # mirror topic, use the match-all pattern: topicPatterns: ['.*'].
+    # topics is a flat list of LITERAL topic names — not globs. topicPatterns is
+    # a list of anchored full-match regular expressions (RE2), matched against
+    # the topic names on the source cluster. At least one of the two is
+    # REQUIRED; both may be set (their union is used). Every selected topic must
+    # be a mirror topic on the cluster link, or the run is refused. To cut over
+    # EVERY source topic, use the match-all pattern: topicPatterns: ['.*'].
     #
     # Note the selection has NO effect on `lag-check`, which always watches
     # every mirror.

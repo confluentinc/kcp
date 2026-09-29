@@ -176,14 +176,15 @@ domain it switches to, and the topic selection(s) that migrate.
 
 | Field           | Type       | Required | Notes                                                                                                            |
 | --------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| `topics`        | `[]string` | see note | A flat list of **literal** topic names, exact-matched against the link's active mirror topics — **not** globs.    |
-| `topicPatterns` | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2). `['.*']` selects every active mirror topic.          |
+| `topics`        | `[]string` | see note | A flat list of **literal** topic names — **not** globs.                                                          |
+| `topicPatterns` | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2), matched against the topic names on the source cluster. `['.*']` selects every source topic. |
 
-**At least one of `topics` / `topicPatterns` is required.** If `topics` is set
-it is authoritative — `topicPatterns` is ignored. There is no
-omit-`topics`-means-all default anymore: to migrate every active mirror topic,
-write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
-absent.
+**At least one of `topics` / `topicPatterns` is required.** When both are set,
+the union is migrated: every literal name plus every source topic a pattern
+matches. Every selected topic must exist on the source and be a mirror topic on
+the cluster link; a selected topic that isn't refuses the run. There is no
+omit-`topics`-means-all default: to migrate every source topic, write an
+explicit match-all pattern, `topicPatterns: ['.*']`.
 
 `topicPatterns` are resolved against the live source on every run, so the
 selected set can change between runs without the manifest changing. On a
