@@ -146,7 +146,7 @@ func TestBucketKafkaVersion(t *testing.T) {
 	cases := map[string]string{
 		"":      "", // no scanned version -> empty, so the plan asks (kafka_version)
 		"3.5.1": "3.0 or newer",
-		"2.6.2": "2.4-2.9",
+		"2.6.2": "2.4–2.9",
 		"2.3.0": "Older than 2.4",
 	}
 	for in, want := range cases {

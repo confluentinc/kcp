@@ -211,24 +211,21 @@ func TestAccessControlNote(t *testing.T) {
 		accessControlNote(md, cp)
 		return md.String()
 	}
-	// Pure IAM on a cluster-link path: IAM policies only, bare RBAC (the Step 3 note glosses it).
-	if s := note([]string{SourceAuthIAM}, "cluster_link", false); !strings.Contains(s, "Map your AWS IAM policies to Confluent Cloud RBAC role bindings") || strings.Contains(s, "role-based access control (RBAC)") {
-		t.Errorf("IAM cluster-link note = %q", s)
+	// Pure IAM: points at the migrate-acls iam command and the Authentication
+	// recommendation above, which carries the specifics.
+	if s := note([]string{SourceAuthIAM}, "cluster_link", false); !strings.Contains(s, "`kcp create-asset migrate-acls iam`") || strings.Contains(s, "migrate-acls kafka") {
+		t.Errorf("IAM note = %q", s)
 	}
-	// IAM on a non-cluster-link path (Replicator): no Step 3, so RBAC is glossed inline.
-	if s := note([]string{SourceAuthIAM}, "replicator", false); !strings.Contains(s, "role-based access control (RBAC)") {
-		t.Errorf("IAM replicator should gloss RBAC: %q", s)
-	}
-	// Mixed IAM + SASL/SCRAM: names both authorization systems.
-	if s := note([]string{SourceAuthIAM, SourceAuthSCRAM}, "cluster_link", false); !strings.Contains(s, "AWS IAM policies and the Kafka ACLs") {
+	// Mixed IAM + SASL/SCRAM: names both commands.
+	if s := note([]string{SourceAuthIAM, SourceAuthSCRAM}, "cluster_link", false); !strings.Contains(s, "`kcp create-asset migrate-acls iam` and `kcp create-asset migrate-acls kafka`") {
 		t.Errorf("IAM+SCRAM should mention both: %q", s)
 	}
 	// Unauthenticated only: no authorization to carry over.
 	if s := note([]string{SourceAuthUnauth}, "cluster_link", false); !strings.Contains(s, "no authorization to carry over") {
 		t.Errorf("unauth note = %q", s)
 	}
-	// SCRAM (or mTLS): Kafka ACLs.
-	if s := note([]string{SourceAuthSCRAM}, "cluster_link", false); !strings.Contains(s, "Map your source ACLs") {
+	// SCRAM (or mTLS): points at the migrate-acls kafka command.
+	if s := note([]string{SourceAuthSCRAM}, "cluster_link", false); !strings.Contains(s, "`kcp create-asset migrate-acls kafka`") {
 		t.Errorf("scram note = %q", s)
 	}
 	// Start-fresh reframes the timing (no cutover/mirror).
@@ -326,6 +323,51 @@ func TestMigrationSteps_StylePendingShowsFullSteps(t *testing.T) {
 	}
 	if !strings.Contains(out, "run the cutover") {
 		t.Errorf("should show the cutover step:\n%s", out)
+	}
+}
+
+// A plain (non-Gateway) Cluster Linking cutover has no `kcp migration` tool to run —
+// it's walked through by hand — so the plan must never mention it.
+func TestClusterLinkCutover_PlainHasNoKcpMigration(t *testing.T) {
+	out := renderMigration(enterpriseClusterLinkPlan())
+	if strings.Contains(out, "kcp migration") {
+		t.Errorf("a plain Cluster Linking cutover must not mention kcp migration, got:\n%s", out)
+	}
+	if !strings.Contains(out, "promote the mirror topics") {
+		t.Errorf("expected the plain cutover's mirror-promotion wording, got:\n%s", out)
+	}
+}
+
+// A Gateway-mediated cutover is driven by `kcp migration`, the CPC Gateway cutover
+// tool, so the plan must walk through its stages.
+func TestClusterLinkCutover_GatewayMediatedUsesKcpMigration(t *testing.T) {
+	cp := enterpriseClusterLinkPlan()
+	cp.Plan.Switchover.GatewayMediated = true
+	out := renderMigration(cp)
+	for _, want := range []string{"`kcp migration lag-check`", "`kcp migration execute`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("gateway-mediated cutover missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// The connector start cue matches the cutover style: a plain Cluster Linking
+// cutover has no `kcp migration` tool to point at, so it says to wait until the
+// mirror topics are promoted; a Gateway-mediated one names the command that
+// promotes them.
+func TestConnectorsStep_StartCueMatchesCutoverStyle(t *testing.T) {
+	base := ClusterPlan{
+		Arn:             "arn:aws:kafka:us-east-1:1:cluster/orders/abc",
+		Plan:            connectorsPlan("Rebuild as Confluent-managed connectors"),
+		ConnectorSource: &ConnectorSource{MSKConnect: true},
+	}
+	if out := renderSteps(base); !strings.Contains(out, "after you promote the mirror topics") || strings.Contains(out, "kcp migration") {
+		t.Errorf("plain cluster-linking start cue wrong, got:\n%s", out)
+	}
+	gw := base
+	gw.Plan.Switchover.GatewayMediated = true
+	if out := renderSteps(gw); !strings.Contains(out, "after `kcp migration execute` promotes the mirror topics") {
+		t.Errorf("gateway-mediated start cue wrong, got:\n%s", out)
 	}
 }
 

@@ -25,7 +25,7 @@ Source: Amazon MSK · Generated 2026-09-01 12:00 UTC · kcp 0.0.0-localdev · sc
 - **Cluster type** — An Enterprise cluster fits your needs. You need private networking, which starts at Enterprise, and nothing else you told us pushes it up to Dedicated. Zones: Spread across three Availability Zones, with an uptime SLA of up to 99.99% (at 2 or more eCKU). The cluster keeps serving through the loss of a zone.
 - **Sizing** — We size from the most demanding of the numbers you gave us. Here that’s your partition count. This tier scales with your workload, so there is no capacity for you to pick.
 - **Networking** — On AWS, we recommend PNI (Private Network Interface) for your private connection. It scales to the full 32 eCKU, so it grows with you. Confluent Cloud pulls your data over the Cluster Link, reaching out to your source cluster. PNI doesn’t carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI.
-- **Authentication** — After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). All credentials land as Confluent Cloud service accounts.
+- **Authentication** — After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). API keys belong to Confluent Cloud service accounts.
 - **Data migration** — We recommend a Cluster Linking cutover. At cutover you stop your producers, let the link finish, then restart them against Confluent Cloud, when you are ready rather than all at once. Your source credentials: No change. Cluster Linking uses your SCRAM credentials as-is.
 
 #### Networking trade-offs
@@ -81,7 +81,7 @@ _0 required, 5 optional open._
 | --- | --- | --- |
 | 🟡 exceeds_enterprise_limits: false | Does your workload exceed any of the following: 1,920 megabytes/sec ingress, 5,760 megabytes/sec egress, or 240,000 requests per second? | true → Yes<br>false → No  (default) |
 | 🟡 target_cloud: aws | Which cloud should your new Confluent Cloud cluster run on?<br>_This is independent of your source cloud. Confluent supports cross-cloud migrations._ | aws → AWS  (default)<br>azure → Azure<br>gcp → GCP |
-| 🟡 target_auth:  | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | api-keys → API keys (SASL/PLAIN)<br>oauth → OAuth<br>mtls → mTLS |
+| 🟡 target_auth:  | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | api-keys → API keys (SASL/PLAIN)<br>oauth → OAuth<br>mtls → mTLS |
 | 🟡 client_coordination: moderate | How much coordination will it take to cut over all your clients and apps at the same time? | easy → Low (few clients, one team)<br>moderate → Moderate  (default)<br>hard → High (many clients and teams) |
 | 🟡 eos_streams:  | Do any applications use exactly-once transactions and/or Kafka Streams? | eos → Exactly-once or transactions<br>kstreams → Kafka Streams |
 

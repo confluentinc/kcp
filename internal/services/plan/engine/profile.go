@@ -76,8 +76,8 @@ type Profile struct {
 	AnyAppNeedsDataMigration string // "No" | "Yes" | ""
 
 	// Source Kafka version facts — the Cluster Linking floor.
-	KafkaVersion        string // "Older than 2.4" | "2.4-2.9" | "3.0 or newer" | ""
-	InterBrokerProtocol string // "No" means IBP < 2.8 (blocks CL on 2.4-2.9)
+	KafkaVersion        string // "Older than 2.4" | "2.4–2.9" | "3.0 or newer" | ""
+	InterBrokerProtocol string // "No" means IBP < 2.8 (blocks CL on 2.4–2.9)
 
 	// Switchover — cutover style and its escalation inputs.
 	DowntimeTolerance        string   // a styleMap key; required with no default (holds the switchover verdict)
@@ -133,6 +133,8 @@ type Profile struct {
 	PartitionsAnswered        bool
 	SchemaAnswered            bool
 	KafkaVersionAnswered      bool
+	IBPAnswered               bool
+	SchemaDetectedByScan      bool // registry presence/kind came from the scan
 	SourceClusterTypeAnswered bool
 }
 

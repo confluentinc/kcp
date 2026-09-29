@@ -56,7 +56,7 @@ clusters:
     # What Kafka version does your source cluster run?
     #   (Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.)
     #   3.0-plus → 3.0 or newer
-    #   2.4-2.9 → 2.4-2.9
+    #   2.4-2.9 → 2.4–2.9
     #   older → Older than 2.4
     kafka_version:   # not set
 
@@ -92,7 +92,7 @@ clusters:
     target_cloud: aws
 
     # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-    #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+    #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
     #   api-keys → API keys (SASL/PLAIN)
     #   oauth → OAuth
     #   mtls → mTLS
@@ -115,6 +115,7 @@ clusters:
     #   sasl-plain → SASL/PLAIN
     #   mtls → TLS client certificates (mTLS)
     #   unauth → None / plaintext
+    #   kerberos → Kerberos (GSSAPI)
     # source_auth: [sasl-plain]   # from scan (uncomment to override)
 
     # Do your topics use tiered storage?

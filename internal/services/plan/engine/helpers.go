@@ -28,6 +28,17 @@ func joinComma(xs []string) string { return strings.Join(xs, ", ") }
 func joinAnd(xs []string) string   { return strings.Join(xs, " and ") }
 func joinSpace(xs []string) string { return strings.Join(xs, " ") }
 
+// joinOr reads "A", "A or B", "A, B or C" — no comma before the final "or".
+func joinOr(xs []string) string {
+	if len(xs) <= 1 {
+		if len(xs) == 0 {
+			return ""
+		}
+		return xs[0]
+	}
+	return strings.Join(xs[:len(xs)-1], ", ") + " or " + xs[len(xs)-1]
+}
+
 // dedupe returns xs with duplicates removed, order preserved.
 func dedupe(xs []string) []string {
 	seen := map[string]bool{}

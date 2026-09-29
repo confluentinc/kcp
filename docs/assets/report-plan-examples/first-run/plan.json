@@ -241,7 +241,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -315,7 +315,7 @@
           "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
           "legend": [
             "3.0-plus → 3.0 or newer",
-            "2.4-2.9 → 2.4-2.9",
+            "2.4-2.9 → 2.4–2.9",
             "older → Older than 2.4"
           ],
           "tokens": [
@@ -497,7 +497,7 @@
         },
         "auth": {
           "value": "API keys (SASL/PLAIN)",
-          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them. Your AWS IAM policies don't carry over with your data. kcp create-asset migrate-acls iam reads the IAM policies of the roles and users you name and turns their Kafka actions into Confluent Cloud ACLs, as Terraform. It reads only the first resource in each policy statement and ignores conditions, so check each generated ACL against the policy it came from.",
           "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
           "action": "Set up API keys (SASL/PLAIN)",
           "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
@@ -512,7 +512,7 @@
           "source_credential_handling": [
             {
               "method": "AWS IAM",
-              "note": "Nothing to do for IAM here. The cluster link uses your existing SASL/SCRAM path (above), so your MSK cluster is unchanged for the migration; your IAM clients get new Confluent Cloud credentials when you point them over. Your AWS IAM policies don't carry over automatically. Confluent Cloud uses role-based access control (RBAC) role bindings, which you set up separately (we can help scope this)."
+              "note": "Nothing to do for IAM here. The cluster link uses your existing SASL/SCRAM path (above), so your MSK cluster is unchanged for the migration; your IAM clients get new Confluent Cloud credentials when you point them over. Your plan's authentication recommendation covers how to recreate your AWS IAM permissions in Confluent Cloud."
             },
             {
               "method": "SASL/SCRAM",
@@ -541,7 +541,7 @@
         },
         "historical_data": {
           "value": "No separate backfill to plan",
-          "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+          "reason": "Based on your scan (no tiered storage), there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp scan metrics` to size the retained data.",
           "action": null,
           "source": "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
         },
@@ -805,7 +805,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -896,7 +896,7 @@
           "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
           "legend": [
             "3.0-plus → 3.0 or newer",
-            "2.4-2.9 → 2.4-2.9",
+            "2.4-2.9 → 2.4–2.9",
             "older → Older than 2.4"
           ],
           "tokens": [
@@ -1081,7 +1081,7 @@
         },
         "auth": {
           "value": "API keys (SASL/PLAIN)",
-          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.",
           "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
           "action": "Set up API keys (SASL/PLAIN)",
           "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
@@ -1122,7 +1122,7 @@
         "historical_data": {
           "value": "",
           "pending": true,
-          "reason": "Based on your scan (tiered storage in use), this cluster keeps significant history (your tiered history) and you haven't confirmed whether your consumers need it, so we default to copying all of it across. Your backfill time scales with the retained volume, so plan a cutover/backfill window big enough to move it before you switch over.",
+          "reason": "Based on your scan (tiered storage in use), you haven't confirmed whether your consumers need their history, so we default to copying all of it (your tiered history) to the new cluster from the earliest offset. Confirm to lock this in. Your backfill time scales with the retained volume, so plan a cutover/backfill window big enough to move it before you switch over.",
           "action": "Confirm historical-data requirement",
           "source": "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
         },
@@ -1188,7 +1188,7 @@
         },
         {
           "name": "kafka_version",
-          "value": "2.4-2.9"
+          "value": "2.4–2.9"
         },
         {
           "name": "source_auth_types",
@@ -1385,7 +1385,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -1459,7 +1459,7 @@
           "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
           "legend": [
             "3.0-plus → 3.0 or newer",
-            "2.4-2.9 → 2.4-2.9",
+            "2.4-2.9 → 2.4–2.9",
             "older → Older than 2.4"
           ],
           "tokens": [
@@ -1477,7 +1477,7 @@
         {
           "key": "inter_broker_protocol",
           "prompt": "Is your inter-broker protocol (IBP) 2.8 or later?",
-          "hint": "This only matters when your Kafka version is 2.4-2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.",
+          "hint": "This only matters when your Kafka version is 2.4–2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.",
           "legend": [
             "true → Yes, 2.8 or later",
             "false → No, below 2.8"
@@ -1658,7 +1658,7 @@
         },
         "auth": {
           "value": "API keys (SASL/PLAIN)",
-          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.",
           "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
           "action": "Set up API keys (SASL/PLAIN)",
           "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
@@ -1698,7 +1698,7 @@
         },
         "historical_data": {
           "value": "No separate backfill to plan",
-          "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+          "reason": "Based on your scan (no tiered storage), there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp scan metrics` to size the retained data.",
           "action": null,
           "source": "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
         },

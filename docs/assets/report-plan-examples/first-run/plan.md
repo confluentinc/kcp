@@ -44,7 +44,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 - **Sizing**: Based on your scan (1,500 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.
   - **Heads up:** Sizing is a lower bound; see the note at the top of the plan.
 - **Networking**: Pending, decided by `move_existing_data`, `private_networking_required`. Answer them and re-run to see this.
-- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.
+- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them. Your AWS IAM policies don't carry over with your data. kcp create-asset migrate-acls iam reads the IAM policies of the roles and users you name and turns their Kafka actions into Confluent Cloud ACLs, as Terraform. It reads only the first resource in each policy statement and ignores conditions, so check each generated ACL against the policy it came from.
 
 ### Application plan
 
@@ -57,7 +57,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 | Schema | Pending | Answer `schema_registry`, `schema_strategy` (they decide this). |
 | Connectors | Pending | Answer `msk_connect_present`, `self_managed_connectors` (they decide this). |
 | Topics | Pending | Answer `topics_have_custom_settings` (it decides this). |
-| Historical data | No separate backfill to plan | The small local window comes across with your data migration, so there's no separate backfill to plan. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
+| Historical data | No separate backfill to plan | There's nothing to re-fetch from object storage. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
 
 #### Why these recommendations
 
@@ -65,7 +65,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 - **Schema**: Pending, decided by `schema_registry`, `schema_strategy`. Answer them and re-run to see this.
 - **Connectors**: Pending, decided by `msk_connect_present`, `self_managed_connectors`. Answer them and re-run to see this.
 - **Topics**: Pending, decided by `topics_have_custom_settings`. Answer it and re-run to see this.
-- **Historical data**: Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.
+- **Historical data**: Based on your scan (no tiered storage), there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp scan metrics` to size the retained data.
 
 ### Migration steps
 
@@ -98,7 +98,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 - **Sizing**: Based on your scan (6,000 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.
   - **Heads up:** Sizing is a lower bound; see the note at the top of the plan.
 - **Networking**: Pending, decided by `move_existing_data`. Answer it and re-run to see this.
-- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.
+- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.
 
 ### Application plan
 
@@ -153,7 +153,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 - **Sizing**: Based on your scan (400 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.
   - **Heads up:** Sizing is a lower bound; see the note at the top of the plan.
 - **Networking**: Pending, decided by `cc_egress_required`, `private_networking_required`. Answer them and re-run to see this.
-- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.
+- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.
 
 ### Application plan
 
@@ -166,7 +166,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 | Schema | Pending | Answer `schema_registry`, `schema_strategy` (they decide this). |
 | Connectors | Pending | Answer `msk_connect_present`, `self_managed_connectors` (they decide this). |
 | Topics | Pending | Answer `topics_have_custom_settings` (it decides this). |
-| Historical data | No separate backfill to plan | The small local window comes across with your data migration, so there's no separate backfill to plan. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
+| Historical data | No separate backfill to plan | There's nothing to re-fetch from object storage. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
 
 #### Why these recommendations
 
@@ -174,7 +174,7 @@ No throughput metrics were scanned, so all sizing below is a lower bound. Run `k
 - **Schema**: Pending, decided by `schema_registry`, `schema_strategy`. Answer them and re-run to see this.
 - **Connectors**: Pending, decided by `msk_connect_present`, `self_managed_connectors`. Answer them and re-run to see this.
 - **Topics**: Pending, decided by `topics_have_custom_settings`. Answer it and re-run to see this.
-- **Historical data**: Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.
+- **Historical data**: Based on your scan (no tiered storage), there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp scan metrics` to size the retained data.
 
 ### Migration steps
 
@@ -200,13 +200,13 @@ Every question, its wording, and its options, listed once. Set answers per clust
 | `exceeds_standard_limits` | Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?<br>_If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking._ | `true` → Yes<br>`false` → No  (default) |
 | `exceeds_enterprise_limits` | Does your workload exceed any of the following: 1,920 megabytes/sec ingress, 5,760 megabytes/sec egress, or 240,000 requests/sec? | `true` → Yes<br>`false` → No  (default) |
 | `target_cloud` | Which cloud should your new Confluent Cloud cluster run on?<br>_This is independent of your source cloud. Confluent supports cross-cloud migrations._ | `aws` → AWS  (default)<br>`azure` → Azure<br>`gcp` → GCP |
-| `target_auth` | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | `api-keys` → API keys (SASL/PLAIN)<br>`oauth` → OAuth<br>`mtls` → mTLS<br>_Select all that apply, as a list, for example `[api-keys, oauth]`._ |
+| `target_auth` | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | `api-keys` → API keys (SASL/PLAIN)<br>`oauth` → OAuth<br>`mtls` → mTLS<br>_Select all that apply, as a list, for example `[api-keys, oauth]`._ |
 | `client_coordination` | How much coordination will it take to cut over all your clients and apps at the same time? | `easy` → Low (few clients, one team)<br>`moderate` → Moderate  (default)<br>`hard` → High (many clients and teams) |
 | `eos_streams` | Do any applications use exactly-once transactions and/or Kafka Streams? | `eos` → Exactly-once or transactions<br>`kstreams` → Kafka Streams<br>_Select all that apply, as a list, for example `[eos, kstreams]`._ |
 | `consumer_history_requirement` | Do your consumers need historical data available after migration?<br>_Only relevant when there's history to carry (tiered storage or long retention) and you're moving existing data._ | `true` → Yes  (default)<br>`false` → No |
 | `source_cluster_type` | Source cluster type | `provisioned` → Provisioned<br>`serverless` → Serverless |
-| `kafka_version` | What Kafka version does your source cluster run?<br>_Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead._ | `3.0-plus` → 3.0 or newer<br>`2.4-2.9` → 2.4-2.9<br>`older` → Older than 2.4 |
-| `inter_broker_protocol` | Is your inter-broker protocol (IBP) 2.8 or later?<br>_This only matters when your Kafka version is 2.4-2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies._ | `true` → Yes, 2.8 or later<br>`false` → No, below 2.8 |
+| `kafka_version` | What Kafka version does your source cluster run?<br>_Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead._ | `3.0-plus` → 3.0 or newer<br>`2.4-2.9` → 2.4–2.9<br>`older` → Older than 2.4 |
+| `inter_broker_protocol` | Is your inter-broker protocol (IBP) 2.8 or later?<br>_This only matters when your Kafka version is 2.4–2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies._ | `true` → Yes, 2.8 or later<br>`false` → No, below 2.8 |
 | `source_auth` | How your Kafka clients authenticate today | `iam` → AWS IAM<br>`scram` → SASL/SCRAM<br>`mtls` → TLS client certificates (mTLS)<br>`unauth` → None / plaintext<br>_Select all that apply, as a list, for example `[iam, scram]`._ |
 | `tiered_storage` | Do your topics use tiered storage?<br>_Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost._ | `true` → Yes<br>`false` → No |
 | `topics_have_custom_settings` | Do any of your topics use non-default settings?<br>_This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete._ | `true` → Yes<br>`false` → No |

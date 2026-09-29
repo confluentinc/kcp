@@ -86,7 +86,7 @@ func TestTopics_Decisions(t *testing.T) {
 	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("Yes")}).Value; got != "Set matching topic settings on Confluent Cloud" {
 		t.Errorf("needs remediation: value=%q", got)
 	}
-	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("No")}).Value; got != "Topics carry over as they are" {
+	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("No")}).Value; got != "Topics should mirror as they are" {
 		t.Errorf("clean: value=%q", got)
 	}
 	if got := topicReadinessDecision(Profile{}).Value; got != "Not assessed" {
@@ -113,6 +113,16 @@ func TestHistorical_Decisions(t *testing.T) {
 	unk := historicalDataDecision(Profile{StorageMode: strptr("Yes")})
 	if unk.Value != "Backfill the full history (default)" || unk.Action == nil {
 		t.Errorf("tiered+unknown: value=%q action=%v", unk.Value, unk.Action)
+	}
+	if !strings.Contains(unk.Reason, "you haven't confirmed whether your consumers need their history") || !strings.Contains(unk.Reason, "from the earliest offset. Confirm to lock this in.") {
+		t.Errorf("tiered+unknown reason: %q", unk.Reason)
+	}
+	if !strings.Contains(notReq.Reason, "The migration still mirrors your topics up to cutover.") {
+		t.Errorf("tiered+not required reason: %q", notReq.Reason)
+	}
+	noTier := historicalDataDecision(Profile{StorageMode: strptr("No")})
+	if noTier.Value != "No separate backfill to plan" || !strings.Contains(noTier.Reason, "(no tiered storage)") || !strings.Contains(noTier.Reason, "nothing to re-fetch from object storage") || strings.Contains(noTier.Reason, "long-retention") {
+		t.Errorf("scanless no-tiered: value=%q reason=%q", noTier.Value, noTier.Reason)
 	}
 	if historicalDataDecision(Profile{}).Value != "Not assessed" {
 		t.Errorf("never asked: want Not assessed")

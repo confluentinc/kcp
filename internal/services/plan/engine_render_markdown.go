@@ -13,8 +13,8 @@ import (
 // docMigrationInfra is the KCP command reference for `create-asset migration-infra`
 // (the migration-type matrix and flags).
 const docMigrationInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"
-const docTargetInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/"
 const docMigration = "https://confluentinc.github.io/kcp/latest/command-reference/migration/"
+const docTargetInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/"
 const docMigrateTopics = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-topics/"
 const docMigrateSchemas = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-schemas/"
 const docMigrateConnectors = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-connectors/"
@@ -856,7 +856,7 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		// include a producer stop, so it leads the section rather than trailing it.
 		gatewayCutover := sw.GatewayMediated
 		if gatewayCutover {
-			md.AddAlert(markdown.AlertNote, "These are the plain Cluster Linking cutover steps. The near-zero-downtime, Gateway-mediated cutover your Data migration recommendation calls for is specialist-assisted (it needs Confluent for Kubernetes and a Gateway license). [Talk to a person](#talk-to-a-person) to set it up.")
+			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway before you run the cutover step below.")
 		}
 		targetClusterStep(md, cp, stateFilePath, step)
 		linkStep(md, cp, stateFilePath, step)
@@ -895,11 +895,12 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 	}
 }
 
-// accessControlNote recommends mapping the source's authorization rules to Confluent
-// Cloud, set up separately from data movement. The scan collects ACLs but no verdict
-// maps them, so this is a lightweight render-side recommendation. Wording follows the
-// source auth: IAM has AWS IAM policies (not Kafka ACLs), unauthenticated sources have
-// no authorization at all, and SCRAM/mTLS/other carry Kafka ACLs.
+// accessControlNote points at how to recreate the source's authorization rules,
+// set up separately from data movement. The Authentication recommendation above
+// (see renderInfraRecommendation) already carries the specifics — which command
+// to run and what it does — via authDecision's access-control notes, so this
+// only adds the timing and, for a source with no authorization to carry over,
+// the guidance those notes don't cover.
 func accessControlNote(md *markdown.Markdown, cp ClusterPlan) {
 	// Start-fresh has no cutover/mirror, so frame the timing against pointing clients
 	// at the new cluster rather than a data cutover (5a).
@@ -912,26 +913,17 @@ func accessControlNote(md *markdown.Markdown, cp ClusterPlan) {
 	var body string
 	switch {
 	case sourceAuthHas(cp, SourceAuthIAM):
-		// Pure IAM has only AWS IAM policies (no Kafka ACLs); a cluster running both IAM and
-		// SASL/SCRAM has two authorization systems to carry over.
-		authNoun := "AWS IAM policies"
+		cmd := "`kcp create-asset migrate-acls iam`"
 		if sourceAuthHas(cp, SourceAuthSCRAM) {
-			authNoun = "AWS IAM policies and the Kafka ACLs your SASL/SCRAM principals use"
+			cmd += " and `kcp create-asset migrate-acls kafka`"
 		}
-		// "role-based access control (RBAC)" is glossed in the Step 3 credentials note, which
-		// only the cluster-link paths render; spell it out here when that step is absent
-		// (Replicator / start-fresh), so the acronym is always introduced once per plan.
-		rbac := "RBAC"
-		if cp.MigrationInfra.Kind != "cluster_link" {
-			rbac = "role-based access control (RBAC)"
-		}
-		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Map your " + authNoun + " to Confluent Cloud " + rbac + " role bindings (or Confluent Cloud ACLs) " + when + ", granting each application and service account only the access it needs." + tail
+		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Recreate them with " + cmd + " — see the Authentication recommendation above for what it reads and how the result lands. Do this " + when + "." + tail
 	case sourceAuthUnauthOnly(cp):
 		// Unauthenticated sources have no authorization to carry over, but the new cluster
 		// still shouldn't run open.
 		body = "**Access control (set up separately).** Your source has no authorization to carry over — still, don't run the new cluster open. Grant each application and service account least-privilege access with Confluent Cloud role-based access control (RBAC) role bindings (or Confluent Cloud ACLs) " + when + "." + tail
 	default:
-		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Map your source ACLs to Confluent Cloud role-based access control (RBAC) role bindings (or Confluent Cloud ACLs) " + when + ", granting each application and service account only the access it needs." + tail
+		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Recreate them with `kcp create-asset migrate-acls kafka` — see the Authentication recommendation above for what it reads and how the result lands. Do this " + when + "." + tail
 	}
 	md.AddParagraph(body)
 }
@@ -963,16 +955,23 @@ func sourceAuthUnauthOnly(cp ClusterPlan) bool {
 
 // clusterLinkCutoverStep renders the shared final Cluster Linking cutover step and
 // its backing-out note, used by both the auto-mapped and the specialist-wired
-// cluster-link paths so they read identically.
+// cluster-link paths so they read identically. A Gateway-mediated cutover is driven
+// by `kcp migration`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
+// has no such tool and is walked through by hand.
 func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
-	md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](" + docMigration + ")). Cluster Linking can carry your consumer offsets across as it mirrors — no timestamp interceptor needed — but offset sync is off by default, so enable `consumer.offset.sync.enable` on the cluster link before you cut over. Run it in three stages:")
-	md.AddOrderedList([]string{
-		"`kcp migration init` — set up the cutover.",
-		"`kcp migration lag-check` — confirm the mirror has caught up to the source (lag is zero).",
-		"`kcp migration execute` — promote the mirror topics and move your clients to Confluent Cloud.",
-	})
+	if cp.Plan.Switchover.GatewayMediated {
+		md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](" + docMigration + ")). Cluster Linking can carry your consumer offsets across as it mirrors — no timestamp interceptor needed — but offset sync is off by default, so enable `consumer.offset.sync.enable` on the cluster link before you cut over. Run it in two stages:")
+		md.AddOrderedList([]string{
+			"`kcp migration lag-check` — confirm the mirror has caught up to the source (lag is zero).",
+			"`kcp migration execute` — the first run registers and validates the migration (`--dry-run` validates only), then promotes the mirror topics and moves your clients to Confluent Cloud.",
+		})
+		clientCutoverChanges(md, cp)
+		md.AddParagraph("**Backing out:** until you run `execute`, nothing is committed: the mirror isn't promoted until lag is zero, and your source keeps taking writes until you cut clients over. To roll back, point your clients at the still-running source instead of running `execute`.")
+		return
+	}
+	md.AddParagraph(step("run the cutover.") + " Turn on `consumer.offset.sync.enable` when you create the link, so your consumer offsets come across too. At cutover, stop your producers, wait for the mirror to catch up (lag zero), promote the mirror topics so they accept writes, then restart your clients against Confluent Cloud.")
 	clientCutoverChanges(md, cp)
-	md.AddParagraph("**Backing out:** until you run `execute`, nothing is committed: the mirror isn't promoted until lag is zero, and your source keeps taking writes until you cut clients over. To roll back, point your clients at the still-running source instead of running `execute`.")
+	md.AddParagraph("**Backing out:** until you promote the mirror topics, nothing is committed: your source keeps taking writes until you stop your producers and cut over. To roll back, restart your producers against the still-running source instead of promoting the mirror.")
 }
 
 // clientCutoverChanges enumerates the concrete config changes each client app needs
@@ -1367,7 +1366,11 @@ func connectorsStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string,
 		sw := cp.Plan.Switchover
 		startCue := "start the Confluent-managed connectors once you cut your clients over"
 		if !sw.StartFresh && !sw.Replicator {
-			startCue = "start the Confluent-managed connectors only after `kcp migration execute` promotes the mirror topics"
+			if sw.GatewayMediated {
+				startCue = "start the Confluent-managed connectors only after `kcp migration execute` promotes the mirror topics"
+			} else {
+				startCue = "start the Confluent-managed connectors only after you promote the mirror topics"
+			}
 		}
 		md.AddParagraph("Create these Confluent-managed connector definitions now, but leave them **stopped**. At cutover, stop the source-side connectors, then " + startCue + " — so you don't double-deliver from a sink or write into a read-only mirror topic.")
 	}

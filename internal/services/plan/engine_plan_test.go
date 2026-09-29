@@ -577,6 +577,46 @@ func TestBuildEnginePlan_OneCluster(t *testing.T) {
 	}
 }
 
+// The plan header must name the real per-cluster source (the resolved
+// profile.SourcePlatform: the declared source_platform answer if given, else the
+// scanned source kind), not just the scan kind alone — a scanless Confluent
+// Platform plan previously said "Amazon MSK" (the scanless placeholder's scan
+// kind), and a scanned Confluent Platform source (which scans as OSK) previously
+// said "Apache Kafka".
+func TestHeaderSource_NamesResolvedSourcePlatform(t *testing.T) {
+	fixed := func() time.Time { return time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC) }
+
+	cp := BuildEnginePlan(ScanlessState(), declFor(ScanlessClusterName, IntakeInputs{SourcePlatform: "Confluent Platform"}), "", fixed)
+	if cp.Header.Source != "Confluent Platform" {
+		t.Errorf("scanless Confluent Platform header = %q, want %q", cp.Header.Source, "Confluent Platform")
+	}
+
+	ak := BuildEnginePlan(ScanlessState(), declFor(ScanlessClusterName, IntakeInputs{SourcePlatform: "Apache Kafka"}), "", fixed)
+	if ak.Header.Source != "Apache Kafka" {
+		t.Errorf("scanless Apache Kafka header = %q, want %q", ak.Header.Source, "Apache Kafka")
+	}
+
+	// Mixed fleet: one cluster declares Confluent Platform, the other stays MSK
+	// (undeclared) — the header must list both distinct platforms.
+	state := report.ProcessedState{Sources: []report.ProcessedSource{{
+		MSKData: &report.ProcessedMSKSource{Regions: []report.ProcessedRegion{{
+			Name: "us-east-1",
+			Clusters: []report.ProcessedCluster{
+				provisionedCluster("msk-cluster", "us-east-1", 5000),
+				provisionedCluster("cp-cluster", "us-east-1", 5000),
+			},
+		}}},
+	}}}
+	declared := DeclaredInputs{Clusters: map[string]DeclaredCluster{
+		"msk-cluster": {Inputs: IntakeInputs{}},
+		"cp-cluster":  {Inputs: IntakeInputs{SourcePlatform: "Confluent Platform"}},
+	}}
+	mixed := BuildEnginePlan(state, declared, "kcp-state.json", fixed)
+	if mixed.Header.Source != "Amazon MSK, Confluent Platform" {
+		t.Errorf("mixed header = %q, want %q", mixed.Header.Source, "Amazon MSK, Confluent Platform")
+	}
+}
+
 // ValidateDeclaredClusters flags declared cluster keys that match no scanned
 // cluster (a misspelled cluster name), and passes correctly spelled ones.
 func TestValidateDeclaredClusters(t *testing.T) {

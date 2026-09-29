@@ -124,7 +124,7 @@ func topicReadinessDecision(p Profile) TopicsResult {
 	case needsRemediation:
 		value = "Set matching topic settings on Confluent Cloud"
 	case askedTopics:
-		value = "Topics carry over as they are"
+		value = "Topics should mirror as they are"
 	}
 	return TopicsResult{Value: value, Tiered: tiered, Reason: reason}
 }
@@ -175,6 +175,10 @@ func historicalDataDecision(p Profile) HistoricalResult {
 		if measured {
 			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(sc("about "+humanGB(*p.RetainedDataGB)+" retained")) + "your retained data is small enough to come across with your data migration, so there's no separate historical backfill to plan whichever cutover you choose."}
 		}
+		if p.StorageMode != nil && p.LongRetention == nil {
+			// Long retention was never measured, so don't claim the local window is small.
+			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(srcOr(p.TieredAnswered, "no tiered storage")) + "there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp scan metrics` to size the retained data."}
+		}
 		if p.StorageMode != nil || p.LongRetention != nil {
 			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(srcOr(p.TieredAnswered, "no tiered or long-retention history")) + "the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm."}
 		}
@@ -206,7 +210,7 @@ func historicalDataDecision(p Profile) HistoricalResult {
 	case "Required":
 		return HistoricalResult{Value: "Backfill the full history", Reason: basis(volumeDriver, ans("consumers need history")) + "we copy all of it (" + source + ") to the new cluster from the earliest offset, then new data keeps flowing from cutover." + timeNote}
 	case "Not required":
-		return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(ans("consumers don't need history")) + "there's nothing extra to copy over; only new data flows to the new cluster from cutover."}
+		return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(ans("consumers don't need history")) + "your consumers don't need historical data, so there is no separate backfill to plan. The migration still mirrors your topics up to cutover."}
 	}
-	return HistoricalResult{Value: "Backfill the full history (default)", Reason: basis(volumeDriver) + "this cluster keeps significant history (" + source + ") and you haven't confirmed whether your consumers need it, so we default to copying all of it across." + timeNote, Action: strptr("Confirm historical-data requirement")}
+	return HistoricalResult{Value: "Backfill the full history (default)", Reason: basis(volumeDriver) + "you haven't confirmed whether your consumers need their history, so we default to copying all of it (" + source + ") to the new cluster from the earliest offset. Confirm to lock this in." + timeNote, Action: strptr("Confirm historical-data requirement")}
 }

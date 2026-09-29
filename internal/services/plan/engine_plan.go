@@ -219,6 +219,103 @@ func ValidateDeclaredClusters(declared DeclaredInputs, state report.ProcessedSta
 	return errs
 }
 
+// ValidateDeclaredSources returns one message per cluster for two mistakes a
+// hand-written plan-inputs.yaml can make about a cluster's source:
+//
+//  1. A declared option offered only for some sources (an opt with a non-nil
+//     Applies, e.g. source_auth: iam, offered only for Amazon MSK) declared on a
+//     cluster whose resolved source doesn't offer it.
+//  2. A declared source_platform that contradicts what the scan detected (an MSK
+//     scan declared apache-kafka/confluent-platform, or an OSK scan declared msk).
+//     A declared confluent-platform on an OSK scan is NOT a contradiction: an OSK
+//     scan can't tell Confluent Platform apart from Apache Kafka, so the
+//     declaration is a refinement, not a conflict.
+//
+// The source resolves the same way buildProfile resolves it (the cluster's own
+// source_platform, else defaults.source_platform, else the scan), except a
+// scanless run with nothing declared leaves it genuinely unknown, and (1) is
+// skipped for that cluster rather than checked against an assumed source.
+func ValidateDeclaredSources(declared DeclaredInputs, state report.ProcessedState, scanless bool) []string {
+	clusters := collectClusters(state)
+	keys := computeClusterKeys(clusters)
+	var errs []string
+	for i, c := range clusters {
+		key := keys[i]
+		res := resolveClusterSource(key, declared, c, scanless)
+		if msg := declaredSourceContradiction(key, res, c, scanless); msg != "" {
+			errs = append(errs, msg)
+		}
+		if res.platform == "" {
+			continue // source unknown: nothing to validate declared options against
+		}
+		sourceType, _, _ := resolveSourceType(res.platform)
+		profile := engine.Profile{SourceType: sourceType, SourcePlatform: res.platform}
+		in := declared.For(key)
+		for _, q := range allQuestions() {
+			for _, eng := range q.engineValues(in) {
+				o, ok := q.optFor(eng)
+				if !ok || o.Applies == nil || o.Applies(profile) {
+					continue
+				}
+				errs = append(errs, fmt.Sprintf(
+					"cluster %q: %s %q is only offered for %s, but this cluster's source is %s (from %s). Remove it or change the source.",
+					key, q.Key, o.Token, sourcesPhrase(allowedSourcesFor(o.Applies)), res.platform, res.from))
+			}
+		}
+	}
+	return errs
+}
+
+// declaredSourceContradiction reports a declared source_platform that conflicts
+// with what the scan itself detected for the cluster — never checked in scanless
+// mode (there is no scan to conflict with) or when nothing was declared (res.from
+// == "scan"). A declared confluent-platform on an OSK (Apache Kafka) scan is
+// exempt: the scan can't distinguish Confluent Platform from Apache Kafka, so
+// that declaration only refines it.
+func declaredSourceContradiction(key string, res sourceResolution, c report.ProcessedCluster, scanless bool) string {
+	if scanless || res.platform == "" || res.from == "scan" {
+		return ""
+	}
+	scanPlatform := scanPlatformOf(c)
+	contradicts := (scanPlatform == enginePlatformMSK && res.platform != enginePlatformMSK) ||
+		(scanPlatform == enginePlatformOSK && res.platform == enginePlatformMSK)
+	if !contradicts {
+		return ""
+	}
+	return fmt.Sprintf(
+		"cluster %q: %s declares source_platform %q, but the scan detected %s for this cluster. Remove it or change the source.",
+		key, res.from, platformToken(res.platform), scanPlatform)
+}
+
+// knownSourcePlatforms lists every source platform an option's Applies might
+// distinguish. allowedSourcesFor evaluates Applies against each directly, so the
+// error text never hardcodes which platforms a given gate (e.g. engine.IsMSK vs
+// engine.IsOSKorCP) allows.
+var knownSourcePlatforms = []string{enginePlatformMSK, enginePlatformOSK, enginePlatformCP}
+
+// allowedSourcesFor returns the source platforms (in knownSourcePlatforms order)
+// for which applies evaluates true.
+func allowedSourcesFor(applies func(p engine.Profile) bool) []string {
+	var out []string
+	for _, platform := range knownSourcePlatforms {
+		sourceType, _, _ := resolveSourceType(platform)
+		if applies(engine.Profile{SourceType: sourceType, SourcePlatform: platform}) {
+			out = append(out, platform)
+		}
+	}
+	return out
+}
+
+// sourcesPhrase renders an allowed-sources list as a natural phrase, e.g. "an
+// Amazon MSK source" or "an Apache Kafka or Confluent Platform source" — with the
+// grammatically correct indefinite article for whichever platform comes first.
+func sourcesPhrase(platforms []string) string {
+	if len(platforms) == 0 {
+		return "no source"
+	}
+	return article(platforms[0]) + " " + strings.Join(platforms, " or ") + " source"
+}
+
 // BuildEnginePlan produces the engine-driven plan from processed state and the
 // customer-declared inputs. Each cluster is mapped through buildProfile and run
 // through engine.ComputePlan. Inputs are layered: fleet-wide `defaults:` are
@@ -260,6 +357,10 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 	// No state file means a pure questionnaire: every scan-derivable fact is really
 	// an answer, so provenance leads must read "your answer", not "your scan".
 	scanless := stateFilePath == ""
+	// Collected across the loop below so the header can name the real per-cluster
+	// source (the resolved profile.SourcePlatform: the declared answer if given,
+	// else the scanned source kind) instead of just the scan kind.
+	var platforms []string
 	for i, c := range clusters {
 		key := keys[i]
 		in := declared.For(key)
@@ -280,6 +381,7 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		anyMoves := anyAppMovesData(in, appInputs)
 
 		profile := buildProfile(c, in, srKind, scanless)
+		platforms = append(platforms, profile.SourcePlatform)
 		if len(appNames) > 0 {
 			profile.NeedsDataMigration = anyMoves
 			profile.AnyAppNeedsDataMigration = anyMoves
@@ -366,8 +468,38 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		}
 		ep.Clusters = append(ep.Clusters, cp)
 	}
+	ep.Header.Source = headerSourceFromPlatforms(platforms, ep.Header.Source)
 	ep.Summary = summarize(ep)
 	return ep
+}
+
+// headerSourceFromPlatforms names the plan header by each cluster's resolved
+// source_platform (the declared source_platform answer if given, else the scanned
+// source kind — see buildProfile), rather than the scan kind alone: a scanless
+// Confluent Platform source should say "Confluent Platform", not "Amazon MSK", and
+// a scanned Confluent Platform source (which scans as OSK) should say "Confluent
+// Platform", not "Apache Kafka". All clusters resolving to the same platform name
+// it; a fleet mixing platforms lists each distinct one. No clusters at all falls
+// back to the scan-kind label already computed.
+func headerSourceFromPlatforms(platforms []string, fallback string) string {
+	seen := map[string]bool{}
+	var distinct []string
+	for _, p := range platforms {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		distinct = append(distinct, p)
+	}
+	switch len(distinct) {
+	case 0:
+		return fallback
+	case 1:
+		return distinct[0]
+	default:
+		sort.Strings(distinct)
+		return strings.Join(distinct, ", ")
+	}
 }
 
 // nonMSKPlatform returns the source platform display name for a non-MSK profile
