@@ -1,9 +1,11 @@
 // Package killpoint holds the migration FSMs' two test-only seams.
 //
 // The kill point lets a live resume test deterministically simulate an abrupt
-// kcp exit (Ctrl-C / lost network / power loss) at a chosen point, by cancelling
-// the run context after a named checkpoint. The mechanism is exactly the real
-// interruption path — a context cancellation — so nothing bespoke is exercised.
+// kcp exit (a Ctrl-C, lost network, power loss) at a chosen point: it cancels
+// the run context right after a named checkpoint and the run returns, leaving
+// the world an exit at that point would leave. A real Ctrl-C ends the process
+// wherever it is (kcp installs no signal handler); the kill point makes the
+// stopping point exact.
 //
 // The failure hook makes a named workflow step fail instead of running, so a
 // live test can drive a step failure (and the rollback it triggers)

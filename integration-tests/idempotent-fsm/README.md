@@ -6,8 +6,9 @@ static-mode (rollout), per `GATEWAY_MODE` — and a real cluster link (Minikube
 profile `kcp-e2e-idempotent-dynamic` or `kcp-e2e-idempotent-static`).
 
 Each test drives the real `kcp migration execute` command, interrupts it at a
-chosen checkpoint via the **killpoint seam** (`KCP_TEST_CANCEL_AFTER=<state>`, a
-real context cancellation — the Ctrl-C path), inspects the genuine partial world
+chosen checkpoint via the **killpoint seam** (`KCP_TEST_CANCEL_AFTER=<state>`,
+which stops the run right after that checkpoint, as an abrupt exit such as a
+Ctrl-C would), inspects the genuine partial world
 it leaves (live gateway CR + live mirror status), then re-runs the **same
 manifest** and asserts it drives to completion. The uninterrupted baseline is
 the control.

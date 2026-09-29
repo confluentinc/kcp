@@ -241,9 +241,9 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		o.reporter.stepDone()
 
 		// Test-only interruption seam: if configured to stop after this
-		// checkpoint, cancel the run now (real context cancellation, the same
-		// path a Ctrl-C takes) so the live resume suite is left with a genuine
-		// partial world after this step's mutation. No-op in production.
+		// checkpoint, cancel the run now, so the live resume suite is left with
+		// the partial world an abrupt exit right after this step's mutation
+		// would leave. No-op in production.
 		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
 			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
 			cancel()
@@ -294,10 +294,11 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// the point of no return: once mirrors are promoted, unfencing would strand
 	// them (producers routed back to source while the target mirrors are
 	// frozen STOPPED), so we never abort past it — the FSM structurally has no
-	// abort_fence edge from fence_verified onward. A cancelled context (Ctrl-C /
-	// kill / deadline) cannot perform the unfence IO, so we leave the fenced
-	// world for the idempotent resume rather than attempt a doomed rollback.
-	// Record which branch was taken.
+	// abort_fence edge from fence_verified onward. A cancelled context cannot
+	// perform the unfence IO, so we leave the fenced world for the idempotent
+	// resume rather than attempt a doomed rollback. Only the test kill point
+	// cancels one: kcp installs no signal handler, so a Ctrl-C ends the process
+	// instead. Record which branch was taken.
 	thisRunsFence := o.fsm.Can(EventAbortFence)
 	earlierRunsFence := o.config.FencedAtStart && beforeFenceStep(o.fsm.Current())
 	willRollback := (thisRunsFence || earlierRunsFence) && ctx.Err() == nil
