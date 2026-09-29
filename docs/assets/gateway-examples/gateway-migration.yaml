@@ -69,13 +69,16 @@ spec:
     #   bearer: { token: ... }                        (MDS/RBAC)
     #   mtls:   { client_cert: ..., client_key: ... }
     linkCredentials: /etc/kcp/link-creds.yaml
-    # Disable the link's consumer.offset.sync.enable during apply and restore it
-    # after switchover. Requires the link to currently have it enabled.
+    # Static routes only; a dynamic route refuses it. Disable the link's
+    # consumer.offset.sync.enable right after the fence, and set it back to
+    # consumerOffsetSyncBaseline after the switch. A run that stops before that
+    # restore leaves it owed, and re-running execute performs it.
     pauseConsumerOffsetSync: true
     # The state consumer.offset.sync.enable was in BEFORE this migration started
     # ("enabled" or "disabled"). Required when pauseConsumerOffsetSync is set,
-    # since a resumed run cannot observe the pre-migration value itself; kcp
-    # restores sync to this value once the migration completes or fails.
+    # since a resumed run cannot observe the pre-migration value itself. kcp sets
+    # sync back to this value after the switch, or when a failure before promote
+    # rolls the migration back.
     consumerOffsetSyncBaseline: enabled
 
   gateway:
