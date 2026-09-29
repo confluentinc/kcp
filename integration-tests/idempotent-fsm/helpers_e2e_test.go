@@ -2,7 +2,7 @@
 
 // Package idempotent_fsm_e2e proves the migration execution FSMs are idempotent
 // from any interruption point, against a live dynamic-mode Confluent Gateway with
-// hot reload (Minikube profile kcp-e2e-idempotent). Each test drives the real
+// hot reload (Minikube profile kcp-e2e-idempotent-<mode>). Each test drives the real
 // `kcp migration execute` command, interrupts it at a chosen checkpoint via the
 // killpoint seam (KCP_TEST_CANCEL_AFTER), inspects the genuine partial world it
 // leaves (live gateway CR, live mirror state), then re-runs the SAME manifest and

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Compiles the idempotent-fsm resume suite (and a linux kcp binary for execute's
-# subprocess in U9) for the cluster node's architecture, ships them plus the
+# Compiles the idempotent-fsm resume suite (and the linux kcp binary the tests run
+# as a subprocess) for the cluster node's architecture, ships them plus the
 # rendered manifests into the runner pod, and executes the test binary there.
+# GATEWAY_MODE (dynamic, the default, or static) picks which environment to run
+# against; a dynamic and a static run can go at the same time (see state.sh).
 #
 # The runner pod is deployed by setup.sh, not here: this script only builds,
 # copies, and execs. The suite cannot run on the developer's machine — the engine
@@ -22,10 +24,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-RENDERED_DIR="${SCRIPT_DIR}/.rendered"
-ENV_FILE="${SCRIPT_DIR}/.env"
+# shellcheck source=state.sh
+. "${SCRIPT_DIR}/state.sh"
 
-[ -f "${ENV_FILE}" ] || { echo "FATAL: ${ENV_FILE} not found — run setup.sh first" >&2; exit 1; }
+[ -f "${ENV_FILE}" ] || { echo "FATAL: ${ENV_FILE} not found — run GATEWAY_MODE=${GATEWAY_MODE} setup.sh first" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a; . "${ENV_FILE}"; set +a
 
@@ -48,11 +50,14 @@ main() {
   # main runs inside the tee pipeline below, where the caller's errexit is off;
   # turn it back on so a failed step still stops the run.
   set -euo pipefail
-  TEST_BIN="${SCRIPT_DIR}/.idempotent-fsm-e2e.test"
-  KCP_BIN="${SCRIPT_DIR}/.kcp-linux"
+  # Build into a folder of this run's own, so a concurrent run in the other mode
+  # never overwrites or deletes these binaries.
+  BUILD_DIR="$(mktemp -d)"
+  TEST_BIN="${BUILD_DIR}/idempotent-fsm-e2e.test"
+  KCP_BIN="${BUILD_DIR}/kcp-linux"
   # Clean the host-side build artefacts whatever the outcome; the test's exit code
   # is preserved because this trap runs no `exit`.
-  trap 'rm -f "${TEST_BIN}" "${KCP_BIN}"' EXIT
+  trap 'rm -rf "${BUILD_DIR}"' EXIT
 
   # Match the node, not the host: the binaries run in a pod. GOTOOLCHAIN=auto lets
   # go fetch the toolchain pinned in .go-version when the local goenv lacks it.

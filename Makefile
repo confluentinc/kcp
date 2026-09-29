@@ -156,10 +156,10 @@ test-idempotent-fsm: test-idempotent-fsm-setup ## Run the idempotent-FSM live re
 test-idempotent-fsm-setup: ## Set up the idempotent-fsm resume cluster (GATEWAY_MODE=dynamic default, or static for AAO)
 	@bash integration-tests/idempotent-fsm/setup.sh
 
-test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
+test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static picks it. Arg: a -test.run selector
 	@bash integration-tests/idempotent-fsm/run.sh $(RUN)
 
-test-idempotent-fsm-teardown: ## Tear down the idempotent-fsm E2E cluster
+test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, or static)
 	@bash integration-tests/idempotent-fsm/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)

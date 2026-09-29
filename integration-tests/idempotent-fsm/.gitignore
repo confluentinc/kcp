@@ -1,9 +1,4 @@
-# Generated per-run by setup.sh — never committed.
-.env
-.rendered/
-# Cross-compiled binaries staged into the runner pod.
-.kcp-linux
-.setconfig-linux
-.idempotent-fsm-e2e.test
+# Generated per mode by setup.sh — never committed.
+.state/
 # Per-run raw evidence reports (kept for human review, not committed).
 .reports/

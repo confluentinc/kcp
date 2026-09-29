@@ -3,7 +3,7 @@
 Proves the migration execution FSMs are **idempotent from any interruption
 point**, against a **live Confluent Gateway** — dynamic-mode (hot reload) or
 static-mode (rollout), per `GATEWAY_MODE` — and a real cluster link (Minikube
-profile `kcp-e2e-idempotent`).
+profile `kcp-e2e-idempotent-dynamic` or `kcp-e2e-idempotent-static`).
 
 Each test drives the real `kcp migration execute` command, interrupts it at a
 chosen checkpoint via the **killpoint seam** (`KCP_TEST_CANCEL_AFTER=<state>`, a
@@ -69,19 +69,30 @@ Needs AWS creds (ECR images + the CP Enterprise licence in AWS Secrets Manager
 `kcp/e2e/gateway-license`) — locally, an ambient `sso`/nonprod-admin profile
 covers both.
 
-`GATEWAY_MODE` (default `dynamic`, or `static` for AAO) selects the route mode.
-Make targets wrap the scripts:
+`GATEWAY_MODE` (default `dynamic`, or `static` for AAO) selects the route mode,
+for setup, run and teardown alike. Each mode has its own Minikube profile
+(`kcp-e2e-idempotent-<mode>`) and its own generated files (`.state/<mode>/`: the
+`.env` run.sh reads and the rendered manifests), so a dynamic and a static
+environment can be up, and run tests, at the same time. Make targets wrap the
+scripts:
 
 ```bash
 # one-time (minutes): stand up the profile, gateway, link, topic pool
 GATEWAY_MODE=dynamic make test-idempotent-fsm-setup
+GATEWAY_MODE=static  make test-idempotent-fsm-setup
 
-# run one test (or all)
-make test-idempotent-fsm-run RUN=TestBaseline_FullMigrationCompletes
+# run one test (or all), in each mode — at the same time from two terminals if you like
+GATEWAY_MODE=dynamic make test-idempotent-fsm-run RUN=TestBaseline_FullMigrationCompletes
+GATEWAY_MODE=static  make test-idempotent-fsm-run RUN=TestBaseline_FullMigrationCompletes
 
-# when done
-make test-idempotent-fsm-teardown
+# when done: each mode separately
+GATEWAY_MODE=dynamic make test-idempotent-fsm-teardown
+GATEWAY_MODE=static  make test-idempotent-fsm-teardown
 ```
+
+Each environment uses about 4.5 GiB of Docker memory at rest (its Minikube
+profile is capped at 12 GiB, `MINIKUBE_MEMORY`). Two at once need roughly 9 GiB
+free in Docker Desktop's memory allowance on top of whatever else is running.
 
 Every run prints its evidence and `run.sh` saves it to
 `.reports/<date>-<time>-<mode>/` (see [Tangible evidence](#tangible-evidence)),
