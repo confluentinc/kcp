@@ -1003,6 +1003,59 @@ func TestReconcileDynamic_OperatorFenceOnTheBatchTopicsSurvives(t *testing.T) {
 	}
 }
 
+// TestReconcile_FencedAtStart: the plan says whether the start-of-run route
+// already carries kcp's fence for this migration — left by an interrupted run —
+// in both route modes. An operator's fence over the same topics is not kcp's.
+func TestReconcile_FencedAtStart(t *testing.T) {
+	active := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}
+	dynamic := func(fencing []any) *Plan {
+		gw := dynGateway()
+		if fencing != nil {
+			gw.Route.Rules = map[string]any{
+				"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"},
+				"fencing": fencing,
+			}
+		}
+		in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+		return Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"}, active, false, ClusterIDs{}, nil, "")
+	}
+	static := func(fence map[string]any) *Plan {
+		gw := staticGateway()
+		if fence != nil {
+			gw.Route.Raw["fence"] = fence
+		}
+		in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+		return Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+	}
+	cases := []struct {
+		name string
+		plan *Plan
+		want bool
+	}{
+		{"dynamic, kcp's fence from the interrupted run", dynamic(resumeFencedRules()["fencing"].([]any)), true},
+		{"dynamic, no fence", dynamic(nil), false},
+		{"dynamic, only an operator's fence on the same topics", dynamic([]any{
+			map[string]any{"trafficType": "PRODUCE", "topics": []any{"t1", "t2"}, "blocked": true},
+		}), false},
+		{"dynamic, kcp's fence for another topic set", dynamic([]any{
+			map[string]any{"topics": []any{"t1"}, "blocked": true},
+		}), false},
+		{"static, kcp's fence from the interrupted run", static(map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}), true},
+		{"static, no fence", static(nil), false},
+		{"static, scope NONE", static(map[string]any{"scope": "NONE"}), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.plan.Artifacts == nil {
+				t.Fatalf("expected a plan, got %+v", tc.plan.Report)
+			}
+			if got := tc.plan.Artifacts.FencedAtStart; got != tc.want {
+				t.Fatalf("FencedAtStart = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestReconcileStatic_FenceKcpDidNotWriteIsRefused: a static route that already
 // carries a fence kcp didn't write is refused, with no fence, switchover or
 // rollback artifact, so no run can overwrite or remove that fence.

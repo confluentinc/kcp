@@ -117,28 +117,32 @@ func countFencingEntry(r, want map[string]any) int {
 // not kcp's.
 func hasKcpFence(r map[string]any, topics []string) bool {
 	for _, fm := range fencingEntries(r) {
-		if len(fm) != 2 {
-			continue
-		}
-		if blocked, _ := fm["blocked"].(bool); !blocked {
-			continue
-		}
-		listed, _ := fm["topics"].([]any)
-		if len(listed) != len(topics) {
-			continue
-		}
-		all := true
-		for _, tp := range topics {
-			if !listsTopic(fm, tp) {
-				all = false
-				break
-			}
-		}
-		if all {
+		if isKcpFenceEntry(fm, topics) {
 			return true
 		}
 	}
 	return false
+}
+
+// isKcpFenceEntry reports whether one rules.fencing entry is kcp's own fence
+// for exactly topics (see hasKcpFence).
+func isKcpFenceEntry(fm map[string]any, topics []string) bool {
+	if len(fm) != 2 {
+		return false
+	}
+	if blocked, _ := fm["blocked"].(bool); !blocked {
+		return false
+	}
+	listed, _ := fm["topics"].([]any)
+	if len(listed) != len(topics) {
+		return false
+	}
+	for _, tp := range topics {
+		if !listsTopic(fm, tp) {
+			return false
+		}
+	}
+	return true
 }
 
 // listsTopic reports whether m's literal `topics` list contains topic.

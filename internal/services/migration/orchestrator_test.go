@@ -2256,3 +2256,155 @@ func assertNoFilesWritten(t *testing.T, dir string) {
 	require.NoError(t, err)
 	assert.Empty(t, entries, "no file should be written to the working directory: %v", entries)
 }
+
+// fencedResume is the reconcile result a resume sees when the interrupted run
+// left kcp's fence on the route. Only Initialize's copy of the plan tells the
+// run so: config itself starts without it.
+func fencedResume(config *MigrationConfig) *migplan.Result {
+	res := resultFromConfig(config)
+	res.FencedAtStart = true
+	return res
+}
+
+// recordingGateway records every route patch the run applies.
+func recordingGateway(mu *sync.Mutex, patches *[]gateway.RoutePatch) orchestratorOverrides {
+	return orchestratorOverrides{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			*patches = append(*patches, rp)
+			mu.Unlock()
+			return "", nil
+		},
+	}
+}
+
+// recordingLink records every cluster-link config change the run applies.
+func recordingLink(mu *sync.Mutex, alters *[]clusterlink.ConfigAlteration) *mockClusterLinkService {
+	return &mockClusterLinkService{
+		alterConfigsFn: func(_ context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			mu.Lock()
+			*alters = append(*alters, alts...)
+			mu.Unlock()
+			return nil
+		},
+	}
+}
+
+// offsetSyncBackOn is the change that sets consumer offset sync back to an
+// "enabled" baseline.
+var offsetSyncBackOn = clusterlink.ConfigAlteration{Name: offsetSyncEnableKey, Value: "true", Operation: clusterlink.OperationSet}
+
+// TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack:
+// a resume starts with the route already fenced by the interrupted run. A step
+// that fails before this run's own fence lands rolls back like a failure after
+// it: it lifts the fence and sets consumer offset sync back to the baseline.
+func TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack(t *testing.T) {
+	for _, step := range []string{EventWaitForLags, EventFence} {
+		t.Run(step, func(t *testing.T) {
+			t.Setenv(killpoint.FailEnvVar, step)
+			var mu sync.Mutex
+			var patches []gateway.RoutePatch
+			var alters []clusterlink.ConfigAlteration
+			orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+			config.PauseConsumerOffsetSync = true
+			config.ConsumerOffsetSyncBaseline = "enabled"
+			orch.actions.clusterLinkService = recordingLink(&mu, &alters)
+			var buf strings.Builder
+			orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+			require.Len(t, patches, 1, "the rollback only: this run never reached its own fence")
+			assert.Equal(t, "", patches[0].Field, "the rollback replaces the whole route with the rollback target")
+			assert.Contains(t, buf.String(), "removing fence to restore traffic")
+			assert.Contains(t, buf.String(), "Gateway unfenced")
+			assert.Contains(t, alters, offsetSyncBackOn, "the rollback sets consumer offset sync back to the baseline")
+		})
+	}
+}
+
+// TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift:
+// on a fresh run nothing is fenced before the fence step, so a failure there
+// changes nothing on the gateway.
+func TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.Empty(t, patches, "nothing is fenced, so nothing is patched")
+	assert.NotContains(t, buf.String(), "removing fence")
+}
+
+// TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
+// resume of a partly promoted batch keeps the interrupted run's fence when a
+// step fails before this run's fence lands, and says so.
+func TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	res := fencedResume(config)
+	res.RollbackAllowed = false
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.Empty(t, patches, "the fence stays: no patch")
+	assert.Contains(t, buf.String(), "keeping the fence", "the run must say it is not unfencing")
+}
+
+// TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence: a
+// route fenced at the start never unfences from promote onwards.
+func TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventPromote)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+	require.Error(t, err)
+	require.Len(t, patches, 1, "this run's fence only: no rollback from promote onwards")
+	assert.NotContains(t, buf.String(), "removing fence")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync: restoring the
+// route after an unconfirmed fence also sets consumer offset sync back to the
+// baseline, in case an earlier, interrupted run paused it.
+func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var alters []clusterlink.ConfigAlteration
+	overrides := recordingGateway(&mu, &patches)
+	var readinessWaits int64
+	overrides.waitForGatewayReadyFn = func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		if atomic.AddInt64(&readinessWaits, 1) == 1 {
+			return fmt.Errorf("gateway pods did not converge") // the fence's wait; the restore's succeeds
+		}
+		return nil
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	orch.actions.clusterLinkService = recordingLink(&mu, &alters)
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	require.Len(t, patches, 2, "the fence, then the restoring apply")
+	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
+}

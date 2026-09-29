@@ -245,6 +245,12 @@ func isKcpStaticFence(f map[string]any) bool {
 		stringField(f, "errorCode") == staticFenceErrorCode
 }
 
+// hasKcpStaticFence reports whether the static route carries kcp's own fence.
+func hasKcpStaticFence(route map[string]any) bool {
+	f, ok := mapField(route, "fence")
+	return ok && isKcpStaticFence(f)
+}
+
 // isUnfencedStatic reports whether f blocks nothing: an empty fence, or scope
 // NONE in either case.
 func isUnfencedStatic(f map[string]any) bool {

@@ -147,6 +147,7 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	sort.Strings(awaitStoppedSorted)
 	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
 		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report),
+		FencedAtStart: base.HasFence(toMigrate),
 		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
@@ -246,6 +247,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	sort.Strings(awaitStoppedSorted)
 	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
 		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report),
+		FencedAtStart: hasKcpStaticFence(gw.Route.Raw),
 		MigrateTopics: sortedCopy(toMigrate)}}
 }
 

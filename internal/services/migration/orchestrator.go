@@ -260,10 +260,12 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
 
 // handleStepFailure maps a failed workflow step to its compensating rollback.
-// While the fence is up and nothing is promoted yet — the states abort_fence
-// can leave — ANY halting error rolls back: unfence (onAbortFence), then restore
-// the offset-sync config. A cancelled context is the exception: it can't do the
-// unfence IO, so the fenced world is left for the idempotent resume.
+// While kcp's fence is up and nothing is promoted yet, ANY halting error rolls
+// back: unfence, then restore the offset-sync config. The fence is up once this
+// run's fence step lands (the states abort_fence can leave), and, on a resume
+// of an interrupted run, from the start (config.FencedAtStart) until then. A
+// cancelled context is the exception: it can't do the unfence IO, so the
+// fenced world is left for the idempotent resume.
 //
 // The rollback event fires here, not from a callback (looplab's non-reentrant
 // eventMu would deadlock), and the sync-config restore runs here too, after the
@@ -282,19 +284,23 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
 			return stepFailure
 		}
-		return o.restoreAfterUnconfirmedFence(ctx, stepFailure)
+		return o.restoreAfterUnconfirmedFence(ctx, stepFailure, params)
 	}
 
-	// Roll back for ANY halting error while the fence is up and nothing is
-	// promoted yet — exactly the states abort_fence can legally leave (fenced,
-	// offset_sync_paused). Promote is the point of no return: once mirrors are
-	// promoted, unfencing would strand them (producers routed back to source
-	// while the target mirrors are frozen STOPPED), so we never abort past it —
-	// the FSM structurally has no abort_fence edge from fence_verified onward. A
-	// cancelled context (Ctrl-C / kill / deadline) cannot perform the unfence IO,
-	// so we leave the fenced world for the idempotent resume rather than attempt
-	// a doomed rollback. Record which branch was taken.
-	willRollback := o.fsm.Can(EventAbortFence) && ctx.Err() == nil
+	// Roll back for ANY halting error while kcp's fence is up and nothing is
+	// promoted yet: this run's fence has landed (the states abort_fence can
+	// leave: fenced, offset_sync_paused), or an interrupted run's fence was up
+	// at the start and this run has not reached its own fence step. Promote is
+	// the point of no return: once mirrors are promoted, unfencing would strand
+	// them (producers routed back to source while the target mirrors are
+	// frozen STOPPED), so we never abort past it — the FSM structurally has no
+	// abort_fence edge from fence_verified onward. A cancelled context (Ctrl-C /
+	// kill / deadline) cannot perform the unfence IO, so we leave the fenced
+	// world for the idempotent resume rather than attempt a doomed rollback.
+	// Record which branch was taken.
+	thisRunsFence := o.fsm.Can(EventAbortFence)
+	earlierRunsFence := o.config.FencedAtStart && beforeFenceStep(o.fsm.Current())
+	willRollback := (thisRunsFence || earlierRunsFence) && ctx.Err() == nil
 	slog.Debug("handling migration step failure", "step", step.Event, "will_rollback", willRollback)
 	if !willRollback {
 		return stepFailure
@@ -312,15 +318,42 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
-	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
-		slog.Error("❌ failed to roll back to initialized", "error", err)
-		return stepFailure
+	if thisRunsFence {
+		if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
+			slog.Error("❌ failed to roll back to initialized", "error", err)
+			return stepFailure
+		}
+	} else {
+		// This run never reached fenced, so there is no abort_fence edge to take:
+		// only the cluster needs putting right, as for an unconfirmed fence. Its
+		// fence step never resolved the gateway capability either, so resolve it
+		// first: without it the unfence would be verified with the unresolved
+		// zero-value capability.
+		err := o.actions.ensureGatewayCapability(ctx, o.config)
+		if err == nil {
+			err = o.actions.unfenceGateway(ctx, o.config)
+		}
+		if err != nil {
+			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			return stepFailure
+		}
+		o.reporter.Success("Gateway unfenced — traffic restored to pre-migration state")
 	}
 
 	// Restore the paused sync config now that the rollback landed.
 	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth)
 
 	return stepFailure
+}
+
+// beforeFenceStep reports whether state comes before this run's fence step
+// lands: the FSM has not reached fenced yet.
+func beforeFenceStep(state string) bool {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		return true
+	}
+	return false
 }
 
 // restoreAfterUnconfirmedFence reapplies the initial gateway CR after a fence
@@ -348,7 +381,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 //
 // The FSM is deliberately untouched: the fence transition was cancelled, so the
 // machine still sits at its pre-fence state, which is already the truth.
-func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error) error {
+func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error, params ExecutionParams) error {
 	// A definite rejection is not the ambiguous timeout the rest of this path is
 	// written for: CFK explicitly refused the fenced spec, so it never took effect
 	// on any pod. Restoring is still right — the refused spec is live in etcd and
@@ -374,6 +407,8 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	} else {
 		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
+	// An earlier, interrupted run may have paused offset sync.
+	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth)
 	return stepFailure
 }
 

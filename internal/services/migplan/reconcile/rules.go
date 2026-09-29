@@ -173,6 +173,18 @@ func (rt *RulesTree) DropFence(topics []string) {
 	rt.root["fencing"] = kept
 }
 
+// HasFence reports whether the rules carry kcp's own fence for exactly this
+// topic set (see isKcpFenceFor).
+func (rt *RulesTree) HasFence(topics []string) bool {
+	existing, _ := sliceField(rt.root, "fencing")
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			return true
+		}
+	}
+	return false
+}
+
 // isKcpFenceFor reports whether e is a fence entry kcp itself would author for
 // exactly this topic set: only the keys kcp writes (topics and blocked),
 // blocked==true, and the same topics as a set. Any other entry is an

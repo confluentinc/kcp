@@ -118,6 +118,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.RollbackFenceYAML = res.RollbackFenceYAML
 	config.RollbackAllowed = res.RollbackAllowed
+	config.FencedAtStart = res.FencedAtStart
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route

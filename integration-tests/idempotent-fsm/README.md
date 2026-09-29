@@ -50,7 +50,8 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `016..085`: a static route fenced by an operator is refused `016..020`
+in `011..085`: rollback when a resume fails before its own fence step
+`011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
 and through a rollback `026..030` (dynamic only), unrouted-producer detection
 on a mid-batch resume `031..035`,
@@ -101,7 +102,9 @@ accepted, leaving 2 mirrors promoting and 3 ACTIVE. Two rollback tests
 (`rollback_e2e_test.go`) fail the resume's `verify_fence` step with the test-only
 failure hook (`KCP_TEST_FAIL_AT`): after a kill at the fence the rollback must
 lift the interrupted run's fence; after a mid-batch kill it must keep the fence,
-and a plain re-run then completes. A detection test (`detection_e2e_test.go`)
+and a plain re-run then completes. A third fails a resume at `wait_for_lags`,
+before its own fence step: it must still lift the interrupted run's fence and,
+on static, set consumer offset sync back to the baseline. A detection test (`detection_e2e_test.go`)
 writes straight to the source of already-promoted topics during a mid-batch
 resume; the fence check must catch it and keep the fence. Two operator-fence
 tests (`operator_fence_e2e_test.go`, dynamic only) add an operator's own

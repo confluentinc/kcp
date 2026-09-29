@@ -119,6 +119,11 @@ type MigrationConfig struct {
 	// is promoted or promoting yet.
 	RollbackAllowed bool
 
+	// FencedAtStart is set each run from the reconcile result: true when the
+	// route already carried kcp's fence for this migration at the start of the
+	// run, left by an earlier, interrupted run.
+	FencedAtStart bool
+
 	// Mode is the route mode migplan resolved this migration under ("static" for
 	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
 	Mode string

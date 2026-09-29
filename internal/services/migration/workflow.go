@@ -266,6 +266,7 @@ func (s *MigrationActions) Initialize(
 	config.RestoreOffsetSync = res.RestoreOffsetSync
 	config.RollbackFenceYAML = res.RollbackFenceYAML
 	config.RollbackAllowed = res.RollbackAllowed
+	config.FencedAtStart = res.FencedAtStart
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route

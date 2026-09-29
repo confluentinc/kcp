@@ -125,6 +125,11 @@ type Artifacts struct {
 	// RollbackAllowed is true when a pre-promote failure may roll back
 	// (unfence): no topic in the batch is promoted or promoting yet.
 	RollbackAllowed bool
+
+	// FencedAtStart is true when the start-of-run route already carries kcp's
+	// fence for this migration: an earlier run fenced it and was interrupted.
+	// The fence is then up before this run's own fence step.
+	FencedAtStart bool
 	// MigrateTopics is every topic this run migrates (Migratable +
 	// AwaitStopped + SwitchOnly), sorted: the topics the fence check watches
 	// for producers writing straight to the source.

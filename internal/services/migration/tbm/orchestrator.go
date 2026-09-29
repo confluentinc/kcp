@@ -210,7 +210,13 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
-	willRollback := o.fsm.Can(EventAbortFence) && ctx.Err() == nil
+	// Roll back while kcp's fence is up and nothing is promoted yet: this run's
+	// fence has landed (fenced, the state abort_fence can leave), or an
+	// interrupted run's fence was up at the start and this run has not reached
+	// its own fence step. A cancelled context leaves the fence for the resume.
+	thisRunsFence := o.fsm.Can(EventAbortFence)
+	earlierRunsFence := o.config.FencedAtStart && beforeFenceStep(o.fsm.Current())
+	willRollback := (thisRunsFence || earlierRunsFence) && ctx.Err() == nil
 	if !willRollback {
 		return stepFailure
 	}
@@ -227,12 +233,32 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
+	if !thisRunsFence {
+		// This run never reached fenced, so there is no abort_fence edge to take:
+		// only the gateway needs putting right.
+		if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			return stepFailure
+		}
+		o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
+		return stepFailure
+	}
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
 		slog.Error("❌ failed to roll back to initialized", "error", err)
 		return stepFailure
 	}
 
 	return stepFailure
+}
+
+// beforeFenceStep reports whether state comes before this run's fence step
+// lands: the FSM has not reached fenced yet.
+func beforeFenceStep(state string) bool {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		return true
+	}
+	return false
 }
 
 func (o *TBMOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.Event) {

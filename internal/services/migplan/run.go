@@ -47,6 +47,10 @@ type Result struct {
 	RollbackFenceYAML string
 	RollbackAllowed   bool
 
+	// FencedAtStart is true when the start-of-run route already carries kcp's
+	// fence for this migration, left by an earlier, interrupted run.
+	FencedAtStart bool
+
 	// MigrateTopics is every topic this run migrates, already-promoted ones
 	// included: the topics the fence check watches for producers writing
 	// straight to the source.
@@ -196,6 +200,7 @@ func newResult(plan *reconcile.Plan) *Result {
 		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
 		r.RollbackFenceYAML = string(plan.Artifacts.RollbackFenceRules)
 		r.RollbackAllowed = plan.Artifacts.RollbackAllowed
+		r.FencedAtStart = plan.Artifacts.FencedAtStart
 		r.MigrateTopics = plan.Artifacts.MigrateTopics
 	}
 	if r.Refused {

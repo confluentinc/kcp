@@ -938,3 +938,80 @@ func TestTBM_MultiBatchComposite(t *testing.T) {
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
 }
+
+// fencedResumeTBM runs a TBM batch whose reconcile result says the route
+// already carries kcp's fence from an interrupted run, with the failure hook
+// set to failAt and rollback allowed or not. It returns the route patches the
+// run applied, its output, its final state and its error.
+func fencedResumeTBM(t *testing.T, failAt string, fencedAtStart, rollbackAllowed bool) (int, string, string, error) {
+	t.Helper()
+	t.Setenv(killpoint.FailEnvVar, failAt)
+	var applyCount int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+			applyCount++
+			return "", nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-fenced-at-start", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+	res := realisticReconcileResult()
+	res.FencedAtStart = fencedAtStart
+	res.RollbackAllowed = rollbackAllowed
+
+	err := orchestrator.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+	return applyCount, out.String(), orchestrator.fsm.Current(), err
+}
+
+// TestTBMOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack:
+// a resume starts with the route already fenced by the interrupted run. A step
+// that fails before this run's own fence lands rolls back like a failure after
+// it: it lifts the fence.
+func TestTBMOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack(t *testing.T) {
+	for _, step := range []string{EventWaitForLags, EventFence} {
+		t.Run(step, func(t *testing.T) {
+			patches, out, _, err := fencedResumeTBM(t, step, true, true)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+			assert.Equal(t, 1, patches, "the rollback only: this run never reached its own fence")
+			assert.Contains(t, out, "removing fence to restore traffic")
+			assert.Contains(t, out, "Gateway unfenced")
+		})
+	}
+}
+
+// TestTBMOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift:
+// on a fresh run nothing is fenced before the fence step, so a failure there
+// changes nothing on the gateway.
+func TestTBMOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift(t *testing.T) {
+	patches, out, _, err := fencedResumeTBM(t, EventWaitForLags, false, true)
+
+	require.Error(t, err)
+	assert.Equal(t, 0, patches, "nothing is fenced, so nothing is patched")
+	assert.NotContains(t, out, "removing fence")
+}
+
+// TestTBMOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
+// resume of a partly promoted batch keeps the interrupted run's fence when a
+// step fails before this run's fence lands, and says so.
+func TestTBMOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	patches, out, _, err := fencedResumeTBM(t, EventWaitForLags, true, false)
+
+	require.Error(t, err)
+	assert.Equal(t, 0, patches, "the fence stays: no patch")
+	assert.Contains(t, out, "keeping the fence", "the run must say it is not unfencing")
+}
+
+// TestTBMOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence: a
+// route fenced at the start never unfences from promote onwards.
+func TestTBMOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t *testing.T) {
+	patches, out, state, err := fencedResumeTBM(t, EventPromote, true, true)
+
+	require.Error(t, err)
+	assert.Equal(t, 1, patches, "this run's fence only: no rollback from promote onwards")
+	assert.NotContains(t, out, "removing fence")
+	assert.Equal(t, StateFenceVerified, state)
+}
