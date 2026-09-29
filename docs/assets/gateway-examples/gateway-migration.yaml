@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/gatewaymigration.schema.json
 #
-# The declarative form of a `kcp migration` run. One file replaces the topology
-# and auth flags that used to be repeated across `init` and `execute`.
+# The declarative form of a `kcp migration` run: the topology, auth and policy
+# for one migration, read fresh on every run.
 #
-#   kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration execute --migration-yaml gateway-migration.yaml
 #   kcp migration lag-check --migration-yaml gateway-migration.yaml
 #
 # Paths in this file resolve relative to the PROCESS working directory, not to
