@@ -71,7 +71,7 @@ This is the most operationally complex part of the migration. There are three di
 2. **Gateway → Source**: how the gateway authenticates to the source cluster on the client's behalf.
 3. **Gateway → CC**: how the gateway authenticates to Confluent Cloud after cutover.
 
-Which direction uses passthrough vs. swap is gateway configuration — the route's `security` block in the gateway CR (`auth: swap`; see the examples under [`gateway-switchover/`](gateway-switchover/)) — not a kcp setting:
+Which direction uses passthrough vs. swap is gateway configuration — the route's `security` block in the gateway CR (`auth: swap`; see the examples under [`gateway-switchover/`](gateway-switchover/index.md)) — not a kcp setting:
 
 - **Destination swap**: clients present their **source credentials** to the gateway. Gateway passes these through to the source; gateway swaps them for CC credentials when routing to CC.
 - **Source swap**: clients present their **CC credentials** to the gateway. Gateway passes these through to CC; gateway swaps them for source credentials when routing to the source.
