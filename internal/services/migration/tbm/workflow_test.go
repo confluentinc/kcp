@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,7 +90,6 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
 	actions.promotePollInterval = time.Millisecond
 	config := testTBMConfig()
-	config.CurrentState = StateUninitialized
 	ctx := context.Background()
 
 	// Initialize captures the reconcile plan's artifacts (FenceYAML,
@@ -104,35 +104,45 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	require.NoError(t, actions.Switch(ctx, config))
 }
 
+// TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig: Initialize
+// copies every plan field of the reconcile result onto the run's config, which
+// starts empty, so a missing copy leaves that field empty and fails here.
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
+		PromoteTopics:  []string{"t1.order"},
+		AwaitStopped:   []string{"t1.order"},
 		FenceYAML:      "rules:\n  fenced: true\n",
 		SwitchoverYAML: "rules:\n  switched: true\n",
 		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
 		Mode:           "dynamic",
+
+		RollbackFenceYAML: "rules:\n  rolled-back: true\n",
+		RollbackAllowed:   true,
+		FencedAtStart:     true,
+		MigrateTopics:     []string{"t1.order", "t2.switch-only"},
 	}
 
 	require.NoError(t, actions.Initialize(context.Background(), config, res))
 
-	assert.Equal(t, res.Route, config.Route)
-	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.PromoteTopics, config.Topics)
+	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.Equal(t, res.RollbackFenceYAML, config.RollbackFenceYAML)
+	assert.True(t, config.RollbackAllowed, "RollbackAllowed")
+	assert.True(t, config.FencedAtStart, "FencedAtStart")
+	assert.Equal(t, res.MigrateTopics, config.MigrateTopics)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
-	// Mode must be persisted, mirroring AAO's Initialize: the unified `execute`
-	// dispatcher reads config.Mode on resume, so an interrupted dynamic
-	// migration that dropped Mode here would be re-dispatched to the static
-	// (AAO) branch on its next run.
+	assert.Equal(t, res.Route, config.Route)
 	assert.Equal(t, res.Mode, config.Mode)
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
 	err := actions.Initialize(context.Background(), config, res)
@@ -300,7 +310,6 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 func promoteTestConfig(topics []string) *migration.MigrationConfig {
 	return &migration.MigrationConfig{
 		MigrationId:         "tbm-promote-1",
-		CurrentState:        StateFenceVerified,
 		Topics:              topics,
 		ClusterId:           "lkc-123",
 		ClusterRestEndpoint: "https://cluster.example.com",
@@ -389,6 +398,85 @@ func TestTBMActions_Promote_WaitsForPendingStoppedUntilStopped(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
 		"expected Promote to poll mirror status until STOPPED was observed")
+}
+
+// Resume-from-PENDING_STOPPED (TBM): a topic reconcile classified AwaitStopped
+// is already mid-promotion, so Promote must WAIT for it to reach STOPPED and
+// never re-issue a promote on it. Mirrors the AAO guard.
+func TestTBMActions_Promote_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.T) {
+	var promoted []string // Promote is synchronous — no locking needed
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoted = append(promoted, topicNames...)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			status := "PENDING_STOPPED"
+			if atomic.AddInt64(&listCalls, 1) >= 3 {
+				status = clusterlink.MirrorStatusStopped
+			}
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "await-me", MirrorStatus: status},
+				{MirrorTopicName: "migrate-me", MirrorStatus: status},
+			}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"await-me", "migrate-me"})
+	config.AwaitStopped = []string{"await-me"}
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err)
+	assert.NotContains(t, promoted, "await-me",
+		"an AwaitStopped topic (already promoting on resume) must be waited on, never re-promoted")
+	assert.Contains(t, promoted, "migrate-me",
+		"the genuinely migratable topic must still be promoted")
+}
+
+// The intra-promote kill-point (killpoint.AfterPromoteAccepted) must interrupt
+// Promote right after a promote request is accepted but before the mirror is
+// confirmed STOPPED — leaving it PENDING_STOPPED — and exit with a non-zero
+// error (no rollback, since it is not ErrUnroutedProducers). This is the seam
+// the live suite drives to leave a genuine PENDING_STOPPED world.
+func TestTBMActions_Promote_KillPointAfterAcceptExitsBeforeConfirm(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, killpoint.AfterPromoteAccepted)
+	var promoted, listed int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, names []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoted, 1)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, n := range names {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: n})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			atomic.AddInt64(&listed, 1)
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: "PENDING_STOPPED"}}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.Error(t, err, "the kill-point after accept must exit non-zero")
+	require.Contains(t, err.Error(), "kill-point")
+	assert.Equal(t, int64(1), atomic.LoadInt64(&promoted), "the promote request must have been issued (accepted) before the kill-point")
 }
 
 func TestTBMActions_Promote_BatchSize_ProcessesSequentially(t *testing.T) {
@@ -534,6 +622,29 @@ func TestTBMActions_Promote_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 // the orchestrator level in orchestrator_test.go).
 // ===========================================================================
 
+// TestTBMActions_VerifyFence_WatchesAlreadyPromotedTopics: the fence check
+// watches every topic the batch migrates, not just those still to promote. On a
+// resume an already-promoted topic's mirror no longer copies from the source,
+// so a write straight to its source would never reach the target.
+func TestTBMActions_VerifyFence_WatchesAlreadyPromotedTopics(t *testing.T) {
+	var calls int32
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if topic == "promoted" {
+				return map[int32]int64{0: 1000 + int64(atomic.AddInt32(&calls, 1))*500}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &migration.MigrationConfig{Topics: []string{"active"}, MigrateTopics: []string{"active", "promoted"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "promoted partition 0", "the already-promoted topic's source must be watched")
+}
+
 func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
@@ -542,7 +653,7 @@ func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 0)
 	require.NoError(t, err)
@@ -553,7 +664,7 @@ func TestTBMActions_VerifyFence_StableOffsets_Passes(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 	require.NoError(t, err)
@@ -571,7 +682,7 @@ func TestTBMActions_VerifyFence_RisingOffset_ReturnsErrUnroutedProducers(t *test
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -593,7 +704,7 @@ func TestTBMActions_VerifyFence_PartitionAbsentFromFirstSnapshot_TreatedAsZeroBa
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -607,7 +718,7 @@ func TestTBMActions_VerifyFence_FirstSnapshotFetchError_PropagatesWithoutErrUnro
 		getFn: func(topic string) (map[int32]int64, error) { return nil, fmt.Errorf("kafka: connection refused") },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -632,4 +743,99 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, elapsed, 1*time.Second, "expected cancellation to exit well before the 20s monitoring window")
+}
+
+// ===========================================================================
+// Fence/Switch no-op guard tests — prove the guard is keyed on the plan's
+// own artifact (config.FenceYAML / config.SwitchoverYAML), never on
+// config.Topics (the promote set). The case this covers: an all-promoted
+// batch has an empty promote set (Topics) but still owes a fence/switch
+// (FenceYAML/SwitchoverYAML non-empty) — gating on Topics would wrongly
+// no-op it and report the batch complete without cutting over.
+// ===========================================================================
+
+// TestTBM_Fence_NoFenceYAMLIsNoop proves an empty FenceYAML artifact
+// short-circuits Fence even when Topics is non-empty — the guard reads the
+// plan's artifact, not the promote set.
+func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when FenceYAML is empty")
+			return gateway.Capability{}, nil
+		},
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when FenceYAML is empty")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.FenceYAML = ""                // artifact empty
+	config.Topics = []string{"t1.order"} // promote set still non-empty
+
+	err := actions.Fence(context.Background(), config)
+	require.NoError(t, err, "Fence with empty FenceYAML must no-op, not error")
+}
+
+// TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences:
+// Topics empty (nothing left to promote — an all-promoted batch) but
+// FenceYAML still set (a fence is still owed ahead of switchover). Fence
+// must still apply exactly one patch, not no-op.
+func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
+	var applyCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			applyCalls++
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.Topics = nil // no topics left to promote
+
+	err := actions.Fence(context.Background(), config)
+	require.NoError(t, err, "Fence with FenceYAML set + no Topics must still fence")
+	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
+}
+
+// TestTBM_Switch_NoSwitchoverYAMLIsNoop proves an empty SwitchoverYAML
+// artifact short-circuits Switch even when Topics is non-empty.
+func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when SwitchoverYAML is empty")
+			return gateway.Capability{}, nil
+		},
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when SwitchoverYAML is empty")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.SwitchoverYAML = ""           // artifact empty
+	config.Topics = []string{"t1.order"} // promote set still non-empty
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err, "Switch with empty SwitchoverYAML must no-op, not error")
+}
+
+// TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches: Topics
+// empty (all-promoted batch) but SwitchoverYAML still set (the switch is
+// still owed). Switch must still apply exactly one patch.
+func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
+	var applyCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			applyCalls++
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.Topics = nil // no topics left to promote
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err, "Switch with SwitchoverYAML set + no Topics must still switch")
+	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
 }

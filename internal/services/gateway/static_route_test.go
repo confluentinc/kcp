@@ -47,30 +47,33 @@ func TestReplaceRouteFenceObj_FragmentMissingFenceKey(t *testing.T) {
 	}
 }
 
-func TestReplaceRouteStreamingDomainObj(t *testing.T) {
+func TestReplaceRouteObj(t *testing.T) {
 	obj := baseStaticCR(t)
-	fragment := []byte("streamingDomain:\n  name: cc\n  bootstrapServerId: cc-bootstrap\n")
-	out, err := ReplaceRouteStreamingDomainObj(obj, "migration-route", fragment)
+	obj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)["fence"] = map[string]any{"scope": "ALL"}
+	artifact := []byte("route:\n  name: migration-route\n  streamingDomain:\n    name: cc\n    bootstrapServerId: cc-bootstrap\n")
+	out, err := ReplaceRouteObj(obj, "migration-route", artifact)
 	if err != nil {
-		t.Fatalf("ReplaceRouteStreamingDomainObj: %v", err)
+		t.Fatalf("ReplaceRouteObj: %v", err)
 	}
 	s := string(out)
 	if !strings.Contains(s, "name: cc") || !strings.Contains(s, "bootstrapServerId: cc-bootstrap") {
-		t.Fatalf("output = %q, want a spliced streamingDomain block", s)
+		t.Fatalf("output = %q, want the artifact's route in place", s)
+	}
+	if strings.Contains(s, "fence") {
+		t.Fatalf("output = %q, want the whole route replaced, so the old fence is gone", s)
 	}
 }
 
-func TestReplaceRouteStreamingDomainObj_RouteNotFound(t *testing.T) {
+func TestReplaceRouteObj_RouteNotFound(t *testing.T) {
 	obj := baseStaticCR(t)
-	fragment := []byte("streamingDomain:\n  name: cc\n  bootstrapServerId: cc-bootstrap\n")
-	if _, err := ReplaceRouteStreamingDomainObj(obj, "nope", fragment); err == nil {
+	if _, err := ReplaceRouteObj(obj, "nope", []byte("route:\n  name: nope\n")); err == nil {
 		t.Fatal("expected an error for a route not present in spec.routes")
 	}
 }
 
-func TestReplaceRouteStreamingDomainObj_FragmentMissingKey(t *testing.T) {
+func TestReplaceRouteObj_ArtifactMissingKey(t *testing.T) {
 	obj := baseStaticCR(t)
-	if _, err := ReplaceRouteStreamingDomainObj(obj, "migration-route", []byte("notit: {}\n")); err == nil {
-		t.Fatal("expected an error when the fragment has no top-level streamingDomain key")
+	if _, err := ReplaceRouteObj(obj, "migration-route", []byte("notit: {}\n")); err == nil {
+		t.Fatal("expected an error when the artifact has no top-level route key")
 	}
 }
