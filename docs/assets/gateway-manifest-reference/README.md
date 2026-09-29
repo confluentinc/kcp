@@ -25,14 +25,23 @@ On a dynamic route, kcp recognises the fence it added by its exact shape: a
 `blocked: true`. Any other entry, including one over the same topics that also
 sets `trafficType` or `topicPatterns`, is an operator's, and kcp leaves it in
 place. If a run is interrupted after fencing, resume it with a manifest that
-resolves to the same topics. Resuming with a different set — a topic added or removed,
-or a `topicPatterns` entry that now also matches a topic created on the source
-since the interrupted run — is a different migration: kcp fences the new set,
-treats the earlier fence as operator-authored, and leaves it on the route, so
-those topics stay blocked after switchover. Finish the interrupted migration
-first, then migrate the changed set. If this has already happened, remove the
-leftover `blocked` entry from the route's `rules.fencing` by hand. Static
-routes are unaffected: their fence is a single route-level block.
+resolves to the same topics. Resuming with a different set — a topic added or
+removed, or a `topicPatterns` entry that now also matches a topic created on
+the source since the interrupted run — is a different migration: kcp fences
+the new set, treats the earlier fence as operator-authored, and leaves it on
+the route, so those topics stay blocked after switchover. Finish the
+interrupted migration first, then migrate the changed set. If this has already
+happened, remove the leftover `blocked` entry from the route's `rules.fencing`
+by hand.
+
+**A static route must not carry someone else's fence.** A static route has a
+single route-level `fence`. kcp recognises its own by its exact value,
+`{scope: ALL, errorCode: BROKER_NOT_AVAILABLE}`, and refuses a route that
+already carries any other fence, because the switchover and a rollback would
+remove it: remove that fence before migrating. `scope: NONE` counts as no
+fence. An operator's plain `scope: ALL` fence reads back with the same
+defaulted `errorCode`, so kcp cannot tell it from its own and would remove it
+too; remove it before migrating.
 
 Each `spec.defaultPolicies` field is a default that a matching CLI flag can
 override for a single run, without editing the file.

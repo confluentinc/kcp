@@ -142,3 +142,53 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 	}
 	t.Logf("\n✅ RESULT: the operator's fence on the batch's topics survived the rollback.")
 }
+
+// setStaticFence sets the live static route's fence to fence, as an operator
+// fencing the route would, and resets the route (source-bound, no fence) when
+// the test ends.
+func (e *env) setStaticFence(t *testing.T, ctx context.Context, fence map[string]any) {
+	t.Helper()
+	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "fence", Value: fence}, "")
+	require.NoError(t, err, "set the route's fence")
+	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
+		"gateway must accept the fence")
+	t.Logf("\n✍️  OPERATOR FENCE SET ▸ %v", fence)
+	t.Cleanup(func() { e.resetStaticRoute(t, context.Background()) })
+}
+
+// An operator's own fence on a static route. A static route has one
+// route-level fence, so kcp cannot keep an operator's fence beside its own:
+// the switch or a rollback would remove it. A route already fenced by someone
+// else is refused, and the run leaves the route and the mirrors as they were.
+// Slice tbm-topic-016..020.
+func TestOperatorFence_StaticRouteIsRefused(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: a dynamic route keeps an operator's fence beside kcp's")
+	}
+	ctx := context.Background()
+	e.resetStaticRoute(t, ctx)
+	topics := e.topicRange(16, 20)
+	const message = "maintenance window: back 14:00"
+	e.setStaticFence(t, ctx, map[string]any{"scope": "ALL", "errorMessage": message})
+	mani := e.writeManifest(t, "operator-fence-static", topics)
+	e.saveManifest(t, mani)
+	e.snapshot(t, ctx, "before", "BEFORE (expect the operator's fence on the route, route → source)", topics)
+	routeBefore := e.routeObj(t, e.readCR(t, ctx))
+	mirrorsBefore := e.mirrorStatus(t, ctx)
+
+	out, err := e.runKCP(t, "kcp-run-1-refused.log", "", "migration", "execute", "--migration-yaml", mani)
+	require.Error(t, err, "a route fenced by someone else must be refused")
+	require.Contains(t, out, "already carries a fence kcp didn't write", "the refusal must name the operator's fence")
+
+	e.snapshot(t, ctx, "after-refusal", "AFTER the refusal (expect the route exactly as before)", topics)
+	routeAfter := e.routeObj(t, e.readCR(t, ctx))
+	mirrorsAfter := e.mirrorStatus(t, ctx)
+	require.Equal(t, routeBefore, routeAfter, "a refused run must leave the route exactly as it was")
+	fence, _ := routeAfter["fence"].(map[string]any)
+	require.Equal(t, message, fence["errorMessage"], "the operator's fence must still be on the route")
+	for _, tp := range topics {
+		require.Equalf(t, mirrorsBefore[tp], mirrorsAfter[tp], "a refused run must not change %s's mirror", tp)
+	}
+	t.Logf("\n✅ RESULT: the static route fenced by an operator was refused and left as it was.")
+}

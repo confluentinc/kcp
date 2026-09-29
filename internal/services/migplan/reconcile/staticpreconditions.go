@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -44,10 +45,14 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		res = append(res, fail("route is static", fmt.Sprintf("route %q is %q; the static (all-at-once) strategy requires a static route", rc.Name, rc.Mode)))
 	}
 
-	// An already-fenced route is NOT a precondition failure — it is the valid state
-	// a resume finds after the fence step. Reconcile classifies by streamingDomain
-	// (not the fence), and the fence step re-applies kcp's whole-route fence
-	// idempotently.
+	// A route carrying kcp's own fence is the state a resume finds after the
+	// fence step, and passes. Any other fence was set by someone else: the switch
+	// and a rollback would remove it, so the run is refused instead.
+	if f, ok := mapField(rc.Raw, "fence"); ok && !isUnfencedStatic(f) && !isKcpStaticFence(f) {
+		res = append(res, fail(staticFenceCheckName, fmt.Sprintf("route %q already carries a fence kcp didn't write (%s); remove it before migrating", rc.Name, renderFence(f))))
+	} else {
+		res = append(res, pass(staticFenceCheckName))
+	}
 
 	domains := staticDomainBootstrapIDs(gw)
 	ids2, declared := domains[in.TargetDomain]
@@ -225,4 +230,32 @@ func ResolveStagedSecretNames(gw *GatewayConfig, targetDomain string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// staticFenceCheckName names the precondition that refuses a route fenced by
+// someone other than kcp.
+const staticFenceCheckName = "route has no fence kcp didn't write"
+
+// isKcpStaticFence reports whether f is exactly the fence kcp writes on a
+// static route (see BuildFenceFragment): only scope and errorCode, with kcp's
+// values. An empty errorMessage read back from the live CR does not count.
+func isKcpStaticFence(f map[string]any) bool {
+	return hasOnlyKeys(f, "scope", "errorCode") &&
+		stringField(f, "scope") == staticFenceScope &&
+		stringField(f, "errorCode") == staticFenceErrorCode
+}
+
+// isUnfencedStatic reports whether f blocks nothing: an empty fence, or scope
+// NONE in either case.
+func isUnfencedStatic(f map[string]any) bool {
+	return len(f) == 0 || strings.EqualFold(stringField(f, "scope"), "NONE")
+}
+
+// renderFence renders a fence for a refusal message.
+func renderFence(f map[string]any) string {
+	b, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Sprintf("%v", f)
+	}
+	return string(b)
 }

@@ -1003,6 +1003,24 @@ func TestReconcileDynamic_OperatorFenceOnTheBatchTopicsSurvives(t *testing.T) {
 	}
 }
 
+// TestReconcileStatic_FenceKcpDidNotWriteIsRefused: a static route that already
+// carries a fence kcp didn't write is refused, with no fence, switchover or
+// rollback artifact, so no run can overwrite or remove that fence.
+func TestReconcileStatic_FenceKcpDidNotWriteIsRefused(t *testing.T) {
+	gw := staticGateway()
+	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorMessage": "maintenance window: back 14:00"}
+	in := ReconcileInput{Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
+
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+
+	if !p.Report.Refused() {
+		t.Fatalf("a route fenced by someone else must be refused, got %+v", p.Report)
+	}
+	if p.Artifacts != nil {
+		t.Fatalf("a refused plan must carry no artifacts, got %+v", p.Artifacts)
+	}
+}
+
 // TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes: a static
 // route's switch and rollback both remove the fence, which a route patch can
 // only do by replacing the whole route, so both are whole start-of-run routes

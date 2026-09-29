@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // staticGateway is defined in preconditions_test.go, alongside dynGateway.
 
@@ -36,24 +39,68 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 	}
 }
 
-func TestStaticPreconditionsAlreadyFenced(t *testing.T) {
-	// A route already carrying a fence is a valid RESUME state — the interrupted
-	// run fenced it — not a precondition failure. This matches dynamic's
-	// fence-blind idempotency (no already-fenced refusal; the fence step re-applies
-	// idempotently on resume). Reverses the original fail-closed stance, which
-	// made static resume-after-fence impossible.
+// staticFenceCheck is the precondition that refuses a route fenced by someone
+// other than kcp.
+const staticFenceCheck = "route has no fence kcp didn't write"
+
+// TestStaticPreconditionsKcpFenceIsAResume: a route carrying kcp's own fence is
+// the state a resume finds after the fence step, so it passes.
+func TestStaticPreconditionsKcpFenceIsAResume(t *testing.T) {
 	gw := staticGateway()
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
-	res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
-	if !ok {
-		t.Fatalf("an already-fenced route must NOT fail preconditions (it is a valid resume state), got: %+v", res)
+	if res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{}); !ok {
+		t.Fatalf("a route fenced by kcp must pass (it is a resume), got: %+v", res)
 	}
-	for _, r := range res {
-		if r.Name == "route is not already fenced" {
-			t.Errorf("the already-fenced precondition should be gone (resume-blind), still present: %+v", r)
-		}
+}
+
+// TestStaticPreconditionsFenceKcpDidNotWrite: a route that already carries any
+// fence other than kcp's exact one is refused, because the switch and a
+// rollback would remove it. scope NONE is no fence.
+func TestStaticPreconditionsFenceKcpDidNotWrite(t *testing.T) {
+	cases := []struct {
+		name    string
+		fence   map[string]any
+		refused bool
+	}{
+		{"custom errorMessage", map[string]any{"scope": "ALL", "errorMessage": "maintenance window: back 14:00"}, true},
+		{"custom errorMessage beside the defaulted errorCode", map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE", "errorMessage": "maintenance window: back 14:00"}, true},
+		{"other errorCode", map[string]any{"scope": "ALL", "errorCode": "NOT_LEADER_OR_FOLLOWER"}, true},
+		{"lower-case scope", map[string]any{"scope": "all", "errorCode": "BROKER_NOT_AVAILABLE"}, true},
+		{"no errorCode", map[string]any{"scope": "ALL"}, true},
+		{"kcp's fence", map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}, false},
+		{"kcp's fence read back with an empty errorMessage", map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE", "errorMessage": ""}, false},
+		{"scope NONE", map[string]any{"scope": "NONE"}, false},
+		{"scope none, with the defaulted errorCode", map[string]any{"scope": "none", "errorCode": "BROKER_NOT_AVAILABLE"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gw := staticGateway()
+			gw.Route.Raw["fence"] = tc.fence
+			in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+
+			res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
+
+			if ok == tc.refused {
+				t.Fatalf("ok = %v, want %v for fence %v: %+v", ok, !tc.refused, tc.fence, res)
+			}
+			var check *PreconditionResult
+			for i := range res {
+				if res[i].Name == staticFenceCheck {
+					check = &res[i]
+				}
+			}
+			if check == nil {
+				t.Fatalf("no %q result in %+v", staticFenceCheck, res)
+			}
+			if check.OK == tc.refused {
+				t.Fatalf("%q OK = %v, want %v: %+v", staticFenceCheck, check.OK, !tc.refused, *check)
+			}
+			if tc.refused && !strings.Contains(check.Detail, "remove it") {
+				t.Fatalf("the refusal must say what to do, got %q", check.Detail)
+			}
+		})
 	}
 }
 
