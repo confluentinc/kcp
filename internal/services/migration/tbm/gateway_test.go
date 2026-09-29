@@ -168,6 +168,7 @@ func realisticReconcileResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  []string{"t1.order"},
+		MigrateTopics:  []string{"t1.order"},
 		GatewayYAML:    testGatewayYAML,
 		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
 		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",

@@ -266,6 +266,7 @@ func (s *MigrationActions) Initialize(
 	config.RestoreOffsetSync = res.RestoreOffsetSync
 	config.RollbackFenceYAML = res.RollbackFenceYAML
 	config.RollbackAllowed = res.RollbackAllowed
+	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
@@ -793,16 +794,18 @@ func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *Migrat
 	return nil
 }
 
-// VerifyFence verifies the fence held: source offsets must be stable, because
-// an increasing offset after fencing indicates a producer bypassing the
-// gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)
-// the step succeeds immediately so the FSM still records fence_verified.
+// VerifyFence verifies the fence held: the source offsets of every topic the
+// run migrates (config.MigrateTopics, already-promoted ones included) must be
+// stable, because an increasing offset after fencing indicates a producer
+// bypassing the gateway. An already-promoted topic's mirror no longer copies
+// from the source, so a write straight to it would never reach the target.
+// When detection is disabled (DetectUnroutedProducersDuration == 0) the step
+// succeeds immediately so the FSM still records fence_verified.
 //
 // detectUnroutedProducers wraps ErrUnroutedProducers only for a real
 // detection; a network/fetch error propagates as-is. Either way we just
-// return it — restoring traffic (unfencing the gateway) is the state
-// machine's job on the abort_fence rollback transition, which the
-// orchestrator triggers only for ErrUnroutedProducers.
+// return it — what happens next (a rollback, or keeping the fence when
+// reconcile forbids one) is the orchestrator's handleStepFailure.
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
@@ -814,7 +817,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 		return fmt.Errorf("source offset service is required for unrouted producer detection")
 	}
 
-	if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+	if err := s.detectUnroutedProducers(ctx, config.MigrateTopics, config.DetectUnroutedProducersDuration); err != nil {
 		return err
 	}
 	s.reporter.Success("Source offsets stable — no unrouted producers detected")

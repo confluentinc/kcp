@@ -614,6 +614,29 @@ func TestTBMActions_Promote_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 // the orchestrator level in orchestrator_test.go).
 // ===========================================================================
 
+// TestTBMActions_VerifyFence_WatchesAlreadyPromotedTopics: the fence check
+// watches every topic the batch migrates, not just those still to promote. On a
+// resume an already-promoted topic's mirror no longer copies from the source,
+// so a write straight to its source would never reach the target.
+func TestTBMActions_VerifyFence_WatchesAlreadyPromotedTopics(t *testing.T) {
+	var calls int32
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if topic == "promoted" {
+				return map[int32]int64{0: 1000 + int64(atomic.AddInt32(&calls, 1))*500}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &migration.MigrationConfig{Topics: []string{"active"}, MigrateTopics: []string{"active", "promoted"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "promoted partition 0", "the already-promoted topic's source must be watched")
+}
+
 func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
@@ -622,7 +645,7 @@ func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 0)
 	require.NoError(t, err)
@@ -633,7 +656,7 @@ func TestTBMActions_VerifyFence_StableOffsets_Passes(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 	require.NoError(t, err)
@@ -651,7 +674,7 @@ func TestTBMActions_VerifyFence_RisingOffset_ReturnsErrUnroutedProducers(t *test
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -673,7 +696,7 @@ func TestTBMActions_VerifyFence_PartitionAbsentFromFirstSnapshot_TreatedAsZeroBa
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -687,7 +710,7 @@ func TestTBMActions_VerifyFence_FirstSnapshotFetchError_PropagatesWithoutErrUnro
 		getFn: func(topic string) (map[int32]int64, error) { return nil, fmt.Errorf("kafka: connection refused") },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 

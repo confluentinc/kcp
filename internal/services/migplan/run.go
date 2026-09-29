@@ -47,6 +47,11 @@ type Result struct {
 	RollbackFenceYAML string
 	RollbackAllowed   bool
 
+	// MigrateTopics is every topic this run migrates, already-promoted ones
+	// included: the topics the fence check watches for producers writing
+	// straight to the source.
+	MigrateTopics []string
+
 	// NothingToDo is reconcile.Plan.NothingToDo: not refused, no topic left to
 	// migrate and no offset-sync restore owed, so the run executes nothing.
 	NothingToDo bool
@@ -191,6 +196,7 @@ func newResult(plan *reconcile.Plan) *Result {
 		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
 		r.RollbackFenceYAML = string(plan.Artifacts.RollbackFenceRules)
 		r.RollbackAllowed = plan.Artifacts.RollbackAllowed
+		r.MigrateTopics = plan.Artifacts.MigrateTopics
 	}
 	if r.Refused {
 		for _, p := range plan.Report.Preconditions {

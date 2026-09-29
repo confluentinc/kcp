@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1023,5 +1024,27 @@ func TestReconcile_RollbackAllowed(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestReconcile_MigrateTopics: the fence check watches every topic the run
+// migrates — including the already-promoted (SwitchOnly) ones, whose mirrors no
+// longer copy from the source, so a write straight to their source would be
+// lost — while PromoteTopics holds only the ones still to promote.
+func TestReconcile_MigrateTopics(t *testing.T) {
+	gateways := map[string]func() *GatewayConfig{"dynamic": dynGateway, "static": staticGateway}
+	for mode, gateway := range gateways {
+		t.Run(mode, func(t *testing.T) {
+			in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+			mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+			p := Reconcile(in, gateway(), []string{"t1", "t2", "t3"}, []string{"t1", "t2", "t3"}, mirrors, false, ClusterIDs{}, nil, "")
+			if p.Artifacts == nil {
+				t.Fatalf("expected a plan, got %+v", p.Report)
+			}
+			if !reflect.DeepEqual(p.Artifacts.MigrateTopics, []string{"t1", "t2", "t3"}) {
+				t.Fatalf("MigrateTopics = %v, want every topic in the batch, sorted", p.Artifacts.MigrateTopics)
+			}
+			assertSetEqual(t, "promote", p.Artifacts.PromoteTopics, []string{"t2", "t3"})
+		})
 	}
 }

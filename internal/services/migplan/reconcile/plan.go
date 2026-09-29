@@ -125,6 +125,10 @@ type Artifacts struct {
 	// RollbackAllowed is true when a pre-promote failure may roll back
 	// (unfence): no topic in the batch is promoted or promoting yet.
 	RollbackAllowed bool
+	// MigrateTopics is every topic this run migrates (Migratable +
+	// AwaitStopped + SwitchOnly), sorted: the topics the fence check watches
+	// for producers writing straight to the source.
+	MigrateTopics []string
 }
 
 type Plan struct {

@@ -96,6 +96,7 @@ func TestNewResult(t *testing.T) {
 			SwitchoverRules:    []byte("switch-yaml"),
 			RollbackFenceRules: []byte("rollback-fence-yaml"),
 			RollbackAllowed:    true,
+			MigrateTopics:      []string{"a", "b", "c"},
 		},
 		GatewayYAML: "gw-yaml",
 		Mode:        "static",
@@ -108,6 +109,9 @@ func TestNewResult(t *testing.T) {
 	}
 	if !ok.RollbackAllowed {
 		t.Error("RollbackAllowed must mirror the plan's")
+	}
+	if len(ok.MigrateTopics) != 3 {
+		t.Errorf("MigrateTopics = %v, want the plan's [a b c]", ok.MigrateTopics)
 	}
 	if ok.GatewayYAML != "gw-yaml" {
 		t.Errorf("GatewayYAML = %q, want gw-yaml", ok.GatewayYAML)

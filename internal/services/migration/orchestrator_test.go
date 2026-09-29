@@ -51,6 +51,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
 		ClusterLinkName:     "test-link",
 		Topics:              topics,
+		MigrateTopics:       topics,
 		InitialCrName:       "my-gateway",
 		K8sNamespace:        "confluent",
 		GatewayYAML:         testInitialCR,
@@ -199,6 +200,7 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  topics,
+		MigrateTopics:  topics,
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -226,6 +228,7 @@ func resultFromConfig(config *MigrationConfig) *migplan.Result {
 		RestoreOffsetSync: config.RestoreOffsetSync,
 		RollbackFenceYAML: config.RollbackFenceYAML,
 		RollbackAllowed:   config.RollbackAllowed,
+		MigrateTopics:     config.MigrateTopics,
 	}
 }
 
@@ -1678,6 +1681,7 @@ func aaoFullResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  []string{"topic-a", "topic-b"},
+		MigrateTopics:  []string{"topic-a", "topic-b"},
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
@@ -1736,6 +1740,7 @@ func newAAOKillPointOrchestrator(
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
 		ClusterLinkName:     "test-link",
 		Topics:              topics,
+		MigrateTopics:       topics,
 		InitialCrName:       "my-gateway",
 		K8sNamespace:        "confluent",
 		GatewayYAML:         testInitialCR,

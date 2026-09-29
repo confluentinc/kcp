@@ -1371,6 +1371,33 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 // VerifyFence / DetectUnroutedProducers tests
 // ===========================================================================
 
+// TestWorkflow_VerifyFence_WatchesAlreadyPromotedTopics: the fence check watches
+// every topic the run migrates, not just those still to promote. On a resume an
+// already-promoted topic's mirror no longer copies from the source, so a write
+// straight to its source would never reach the target.
+func TestWorkflow_VerifyFence_WatchesAlreadyPromotedTopics(t *testing.T) {
+	var calls int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if topic == "promoted" {
+				return map[int32]int64{0: 100 + atomic.AddInt64(&calls, 1)*10}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+	wf := NewMigrationActionsWithOffsets(&mockGatewayService{}, &mockClusterLinkService{}, sourceOffset, &mockOffsetProvider{})
+	config := &MigrationConfig{
+		Topics:                          []string{"active"},
+		MigrateTopics:                   []string{"active", "promoted"},
+		DetectUnroutedProducersDuration: time.Millisecond,
+	}
+
+	err := wf.VerifyFence(context.Background(), config)
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "promoted partition 0", "the already-promoted topic's source must be watched")
+}
+
 func TestWorkflow_VerifyFence_StableOffsets(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}
@@ -1384,7 +1411,7 @@ func TestWorkflow_VerifyFence_StableOffsets(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1", "topic-2"},
+		MigrateTopics:                   []string{"topic-1", "topic-2"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
@@ -1425,7 +1452,7 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, destOffset)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 		GatewayYAML:                     "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n",
 		InitialCrName:                   "my-gw",
@@ -1459,7 +1486,7 @@ func TestWorkflow_VerifyFence_NewPartitionBetweenSnapshots_IsViolation(t *testin
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, sourceOffset)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
@@ -1484,7 +1511,7 @@ func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: 0, // check disabled
 	}
 
@@ -1500,7 +1527,7 @@ func TestWorkflow_VerifyFence_NilOffsetServices(t *testing.T) {
 
 	wf := NewMigrationActions(gw, cl) // no offset providers
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 

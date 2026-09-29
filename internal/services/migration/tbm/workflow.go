@@ -118,6 +118,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.RollbackFenceYAML = res.RollbackFenceYAML
 	config.RollbackAllowed = res.RollbackAllowed
+	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	// Persist the resolved route mode, mirroring AAO's Initialize exactly.
@@ -321,9 +322,10 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 }
 
 // VerifyFence runs the verify_fence transition: verifies the fence held by
-// checking that source offsets are stable across detectUnroutedProducersDuration
-// — an increasing offset after fencing means a producer bypassing the gateway
-// and writing directly to the source cluster. When detection is disabled
+// checking that the source offsets of every topic the batch migrates
+// (config.MigrateTopics, already-promoted ones included) are stable across
+// detectUnroutedProducersDuration — an increasing offset after fencing means a
+// producer bypassing the gateway and writing directly to the source cluster. When detection is disabled
 // (detectUnroutedProducersDuration <= 0) the step succeeds immediately so the
 // FSM still records fence_verified. Mirrors migration.MigrationActions.VerifyFence,
 // except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
@@ -336,7 +338,7 @@ func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		return nil
 	}
 
-	if err := a.detectUnroutedProducers(ctx, config.Topics, detectUnroutedProducersDuration); err != nil {
+	if err := a.detectUnroutedProducers(ctx, config.MigrateTopics, detectUnroutedProducersDuration); err != nil {
 		return err
 	}
 	a.reporter.Success("Source offsets stable — no unrouted producers detected")

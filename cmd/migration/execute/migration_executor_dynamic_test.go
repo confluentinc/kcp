@@ -97,6 +97,7 @@ func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  config.Topics,
+		MigrateTopics:  config.Topics,
 		FenceYAML:      config.FenceYAML,
 		SwitchoverYAML: config.SwitchoverYAML,
 		GatewayYAML:    config.GatewayYAML,

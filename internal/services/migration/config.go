@@ -20,6 +20,12 @@ type MigrationConfig struct {
 	ClusterLinkName     string
 	Topics              []string
 
+	// MigrateTopics is every topic this run migrates — Topics plus the
+	// already-promoted ones — set each run from the reconcile result. The fence
+	// check watches their source offsets: an already-promoted topic's mirror no
+	// longer copies from the source, so a write straight to it would be lost.
+	MigrateTopics []string
+
 	// AwaitStopped is the subset of Topics that reconcile found already
 	// mid-promotion (PENDING_STOPPED) on this run — resume-derived, so it is
 	// (re)populated fresh from the reconcile Result every run. The promote

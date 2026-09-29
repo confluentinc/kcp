@@ -146,7 +146,8 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
 	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
-		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report)}}
+		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report),
+		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
@@ -244,7 +245,8 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
 	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
-		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report)}}
+		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report),
+		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
 // Reconcile is the single entry point for both route-mode strategies. It
@@ -271,6 +273,13 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 // must go forward instead.
 func rollbackAllowed(report Report) bool {
 	return len(report.SwitchOnly) == 0 && len(report.AwaitStopped) == 0
+}
+
+// sortedCopy returns a sorted copy of ss, leaving ss unchanged.
+func sortedCopy(ss []string) []string {
+	out := append([]string(nil), ss...)
+	sort.Strings(out)
+	return out
 }
 
 // topicsOf flattens the Topic field of one or more verdict buckets into a single

@@ -418,6 +418,7 @@ func killPointFullResult(topics []string) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  topics,
+		MigrateTopics:  topics,
 		FenceYAML:      killPointFenceYAML,
 		SwitchoverYAML: killPointSwitchoverYAML,
 		GatewayYAML:    testGatewayYAML,
