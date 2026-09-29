@@ -199,7 +199,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -362,10 +362,10 @@
               "detail": "Band 2 ≤ Enterprise"
             },
             {
-              "id": "mtls_on_non_aws_target",
-              "description": "Source uses mTLS (or mTLS chosen as target), target is non-AWS",
-              "customer": "mTLS authentication on your AWS target",
-              "encouragement": "Dedicated supports mTLS on your target cloud.",
+              "id": "mtls_on_gcp_target",
+              "description": "Source uses mTLS (or mTLS chosen as target), target is Google Cloud",
+              "customer": "mTLS authentication on your Google Cloud target",
+              "encouragement": "Dedicated supports mTLS on Google Cloud.",
               "fired": false,
               "detail": "not applicable"
             },

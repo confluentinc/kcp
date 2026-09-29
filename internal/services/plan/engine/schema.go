@@ -92,6 +92,23 @@ func schemaDecision(p Profile) SchemaResult {
 		return SchemaResult{Value: "Pending", Kind: SchemaKindPending, Held: true, Reason: reason}
 	}
 
+	// 0. The scan detected a Confluent registry but its edition is unanswered: the
+	// registry is present, so never claim "no Schema Registry detected".
+	if sr == "" && p.SchemaDetectedByScan {
+		switch strategy {
+		case schemaStrategyFresh:
+			return recreateFresh()
+		case schemaStrategySchemaless:
+			return SchemaResult{
+				Value:        "Schemaless (mismatch)",
+				Kind:         SchemaKindSchemaless,
+				Reason:       basis(sc("Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
+			}
+		}
+		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")
+	}
+
 	// 1. No source registry.
 	if sr == sourceSRNone || sr == "" {
 		switch strategy {
@@ -152,7 +169,7 @@ func schemaDecision(p Profile) SchemaResult {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
-				Reason:       basis(srcOr(p.SchemaAnswered, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				Reason:       basis(srcOr(!p.SchemaDetectedByScan, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
@@ -183,7 +200,7 @@ func schemaDecision(p Profile) SchemaResult {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
-				Reason:       basis(srcOr(p.SchemaAnswered, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				Reason:       basis(srcOr(!p.SchemaDetectedByScan, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}

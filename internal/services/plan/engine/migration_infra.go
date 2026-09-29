@@ -49,7 +49,7 @@ const (
 func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 	if p.TargetIsGovCloud == "Yes" {
 		// Government has no Cluster Linking at all — the specialist designs the whole path.
-		return specialistInfra("Confluent Cloud for Government does not offer Cluster Linking, which every migration-infra type relies on, so we design the migration path with a specialist.", false)
+		return specialistInfra("Confluent Cloud for Government doesn't offer fully managed Cluster Linking, which every migration-infra type relies on, so we design the migration path with a specialist.", false)
 	}
 	if tier == TierDedicated {
 		// Plan-layer-unreachable (a Dedicated plan is withheld before infra is mapped);
@@ -63,10 +63,16 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 	// networking is designed with a specialist, so the standard cutover steps stay in
 	// place (and no unusable AWS command is emitted).
 	if p.isOSKorCP() && p.SourceCloud != "" && p.SourceCloud != "AWS" {
-		where := "in " + p.SourceCloud
 		if p.SourceCloud == "On-prem or other" {
-			where = "on-premises or in another environment"
+			// Unlike Azure/GCP (still a cloud VPC/VNet, just not AWS), an on-prem source
+			// has no cloud network at all, so we do not claim Cluster Linking still
+			// applies as-is here — a private target needs a source-initiated link or one
+			// of the other on-prem paths (see the onprem_private_cluster_link
+			// human-assist trigger), not just a specialist-wired version of the standard
+			// destination-initiated link.
+			return specialistInfra("Your source runs on-premises or in another environment, and kcp's migration infrastructure provisions the outbound cluster link from an AWS VPC, so the link's networking is set up with a specialist rather than auto-generated.", true)
 		}
+		where := "in " + p.SourceCloud
 		return specialistInfra("Your source runs "+where+", and kcp's migration infrastructure provisions the outbound cluster link from an AWS VPC, so the link's networking is set up with a specialist rather than auto-generated. Cluster Linking itself still applies — the standard cutover steps below are unchanged.", true)
 	}
 
@@ -118,6 +124,8 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 		return scramListenerLinkChoice(p, "mTLS", "mTLS certificates")
 	case authHas(p, authSASLPlain):
 		return scramListenerLinkChoice(p, "SASL/PLAIN", "SASL/PLAIN credentials")
+	case authHas(p, authKerberos):
+		return scramListenerLinkChoice(p, "Kerberos", "Kerberos credentials")
 	default:
 		// Genuinely-undetected source auth on a supported tier: Cluster Linking IS
 		// available, only the link's authentication is designed with a specialist, so the

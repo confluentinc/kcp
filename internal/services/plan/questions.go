@@ -31,9 +31,12 @@ type opt struct {
 	Engine string
 	Detail string
 	// Applies gates whether the option is OFFERED (rendered) for a given profile;
-	// nil means always. The token stays parseable regardless (so a hand-added value
-	// still resolves) — this only controls which options are shown in the legend and
-	// terse hints, e.g. AWS IAM / AWS Glue are shown only for MSK.
+	// nil means always. It also gates whether a hand-written plan-inputs.yaml value
+	// is ACCEPTED: ValidateDeclaredSources rejects a value whose Applies is false
+	// for the cluster's resolved source (its own declared source_platform, else
+	// defaults.source_platform, else the scan's), e.g. source_auth: iam is offered,
+	// and accepted, only for an Amazon MSK source; sasl-plain and kerberos only for
+	// Apache Kafka or Confluent Platform.
 	Applies func(p engine.Profile) bool
 	// detailFn overrides Detail per source type (nil, or an empty return, keeps the
 	// static Detail). Lets one option carry source-specific wording without a second
@@ -254,7 +257,7 @@ var catalog = []question{
 		set: func(in *IntakeInputs, v []string) { in.TargetCloud = first(v) }},
 
 	{Key: "target_auth", Prompt: "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.", Disp: dispOptional, Multi: true,
-		Hint: "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+		Hint: "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
 		Opts: []opt{
 			{Token: "api-keys", Label: "API keys (SASL/PLAIN)", Engine: "API keys (SASL/PLAIN)"},
 			{Token: "oauth", Label: "OAuth", Engine: "OAuth"},
@@ -320,7 +323,7 @@ var scanCatalog = []question{
 		Hint: "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
 		Opts: []opt{
 			{Token: "3.0-plus", Label: "3.0 or newer", Engine: "3.0 or newer"},
-			{Token: "2.4-2.9", Label: "2.4-2.9", Engine: "2.4-2.9"},
+			{Token: "2.4-2.9", Label: "2.4–2.9", Engine: "2.4–2.9"},
 			{Token: "older", Label: "Older than 2.4", Engine: "Older than 2.4"},
 		},
 		Current:    func(p engine.Profile) []string { return nonEmpty(p.KafkaVersion) },
@@ -329,15 +332,15 @@ var scanCatalog = []question{
 
 	// Inter-broker protocol relative to the 2.8 Cluster Linking floor. Derived from
 	// the scanned config when available; this surfaces only when it wasn't AND the
-	// Kafka version is on the 2.4-2.9 band, the one place IBP changes the mechanism.
+	// Kafka version is on the 2.4–2.9 band, the one place IBP changes the mechanism.
 	{Key: "inter_broker_protocol", Prompt: "Is your inter-broker protocol (IBP) 2.8 or later?", Scan: true, requiredWhenMissing: true,
-		Hint: "This only matters when your Kafka version is 2.4-2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.",
-		// Only relevant when the plan could actually use Cluster Linking: the 2.4-2.9
+		Hint: "This only matters when your Kafka version is 2.4–2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.",
+		// Only relevant when the plan could actually use Cluster Linking: the 2.4–2.9
 		// band, data is moving, and the destination is private (Enterprise/Dedicated,
 		// not Serverless). A public Standard cluster goes to Replicator regardless, so
 		// IBP can't change its outcome and must not gate its plan.
 		Applies: func(p engine.Profile) bool {
-			return p.KafkaVersion == "2.4-2.9" && p.InterBrokerProtocol == "" && clusterLinkingPath(p)
+			return p.KafkaVersion == "2.4–2.9" && p.InterBrokerProtocol == "" && clusterLinkingPath(p)
 		},
 		Opts:       yn("Yes, 2.8 or later", "No, below 2.8", "Yes", "No"),
 		Current:    func(p engine.Profile) []string { return nonEmpty(p.InterBrokerProtocol) },
@@ -361,14 +364,16 @@ var scanCatalog = []question{
 		overridden: func(in IntakeInputs) bool { return in.OvPartitionBand != "" }},
 
 	{Key: "source_auth", Prompt: "How your Kafka clients authenticate today", Scan: true, Multi: true, requiredWhenMissing: true,
-		// AWS IAM is offered only for MSK; SASL/PLAIN is offered only for a non-MSK
-		// source (MSK's SASL is SCRAM). SASL/SCRAM, mTLS and plaintext apply to both.
+		// AWS IAM is offered only for MSK; SASL/PLAIN and Kerberos are offered only
+		// for a non-MSK source (MSK's SASL is SCRAM, and MSK has no Kerberos support).
+		// SASL/SCRAM, mTLS and plaintext apply to both.
 		Opts: []opt{
 			{Token: "iam", Label: "AWS IAM", Engine: "AWS IAM", Applies: engine.IsMSK},
 			{Token: "scram", Label: "SASL/SCRAM", Engine: "SASL/SCRAM"},
 			{Token: "sasl-plain", Label: "SASL/PLAIN", Engine: "API keys (SASL/PLAIN)", Applies: engine.IsOSKorCP},
 			{Token: "mtls", Label: "TLS client certificates (mTLS)", Engine: "TLS client certificates (mTLS)"},
 			{Token: "unauth", Label: "None / plaintext", Engine: "None / plaintext"},
+			{Token: "kerberos", Label: "Kerberos (GSSAPI)", Engine: "Kerberos (GSSAPI)", Applies: engine.IsOSKorCP},
 		},
 		Current:    func(p engine.Profile) []string { return p.SourceAuthTypes },
 		set:        func(in *IntakeInputs, v []string) { in.OvSourceAuth = v },
@@ -603,11 +608,32 @@ func mapEngineTokens(q question, engVals []string) []string {
 	return toks
 }
 
-// engineValues reads the resolved engine value(s) for this question off IntakeInputs.
+// engineValues reads the resolved engine value(s) for this question off
+// IntakeInputs, both the declared catalog and the scanCatalog's declared
+// overrides (the Ov* fields) — ValidateDeclaredSources needs the latter too, to
+// check a declared source_auth override against the resolved source.
 func (q question) engineValues(in IntakeInputs) []string {
 	switch q.Key {
 	case "source_platform":
 		return nonEmpty(in.SourcePlatform)
+	case "source_cluster_type":
+		return nonEmpty(in.OvClusterType)
+	case "kafka_version":
+		return nonEmpty(in.OvKafkaVersion)
+	case "inter_broker_protocol":
+		return nonEmpty(in.OvInterBrokerProtocol)
+	case "partition_band":
+		return nonEmpty(in.OvPartitionBand)
+	case "source_auth":
+		return in.OvSourceAuth
+	case "tiered_storage":
+		return nonEmpty(in.OvTiered)
+	case "topics_have_custom_settings":
+		return nonEmpty(in.OvTopicSettings)
+	case "msk_connect_present":
+		return nonEmpty(in.OvMSKConnect)
+	case "self_managed_connectors":
+		return nonEmpty(in.OvSelfManaged)
 	case "source_cloud":
 		return nonEmpty(in.SourceCloud)
 	case "private_networking_required":

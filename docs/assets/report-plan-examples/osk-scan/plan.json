@@ -255,7 +255,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -311,7 +311,7 @@
           "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
           "legend": [
             "3.0-plus → 3.0 or newer",
-            "2.4-2.9 → 2.4-2.9",
+            "2.4-2.9 → 2.4–2.9",
             "older → Older than 2.4"
           ],
           "tokens": [
@@ -333,13 +333,15 @@
             "scram → SASL/SCRAM",
             "sasl-plain → SASL/PLAIN",
             "mtls → TLS client certificates (mTLS)",
-            "unauth → None / plaintext"
+            "unauth → None / plaintext",
+            "kerberos → Kerberos (GSSAPI)"
           ],
           "tokens": [
             "scram",
             "sasl-plain",
             "mtls",
-            "unauth"
+            "unauth",
+            "kerberos"
           ],
           "required": false,
           "status": "scan",
@@ -475,7 +477,7 @@
         },
         "auth": {
           "value": "API keys (SASL/PLAIN)",
-          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: kcp create-asset migrate-acls kafka turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.",
           "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
           "action": "Set up API keys (SASL/PLAIN)",
           "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"

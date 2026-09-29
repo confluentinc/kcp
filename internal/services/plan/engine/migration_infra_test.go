@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMigrationInfraDecision(t *testing.T) {
 	prof := func(public bool, auths ...string) Profile {
@@ -53,6 +56,7 @@ func TestMigrationInfraDecision(t *testing.T) {
 		// (type 4) as the alternative. Only genuinely-undetected auth -> specialist.
 		{"private mtls", prof(false, authMTLS), TierEnterprise, 2, 4},
 		{"private sasl-plain", prof(false, authSASLPlain), TierEnterprise, 2, 4},
+		{"private kerberos", prof(false, authKerberos), TierEnterprise, 2, 4},
 		{"private none", prof(false), TierEnterprise, 0, 0},
 	}
 	for _, tc := range cases {
@@ -86,5 +90,19 @@ func TestMigrationInfraDecision(t *testing.T) {
 	// An AWS (or unknown-cloud) OSK source still auto-maps to a standard type.
 	if got := MigrationInfraDecision(Profile{SourceType: SourceApacheKafka, SourceCloud: "AWS", SourceAuthTypes: []string{authSCRAM}}, TierEnterprise); got.Type != 2 {
 		t.Errorf("AWS OSK source: type=%d, want 2", got.Type)
+	}
+}
+
+// A Kerberos source on AWS gets the SASL/SCRAM listener link (like SASL/PLAIN-only)
+// rather than the undetected-auth specialist fallback, and its source-credentials
+// note renders.
+func TestMigrationInfra_KerberosOnAWS(t *testing.T) {
+	p := Profile{SourceType: SourceApacheKafka, SourceCloud: "AWS", SourceAuthTypes: []string{authKerberos}, RequiresPrivateField: "Yes", NeedsDataMigration: "Yes"}
+	got := MigrationInfraDecision(p, TierEnterprise)
+	if got.Type != 2 || got.AlternativeType != 4 {
+		t.Errorf("kerberos on AWS: type=%d alt=%d, want 2/4", got.Type, got.AlternativeType)
+	}
+	if !strings.Contains(got.Rationale, "SASL/SCRAM listener") {
+		t.Errorf("rationale = %q, want the SCRAM-listener note", got.Rationale)
 	}
 }

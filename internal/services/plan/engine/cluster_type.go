@@ -144,7 +144,7 @@ type ClusterTypeResult struct {
 }
 
 func clusterTypeRules(p Profile, sizing SizingResult, tc string) (rules []ruleEval, hardFired []ruleEval) {
-	mtlsNonAws := tc != "" && tc != "AWS" && (authHas(p, authMTLS) || targetHasMtls(p))
+	mtlsOnGCP := tc == "GCP" && (authHas(p, authMTLS) || targetHasMtls(p))
 
 	// A declared Enterprise-ceiling breach forces Dedicated — meaningful only on
 	// Band 2, which is the band whose card asks the Enterprise ceilings.
@@ -158,10 +158,10 @@ func clusterTypeRules(p Profile, sizing SizingResult, tc string) (rules []ruleEv
 			Fired:         sizing.Band == bandXL,
 		},
 		{
-			ID:            "mtls_on_non_aws_target",
-			Customer:      "mTLS authentication on your " + tc + " target",
-			Encouragement: "Dedicated supports mTLS on your target cloud.",
-			Fired:         mtlsNonAws,
+			ID:            "mtls_on_gcp_target",
+			Customer:      "mTLS authentication on your Google Cloud target",
+			Encouragement: "Dedicated supports mTLS on Google Cloud.",
+			Fired:         mtlsOnGCP,
 		},
 		{
 			// No encouragement: this one withholds the plan and renders a bespoke

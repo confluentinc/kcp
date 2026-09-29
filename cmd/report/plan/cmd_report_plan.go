@@ -105,11 +105,15 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("load --plan-inputs %s: %w", planInputs, err)
 	}
-	// Misspelled keys, invalid values, or misspelled cluster names would otherwise be
-	// silently ignored, leaving the user with a plan that looks answered but isn't. So
-	// collect every such mistake and fail before writing anything, rather than emit a
-	// plan built on dropped answers. Cluster-name checks need a real scan to compare
-	// against (skip them in questionnaire mode).
+	// Misspelled keys, invalid values, misspelled cluster names, or an option
+	// declared for a source that never offers it (e.g. source_auth: iam on a
+	// Confluent Platform cluster) would otherwise be silently ignored or dropped,
+	// leaving the user with a plan that looks answered but isn't. So collect every
+	// such mistake and fail before writing anything, rather than emit a plan built
+	// on dropped answers. Cluster-name checks need a real scan to compare against
+	// (skip them in questionnaire mode); the source checks run either way, since a
+	// scanless run can still declare a source_platform to validate against.
+	inputErrs = append(inputErrs, plan.ValidateDeclaredSources(declared, processed, scanless)...)
 	if !scanless {
 		inputErrs = append(inputErrs, plan.ValidateDeclaredClusters(declared, processed)...)
 	}

@@ -181,3 +181,17 @@ clusters:
 		t.Errorf("undeclared cluster should get defaults: %+v", got)
 	}
 }
+
+// Kerberos (GSSAPI) is offered as a source-auth option only for a self-managed
+// Apache Kafka / Confluent Platform source — MSK has no Kerberos support.
+func TestQuestions_KerberosOSKOnly(t *testing.T) {
+	msk := engine.Profile{MSKClusterType: engine.MSKProvisioned, SourcePlatform: "Amazon MSK", PartitionsExact: fp(1000)}
+	if q := find(resolveQuestions(msk, IntakeInputs{}), "source_auth"); q == nil || containsStr(q.Tokens, "kerberos") {
+		t.Errorf("MSK source_auth tokens = %+v, must not offer kerberos", q)
+	}
+
+	osk := engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", PartitionsExact: fp(1000)}
+	if q := find(resolveQuestions(osk, IntakeInputs{}), "source_auth"); q == nil || !containsStr(q.Tokens, "kerberos") {
+		t.Errorf("OSK source_auth tokens = %+v, want kerberos offered", q)
+	}
+}

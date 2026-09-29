@@ -110,7 +110,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	aclsCmd.MarkFlagsMutuallyExclusive("role-arn", "user-arn", "state-file")
 	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-id")
 	_ = aclsCmd.MarkFlagRequired("target-cluster-id")
-	_ = aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	_ = aclsCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return aclsCmd
 }

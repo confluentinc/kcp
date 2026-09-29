@@ -20,10 +20,10 @@ const (
 // styleMap keys ARE the downtime_tolerance answer vocabulary, in reading order
 // (most downtime first, zero downtime last).
 var styleMap = map[string]string{
-	"A scheduled window, all at once":           "Cluster Linking, all at once",
-	"A scheduled window, one service at a time": "Cluster Linking, one service at a time",
-	"Minutes per service":                       "Cluster Linking, service by service",
-	"Seconds per service":                       "Cluster Linking, near-zero downtime",
+	"A scheduled window, all at once":           "Cluster Linking, all at once (Restart-All-At-Once)",
+	"A scheduled window, one service at a time": "Cluster Linking, one service at a time (Stop-Wait-Restart)",
+	"Minutes per service":                       "Cluster Linking, service by service (Stop-Restart-Repeat)",
+	"Seconds per service":                       "Cluster Linking, near-zero downtime (Stop-Restart-Repeat via Gateway)",
 	"Zero downtime":                             styleZeroDowntime,
 }
 
@@ -32,6 +32,11 @@ var (
 	styleGatewayRequired = styleMap["Seconds per service"]
 	styleNoGateway       = styleMap["Minutes per service"]
 )
+
+// styleAllAtOnce is named so the cutover lead below can tell the all-at-once
+// style apart from the others: "cut clients over when you are ready rather
+// than all at once" is backwards when this is the style.
+var styleAllAtOnce = styleMap["A scheduled window, all at once"]
 
 // gatewayUsable — the Confluent Gateway cannot accept AWS IAM clients (and a
 // Serverless source is IAM-only), so a Gateway-dependent style is unavailable to
@@ -43,6 +48,12 @@ func gatewayUsable(p Profile) bool {
 const gatewayIAMNote = "A zero-downtime or seconds-level cutover runs through the Confluent Gateway, " +
 	"which needs a client authentication method it can accept, and AWS IAM is not one. Moving your " +
 	"clients to SASL/SCRAM or mTLS first opens that path, and we can plan that with you."
+
+// clCutoverSteps spells out the plain (non-Gateway) Cluster Linking cutover so every
+// plain-CL reason ends with the same concrete steps.
+const clCutoverSteps = "Turn on consumer.offset.sync.enable when you create the link, so your consumer " +
+	"offsets come across too. At cutover, stop your producers, wait for the mirror to catch up (lag " +
+	"zero), promote the mirror topics so they accept writes, then restart your clients against Confluent Cloud."
 
 // Alternative is the "also an option" shown under a switchover verdict.
 type Alternative struct {
@@ -165,14 +176,10 @@ func jumpClusterPlan(p Profile, tier Tier) SwitchoverResult {
 	}
 }
 
-func startFreshPlan(tier Tier, serverlessSource bool) SwitchoverResult {
+func startFreshPlan(p Profile, tier Tier) SwitchoverResult {
 	tierName := "new"
 	if tier != "" {
 		tierName = string(tier)
-	}
-	mirrorReason := "If you need your existing messages on the new cluster, we would use Cluster Linking to mirror topics and offsets continuously, then cut clients over once they have caught up. Change your answer above and we will plan that instead."
-	if serverlessSource {
-		mirrorReason = "If you need your existing messages on the new cluster, we would use Confluent Replicator to copy them across, then cut clients over. Cluster Linking is not an option from MSK Serverless, which only supports AWS IAM authentication. Change your answer above and we will plan that instead."
 	}
 	return SwitchoverResult{
 		Value:      "Start fresh",
@@ -181,24 +188,66 @@ func startFreshPlan(tier Tier, serverlessSource bool) SwitchoverResult {
 		Reason: basis(ans("no data migration")) + "you don't need to carry existing data across, so this is the simplest path. Create the " +
 			tierName + " cluster, point your producers and consumers at it, and let the old cluster age out over its retention window. " +
 			"No mirroring, no replication tooling, no cutover window. If you later need some history, say so and we will plan a mirrored cutover instead.",
-		Alternative: &Alternative{Value: "Mirror your data across first", Reason: mirrorReason},
+		Alternative: &Alternative{Value: "Mirror your data across first", Reason: startFreshAlternative(p, tier)},
 		Action:      nil,
 	}
 }
 
+// startFreshAlternative names whichever mechanism the customer would actually
+// get if they flipped needs_data_migration to Yes, built from resolveMechanism
+// with the same profile and tier rather than guessed from isServerless alone —
+// a Standard destination, a below-Cluster-Linking-floor source, or an
+// Enterprise-destination Serverless source (which resolves to a jump cluster,
+// neither Cluster Linking nor Replicator) all name the wrong mechanism if
+// guessed. Forcing needsDataAnswer to "Yes" means this can never drift from
+// what switchoverDecision would actually plan if the answer changed.
+func startFreshAlternative(p Profile, tier Tier) string {
+	m := resolveMechanism(p, tier, "Yes")
+	// Flipping to Yes would fire the onprem_private_cluster_link handoff, so promise
+	// a designed private link rather than a self-serve mechanism.
+	if p.isOSKorCP() && p.SourceCloud == "On-prem or other" && willBePrivate(p) && mechanismUsesClusterLink(p, tier, "Yes") {
+		return "If you need your existing messages on the new cluster, we'd design the private link with you, since your brokers run outside a cloud network. Change your answer above and we will plan that instead."
+	}
+	lead := "If you need your existing messages on the new cluster, we would use "
+	tail := " Change your answer above and we will plan that instead."
+	if m.Mechanism == "jump-cluster" {
+		return lead + "Cluster Linking through a temporary jump cluster to mirror topics and offsets " +
+			"continuously, then cut clients over once they have caught up. The jump cluster is there " +
+			"because AWS IAM credentials cannot cross a cluster link directly." + tail
+	}
+	if m.Mechanism == "replicator" {
+		var why string
+		switch m.Why {
+		case "gov":
+			why = "Confluent Cloud for Government doesn't offer fully managed Cluster Linking."
+		case "serverless-tier":
+			why = "Cluster Linking is not an option from MSK Serverless, which only supports AWS IAM authentication."
+		case "tier":
+			why = "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a " + string(tier) + " cluster."
+		case "ibp":
+			why = "Your inter-broker protocol is below 2.8, so Cluster Linking is not available even though your Kafka version qualifies."
+		default:
+			why = "Your source is below the Cluster Linking floor: Kafka 2.4, Confluent Platform 5.4, inter-broker protocol (IBP) 2.8."
+		}
+		return lead + "Confluent Replicator to copy them across, then cut clients over. " + why + tail
+	}
+	return lead + "Cluster Linking to mirror topics and offsets continuously, then cut clients over once they have caught up." + tail
+}
+
 // kcpResource links the KCP migration infrastructure where an MSK source
-// migrates over Cluster Linking, with a caveat when the source is mTLS-only.
+// migrates over Cluster Linking, with a caveat when the source lacks SASL/SCRAM
+// (the link signs in over SASL/SCRAM).
 func kcpResource(p Profile, tier Tier) *KCPResource {
 	if tier == "" || !clusterLinkingAvailable(tier) {
 		return nil
 	}
 	r := &KCPResource{URL: "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"}
-	if mtlsNeeded(p) {
-		source := "source"
-		if p.isMSK() {
-			source = "MSK source"
+	if !authHas(p, authSCRAM) {
+		onlyIf := "if your source is mTLS-only"
+		if !p.isMSK() {
+			onlyIf = "if your source is mTLS-, SASL/PLAIN- or Kerberos-only"
 		}
-		r.Caveat = "KCP's migration-infra links over SASL/SCRAM. If your " + source + " is mTLS-only, add a SASL/SCRAM listener for the link first. Your clients can keep mTLS."
+		r.Caveat = "The link kcp generates signs in over SASL/SCRAM, so " + onlyIf + ", add a SASL/SCRAM listener and a SCRAM user for the link. Your clients keep their current authentication on the source."
 	}
 	return r
 }
@@ -216,7 +265,7 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 	m := resolveMechanism(p, tier, "")
 
 	if m.Mechanism == "start-fresh" {
-		return startFreshPlan(tier, p.isServerless())
+		return startFreshPlan(p, tier)
 	}
 
 	if m.Mechanism == "jump-cluster" {
@@ -229,7 +278,7 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 		mustMoveData := p.NeedsDataMigration == "Yes"
 		switch m.Why {
 		case "gov":
-			return replicatorPlan(p, "Confluent Cloud for Government does not offer Cluster Linking, so we move your existing data with Confluent Replicator instead.", mustMoveData)
+			return replicatorPlan(p, "Confluent Cloud for Government doesn't offer fully managed Cluster Linking, so we move your existing data with Confluent Replicator instead.", mustMoveData)
 		case "serverless-tier":
 			t := "Standard"
 			if tier != "" {
@@ -239,7 +288,7 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 		case "tier":
 			return replicatorPlan(p, "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a "+string(tier)+" cluster.", mustMoveData)
 		case "ibp":
-			return replicatorPlan(p, basis(srcOr(p.KafkaVersionAnswered, "inter-broker protocol below 2.8"))+"Cluster Linking is not available even though your Kafka version qualifies.", mustMoveData)
+			return replicatorPlan(p, basis(srcOr(p.IBPAnswered, "inter-broker protocol below 2.8"))+"Cluster Linking is not available even though your Kafka version qualifies.", mustMoveData)
 		default:
 			kafkaFinding := "source below the Cluster Linking floor"
 			if p.KafkaVersion != "" {
@@ -276,7 +325,7 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 			Value: styleNoGateway,
 			Reason: "You asked for a cutover faster than we can run on AWS IAM. " + gatewayIAMNote +
 				" So we recommend a Cluster Linking cutover, so you cut clients over when you are ready " +
-				"rather than all at once.",
+				"rather than all at once. " + clCutoverSteps,
 			How:         clHow,
 			Action:      strptr("Create cluster link"),
 			MM2:         false,
@@ -302,8 +351,17 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 		hardCoordination := p.ClientCoordinationBurden == "Hard (many clients and teams)"
 		switch {
 		case (blastRadiusHigh || hardCoordination) && !gatewayUsable(p):
-			reason = "We recommend a Cluster Linking cutover, so you " +
-				"cut clients over when you are ready rather than all at once. " + gatewayIAMNote
+			// The lead says "rather than all at once", which is backwards when the style
+			// IS the all-at-once style: mapped can still be that style here even after
+			// the escalation check above (style stays `mapped`, unchanged).
+			if mapped == styleAllAtOnce {
+				reason = "So we recommend a Cluster Linking cutover, moving all your clients over together in one scheduled window. " +
+					gatewayIAMNote + " " + clCutoverSteps
+			} else {
+				reason = "We recommend a Cluster Linking cutover, so you " +
+					"cut clients over when you are ready rather than all at once. " + gatewayIAMNote +
+					" " + clCutoverSteps
+			}
 			how = clHow
 		case blastRadiusHigh || hardCoordination:
 			gatewayMediated = true
@@ -318,11 +376,14 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 			reason = "We recommend a Cluster Linking cutover, moved to a Gateway-mediated approach because " + joinAnd(whyParts) + ". The Gateway needs a Confluent Cloud Gateway license and Confluent for Kubernetes. Talk to us and we will work out what that takes for you."
 			how = clHow
 		default:
-			pace := "restart them against Confluent Cloud, service by service when you are ready"
-			if mapped == styleMap["A scheduled window, all at once"] {
-				pace = "restart them all against Confluent Cloud together, in your scheduled window"
+			// Same backwards-lead fix as the escalation branch above: style is still
+			// `mapped` here.
+			if mapped == styleAllAtOnce {
+				reason = "We recommend a Cluster Linking cutover, moving all your clients over together in one scheduled window. " + clCutoverSteps
+			} else {
+				reason = "We recommend a Cluster Linking cutover, so you cut clients over when you are ready " +
+					"rather than all at once. " + clCutoverSteps
 			}
-			reason = "We recommend a Cluster Linking cutover. At cutover you stop your producers, let the link finish, then " + pace + "."
 			how = clHow
 		}
 	}

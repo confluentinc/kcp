@@ -59,9 +59,9 @@ func resolveMechanism(p Profile, tier Tier, needsDataAnswer string) mechanismRes
 	if needsDataAnswer != "" {
 		needsData = needsDataAnswer != "No"
 	}
-	// Cluster Linking floor: below Kafka 2.4, OR 2.4-2.9 with inter-broker
+	// Cluster Linking floor: below Kafka 2.4, OR 2.4–2.9 with inter-broker
 	// protocol < 2.8 (IBP is assumed ≥ 2.8 unless the user says otherwise).
-	ibpBelow := p.KafkaVersion == "2.4-2.9" && p.InterBrokerProtocol == "No"
+	ibpBelow := p.KafkaVersion == "2.4–2.9" && p.InterBrokerProtocol == "No"
 	belowFloor := p.KafkaVersion == "Older than 2.4" || ibpBelow
 
 	if !needsData {
@@ -108,6 +108,15 @@ func mechanismUsesClusterLink(p Profile, tier Tier, needsDataAnswer string) bool
 // PrivateLink Endpoint (or GCP egress PSC) is added for the link — keeping the
 // networking verdict consistent with the migration-infra type (public source =>
 // type 1, no private networking to the source).
+//
+// An on-prem (or "other") source has no cloud VPC/VNet for either endpoint to
+// reach into — Egress PrivateLink Endpoint and GCP's egress PSC are both
+// documented only for a source inside a cloud network — so no standard egress
+// endpoint is added there either; a specialist designs the private route instead
+// (see the onprem_private_cluster_link human-assist trigger).
 func clusterLinkNeedsPrivateEgress(p Profile, tier Tier, needsDataAnswer string) bool {
+	if p.SourceCloud == "On-prem or other" {
+		return false
+	}
 	return mechanismUsesClusterLink(p, tier, needsDataAnswer) && p.SourcePublicAccess != "Yes"
 }

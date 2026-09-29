@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSizingShape_Mismatch(t *testing.T) {
 	// Reviewed peer above the anchor is the unusual-shape edge case.
@@ -44,10 +47,20 @@ func TestHumanAssist_Triggers(t *testing.T) {
 		t.Errorf("breadth: required=%v triggers=%+v", breadth.Required, breadth.Triggers)
 	}
 
-	// Connects "Other" on the private path.
-	other := humanAssistDecision(Profile{RequiresPrivateField: "Yes", ConnectsToday: connectsOther}, haCtx{Tier: TierEnterprise, Band: 2})
+	// Connects "Other" on the private path, on an AWS target — connects_today is
+	// only asked on AWS, so the trigger must require it too.
+	other := humanAssistDecision(Profile{RequiresPrivateField: "Yes", TargetCloud: "AWS", ConnectsToday: connectsOther}, haCtx{Tier: TierEnterprise, Band: 2})
 	if !hasTrigger(other, "connection_other") {
 		t.Errorf("connection_other not fired: %+v", other.Triggers)
+	}
+
+	// Same private + Other answer, but a GCP/Azure target: connects_today is never
+	// asked off-AWS, so this must not fire.
+	for _, cloud := range []string{"GCP", "Azure"} {
+		notAWS := humanAssistDecision(Profile{RequiresPrivateField: "Yes", TargetCloud: cloud, ConnectsToday: connectsOther}, haCtx{Tier: TierEnterprise, Band: 2})
+		if hasTrigger(notAWS, "connection_other") {
+			t.Errorf("connection_other fired on a %s target: %+v", cloud, notAWS.Triggers)
+		}
 	}
 
 	// Every Dedicated route is a trigger; the cause is named, ceiling-figures stay internal.
@@ -90,5 +103,21 @@ func TestHumanAssist_Triggers(t *testing.T) {
 	clean := humanAssistDecision(Profile{}, haCtx{Tier: TierStandard, Band: 1, Complete: true})
 	if clean.Required || clean.Value != "Not needed" || clean.Action != "Talk to a person" {
 		t.Errorf("clean: %+v", clean)
+	}
+}
+
+func TestDedicatedSrcReason_MtlsAttribution(t *testing.T) {
+	c := cause{ID: "mtls_on_gcp_target"}
+	src, _ := dedicatedSrcReason(Profile{TargetIdentityModel: []string{"mTLS"}}, c)
+	if !strings.Contains(src, "you chose mTLS for your clients on Confluent Cloud") {
+		t.Errorf("target-only: %q", src)
+	}
+	src, _ = dedicatedSrcReason(Profile{SourceAuthTypes: []string{authMTLS}}, c)
+	if !strings.Contains(src, "your source uses mTLS") {
+		t.Errorf("source: %q", src)
+	}
+	src, _ = dedicatedSrcReason(Profile{SourceAuthTypes: []string{authMTLS}, TargetIdentityModel: []string{"mTLS"}}, c)
+	if !strings.Contains(src, "your source uses mTLS") {
+		t.Errorf("both: %q", src)
 	}
 }

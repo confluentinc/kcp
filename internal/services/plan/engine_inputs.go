@@ -325,6 +325,19 @@ func (q question) engineFor(token string) (string, bool) {
 	return "", false
 }
 
+// optFor finds the option carrying the given engine value (the reverse of
+// engineFor), so a caller holding a resolved engine value — e.g. a declared
+// answer read back off IntakeInputs — can get back to its option (Token,
+// Applies) for validation or display.
+func (q question) optFor(eng string) (opt, bool) {
+	for _, o := range q.Opts {
+		if o.Engine == eng {
+			return o, true
+		}
+	}
+	return opt{}, false
+}
+
 // tokens lists a question's valid tokens (for error messages).
 func (q question) tokens() []string {
 	out := make([]string, len(q.Opts))

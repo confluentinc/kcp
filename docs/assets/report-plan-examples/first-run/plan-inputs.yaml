@@ -86,7 +86,7 @@ all_clusters:
   # consumer_history_requirement: true   # default
   # ── Derived from your source auth per cluster; set one here to force it on ALL clusters ──
   # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-  #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+  #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
   #   api-keys → API keys (SASL/PLAIN)
   #   oauth → OAuth
   #   mtls → mTLS
@@ -103,7 +103,7 @@ all_clusters:
   #   false → No
   # self_managed_connectors:   # from scan · [true | false]
   # Is your inter-broker protocol (IBP) 2.8 or later?
-  #   (This only matters when your Kafka version is 2.4-2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.)
+  #   (This only matters when your Kafka version is 2.4–2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.)
   #   true → Yes, 2.8 or later
   #   false → No, below 2.8
   # inter_broker_protocol:   # from scan · [true | false]

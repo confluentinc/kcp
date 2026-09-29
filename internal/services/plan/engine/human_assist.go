@@ -1,5 +1,7 @@
 package engine
 
+import "strings"
+
 // Human Assist — a first-class output, not a fallback: it routes genuinely
 // complex scenarios and protects trust by handing off answers we could compute
 // but would rather not have a customer self-serve into. A high trigger rate is
@@ -24,8 +26,11 @@ func specialistWhy(src, reason string) string {
 // link's outbound connection) already carry an honest customer phrase.
 func dedicatedSrcReason(p Profile, c cause) (src, reason string) {
 	switch c.ID {
-	case "mtls_on_non_aws_target":
-		return "your answer that your source uses mTLS", "keeping mTLS on your " + targetCloud(p) + " target needs a Dedicated cluster."
+	case "mtls_on_gcp_target":
+		if authHas(p, authMTLS) {
+			return "your answer that your source uses mTLS", "keeping mTLS on your Google Cloud target needs a Dedicated cluster."
+		}
+		return "your answer that you chose mTLS for your clients on Confluent Cloud", "mTLS on your Google Cloud target needs a Dedicated cluster."
 	case "band4_exceeds_enterprise_cap":
 		cust := c.Customer
 		if cap := sizingCapForDriver(p); cap != "" {
@@ -164,12 +169,31 @@ func humanAssistDecision(p Profile, ctx haCtx) HumanAssistResult {
 			"Declared a workload beyond the standard sizing bands ("+joinComma(enterpriseLimits())+"). Route to a specialist: sizing needs a human.")
 	}
 
-	// Compound topology — only on the private path, where we ask.
-	if requiresPrivate(p) && connectsToday(p) == connectsOther {
+	// Compound topology — only on the private path, on an AWS target, where we ask
+	// (connects_today is only asked when WillBePrivate(p) && TargetCloudOf(p) == "AWS").
+	if requiresPrivate(p) && targetCloud(p) == "AWS" && connectsToday(p) == connectsOther {
 		add("connection_other",
 			specialistWhy("your answer that you connect over more than one method",
 				"the right combination depends on details we can't see from here, so we'd like to go through it with you."),
 			"")
+	}
+
+	// An Apache Kafka / Confluent Platform source that runs on-premises (or in
+	// another environment outside any cloud network), migrating data to a private
+	// Confluent Cloud target over a cluster link: Confluent Cloud's documented
+	// private routes (Egress PrivateLink Endpoint, GCP egress PSC) only reach a
+	// source inside a cloud VPC/VNet, so there is no self-serve path here. Public
+	// targets and non-cluster-link mechanisms (Replicator, start fresh) sidestep
+	// this entirely, so only the private + cluster-link combination fires it.
+	if p.isOSKorCP() && p.SourceCloud == "On-prem or other" &&
+		!strings.HasPrefix(ctx.NetworkingMethod, "Public") &&
+		mechanismUsesClusterLink(p, ctx.Tier, p.AnyAppNeedsDataMigration) {
+		why := "An Enterprise cluster can't link to Apache Kafka brokers outside a cloud network over a private endpoint. We'll design the path with you. The options are Replicator running in your network, temporary public broker endpoints, or a cluster link into a Dedicated cluster over network peering (or Transit Gateway on AWS)."
+		if p.isCP() {
+			why = "Your Confluent Platform brokers run outside a cloud network, so Confluent Cloud can't reach them over a private endpoint. The usual private route is a source-initiated cluster link: your brokers connect out to Confluent Cloud over your Direct Connect, ExpressRoute or Interconnect link. It needs Confluent Platform 7.1 or later on Confluent Server brokers. We'll confirm your version and connectivity with you and design the link together."
+		}
+		add("onprem_private_cluster_link", why,
+			"On-prem/other Apache Kafka or Confluent Platform source, private target, data moving over a cluster link: no self-serve private path (Egress PrivateLink Endpoint / GCP egress PSC only reach a source inside a cloud VPC or VNet). Confluent Platform needs a source-initiated link (7.1+ on Confluent Server); Apache Kafka has no documented private path at all (Replicator, public endpoints, or Dedicated with peering/Transit Gateway).")
 	}
 
 	// Breadth is an upside trigger — sprawl is where Confluent wins on cost.

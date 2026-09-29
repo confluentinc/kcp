@@ -83,7 +83,7 @@ The matrix above describes _source_ support. Independently, three `create-asset`
 
 The declaration is **required** on these three commands (there is no default). It is not accepted on any other command.
 
-**Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
+**Confluent Cloud for Government** doesn't offer fully managed Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
 
 | Path                                            | `commercial` (Standard) | `government` (Government)              |
 | :---------------------------------------------- | :---------------------- | :-------------------------------------------- |
