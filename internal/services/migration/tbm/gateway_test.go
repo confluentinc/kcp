@@ -667,3 +667,53 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
 }
+
+// TestTBMActions_Fence_UnconfirmedFenceIsMarked: once the fence patch has
+// reached the cluster, every later failure leaves the fenced rules there, so
+// Fence marks it migration.ErrFenceUnconfirmed for the orchestrator to remove.
+// A patch that never reached the cluster is not marked.
+func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
+	patchOK := func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil }
+	cases := []struct {
+		name   string
+		gw     *mockGatewayService
+		marked bool
+	}{
+		{"an apply failure is not an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("k8s API unavailable")
+			},
+		}, false},
+		{"an apply that landed but could not be read back is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("%w: stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified)
+			},
+		}, true},
+		{"an acceptance failure is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: patchOK,
+			waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
+			},
+		}, true},
+		{"a verification failure is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: patchOK,
+			waitForGatewayReadyFn: func(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
+				return fmt.Errorf("gateway pods did not converge")
+			},
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tc.gw, &mockClusterLinkService{})
+
+			err := actions.Fence(context.Background(), testTBMConfig())
+
+			require.Error(t, err)
+			if tc.marked {
+				assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
+			} else {
+				assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
+			}
+		})
+	}
+}

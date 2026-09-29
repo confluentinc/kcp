@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
@@ -184,8 +185,8 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 		o.reporter.stepDone()
 
 		// Test-only interruption seam: cancel the run after the configured
-		// checkpoint (real context cancellation, the Ctrl-C path) so the live
-		// resume suite is left with a genuine partial world. No-op in production.
+		// checkpoint, so the live resume suite is left with the partial world an
+		// abrupt exit right after this step would leave. No-op in production.
 		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
 			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
 			cancel()
@@ -198,17 +199,33 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 }
 
 // handleStepFailure maps a failed workflow step to its compensating rollback.
-// It rolls back for ANY halting error while the fence is up and nothing is
-// promoted yet — the only state abort_fence can legally leave (fenced). Promote
-// is the point of no return: once mirrors are promoted, unfencing would strand
+// A fence that reached the cluster but could not be confirmed is removed (see
+// removeUnconfirmedFence). Otherwise it rolls back for ANY halting error while
+// kcp's fence is up and nothing is promoted yet: this run's fence has landed
+// (fenced, the state abort_fence can leave), or an interrupted run's fence was
+// up at the start and this run has not reached its own fence step. Promote is
+// the point of no return: once mirrors are promoted, unfencing would strand
 // them (producers routed back to source while the target mirrors are frozen
 // STOPPED), so we never abort past it — the FSM structurally has no abort_fence
-// edge from fence_verified onward. A cancelled context (Ctrl-C / kill /
-// deadline) cannot perform the unfence IO, so we leave the fenced world for the
-// idempotent resume. Mirrors migration.handleStepFailure, minus the
-// ErrFenceUnconfirmed and pause_offset_sync branches TBM has no equivalent of.
+// edge from fence_verified onward. With part of the batch already promoted
+// (RollbackAllowed false) the fence is kept. A cancelled context cannot perform
+// the unfence IO, so the fenced world is left for the idempotent resume; only
+// the test kill point cancels one, since kcp installs no signal handler and a
+// Ctrl-C ends the process instead.
 func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
+
+	// A fence that reached the cluster but was never confirmed is removed
+	// outside the FSM: the fence transition was cancelled, so the machine never
+	// left lags_ok and there is no edge to travel back along. Only the gateway
+	// needs putting right.
+	if errors.Is(stepErr, migration.ErrFenceUnconfirmed) {
+		if !o.config.RollbackAllowed {
+			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			return stepFailure
+		}
+		return o.removeUnconfirmedFence(ctx, stepFailure)
+	}
 
 	// Roll back while kcp's fence is up and nothing is promoted yet: this run's
 	// fence has landed (fenced, the state abort_fence can leave), or an
@@ -228,7 +245,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		reason = "Unrouted producers detected"
 	}
 	if !o.config.RollbackAllowed {
-		o.reporter.warn("%s — keeping the fence: part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch", reason)
+		o.reporter.warn("%s — keeping the fence: %s", reason, rollbackForbiddenReason)
 		return stepFailure
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
@@ -248,6 +265,31 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		return stepFailure
 	}
 
+	return stepFailure
+}
+
+// rollbackForbiddenReason is why a failure keeps the fence when reconcile
+// forbade a rollback (MigrationConfig.RollbackAllowed false).
+const rollbackForbiddenReason = "part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch"
+
+// removeUnconfirmedFence sets the route's rules to reconcile's rollback target
+// after a fence that reached the cluster but could not be confirmed on every
+// gateway pod. Whether the operator rejected the fenced rules or they are
+// still propagating, they are live in the CR and could hold client traffic,
+// so they are taken out either way. A failed removal is reported with the
+// fence's own failure, since the fence may still be up.
+func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailure error) error {
+	var rejected *gateway.GatewayRejectedError
+	if errors.As(stepFailure, &rejected) {
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; removing it", rejected.Reason)
+	} else {
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — removing it")
+	}
+	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+		slog.Error("❌ failed to remove an unconfirmed fence", "error", err)
+		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
+	}
+	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
 	return stepFailure
 }
 

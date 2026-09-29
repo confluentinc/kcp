@@ -1015,3 +1015,78 @@ func TestTBMOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t 
 	assert.NotContains(t, out, "removing fence")
 	assert.Equal(t, StateFenceVerified, state)
 }
+
+// unconfirmedFenceTBM runs a fresh TBM batch whose fence patch lands but whose
+// first acceptance wait fails, with rollback allowed or not and the restoring
+// patch failing or not. It returns the route patches applied, the output, the
+// final state and the run's error.
+func unconfirmedFenceTBM(t *testing.T, rollbackAllowed, restoreFails bool) ([]gateway.RoutePatch, string, string, error) {
+	t.Helper()
+	var patches []gateway.RoutePatch
+	var accepts int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			patches = append(patches, rp)
+			if restoreFails && len(patches) == 2 {
+				return "", fmt.Errorf("k8s API unavailable")
+			}
+			return "", nil
+		},
+		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			accepts++
+			if accepts == 1 {
+				return fmt.Errorf("operator never reconciled") // the fence's wait; the restore's succeeds
+			}
+			return nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-unconfirmed-fence", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+	res := realisticReconcileResult()
+	res.RollbackAllowed = rollbackAllowed
+
+	err := orchestrator.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+	return patches, out.String(), orchestrator.fsm.Current(), err
+}
+
+// TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence: a fence that
+// reached the cluster but could not be confirmed is taken back out — the run
+// sets the route's rules to reconcile's rollback target — and the run fails.
+func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence(t *testing.T) {
+	patches, out, state, err := unconfirmedFenceTBM(t, true, false)
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.Len(t, patches, 2, "the fence, then the patch removing it")
+	want, ferr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
+	require.NoError(t, ferr)
+	assert.Equal(t, "rules", patches[1].Field)
+	assert.Equal(t, want, patches[1].Value, "the removal sets the rules to reconcile's rollback target")
+	assert.Contains(t, out, "removing it")
+	assert.Contains(t, out, "Fence removed")
+	assert.Equal(t, StateLagsOk, state, "the fence transition never completed")
+}
+
+// TestTBMOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence:
+// with part of the batch already promoted, removing the fence would send those
+// topics' clients back to the source, so the fence stays and the run says so.
+func TestTBMOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	patches, out, _, err := unconfirmedFenceTBM(t, false, false)
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Len(t, patches, 1, "the fence only: nothing removes it")
+	assert.Contains(t, out, "keeping the fence")
+}
+
+// TestTBMOrchestrator_Execute_UnconfirmedFence_RemovalFails_ReportsBoth: when
+// the patch removing the fence also fails, the run's error names both
+// failures, so the operator knows the fence may still be up.
+func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovalFails_ReportsBoth(t *testing.T) {
+	patches, _, _, err := unconfirmedFenceTBM(t, true, true)
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Len(t, patches, 2)
+	assert.Contains(t, err.Error(), "operator never reconciled", "the fence's own failure")
+	assert.Contains(t, err.Error(), "k8s API unavailable", "the removal's failure")
+}

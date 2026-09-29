@@ -2,6 +2,7 @@ package tbm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -247,12 +248,10 @@ func formatLag64(n int64) string {
 // gateway claims to support it, derives the fence RoutePatch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
 // deriveFenceRoutePatch), patches it in, and confirms it landed. Unlike
-// migration.FenceGateway there is no pod-UID capture (that strengthening is
-// deferred, unlike verify_fence's rogue/unrouted-producer detection, which
-// is real — see VerifyFence). A failure here has no compensating rollback of
-// its own (abort_fence only fires from verify_fence's ErrUnroutedProducers)
-// — it just returns an error, leaving the FSM at lags_ok; re-running
-// execute-tbm retries fencing.
+// migration.FenceGateway there is no pod-UID capture. A failure leaves the FSM
+// at lags_ok. Once the patch has reached the cluster, every failure is marked
+// migration.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
+// client traffic, so the orchestrator removes them (see handleStepFailure).
 func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
 	// Plan-driven no-op: reconcile emitted no fence artifact, so there is nothing
 	// to fence this run. Keyed on config.FenceYAML, NOT config.Topics: Topics (the
@@ -274,15 +273,21 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 
 	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
 	if err != nil {
+		if errors.Is(err, gateway.ErrApplyUnverified) {
+			// The patch persisted; only kcp's read-back of the stored configId
+			// failed, so the fenced rules are live like after any failure below.
+			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", migration.ErrFenceUnconfirmed, err)
+		}
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	a.reporter.Success("Fenced gateway CR applied")
 
+	// The fenced rules are live in the cluster from here on.
 	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
 	}
 	if err := a.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
 	}
 
 	a.reporter.Success("Gateway fenced and ready")
