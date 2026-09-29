@@ -43,10 +43,9 @@ func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 }
 
 // deriveRulesRoutePatch builds the RoutePatch that grafts yamlSrc's rules
-// fragment onto config.Route. TBM's fence and switch write paths both patch
-// the same "rules" field — they differ only in which captured YAML the
-// fragment comes from — unlike AAO's fence/switch pair, which patch distinct
-// fields ("fence" vs "streamingDomain").
+// fragment onto config.Route. TBM's fence, switch and rollback all patch the
+// same "rules" field — they differ only in which reconcile artifact the
+// fragment comes from.
 func deriveRulesRoutePatch(config *migration.MigrationConfig, yamlSrc string) (gateway.RoutePatch, error) {
 	v, err := gateway.FragmentValue([]byte(yamlSrc), "rules")
 	if err != nil {
@@ -71,15 +70,11 @@ func deriveSwitchRoutePatch(config *migration.MigrationConfig) (gateway.RoutePat
 	return deriveRulesRoutePatch(config, config.SwitchoverYAML)
 }
 
-// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
-// its captured state in config.GatewayYAML — a whole-route replace (Field ==
-// "") rather than a single-key mutation.
+// deriveUnfenceRoutePatch builds the RoutePatch a rollback applies: reconcile's
+// rollback target (config.RollbackFenceYAML), set on config.Route's rules like
+// the fence and the switch.
 func deriveUnfenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+	return deriveRulesRoutePatch(config, config.RollbackFenceYAML)
 }
 
 // verifier builds the shared gateway apply/wait/verify mechanism, seeded

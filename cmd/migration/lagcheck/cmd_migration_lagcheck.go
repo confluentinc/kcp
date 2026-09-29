@@ -34,8 +34,8 @@ func NewMigrationLagCheckCmd() *cobra.Command {
 Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
-comes from the GatewayMigration manifest, so this command reads no state file and works
-before 'kcp migration execute' has ever run. The credentials are the cluster-link REST leg
+comes from the GatewayMigration manifest, so this command works before
+'kcp migration execute' has ever run. The credentials are the cluster-link REST leg
 (spec.clusterLink.linkCredentials), honoured in whatever form the manifest resolves —
 api_key, basic, bearer, or mtls. lag-check never dials the source or destination Kafka
 legs directly.

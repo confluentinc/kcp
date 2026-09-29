@@ -92,6 +92,7 @@ func GenerateGateway() ([]byte, error) {
 	stringCredential(source.Properties["credentials"])
 	stringCredential(kafka.Properties["clusterCredentials"])
 	stringCredential(clusterLink.Properties["linkCredentials"])
+	clusterLink.Properties["consumerOffsetSyncBaseline"].Enum = []any{manifest.OffsetSyncBaselineEnabled, manifest.OffsetSyncBaselineDisabled}
 	// The reflected schema requires only restEndpoint (the one field without
 	// omitempty), but Validate() also requires bootstrapServers and
 	// clusterCredentials. Patch the schema to match so an editor/CI lint cannot
@@ -147,10 +148,11 @@ func GenerateGateway() ([]byte, error) {
 		kafka.Properties["restEndpoint"]:       "REST endpoint of the destination cluster.",
 		kafka.Properties["clusterCredentials"]: "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
 
-		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
-		clusterLink.Properties["bootstrapServers"]:        "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
-		clusterLink.Properties["linkCredentials"]:         "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
-		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["name"]:                       "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["bootstrapServers"]:           "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
+		clusterLink.Properties["linkCredentials"]:            "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
+		clusterLink.Properties["pauseConsumerOffsetSync"]:    "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["consumerOffsetSyncBaseline"]: "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pauseConsumerOffsetSync is set; kcp restores sync to this value after the migration completes or fails.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",

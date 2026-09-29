@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
@@ -138,12 +139,8 @@ func (s *MigrationActions) ensureGatewayCapability(ctx context.Context, config *
 }
 
 // ResolveGatewayCapability determines how gateway state transitions will be
-// verified on the live cluster, adopts it for this run, and records it on the
-// migration config. Called once, authoritatively, via ensureGatewayCapability
-// — there is no separate advisory call at Initialize: execute is the only
-// command now, so there is no earlier "review, then commit" moment to advise
-// at (this function used to be called a second, advisory time from Initialize,
-// back when init and execute were separate commands).
+// verified on the live cluster and adopts it for this run. Called once per run,
+// via ensureGatewayCapability.
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
 	// Settle the port first: the last gate probes /config, so detection needs it.
 	if config.GatewayConfigPort == 0 {
@@ -166,7 +163,6 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
 	}
 
-	previous := config.GatewayVerificationMode
 	capability, err := s.verifier().ResolveCapability(ctx, config.K8sNamespace, config.InitialCrName,
 		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
 	if err != nil {
@@ -182,16 +178,6 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	// ensureGatewayCapability would silently re-resolve (harmless) AND
 	// re-run VerifyHotReloadCapability a second, unrequested time.
 	s.capabilityResolved = true
-	config.GatewayVerificationMode = string(capability.Mode)
-	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
-
-	// A change since init is worth saying out loud either way: it means the
-	// cluster moved under the migration.
-	if previous != "" && previous != string(capability.Mode) {
-		s.reporter.warn("Gateway verification changed since this migration was initialised: %q -> %q. Using the live cluster's capability.",
-			previous, capability.Mode)
-	}
-
 	return nil
 }
 
@@ -233,8 +219,8 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 	return s.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 }
 
-// gatewayConfigPort returns the port to poll GET /config on, tolerating a
-// migration state file written before the field existed.
+// gatewayConfigPort returns the port to poll GET /config on, defaulting an
+// unset (0) GatewayConfigPort to the gateway default.
 func gatewayConfigPort(config *MigrationConfig) int {
 	if config.GatewayConfigPort <= 0 {
 		return gateway.DefaultGatewayConfigPort
@@ -256,12 +242,11 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
-// Initialize captures the migplan-derived artifacts onto config and runs the
-// AAO-specific preconditions migplan does not cover: gateway capability
-// resolution and the PauseConsumerOffsetSync live precondition. Mirrors
+// Initialize captures the migplan-derived artifacts onto config. Mirrors
 // TBMActions.Initialize's shape (check res.Refused, copy fields) — everything
-// migplan.Reconcile already validated (staged-auth/secret existence,
-// cluster-link topic classification) is NOT re-checked here.
+// migplan.Reconcile already decided (staged-auth/secret existence, cluster-link
+// topic classification, whether an offset-sync restore is owed) is NOT
+// re-checked here.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
@@ -274,13 +259,19 @@ func (s *MigrationActions) Initialize(
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
 
-	config.Topics = res.Topics
+	config.Topics = res.PromoteTopics
+	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
+	config.RestoreOffsetSync = res.RestoreOffsetSync
+	config.RollbackFenceYAML = res.RollbackFenceYAML
+	config.RollbackAllowed = res.RollbackAllowed
+	config.FencedAtStart = res.FencedAtStart
+	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
-	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
+	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
 	// moment to resolve it for anymore (execute is the only command), and
@@ -288,48 +279,6 @@ func (s *MigrationActions) Initialize(
 	// process — ensureGatewayCapability resolves it lazily, once, from
 	// whichever of FenceGateway/SwitchGateway runs first later in this same
 	// Execute() call.
-
-	clusterLinkConfig := clusterlink.Config{
-		RestEndpoint: config.ClusterRestEndpoint,
-		ClusterID:    config.ClusterId,
-		LinkName:     config.ClusterLinkName,
-		Auth:         restAuth,
-		Topics:       config.Topics,
-	}
-
-	// Get cluster link configs — still needed for the PauseConsumerOffsetSync
-	// precondition below and for the offset-sync restore bookend's diff
-	// baseline. Topic classification/validation is no longer done here —
-	// migplan.Reconcile's Classify already proved config.Topics feasible.
-	configs, err := s.clusterLinkService.ListConfigs(ctx, clusterLinkConfig)
-	if err != nil {
-		return fmt.Errorf("failed to list cluster link configs: %w", err)
-	}
-
-	// If the operator opted into pausing consumer offset sync during execute,
-	// validate the precondition: the cluster link must currently have
-	// consumer.offset.sync.enable=true. Refuse fail-fast if the key is missing
-	// or set to anything other than "true".
-	//
-	// Skip the check when PauseConsumerOffsetSyncFlipped is already true: kcp
-	// itself set the value to "false" via DisableOffsetSync, so seeing "false"
-	// here is the expected mid-flight state, not drift.
-	if config.PauseConsumerOffsetSync && !config.PauseConsumerOffsetSyncFlipped {
-		observed, present := configs[offsetSyncEnableKey]
-		switch {
-		case !present:
-			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
-		case observed != "true":
-			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
-		}
-		s.reporter.Success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
-	}
-
-	// Defensive guard: never overwrite the pre-disable snapshot once the
-	// bookend has flipped consumer.offset.sync.enable=false.
-	if !config.PauseConsumerOffsetSyncFlipped {
-		config.ClusterLinkConfigs = configs
-	}
 
 	slog.Debug("migration initialized successfully")
 	return nil
@@ -469,6 +418,20 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is
+	// nothing to fence this run. Read the plan (config.FenceYAML), never the
+	// live cluster — the reconcile engine already decided. This is
+	// deliberately NOT keyed on config.Topics: fence is a whole-route action
+	// independent of per-topic promote status, and reconcile can return an
+	// empty promote set (nothing left to promote) while still owing a fence —
+	// e.g. every topic already promoted to STOPPED but the switch not yet
+	// applied. Gating on Topics there would silently skip
+	// the still-owed fence/switch.
+	if config.FenceYAML == "" {
+		s.reporter.Detail("No fence artifact in plan — nothing to fence")
+		return nil
+	}
+
 	// Capability must be resolved before capturePods below reads it (and
 	// before deriveFenceRoutePatch, which needs config.FenceYAML — already set
 	// by Initialize earlier in this same run). A no-op on any run past the
@@ -588,9 +551,8 @@ func (s *MigrationActions) confirmFence(
 // pulled and cleaned of server-managed metadata (managedFields,
 // resourceVersion, uid, creationTimestamp, generation, status — see
 // migplan/gatewayfile.go's cleanGatewayDoc) — into a plain
-// map[string]interface{} for the splice helpers below. Unlike the pre-migplan
-// cleanInitialCR this does no cleaning of its own: migplan already did that
-// once, centrally, when it captured GatewayYAML at init.
+// map[string]interface{} for the splice helpers below. It does no cleaning of
+// its own: migplan cleans the CR when it pulls it.
 func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 	var obj map[string]interface{}
 	if err := yaml.Unmarshal([]byte(gatewayYAML), &obj); err != nil {
@@ -605,10 +567,9 @@ func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 // apply and ResolveGatewayCapability's detection both derive from the same
 // source, so they can never drift from each other.
 //
-// AAO's execute path is static-route-only by construction: a dynamic-resolved
-// route is refused before any MigrationConfig is ever persisted (see
-// MigrationConfig.Mode's own doc comment), so FenceYAML here is always the
-// static {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
+// This FSM only runs for static routes (the command layer sends a dynamic
+// route to the TBM FSM), so FenceYAML here is always the static
+// {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
 func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
 	base, err := parseGatewayYAML(config.GatewayYAML)
 	if err != nil {
@@ -630,7 +591,7 @@ func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gateway.ReplaceRouteStreamingDomainObj(base, config.Route, []byte(config.SwitchoverYAML))
+	return gateway.ReplaceRouteObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
 // deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
@@ -645,44 +606,36 @@ func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) 
 	return gateway.RoutePatch{RouteName: config.Route, Field: "fence", Value: v}, nil
 }
 
-// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: a
-// whole-route replace (Field == "") of config.Route with its captured
-// (unfenced) shape from config.GatewayYAML, streamingDomain flipped to
-// config.SwitchoverYAML's target. It is a whole-route replace, not a
-// single-key streamingDomain write, for the same reason as
-// deriveUnfenceRoutePatch — the switch happens from the fenced state and must
-// drop the fence key, and a field-level "add" can only overwrite a key, never
-// remove one. Grafting onto the captured route (which carries the pre-staged
-// redundant auth for the target domain, proved at init) yields unfenced +
-// target-domain + target-auth in one patch.
+// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: reconcile's
+// switched route (config.SwitchoverYAML) — unfenced, bound to the target
+// domain, carrying the route's pre-staged target auth — replacing config.Route
+// whole.
 func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	domain, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "streamingDomain")
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	route["streamingDomain"] = domain
-	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+	return wholeRoutePatch(config, config.SwitchoverYAML)
 }
 
-// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
-// its captured state in config.GatewayYAML — a whole-route replace (Field ==
-// "") rather than a single-key mutation, since unfence removes the fence key
-// entirely instead of overwriting it.
+// deriveUnfenceRoutePatch builds the RoutePatch a rollback applies: reconcile's
+// rollback route (config.RollbackFenceYAML) — the start-of-run route with the
+// fence taken out — replacing config.Route whole.
 func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
+	return wholeRoutePatch(config, config.RollbackFenceYAML)
+}
+
+// wholeRoutePatch is the RoutePatch replacing config.Route with artifact's
+// {route: …} exactly as reconcile built it. The static switch and rollback both
+// remove the fence, which a single-field patch cannot, so both replace the
+// whole route.
+func wholeRoutePatch(config *MigrationConfig, artifact string) (gateway.RoutePatch, error) {
+	route, err := gateway.FragmentValue([]byte(artifact), "route")
 	if err != nil {
 		return gateway.RoutePatch{}, err
 	}
 	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
 }
 
-// unfenceGateway patches config.Route back to its captured state in the
-// gateway CR snapshot migplan captured (config.GatewayYAML) to restore normal
-// traffic, then waits for the operator to report the gateway Ready at the
+// unfenceGateway replaces config.Route with reconcile's rollback route
+// (config.RollbackFenceYAML, the start-of-run route with the fence taken out)
+// to restore normal traffic, then waits for the operator to report the gateway Ready at the
 // restored spec — the same convergence check FenceGateway uses. Without the
 // wait we would report traffic restored while pods are still cycling, and
 // miss rollout failures entirely.
@@ -722,46 +675,35 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 }
 
 // PauseOffsetSync runs the pause_offset_sync stage: with the operator's
-// --pause-consumer-offset-sync opt-in it pauses cluster-link consumer offset
-// sync immediately after fencing; otherwise it passes through so the FSM
-// still records offset_sync_paused. The already-flipped guard makes resumes
-// (and legacy state files whose pause ran pre-FSM) idempotent.
+// --pause-consumer-offset-sync opt-in, and only when this run has an actual
+// cutover in flight (config.FenceYAML set by the plan), it applies an
+// idempotent AlterConfigs SET disabling cluster-link consumer offset sync;
+// otherwise it passes through so the FSM still records offset_sync_paused.
+// Plan- and manifest-driven only: it never reads the live cluster link to
+// decide anything, so re-running it (a resume, a retry) simply re-applies the
+// same SET — safe whether or not a prior attempt already landed it.
 func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
 		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
 		s.reporter.Detail("Offset-sync pause not requested — skipping")
 		return nil
 	}
-	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
-		s.reporter.Detail("consumer.offset.sync already paused — skipping")
+	// Plan-driven: only pause when there is an active cutover this run
+	// (reconcile emitted fence work). Read the plan (FenceYAML), never the
+	// live link.
+	if config.FenceYAML == "" {
+		slog.Debug("⏭️ no cutover in flight, skipping offset-sync pause")
+		s.reporter.Detail("No cutover in flight — offset-sync pause skipped")
 		return nil
 	}
 
 	clCfg := BuildClusterLinkConfig(config, restAuth)
 
 	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
-
-	// Per-call deadlines derived from the parent ctx so signal cancellation
-	// still propagates, but a hung REST endpoint cannot block indefinitely.
-	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	currentConfigs, err := s.clusterLinkService.ListConfigs(listCtx, clCfg)
-	listCancel()
-	if err != nil {
-		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
-	}
-	observed, present := currentConfigs[offsetSyncEnableKey]
-	switch {
-	case !present:
-		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
-	case observed != "true":
-		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
-	}
 
 	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
 	// with sync still enabled before disabling it. The fence has frozen the
@@ -771,8 +713,8 @@ func (s *MigrationActions) PauseOffsetSync(
 	// would otherwise be reprocessed after switchover. Best-effort: offset sync
 	// is asynchronous, so this reduces but does not guarantee zero duplicates. A
 	// ctx cancellation here leaves sync still enabled (nothing flipped) and
-	// cancels the transition, matching the drift-refusal path above. 0 (the
-	// default) skips the wait entirely — the prior immediate-disable behaviour.
+	// cancels the transition. 0 (the default) skips the wait entirely — the
+	// prior immediate-disable behaviour.
 	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
 		s.reporter.Detail("Draining consumer offset sync for %s before pausing...", drain)
 		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
@@ -783,52 +725,88 @@ func (s *MigrationActions) PauseOffsetSync(
 		}
 	}
 
-	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	err = s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
+	// Idempotent: re-applying enable=false on a resume or retry is a no-op
+	// AlterConfigs against the cluster link.
+	alterCtx, alterCancel := context.WithTimeout(ctx, offsetSyncCallTimeout)
+	defer alterCancel()
+	if err := s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
-	})
-	alterCancel()
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	// Inline persist: the marker's crash window (AlterConfigs done, marker not
-	// yet on disk) stays as small as the pre-FSM bookend kept it — the FSM's
-	// own post-transition persist would widen it.
-	config.PauseConsumerOffsetSyncFlipped = true
-	if err := persist(); err != nil {
-		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
 	s.reporter.Success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
 	return nil
 }
 
-// restoreOffsetSyncAfterRollback restores the consumer.offset.* config the
-// pause flipped, as the second half of the abort_fence rollback. Soft-fail:
-// the unfence already succeeded and a restore error must not undo it — the
-// flipped marker stays set so the restore remains owed. No-op when nothing
-// was flipped (e.g. the pause failed before its AlterConfigs, or a drift
-// refusal), which also keeps externally-set config untouched.
+// restoreOffsetSyncAfterRollback sets consumer.offset.sync.enable back to the
+// declared baseline, as the second half of the abort_fence rollback.
+// Soft-fail: the unfence already succeeded, the run is already failing with
+// the step error that triggered the rollback, and a restore error must not
+// undo the unfence, so a failure prints manual remediation instead. Gated only
+// on config.PauseConsumerOffsetSync, never on whether a prior pause actually
+// landed, so it is safe to call even when the pause failed before its own
+// AlterConfigs. It runs on a fresh context: the rollback only fires while the
+// run's context is still live, and the restore must not be cut short by a
+// signal arriving after the unfence.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-	persist func() error,
 ) {
-	clCfg := BuildClusterLinkConfig(config, restAuth)
-	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
+	if !config.PauseConsumerOffsetSync {
+		return
+	}
+	r := newReporter()
+	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	want, err := setOffsetSyncBaseline(context.Background(), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
+	if err != nil {
+		r.Remediation("Gateway unfenced but %v — re-apply manually.", err)
+		return
+	}
+	r.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
 }
 
-// VerifyFence verifies the fence held: source offsets must be stable, because
-// an increasing offset after fencing indicates a producer bypassing the
-// gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)
-// the step succeeds immediately so the FSM still records fence_verified.
+// RestoreOffsetSync runs the restore_offset_sync stage, the last in the
+// workflow: when reconcile found a restore owed (config.RestoreOffsetSync), it
+// applies an idempotent AlterConfigs SET of consumer.offset.sync.enable to the
+// declared baseline; otherwise it passes through so the FSM still records
+// offset_sync_restored. Plan- and manifest-driven only: it never reads the
+// live cluster link. A failed SET fails the step and leaves the FSM at
+// switched. The switch has landed, so nothing rolls back; a re-run, whose
+// reconcile still finds the restore owed, retries it.
+func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+	if !config.RestoreOffsetSync {
+		if !config.PauseConsumerOffsetSync {
+			slog.Debug("⏭️ consumer offset sync pause not requested, nothing to restore")
+			s.reporter.Detail("Offset-sync pause not requested — nothing to restore")
+		} else {
+			slog.Debug("⏭️ consumer offset sync already at its baseline, nothing to restore")
+			s.reporter.Detail("Consumer offset sync already at its baseline — nothing to restore")
+		}
+		return nil
+	}
+
+	s.reporter.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	want, err := setOffsetSyncBaseline(ctx, s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
+	if err != nil {
+		return err
+	}
+	s.reporter.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+	return nil
+}
+
+// VerifyFence verifies the fence held: the source offsets of every topic the
+// run migrates (config.MigrateTopics, already-promoted ones included) must be
+// stable, because an increasing offset after fencing indicates a producer
+// bypassing the gateway. An already-promoted topic's mirror no longer copies
+// from the source, so a write straight to it would never reach the target.
+// When detection is disabled (DetectUnroutedProducersDuration == 0) the step
+// succeeds immediately so the FSM still records fence_verified.
 //
 // detectUnroutedProducers wraps ErrUnroutedProducers only for a real
 // detection; a network/fetch error propagates as-is. Either way we just
-// return it — restoring traffic (unfencing the gateway) is the state
-// machine's job on the abort_fence rollback transition, which the
-// orchestrator triggers only for ErrUnroutedProducers.
+// return it — what happens next (a rollback, or keeping the fence when
+// reconcile forbids one) is the orchestrator's handleStepFailure.
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
@@ -836,11 +814,19 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 		return nil
 	}
 
+	// Plan-driven no-op: reconcile left no topic to migrate (a run that owes
+	// only the offset-sync restore), so there is no source to watch. Read the
+	// plan (config.MigrateTopics), never the live cluster.
+	if len(config.MigrateTopics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to check for unrouted producers")
+		return nil
+	}
+
 	if s.sourceOffset == nil {
 		return fmt.Errorf("source offset service is required for unrouted producer detection")
 	}
 
-	if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+	if err := s.detectUnroutedProducers(ctx, config.MigrateTopics, config.DetectUnroutedProducersDuration); err != nil {
 		return err
 	}
 	s.reporter.Success("Source offsets stable — no unrouted producers detected")
@@ -849,6 +835,14 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
+	// nothing to promote this run. Read the plan (config.Topics), never the
+	// live cluster — the reconcile engine already decided.
+	if len(config.Topics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to promote")
+		return nil
+	}
+
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -875,6 +869,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	awaitingStop := make(map[string]bool)
 	for _, topic := range config.Topics {
 		remaining[topic] = true
+	}
+	// Resume seeding: topics reconcile classified AwaitStopped are already
+	// mid-promotion (PENDING_STOPPED) on the link from an earlier run. Seed them
+	// straight into awaitingStop so the loop's first pass confirms them via
+	// ListMirrorTopics and waits for STOPPED, instead of treating them as
+	// promote candidates and re-issuing a promote on an already-promoting mirror
+	// (which CC rejects → 3 retries → fatal). They still count toward remaining,
+	// so the switch is blocked until they reach STOPPED.
+	for _, topic := range config.AwaitStopped {
+		if remaining[topic] {
+			awaitingStop[topic] = true
+		}
 	}
 	sweepFailures := 0
 
@@ -1033,6 +1039,15 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			}
 		}
 
+		// Test-only intra-promote kill-point: topics accepted but not yet
+		// confirmed STOPPED — a real abrupt exit here leaves them PENDING_STOPPED.
+		// Returns a plain error so the partial world is left for a resume. No-op
+		// in production.
+		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
+		}
+
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", s.promotePollInterval)
 		select {
 		case <-ctx.Done():
@@ -1049,8 +1064,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // same no-deadline-by-default behavior as FenceGateway.
 //
 // Because the captured route is unfenced and already carries pre-staged
-// ("redundant") auth for the target domain (proved by migplan.Reconcile's
-// redundant-auth check at init), this one whole-route replace yields unfenced +
+// ("redundant") auth for the target domain (checked by migplan.Reconcile's
+// redundant-auth precondition), this one whole-route replace yields unfenced +
 // target-domain + target-auth with no secret or auth change at cutover — it
 // both drops the fence and flips the domain, and there is no separately-authored
 // switchover CR to apply.
@@ -1061,6 +1076,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
+
+	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
+	// nothing to switch this run. Read the plan (config.SwitchoverYAML),
+	// never the live cluster — the reconcile engine already decided. Not
+	// keyed on config.Topics for the same reason as FenceGateway's guard
+	// (see its comment): switch is a whole-route action independent of
+	// per-topic promote status, and an empty promote set does not mean the
+	// switch itself is done.
+	if config.SwitchoverYAML == "" {
+		s.reporter.Detail("No switchover artifact in plan — nothing to switch")
+		return nil
+	}
 
 	// A no-op if FenceGateway already resolved capability earlier in this
 	// process (the normal case); only load-bearing for a resume that jumps

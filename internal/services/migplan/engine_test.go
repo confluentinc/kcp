@@ -116,7 +116,7 @@ func TestEngineRunHappyPath(t *testing.T) {
 	if plan.Report.Refused() {
 		t.Fatalf("expected success, refused: %+v", plan.Report)
 	}
-	if plan.Artifacts == nil || len(plan.Artifacts.Topics) != 1 {
+	if plan.Artifacts == nil || len(plan.Artifacts.PromoteTopics) != 1 {
 		t.Fatalf("expected 1 migratable topic, got %+v", plan.Artifacts)
 	}
 }

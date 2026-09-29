@@ -70,8 +70,8 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	if !res.Refused && len(res.Topics) > 0 {
-		topicsJSON, _ := json.MarshalIndent(res.Topics, "", "  ")
+	if !res.Refused && len(res.PromoteTopics) > 0 {
+		topicsJSON, _ := json.MarshalIndent(res.PromoteTopics, "", "  ")
 		_, _ = fmt.Fprintf(w, "\n=== topics.json ===\n%s\n", topicsJSON)
 		_, _ = fmt.Fprintf(w, "\n=== fence-rules.yaml ===\n%s\n", res.FenceYAML)
 		_, _ = fmt.Fprintf(w, "\n=== switchover-rules.yaml ===\n%s\n", res.SwitchoverYAML)

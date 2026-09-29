@@ -20,10 +20,8 @@ const (
 
 // RunReportStage is one committed (or attempted) workflow transition, timed.
 //
-// Only forward steps that actually ran appear here — steps skipped because the
-// migration was resumed past them are listed by name in RunReport.SkippedStages
-// instead, so every entry in Stages carries real timings and a consumer never
-// has to test for a zero timestamp.
+// Only forward steps that actually ran appear here, so every entry in Stages
+// carries real timings and a consumer never has to test for a zero timestamp.
 type RunReportStage struct {
 	Event      string    `json:"event"`
 	From       string    `json:"from"`
@@ -47,19 +45,18 @@ type RunReportStage struct {
 //
 // It carries no credentials and no topic names — only the topic count.
 type RunReport struct {
-	MigrationId   string           `json:"migration_id"`
-	KcpVersion    string           `json:"kcp_version"`
-	KcpCommit     string           `json:"kcp_commit,omitempty"`
-	Topics        int              `json:"topics"`
-	LagThreshold  int64            `json:"lag_threshold"`
-	StartedAt     time.Time        `json:"started_at"`
-	EndedAt       time.Time        `json:"ended_at"`
-	DurationMs    int64            `json:"duration_ms"`
-	Stages        []RunReportStage `json:"stages"`
-	SkippedStages []string         `json:"skipped_stages,omitempty"`
-	FinalState    string           `json:"final_state"`
-	Outcome       string           `json:"outcome,omitempty"`
-	Error         string           `json:"error,omitempty"`
+	MigrationId  string           `json:"migration_id"`
+	KcpVersion   string           `json:"kcp_version"`
+	KcpCommit    string           `json:"kcp_commit,omitempty"`
+	Topics       int              `json:"topics"`
+	LagThreshold int64            `json:"lag_threshold"`
+	StartedAt    time.Time        `json:"started_at"`
+	EndedAt      time.Time        `json:"ended_at"`
+	DurationMs   int64            `json:"duration_ms"`
+	Stages       []RunReportStage `json:"stages"`
+	FinalState   string           `json:"final_state"`
+	Outcome      string           `json:"outcome,omitempty"`
+	Error        string           `json:"error,omitempty"`
 }
 
 // RunReportRecorder accumulates a RunReport and flushes it to disk.
@@ -101,8 +98,8 @@ func NewRunReportRecorder(path, migrationId string, topics int, lagThreshold int
 			FinalState:   initialState,
 		},
 	}
-	// Written immediately, before any stage runs. The first stage of a loaded migration is
-	// lag checking, which has no convergence bound — so a caller that imposes a deadline
+	// Written immediately, before any stage runs. Lag checking, the first
+	// stage that can take real time, has no convergence bound — so a caller that imposes a deadline
 	// and kills the process may do so before ANY stage completes. Without this the file
 	// would never exist and the report would be indistinguishable from "the flag was never
 	// passed", when in fact it says something specific: the run died waiting on its first
@@ -145,15 +142,6 @@ func (r *RunReportRecorder) StageFailed(err error) {
 	}
 	r.closeStage(err)
 	r.flush()
-}
-
-// StageSkipped records a workflow step the run passed over because the
-// migration had already advanced beyond it.
-func (r *RunReportRecorder) StageSkipped(event string) {
-	if r == nil {
-		return
-	}
-	r.report.SkippedStages = append(r.report.SkippedStages, event)
 }
 
 // Finish stamps the run's verdict and writes the report a final time. It is

@@ -16,8 +16,16 @@ DST_CID='LKsbYRvfTM-TVXKjdjgdxA'
 SRC_REST='http://localhost:18090'
 DST_REST='http://localhost:28090'
 LINK='migplan-link'
-SRC_TOPICS=(team-a.orders team-a.payments billing-v2 team-b.audit)
+SRC_TOPICS=(team-a.orders team-a.payments billing-v2 team-b.audit resume.switchonly)
 MIRRORS=(team-a.orders team-a.payments billing-v2)   # NOTE: team-b.audit is intentionally NOT mirrored
+# resume.switchonly is mirrored then PROMOTED to a durable STOPPED, feeding the
+# resume verdicts: SWITCH-ONLY (stopped + route still on source) and, via the
+# gateway-resume-unchanged.yaml fixture, UNCHANGED (stopped + route already on
+# target). Seeded after the ACTIVE poll below so it never perturbs the 3-ACTIVE
+# invariant the happy-path test asserts. (AWAIT-STOPPED needs a durable
+# PENDING_STOPPED, which is a transient the engine tier cannot seed reliably —
+# it is covered by the reconcile unit tests and the idempotent-fsm live suite.)
+STOPPED_TOPIC=resume.switchonly
 
 echo "==> docker compose up"
 docker compose up -d
@@ -73,12 +81,43 @@ for t in "${MIRRORS[@]}"; do
 done
 
 echo "==> polling mirrors until all ACTIVE"
+ready=false
 for _ in $(seq 1 60); do
   active=$(curl -s "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK/mirrors" \
     | grep -o '"mirror_status":"ACTIVE"' | wc -l | tr -d ' ')
   echo "    ACTIVE mirrors: $active/${#MIRRORS[@]}"
-  [[ "$active" == "${#MIRRORS[@]}" ]] && { echo "==> ready"; exit 0; }
+  [[ "$active" == "${#MIRRORS[@]}" ]] && { ready=true; break; }
   sleep 2
 done
-echo "mirrors did not all reach ACTIVE" >&2
+[[ "$ready" == true ]] || { echo "mirrors did not all reach ACTIVE" >&2; exit 1; }
+
+# --- Seed one durable STOPPED mirror for the resume verdict tests ---
+# Mirror STOPPED_TOPIC, wait for it to catch up (ACTIVE), then promote it. On a
+# tiny idle topic promote reaches STOPPED near-instantly, so this is reliable
+# (unlike PENDING_STOPPED, which needs an in-flight promote to be interrupted).
+echo "==> mirroring $STOPPED_TOPIC then promoting it to STOPPED"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK/mirrors" \
+  -d "{\"source_topic_name\":\"$STOPPED_TOPIC\"}")
+[[ "$code" == "200" || "$code" == "201" || "$code" == "400" || "$code" == "409" ]] \
+  || { echo "unexpected status $code creating mirror $STOPPED_TOPIC" >&2; exit 1; }
+# wait for it to be ACTIVE (caught up) before promoting
+for _ in $(seq 1 30); do
+  st=$(curl -s "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK/mirrors/$STOPPED_TOPIC" \
+    | grep -o '"mirror_status":"[^"]*"' | cut -d'"' -f4)
+  [[ "$st" == "ACTIVE" || "$st" == "STOPPED" ]] && break
+  sleep 1
+done
+# promote (idempotent: an already-STOPPED mirror just stays STOPPED)
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+  "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK/mirrors:promote" \
+  -d "{\"mirror_topic_names\":[\"$STOPPED_TOPIC\"]}"
+for _ in $(seq 1 30); do
+  st=$(curl -s "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK/mirrors/$STOPPED_TOPIC" \
+    | grep -o '"mirror_status":"[^"]*"' | cut -d'"' -f4)
+  echo "    $STOPPED_TOPIC: $st"
+  [[ "$st" == "STOPPED" ]] && { echo "==> ready"; exit 0; }
+  sleep 1
+done
+echo "$STOPPED_TOPIC did not reach STOPPED" >&2
 exit 1

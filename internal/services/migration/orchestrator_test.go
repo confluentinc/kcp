@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/looplab/fsm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,10 +31,11 @@ type orchestratorOverrides struct {
 	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
-// newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
-// The returned config starts at the given initialState.
-// Optional overrides allow customizing mock behavior before construction.
-func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
+// newHappyPathOrchestrator builds an orchestrator where every workflow step
+// succeeds. Like production, its FSM starts at StateUninitialized; a test
+// drives it with Execute and a plan (resultFromConfig or
+// uninitializedReconcileResult).
+func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig) {
 	t.Helper()
 
 	if len(topics) == 0 {
@@ -43,7 +44,6 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	config := &MigrationConfig{
 		MigrationId:         "test-migration-1",
-		CurrentState:        initialState,
 		KubeConfigPath:      "/fake/kubeconfig",
 		SourceBootstrap:     "source:9092",
 		ClusterBootstrap:    "dest:9092",
@@ -51,6 +51,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
 		ClusterLinkName:     "test-link",
 		Topics:              topics,
+		MigrateTopics:       topics,
 		InitialCrName:       "my-gateway",
 		K8sNamespace:        "confluent",
 		GatewayYAML:         testInitialCR,
@@ -58,6 +59,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		Mode:                "static",
 		FenceYAML:           testFenceYAML,
 		SwitchoverYAML:      testSwitchoverYAML,
+		RollbackFenceYAML:   testRollbackFenceYAML,
+		RollbackAllowed:     true,
 	}
 
 	// Default mock implementations. The gateway CR must be a real routed gateway
@@ -177,24 +180,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	actions.lagPollInterval = time.Millisecond
 	actions.promotePollInterval = time.Millisecond
 
-	stateDir := t.TempDir()
-	stateFilePath := filepath.Join(stateDir, "migration-state.json")
+	orch := NewMigrationOrchestrator(config, actions)
 
-	migrationState := NewMigrationState()
-
-	orch := NewMigrationOrchestrator(config, actions, migrationState, stateFilePath)
-
-	return orch, config, stateFilePath
-}
-
-// loadPersistedMigration reads the state file and returns the migration config by ID.
-func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *MigrationConfig {
-	t.Helper()
-	state, err := NewMigrationStateFromFile(stateFilePath)
-	require.NoError(t, err, "failed to load state file")
-	m, err := state.GetMigrationById(migrationID)
-	require.NoError(t, err, "migration %q not found in state file", migrationID)
-	return m
+	return orch, config
 }
 
 // uninitializedReconcileResult builds the migplan.Result an orchestrator test
@@ -204,92 +192,64 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *Mi
 // two-topic default — so a test that drives a full run through PromoteTopics
 // sees ListMirrorTopics (built from the same resolved topic set at
 // construction) agree with config.Topics after Initialize overwrites it from
-// res.Topics.
+// res.PromoteTopics.
 func uninitializedReconcileResult(topics []string) *migplan.Result {
 	if len(topics) == 0 {
 		topics = []string{"topic-a", "topic-b"}
 	}
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         topics,
+		PromoteTopics:  topics,
+		MigrateTopics:  topics,
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
 		GatewayYAML:    testInitialCR,
 		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
+}
+
+// resultFromConfig builds the migplan.Result that Initialize copies onto config,
+// mirroring config's own (possibly test-tweaked) plan fields, so a test that
+// adjusts config after construction keeps those adjustments through a full
+// walk from uninitialized.
+func resultFromConfig(config *MigrationConfig) *migplan.Result {
+	return &migplan.Result{
+		Route:          config.Route,
+		PromoteTopics:  config.Topics,
+		AwaitStopped:   config.AwaitStopped,
+		FenceYAML:      config.FenceYAML,
+		SwitchoverYAML: config.SwitchoverYAML,
+		GatewayYAML:    config.GatewayYAML,
+		Mode:           config.Mode,
+
+		RestoreOffsetSync: config.RestoreOffsetSync,
+		RollbackFenceYAML: config.RollbackFenceYAML,
+		RollbackAllowed:   config.RollbackAllowed,
+		MigrateTopics:     config.MigrateTopics,
+	}
+}
+
+// caughtUpDestination models a mirror that has kept pace with the source: its
+// offsets are at or past anything the rogue-producer mocks report, so
+// wait_for_lags sees zero lag (ComputeTotalLag clamps a destination that is
+// ahead to 0) while verify_fence still sees the source climb.
+func caughtUpDestination() *mockOffsetProvider {
+	ahead := map[int32]int64{0: 1 << 40, 1: 1 << 40}
+	return &mockOffsetProvider{getFn: func(string) (map[int32]int64, error) { return ahead, nil }}
 }
 
 // --- FSM transition tests ---
 
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch, _ := newHappyPathOrchestrator(t, nil)
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.NoError(t, err)
 
-	assert.Equal(t, StateSwitched, config.CurrentState)
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-}
-
-func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
-	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
-		t.Run("from_"+startState, func(t *testing.T) {
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil)
-
-			// Every one of these starting states is already past
-			// StateUninitialized, so onInitialize never fires and a nil res is
-			// correct — mirrors cmd/migration/execute's own state gate on when
-			// migplan.Reconcile is computed.
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-			require.NoError(t, err)
-
-			assert.Equal(t, StateSwitched, config.CurrentState)
-
-			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-			assert.Equal(t, StateSwitched, persisted.CurrentState)
-		})
-	}
-}
-
-// TestHasPendingWork pins the predicate cmd/migration/execute uses to decide
-// whether to touch the gateway at all before Execute runs — see
-// migration_executor.go. It must agree with what Execute would actually do:
-// true for every state Execute walks at least one step for, false only once
-// there is nothing left.
-func TestHasPendingWork(t *testing.T) {
-	t.Run("true for a fresh migration", func(t *testing.T) {
-		orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
-		assert.True(t, orch.HasPendingWork())
-	})
-
-	t.Run("true for every state short of switched", func(t *testing.T) {
-		for _, s := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
-			t.Run(s, func(t *testing.T) {
-				orch, _, _ := newHappyPathOrchestrator(t, s, nil)
-				assert.True(t, orch.HasPendingWork())
-			})
-		}
-	})
-
-	t.Run("false once switched", func(t *testing.T) {
-		orch, _, _ := newHappyPathOrchestrator(t, StateSwitched, nil)
-		assert.False(t, orch.HasPendingWork(),
-			"a completed migration must report no pending work, so a re-run touches nothing")
-	})
-
-	t.Run("true for an unrecognized state, deferring to Execute's own refusal", func(t *testing.T) {
-		// A corrupted file or one written by a newer kcp must fail loudly at
-		// Execute (see isKnownState), not be silently read here as "nothing to
-		// do" — that would report a bogus success instead of the refusal.
-		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
-		require.True(t, orch.HasPendingWork())
-
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unrecognized migration state")
-	})
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
 }
 
 // --- Error handling tests ---
@@ -301,17 +261,15 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
+	orch, _ := newHappyPathOrchestrator(t, nil, overrides)
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.Error(t, err)
 
-	// The orchestrator should have persisted state after each successful step.
-	// Init (uninitialized -> initialized) succeeded and was persisted.
-	// CheckLags (initialized -> lags_ok) succeeded and was persisted.
-	// Fence (lags_ok -> fenced) failed, so the last persisted state should be lags_ok.
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateLagsOk, persisted.CurrentState)
+	// Init (uninitialized -> initialized) succeeded. CheckLags (initialized ->
+	// lags_ok) succeeded. Fence (lags_ok -> fenced) failed, so the FSM should
+	// rest at lags_ok.
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
 }
 
 func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testing.T) {
@@ -333,7 +291,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
@@ -347,6 +305,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
 	// Track promote calls to verify it only runs once (not twice from duplicate callback)
 	originalPromote := orch.actions.clusterLinkService
@@ -357,18 +316,18 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	var out strings.Builder
+	orch.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+		"the rollback banner names detection as the reason, as a capitalised sentence")
 
 	// FSM state should have rolled back to initialized via abort_fence
-	assert.Equal(t, StateInitialized, config.CurrentState,
+	assert.Equal(t, StateInitialized, orch.fsm.Current(),
 		"FSM state should be rolled back to initialized after unrouted producer detection")
-
-	// State file should be persisted with initialized
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState,
-		"persisted state should be initialized after abort_fence transition")
 
 	// Gateway should have been unfenced: the rollback patches the route back to
 	// its captured whole-route state (Field == ""), distinct from the
@@ -403,21 +362,25 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
-	// Override source offset provider to return increasing offsets
+	// Override source offset provider to return increasing offsets. Its own
+	// counter: sharing applyCallCount would let wait_for_lags' sweep shift which
+	// apply the patch mock treats as the fence.
+	var sourceCallCount int64
 	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
-			n := atomic.AddInt64(&applyCallCount, 1)
+			n := atomic.AddInt64(&sourceCallCount, 1)
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	// Unrouted producers were detected, so the surfaced error still wraps
 	// ErrUnroutedProducers; the unfence happens on the abort_fence rollback and
@@ -425,17 +388,15 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
 	// State must remain at the rollback's source: the abort_fence transition is
-	// cancelled when unfenceGateway fails, so it is never persisted as
-	// initialized. Detection fails at offset_sync_paused (the pause stage sits
+	// cancelled when unfenceGateway fails, so it never reaches initialized. Detection fails at offset_sync_paused (the pause stage sits
 	// between fence and verify), so that is where the FSM honestly rests.
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateOffsetSyncPaused, persisted.CurrentState,
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
 		"state should remain at offset_sync_paused when unfencing fails")
 }
 
 func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOffsetSyncPaused(t *testing.T) {
 	// The unfence CR applies cleanly but the gateway never converges to Ready.
-	// The abort_fence rollback must be cancelled — persisting initialized while
+	// The abort_fence rollback must be cancelled — landing at initialized while
 	// the gateway is still mid-rollout would misrepresent reality.
 	var waitCallCount int64
 	var sourceCallCount int64
@@ -451,7 +412,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
@@ -464,98 +425,46 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
 	assert.Equal(t, int64(1), atomic.LoadInt64(&waitCallCount),
 		"the unfence rollout readiness should be awaited exactly once (the fence rollout waits via WaitForGatewayPods when detection is enabled)")
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateOffsetSyncPaused, persisted.CurrentState,
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
 		"state should remain at offset_sync_paused when the unfence rollout never becomes ready")
 }
 
-func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
+func TestOrchestrator_Execute_VerifyFenceCommittedBeforePromote(t *testing.T) {
 	// A successful unrouted-producer check is its own FSM transition
-	// (offset_sync_paused → fence_verified), persisted before promotion starts
-	// like every other step. The persisted value is informational — bootstrap
-	// demotes it back through fenced to lags_ok on the next run (see
-	// TestOrchestrator_Bootstrap_DemotesFenceVerified) — but it must still
-	// record the FSM's true mid-run position, never promoted.
+	// (offset_sync_paused → fence_verified), committed before promotion starts
+	// like every other step, so a promote failure leaves the FSM at
+	// fence_verified — never promoted.
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 			return nil, fmt.Errorf("confluent cloud API unavailable")
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 
-	// The verify step succeeded (stable offsets) and was persisted; the promote
-	// transition was cancelled, so fence_verified is the last good state.
-	assert.Equal(t, StateFenceVerified, config.CurrentState)
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateFenceVerified, persisted.CurrentState,
-		"successful fence verification should be persisted even when promotion later fails")
-}
-
-func TestOrchestrator_Bootstrap_DemotesFenceVerified(t *testing.T) {
-	// fence_verified is a point-in-time attestation and never survives a
-	// restart: construction demotes it to fenced (expire_verification) so
-	// detection re-runs, and the fence demotion then carries it to lags_ok so
-	// the resume re-asserts the fenced CR before re-verifying.
-	_, config, _ := newHappyPathOrchestrator(t, StateFenceVerified, nil)
-
-	assert.Equal(t, StateLagsOk, config.CurrentState,
-		"bootstrap should demote a persisted fence_verified through fenced to lags_ok")
-}
-
-func TestOrchestrator_Bootstrap_DemotesFencedFamily(t *testing.T) {
-	// Whether the live gateway still holds the fenced CR is also a
-	// point-in-time fact: a crash or a partially-completed abort_fence
-	// rollback can leave the gateway unfenced while the state file still says
-	// fenced or offset_sync_paused. Construction demotes both to lags_ok so
-	// the resume re-applies the fenced CR (a no-op rollout when the gateway
-	// never diverged) instead of promoting behind a fence that may not exist.
-	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
-		t.Run(state, func(t *testing.T) {
-			_, config, _ := newHappyPathOrchestrator(t, state, nil)
-			assert.Equal(t, StateLagsOk, config.CurrentState,
-				"bootstrap should demote a persisted %s to lags_ok", state)
-		})
-	}
-}
-
-func TestOrchestrator_ExpireVerificationIsAnFSMEdge(t *testing.T) {
-	// The bootstrap demotions must be modelled as FSM transitions
-	// (expire_verification: fence_verified → fenced; expire_fence:
-	// {fenced, offset_sync_paused} → lags_ok), not config mutations the
-	// machine never sees — so they fire through the FSM callbacks and appear
-	// in fsm.Visualize output alongside abort_fence.
-	orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
-
-	viz := fsm.Visualize(orch.fsm)
-	assert.Contains(t, viz,
-		`"fence_verified" -> "fenced" [ label = "expire_verification" ];`,
-		"expire_verification should be a visible edge in the state machine")
-	assert.Contains(t, viz,
-		`"fenced" -> "lags_ok" [ label = "expire_fence" ];`,
-		"expire_fence should be a visible edge from fenced")
-	assert.Contains(t, viz,
-		`"offset_sync_paused" -> "lags_ok" [ label = "expire_fence" ];`,
-		"expire_fence should be a visible edge from offset_sync_paused")
+	// The verify step succeeded (stable offsets); the promote transition was
+	// cancelled, so fence_verified is the last good state.
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
 func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
 	// The offset-sync pause is a first-class stage between fenced and
 	// verification: pause_offset_sync enters it, verify_fence now leaves it,
 	// and the abort_fence rollback covers it (rogue detection fires there).
-	orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch, _ := newHappyPathOrchestrator(t, nil)
 
 	viz := fsm.Visualize(orch.fsm)
 	assert.Contains(t, viz,
@@ -569,119 +478,115 @@ func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
 		"abort_fence should cover offset_sync_paused, where rogue detection now fails")
 }
 
-func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *testing.T) {
-	// A resume from offset_sync_paused must re-run fence verification before
-	// promoting. The bootstrap fence demotion sends it back through the fence
-	// step first; verification then follows as the forward walk's next
-	// attestation, so the rogue-producer check never survives a restart.
-	var getCalls int64
+func TestOrchestrator_RestoreStageIsAnFSMEdge(t *testing.T) {
+	// The offset-sync restore is the last stage: restore_offset_sync leaves
+	// switched, and no abort_fence edge leaves either end of it.
+	orch, _ := newHappyPathOrchestrator(t, nil)
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateOffsetSyncPaused, nil)
-	config.DetectUnroutedProducersDuration = time.Millisecond
-
-	zeroLagOffsets := map[int32]int64{0: 100, 1: 200}
-	orch.actions.sourceOffset = &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			atomic.AddInt64(&getCalls, 1)
-			return zeroLagOffsets, nil
-		},
-	}
-
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-	require.NoError(t, err)
-
-	assert.GreaterOrEqual(t, atomic.LoadInt64(&getCalls), int64(2),
-		"resume from offset_sync_paused should take both detection snapshots before promoting")
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	viz := fsm.Visualize(orch.fsm)
+	assert.Contains(t, viz,
+		`"switched" -> "offset_sync_restored" [ label = "restore_offset_sync" ];`,
+		"restore_offset_sync should be a visible edge in the state machine")
+	assert.NotContains(t, viz, `"switched" -> "initialized"`, "a switched migration never rolls back")
+	assert.NotContains(t, viz, `"offset_sync_restored" -> "initialized"`, "a restored migration never rolls back")
 }
 
-func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T) {
-	// The divergence this pins closed: a previous run's rollback applied the
-	// initial (unfenced) CR but died before the rolled-back state reached disk
-	// (or its readiness wait failed after the apply landed). The state file
-	// says fenced/offset_sync_paused while the live gateway is unfenced —
-	// without a re-fence the resume would sample a quiet source through
-	// verify_fence and promote behind a fence that does not exist.
-	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
-		t.Run(state, func(t *testing.T) {
-			var mu sync.Mutex
-			var appliedPatches []gateway.RoutePatch
-			overrides := orchestratorOverrides{
-				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-					mu.Lock()
-					appliedPatches = append(appliedPatches, rp)
-					mu.Unlock()
-					return "", nil
-				},
-			}
-
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
-
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-			require.NoError(t, err)
-
-			mu.Lock()
-			defer mu.Unlock()
-			require.NotEmpty(t, appliedPatches, "the resume must apply gateway CRs")
-			// The re-asserted fence is derived from the initial CR (fence injected
-			// onto the named route), not a snapshotted fenced-CR blob.
-			assert.Equal(t, "fence", appliedPatches[0].Field,
-				"resume must re-apply the fenced CR before verifying or promoting behind it")
-			assert.Equal(t, "migration-route", appliedPatches[0].RouteName,
-				"the re-asserted fence must target the migration route")
-
-			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-			assert.Equal(t, StateSwitched, persisted.CurrentState)
-		})
+// TestOrchestrator_Execute_RestoreOffsetSync_FiresAfterSwitch: with a restore
+// in the plan, the baseline SET runs after the switch has applied — the pause
+// (=false) first, the restore (=true) last — and the run ends at
+// offset_sync_restored.
+func TestOrchestrator_Execute_RestoreOffsetSync_FiresAfterSwitch(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	record := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		order = append(order, event)
 	}
-}
-
-func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing.T) {
-	// The rollback completed (gateway unfenced) but persisting initialized
-	// failed: disk still claims a fenced-family state while reality is
-	// unfenced. A log line alone is not actionable — the returned error must
-	// carry the persist failure and the true gateway state, and the step
-	// error must keep its sentinel classification through the extra wrap.
-	var applyCalls int64
-	var stateDir string
 
 	overrides := orchestratorOverrides{
 		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-			if atomic.AddInt64(&applyCalls, 1) == 2 {
-				// The unfence apply: remove the state directory so every
-				// subsequent persist fails while the unfence itself succeeds.
-				require.NoError(t, os.RemoveAll(stateDir))
-			}
+			record("apply")
 			return "", nil
 		},
 	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	config.RestoreOffsetSync = true
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
-	stateDir = filepath.Dir(stateFilePath)
-	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-
-	// Rogue producer: source offsets keep increasing.
-	var sourceCalls int64
-	orch.actions.sourceOffset = &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			n := atomic.AddInt64(&sourceCalls, 1)
-			return map[int32]int64{0: 100 + n*10}, nil
+	originalCL := orch.actions.clusterLinkService
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn: originalCL.ListMirrorTopics,
+		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			for _, a := range alts {
+				record("alter:" + a.Value)
+			}
+			return nil
 		},
+		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrUnroutedProducers,
-		"the step error must keep its classification through the persist-failure wrap")
-	assert.Contains(t, err.Error(), "persisting the rolled-back state failed",
-		"a swallowed persist failure after a completed rollback is not actionable")
-	assert.Contains(t, err.Error(), "unfenced",
-		"the error must name the true gateway state")
-	assert.Equal(t, StateInitialized, config.CurrentState,
-		"in-memory state reflects the completed rollback")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"apply", "alter:false", "apply", "alter:true"}, order,
+		"fence, pause, switch, then restore — the restore runs only after the switch applied")
+}
+
+// TestOrchestrator_Execute_RestoreFails_StopsAtSwitched: a failed restore fails
+// the run — the switch already landed, so the FSM stays at switched with no
+// rollback, and a re-run with the restore still owed retries it and completes.
+func TestOrchestrator_Execute_RestoreFails_StopsAtSwitched(t *testing.T) {
+	var applyCalls int64
+	var failRestore int32 = 1
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	config.RestoreOffsetSync = true
+
+	var restoreAttempts int64
+	originalCL := orch.actions.clusterLinkService
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn: originalCL.ListMirrorTopics,
+		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			for _, a := range alts {
+				if a.Value == "true" {
+					atomic.AddInt64(&restoreAttempts, 1)
+					if atomic.LoadInt32(&failRestore) == 1 {
+						return fmt.Errorf("503 restore boom")
+					}
+				}
+			}
+			return nil
+		},
+		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	require.Error(t, err, "a failed restore must fail the run")
+	assert.Contains(t, err.Error(), "restoring consumer offset sync")
+	assert.Contains(t, err.Error(), "503 restore boom")
+	assert.Equal(t, StateSwitched, orch.fsm.Current(), "the switch landed; only the restore is left")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "fence and switch only — no rollback after the switch")
+
+	// The re-run: the switch is done, so reconcile owes only the restore.
+	atomic.StoreInt32(&failRestore, 0)
+	rerun := NewMigrationOrchestrator(config, orch.actions)
+	restoreOnly := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, GatewayYAML: testInitialCR, Mode: "static", RestoreOffsetSync: true}
+	require.NoError(t, rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, restoreOnly))
+	assert.Equal(t, StateOffsetSyncRestored, rerun.fsm.Current())
+	assert.Equal(t, int64(2), atomic.LoadInt64(&restoreAttempts), "the re-run retried the restore once")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the re-run applied no gateway patch")
 }
 
 func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *testing.T) {
@@ -703,7 +608,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
 
@@ -732,7 +637,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -754,17 +659,18 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	assert.Less(t, firstApply, firstAlter, "pause must fire after the fence apply")
 	assert.Less(t, firstAlter, firstDetectionGet, "pause must fire before the first detection snapshot")
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker must be persisted (restore is owed by the post-execute bookend)")
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
 }
 
 func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	// AE3: a pause failure must not hold clients fenced. The abort_fence
 	// rollback unfences the gateway (with readiness wait) and lands at
-	// initialized; the original pause error still surfaces. Nothing was
-	// flipped, so the rollback's sync restore is a no-op.
+	// initialized; the original pause error still surfaces. The rollback's
+	// sync restore is now unconditional on PauseConsumerOffsetSync (idempotent
+	// apply, not gated on whether the pause actually landed), so it still
+	// attempts its own AlterConfigs even though the pause never flipped
+	// anything — the mock's unconditional AlterConfigs failure makes that
+	// attempt fail too, soft-failing without changing the surfaced error.
 	//
 	// This test is also the reentrancy pin: the rollback must fire from
 	// handleStepFailure after the pause step's Event call returned — a
@@ -783,7 +689,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
@@ -797,22 +703,19 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
-	assert.Equal(t, StateInitialized, config.CurrentState,
+	assert.Equal(t, StateInitialized, orch.fsm.Current(),
 		"pause failure must roll back to initialized, not hold clients fenced")
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState)
-	assert.False(t, persisted.PauseConsumerOffsetSyncFlipped)
 
 	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls),
 		"fence apply then unfence apply")
 	assert.Equal(t, int64(2), atomic.LoadInt64(&waitCalls),
 		"gateway readiness awaited for both the fence and the unfence")
-	assert.Equal(t, int64(1), atomic.LoadInt64(&alterCalls),
-		"only the failed disable attempt — no restore call when nothing was flipped")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&alterCalls),
+		"the failed disable attempt, plus the rollback's unconditional idempotent restore attempt")
 }
 
 // TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR covers the state
@@ -843,9 +746,9 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge",
@@ -862,11 +765,8 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 	assert.NotEqual(t, wantFenceRP, appliedPatches[1])
 
 	// The fence transition was cancelled, so the machine never left lags_ok —
-	// which is already the truth once the fence has been undone. No transition
-	// completed, so there is nothing to persist and no state file to read.
+	// which is already the truth once the fence has been undone.
 	assert.Equal(t, StateLagsOk, orch.fsm.Current())
-	assert.NoFileExists(t, stateFilePath,
-		"a run that completed no transition must not write state")
 }
 
 func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testing.T) {
@@ -887,9 +787,9 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 		},
 	}
 
-	orch, _, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
@@ -899,7 +799,6 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the restore must have been attempted")
 
 	assert.Equal(t, StateLagsOk, orch.fsm.Current())
-	assert.NoFileExists(t, stateFilePath)
 }
 
 func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
@@ -914,9 +813,9 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 		},
 	}
 
-	orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
@@ -962,8 +861,8 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 	var stdout string
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
-			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+			orch, config := newHappyPathOrchestrator(t, nil, overrides)
+			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 		})
 	})
 	out := stdout + stderr
@@ -987,8 +886,8 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 
 func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T) {
 	// AE4: the pause failed and the unfence also fails. The rollback cancels:
-	// state stays fenced (memory and disk, honestly reflecting the gateway),
-	// the pause error surfaces, and a re-run simply retries the pause.
+	// the FSM stays fenced (honestly reflecting the gateway), the pause error
+	// surfaces, and a re-run simply retries the pause.
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
@@ -1001,7 +900,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
@@ -1023,23 +922,23 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom")
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateFenced, persisted.CurrentState,
-		"a cancelled rollback must leave the persisted state at fenced")
+	assert.Equal(t, StateFenced, orch.fsm.Current(),
+		"a cancelled rollback must leave the FSM at fenced")
 	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls),
 		"the unfence must have been attempted")
 
-	// Re-run recovery: the transient pause failure is gone; execute resumes
-	// from fenced, pauses, and completes — no pending-rollback bookkeeping.
+	// Re-run recovery: the transient pause failure is gone. Like a real re-run,
+	// a fresh orchestrator over the same (still-fenced) world walks from
+	// uninitialized, re-applies the fence, pauses, and completes.
 	atomic.StoreInt32(&alterFail, 0)
-	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	rerun := NewMigrationOrchestrator(config, orch.actions)
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.NoError(t, err, "a re-run after a failed rollback must retry the pause and proceed")
-	persisted = loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateOffsetSyncRestored, rerun.fsm.Current())
 }
 
 func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *testing.T) {
@@ -1060,7 +959,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
@@ -1074,12 +973,11 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 		},
 	}
 
-	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateFenced, persisted.CurrentState)
+	assert.Equal(t, StateFenced, orch.fsm.Current())
 	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the unfence must have been attempted")
 	assert.Equal(t, int64(1), atomic.LoadInt64(&alterCalls),
 		"no restore attempt after a cancelled unfence — only the failed disable")
@@ -1109,11 +1007,10 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
 	orch.actions.clusterLinkService = &mockClusterLinkService{
@@ -1141,15 +1038,13 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState)
-	assert.False(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the rollback's restore must clear the flipped marker")
+	assert.Equal(t, StateInitialized, orch.fsm.Current())
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1167,29 +1062,29 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		"restore must never start before gateway readiness confirms")
 }
 
-func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *testing.T) {
-	// The restore half of the rollback is soft-fail: unfencing succeeded, so
-	// clients are safe; a failed restore lands at initialized anyway with the
-	// flipped marker kept and loud rollback-context guidance (not the
-	// post-switchover wording).
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
-	config.PauseConsumerOffsetSync = true
-	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
+// testFencedCR is testInitialCR as a resumed run pulls it after a killed run
+// fenced the route: the fence is already on it.
+const testFencedCR = testInitialCR + "      fence:\n        scope: ALL\n        errorCode: BROKER_NOT_AVAILABLE\n"
 
-	var listCalls int64
-	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			if atomic.AddInt64(&listCalls, 1) == 1 {
-				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-			}
-			return nil, fmt.Errorf("network error during restore")
-		},
-		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
-			return nil
+// TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence: a resumed run
+// starts from a route an earlier, killed run already fenced, so the gateway CR
+// it pulls at the start carries the fence. When that run hits a pre-promote
+// failure (here, unrouted producers), the rollback must apply reconcile's
+// rollback route (unfenced), not re-apply the fenced CR it pulled.
+func TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			patches = append(patches, rp)
+			return "", nil
 		},
 	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.GatewayYAML = testFencedCR
+	config.DetectUnroutedProducersDuration = time.Millisecond
 
 	var sourceCalls int64
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -1198,48 +1093,123 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
-	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrUnroutedProducers)
-	})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, StateInitialized, orch.fsm.Current())
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState,
-		"a failed restore must not cancel the completed unfence")
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker stays set — a restore is still owed")
-
-	assert.Contains(t, stderr, "unfenced", "guidance must carry the rollback context")
-	assert.Contains(t, stderr, config.ClusterLinkName)
-	assert.NotContains(t, stderr, "Migration completed",
-		"the post-switchover wording is wrong for a rollback")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, patches, 2, "the fence, then the rollback")
+	rollback := patches[1]
+	assert.Empty(t, rollback.Field, "the rollback replaces the whole route")
+	route, ok := rollback.Value.(map[string]any)
+	require.True(t, ok, "rollback value is %T", rollback.Value)
+	assert.NotContains(t, route, "fence", "the rollback must leave the route unfenced: %v", route)
 }
 
+// TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence: reconcile found
+// part of the batch already promoted (a resume), so a pre-promote failure must
+// not unfence — that would send the promoted topics' clients back to the
+// source. The run fails with the fence still up, and says why.
+func TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.RollbackAllowed = false
+	config.DetectUnroutedProducersDuration = time.Millisecond
+
+	var sourceCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCalls, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+	orch.actions.destinationOffset = caughtUpDestination()
+
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	out := buf.String()
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&patches), "the fence only — no rollback patch")
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(), "the FSM stays where the failure left it")
+	assert.Contains(t, out, "keeping the fence", "the run must say it is not unfencing")
+	assert.NotContains(t, out, "Gateway unfenced", "nothing was unfenced")
+}
+
+// TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence:
+// an unconfirmed fence is normally compensated by restoring the unfenced
+// route, but with part of the batch already promoted that restore would send
+// its clients back to the source. It is skipped, and the run fails.
+func TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.RollbackAllowed = false
+
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	out := buf.String()
+
+	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&patches), "the fence only — no restoring apply")
+	assert.Contains(t, out, "keeping the fence")
+}
+
+// TestOrchestrator_Execute_FailureHookFailsTheStep: with the test-only failure
+// hook naming verify_fence, that step fails the way a real failure would — the
+// run takes the same rollback path, unfencing and landing at initialized.
+func TestOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
+	var patches int64
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return "", nil
+		},
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&patches), "the fence, then the rollback")
+	assert.Equal(t, StateInitialized, orch.fsm.Current())
+}
+
+// TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized
+// replaces the former pair of ListConfigs-fail / AlterConfigs-fail rollback
+// tests: restore no longer calls ListConfigs at all (it is a single
+// idempotent AlterConfigs SET), so the only way it can fail now is the SET
+// itself failing. The restore half is still soft-fail — the unfence already
+// completed, so the run lands at initialized regardless, with loud
+// rollback-context remediation (not the post-switchover wording).
 func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t *testing.T) {
-	// Companion to the ListConfigs-fail case above: here the restore's diff read
-	// succeeds but the AlterConfigs that re-enables sync fails. The restore half
-	// is still soft-fail — the unfence already completed, so the run lands at
-	// initialized with the flipped marker kept (a restore is still owed) and the
-	// rollback-context remediation names the still-owed keys.
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
+	orch, config := newHappyPathOrchestrator(t, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
-	var listCalls int64
 	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			if atomic.AddInt64(&listCalls, 1) == 1 {
-				// Drift check before the pause disable: sync still enabled.
-				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-			}
-			// Restore diff after the disable: sync is paused, so the restore
-			// wants to set it back to true.
-			return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-		},
 		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
 			// The pause disable (=false) succeeds; the restore re-enable (=true) fails.
 			for _, a := range alts {
@@ -1258,36 +1228,35 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState,
+	assert.Equal(t, StateInitialized, orch.fsm.Current(),
 		"a failed restore alter must not cancel the completed unfence")
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker stays set — a restore is still owed")
 
 	assert.Contains(t, stderr, "unfenced", "guidance must carry the rollback context")
-	assert.Contains(t, stderr, "Still owed", "a failed restore alter must name the owed keys")
+	assert.Contains(t, stderr, "re-apply manually", "a failed restore alter must point at manual remediation")
 	assert.Contains(t, stderr, config.ClusterLinkName)
 	assert.NotContains(t, stderr, "Migration completed",
 		"the post-switchover wording is wrong for a rollback")
 }
 
-// TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance joins the two halves
-// that are otherwise only tested apart: WHERE a failed Execute leaves the FSM
-// (config.CurrentState — the value the executor forwards) and WHAT
-// WarnIfPausedOnExecuteFailure emits for that state. It drives a real failed
-// Execute into each urgent fenced-family landing an operator can actually reach
-// with the pause already flipped, then feeds the resulting config+error to the
-// guidance exactly as cmd/migration/execute does. Guards against a landing-state
-// change that would silently mis-shape the operator guidance while both isolated
-// unit tests still pass.
-func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
+// TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState
+// replaces the former EmitsStateMatchedGuidance, which pinned per-state
+// guidance copy (WarnIfPausedOnExecuteFailure branching on orch.fsm.Current()
+// and the state-file PauseConsumerOffsetSyncFlipped marker). Both are gone:
+// the guidance is now a single generic reminder gated only on
+// config.PauseConsumerOffsetSync. This drives a real failed Execute into
+// several different landing states an operator can actually reach with the
+// pause opt-in set, then feeds the resulting config+error to the guidance
+// exactly as cmd/migration/execute does, and asserts the SAME generic copy
+// appears no matter which state the FSM rested in.
+func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *testing.T) {
 	validCR := "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// enableTrue is the drift-check/happy list response used by every case.
@@ -1299,12 +1268,10 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		overrides       orchestratorOverrides
-		configure       func(orch *MigrationOrchestrator, config *MigrationConfig)
-		wantState       string
-		wantContains    []string
-		wantNotContains []string
+		name      string
+		overrides orchestratorOverrides
+		configure func(orch *MigrationOrchestrator, config *MigrationConfig)
+		wantState string
 	}{
 		{
 			name: "offset_sync_paused: rogue detected then unfence fails",
@@ -1339,10 +1306,9 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 						return map[int32]int64{0: 100 + n*10}, nil
 					},
 				}
+				orch.actions.destinationOffset = caughtUpDestination()
 			},
-			wantState:       StateOffsetSyncPaused,
-			wantContains:    []string{"still fenced", "blocked", "kcp migration execute", "test-link", "consumer.offset.sync.enable"},
-			wantNotContains: []string{"restore will run after a successful switchover", "rollback failed"},
+			wantState: StateOffsetSyncPaused,
 		},
 		{
 			name:      "fence_verified: promote fails after a successful pause+verify",
@@ -1364,9 +1330,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 					},
 				}
 			},
-			wantState:       StateFenceVerified,
-			wantContains:    []string{"still fenced", "blocked", "re-apply the initial gateway CR", "test-link"},
-			wantNotContains: []string{"restore will run after a successful switchover", "complete the switchover", "Do not re-apply"},
+			wantState: StateFenceVerified,
 		},
 		{
 			name: "promoted: switchover fails after a successful promote",
@@ -1397,40 +1361,32 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 					alterConfigsFn:        alterOK,
 				}
 			},
-			wantState:       StatePromoted,
-			wantContains:    []string{"still fenced", "blocked", "complete the switchover", "Do not re-apply the initial gateway CR"},
-			wantNotContains: []string{"restore will run after a successful switchover"},
+			wantState: StatePromoted,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, tc.overrides)
+			orch, config := newHappyPathOrchestrator(t, nil, tc.overrides)
 			tc.configure(orch, config)
 
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 			require.Error(t, err)
 
-			// The FSM rests in the expected urgent state, in memory (the value
-			// the executor forwards to the guidance) and on disk.
-			assert.Equal(t, tc.wantState, config.CurrentState, "in-memory landed state")
-			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-			assert.Equal(t, tc.wantState, persisted.CurrentState, "persisted landed state")
-			require.True(t, config.PauseConsumerOffsetSyncFlipped,
-				"the urgent guidance only fires when the pause was flipped")
+			// The FSM rests in the expected landed state — the value the
+			// executor forwards to the guidance.
+			assert.Equal(t, tc.wantState, orch.fsm.Current(), "landed state")
 
 			// Feed the landed config + error to the guidance exactly as the
-			// executor does (cmd/migration/execute/migration_executor.go), and
-			// assert the emitted copy matches the landed state.
+			// executor does (cmd/migration/execute/migration_executor.go). The
+			// copy is the same generic reminder regardless of which state the
+			// FSM landed in.
 			out := captureStderr(t, func() {
 				WarnIfPausedOnExecuteFailure(config, err)
 			})
-			for _, want := range tc.wantContains {
-				assert.Contains(t, out, want, "guidance for %s must mention %q", tc.wantState, want)
-			}
-			for _, notWant := range tc.wantNotContains {
-				assert.NotContains(t, out, notWant, "guidance for %s must not mention %q", tc.wantState, notWant)
-			}
+			assert.Contains(t, out, "test-link", "guidance for %s must name the cluster link", tc.wantState)
+			assert.Contains(t, out, "consumer.offset.sync.enable", "guidance for %s must name the key", tc.wantState)
+			assert.Contains(t, out, "declared baseline", "guidance for %s must point at the declared baseline", tc.wantState)
 		})
 	}
 }
@@ -1438,10 +1394,10 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T) {
 	// AE2 pin: the default flow's offset_sync_unchanged guarantee. Without the
 	// opt-in the run passes through offset_sync_paused to switched with zero
-	// AlterConfigs calls. (ListConfigs still runs once, in Initialize.)
+	// AlterConfigs calls.
 	var alterCalls int64
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch, _ := newHappyPathOrchestrator(t, nil)
 
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
@@ -1462,20 +1418,18 @@ func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls),
 		"the default flow must never write cluster-link config")
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-	assert.False(t, persisted.PauseConsumerOffsetSyncFlipped)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
 }
 
-func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *testing.T) {
-	// AE7 pin: an in-flight state file from a release where the pause ran
-	// pre-FSM (flipped marker set, state fenced) resumes without a second
-	// pause: the stage passes through on the marker and promotion proceeds.
+// TestOrchestrator_Execute_RerunOverPausedLink_ReappliesPauseIdempotently: a
+// re-run over a link an interrupted run already paused re-applies the same
+// AlterConfigs SET (a no-op against a real cluster link). The pause is
+// plan-driven, so it never reads the live link: no ListConfigs call.
+func TestOrchestrator_Execute_RerunOverPausedLink_ReappliesPauseIdempotently(t *testing.T) {
 	var alterCalls, listCalls int64
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil)
+	orch, config := newHappyPathOrchestrator(t, nil)
 	config.PauseConsumerOffsetSync = true
-	config.PauseConsumerOffsetSyncFlipped = true
 
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
@@ -1493,17 +1447,15 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls), "no second pause")
-	assert.Equal(t, int64(0), atomic.LoadInt64(&listCalls), "no drift re-check on the already-flipped path")
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped, "marker stays set until the restore bookend clears it")
+	assert.Equal(t, int64(1), atomic.LoadInt64(&alterCalls), "the idempotent pause SET is re-applied on resume")
+	assert.Equal(t, int64(0), atomic.LoadInt64(&listCalls), "never reads the live link to decide")
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
 }
 
-// captureStdout mirrors captureStderr (offset_sync_bookend_test.go) for the
+// captureStdout mirrors captureStderr (offset_sync_test.go) for the
 // reporter's progress stream.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
@@ -1527,24 +1479,15 @@ func captureStdout(t *testing.T, fn func()) string {
 
 func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	// Log hygiene: the rollback's output names config keys, counts, and the
-	// cluster-link name — never config values or credentials.
-	orch, config, _ := newHappyPathOrchestrator(t, StateLagsOk, nil)
+	// cluster-link name — never credentials. (Restore is now a baseline-driven
+	// idempotent apply — it never reads live cluster-link config values at
+	// all, so there is nothing config-value-shaped left to leak.)
+	orch, config := newHappyPathOrchestrator(t, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{
-		"consumer.offset.sync.enable":   "true",
-		"consumer.offset.group.filters": `{"groups":["SENSITIVE-GROUP-FILTER"]}`,
-	}
 
-	var listCalls int64
 	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			if atomic.AddInt64(&listCalls, 1) == 1 {
-				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-			}
-			return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-		},
 		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
 			return nil
 		},
@@ -1557,11 +1500,12 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 			return map[int32]int64{0: 100 + n*10}, nil
 		},
 	}
+	orch.actions.destinationOffset = caughtUpDestination()
 
 	var stdout string
 	stderrOut := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"}, nil)
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"}, resultFromConfig(config))
 			require.Error(t, err)
 		})
 	})
@@ -1569,98 +1513,114 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 
 	assert.Contains(t, combined, "Restoring consumer.offset.sync",
 		"the rollback's restore must announce itself")
-	assert.NotContains(t, combined, "SENSITIVE-GROUP-FILTER",
-		"config values must never appear in rollback output")
 	assert.NotContains(t, combined, "super-secret-value",
 		"credentials must never appear in rollback output")
 }
 
-func TestOrchestrator_Execute_UnknownState_Fails(t *testing.T) {
-	// A state value this binary does not know (corrupted file, or a file
-	// written by a newer kcp) must fail loudly. Silently skipping every step
-	// and printing "Migration complete!" is the failure mode this guards.
-	orch, config, _ := newHappyPathOrchestrator(t, "bogus_state", nil)
-
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-	require.Error(t, err, "an unrecognized persisted state must not execute as a silent no-op")
-	assert.Contains(t, err.Error(), "bogus_state")
-	assert.Equal(t, "bogus_state", config.CurrentState,
-		"the unknown state must be left untouched for the operator to inspect")
-}
-
-func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing.T) {
-	// A rogue producer may appear between the run that verified the fence and
-	// a later resume (e.g. promote failed, operator re-runs hours later).
-	// fence_verified must not survive the restart: detection re-runs, catches
-	// the rogue producer, and the abort_fence rollback fires.
-	var sourceCallCount int64
-
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
-	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-
-	// Rogue producer: source offsets keep increasing on every call
-	orch.actions.sourceOffset = &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			n := atomic.AddInt64(&sourceCallCount, 1)
-			return map[int32]int64{0: 100 + n*10}, nil
-		},
-	}
-
-	// Deadline bounds the failure mode where detection is skipped and promote
-	// polls forever on never-zero lag; the happy path finishes in milliseconds.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-	require.Error(t, err,
-		"resume from fence_verified must re-run detection and catch the rogue producer")
-	assert.ErrorIs(t, err, ErrUnroutedProducers)
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState,
-		"detection on resume should roll back to initialized via abort_fence")
-}
-
-func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
-	// A transient offset-fetch failure during the detection window is not a
-	// detection: it must propagate without ErrUnroutedProducers so the
-	// orchestrator neither unfences the gateway nor rolls the FSM back.
-	// Re-running execute resumes from offset_sync_paused and retries verification.
-	var applyCalls int64
+func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testing.T) {
+	// Any halting runtime error in the fence-up, pre-promote window — here a
+	// transient offset-fetch failure during verify (NOT a rogue-producer
+	// detection) — must abort the fence and roll the FSM back to initialized.
+	// Nothing is promoted yet and KCP is alive, so the safe, client-unblocking
+	// move is to unfence and let the operator re-run idempotently.
+	var mu sync.Mutex
+	var appliedPatches []gateway.RoutePatch
 	overrides := orchestratorOverrides{
 		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-			atomic.AddInt64(&applyCalls, 1)
+			mu.Lock()
+			appliedPatches = append(appliedPatches, rp)
+			mu.Unlock()
 			return "", nil
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, []string{"topic-a"}, overrides)
+	orch, config := newHappyPathOrchestrator(t, []string{"topic-a"}, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
+	// unfenceGateway parses GatewayYAML to build the whole-route restore patch.
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
-	// First snapshot succeeds; the second fails mid-window.
+	// First snapshot succeeds; the second fails mid-window — a fetch error, not a
+	// rogue-producer detection.
 	var getCalls int64
 	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
-			if atomic.AddInt64(&getCalls, 1) == 1 {
+			if atomic.AddInt64(&getCalls, 1) <= 2 { // wait_for_lags sweep, then verify baseline
 				return map[int32]int64{0: 100}, nil
 			}
 			return nil, fmt.Errorf("connection reset by peer")
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	var out strings.Builder
+	orch.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
-		"a fetch failure must not be classified as a detection")
+		"a fetch failure must not be classified as a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
+	assert.Contains(t, out.String(), "Verifying gateway fence failed — removing fence to restore traffic",
+		"the rollback banner names the failed step, as a capitalised sentence")
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateOffsetSyncPaused, persisted.CurrentState,
-		"state must stay at offset_sync_paused — no abort_fence rollback on a fetch error")
+	assert.Equal(t, StateInitialized, orch.fsm.Current(),
+		"a halting error while fenced and pre-promote must abort_fence back to initialized")
 
-	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
-		"only the fence CR apply should occur; the gateway must not be unfenced")
+	mu.Lock()
+	unfenced := false
+	for _, rp := range appliedPatches {
+		if rp.Field == "" { // whole-route replace == the unfence, distinct from field-set fence patches
+			unfenced = true
+		}
+	}
+	mu.Unlock()
+	assert.True(t, unfenced, "the gateway must be unfenced after a pre-promote halt")
+}
+
+func TestOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) {
+	// When the halt is a context cancellation (Ctrl-C / kill / deadline), KCP
+	// cannot perform the unfence IO, so it must NOT attempt abort_fence — it
+	// leaves the fenced partial world for the idempotent resume. This guards the
+	// ctx.Err()==nil half of the rollback decision: without it, a broadened
+	// rollback would try to unfence on a dead context.
+	var mu sync.Mutex
+	var appliedPatches []gateway.RoutePatch
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			appliedPatches = append(appliedPatches, rp)
+			mu.Unlock()
+			return "", nil
+		},
+	}
+
+	orch, config := newHappyPathOrchestrator(t, []string{"topic-a"}, overrides)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var getCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt64(&getCalls, 1) <= 2 { // wait_for_lags sweep, then verify baseline
+				return map[int32]int64{0: 100}, nil
+			}
+			cancel() // simulate Ctrl-C mid-verify
+			return nil, context.Canceled
+		},
+	}
+
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+	require.Error(t, err)
+
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
+		"a cancelled context must leave the fenced world for resume — no abort_fence")
+
+	mu.Lock()
+	for _, rp := range appliedPatches {
+		assert.NotEqual(t, "", rp.Field,
+			"the gateway must NOT be unfenced when the context is cancelled (no IO on a dead ctx)")
+	}
+	mu.Unlock()
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
@@ -1670,17 +1630,781 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 
 	// The verify_fence transition succeeded first (detection disabled → no-op),
 	// then the promote transition was cancelled, so the FSM rests at
 	// fence_verified — never promoted.
-	assert.Equal(t, StateFenceVerified, config.CurrentState)
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current(),
+		"should rest at fence_verified after promote failure, never promoted")
+}
 
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateFenceVerified, persisted.CurrentState,
-		"state file should rest at fence_verified after promote failure, never promoted")
+// --- AAO kill-point matrix ---
+//
+// Each kill-point test below constructs, purely via the fakes and a hand-built
+// *migplan.Result, the live cluster state a kill at one point would leave,
+// drives one full from-zero Execute, and asserts (a) it converges to switched
+// and (b) a second Execute — fed the Result a real migplan.Reconcile would
+// return once nothing at all remains (aaoDoneResult) — is a pure no-op: zero
+// additional gateway patches, zero additional PromoteMirrorTopics calls. The
+// FSM only ever consumes config.Topics/FenceYAML/SwitchoverYAML — set by
+// Initialize from that Result — and never reads the live cluster to decide
+// what to skip (see workflow.go's Initialize and its plan-driven no-op guards:
+// FenceGateway on FenceYAML, PromoteTopics on Topics, SwitchGateway on
+// SwitchoverYAML).
+
+// aaoDoneResult builds the migplan.Result a real migplan.Reconcile returns
+// once nothing at all remains for AAO: no per-topic promote work (Topics)
+// and no gateway-level work either (FenceYAML/SwitchoverYAML empty too) —
+// see internal/services/migplan/reconcile/reconcile.go's reconcileStatic,
+// whose `len(toMigrate) == 0` early return leaves Plan.Artifacts nil and
+// therefore every one of these three fields empty on the resulting Result.
+// This is the constructed Result every row's second ("must now be a no-op")
+// Execute call below is driven with.
+func aaoDoneResult() *migplan.Result {
+	return &migplan.Result{
+		Route:         "migration-route",
+		PromoteTopics: []string{},
+		Mode:          "static",
+		GatewayYAML:   testInitialCR,
+		// FenceYAML/SwitchoverYAML deliberately left "" — nothing in flight.
+	}
+}
+
+// aaoFullResult builds the migplan.Result for a fully migratable two-topic
+// plan (both topics still needing fence+promote+switch) — the Result every
+// "everything still to do" row below drives its first Execute call with.
+func aaoFullResult() *migplan.Result {
+	return &migplan.Result{
+		Route:          "migration-route",
+		PromoteTopics:  []string{"topic-a", "topic-b"},
+		MigrateTopics:  []string{"topic-a", "topic-b"},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
+	}
+}
+
+// newAAOKillPointOrchestrator is the shared builder behind every
+// kill-point test. Unlike buildHappyPathOrchestrator's fixed "every topic
+// starts ACTIVE, only this run's own PromoteMirrorTopics call flips it to
+// STOPPED" mirror model, this lets a test seed which topics' mirrors are
+// ALREADY STOPPED before Execute ever runs — modelling exactly the live
+// state a kill at a mid/late-promote point would leave — and it records
+// every gateway-route patch and every PromoteMirrorTopics call (with its
+// topic list, in call order) so each test can assert on them directly,
+// including that a second Execute adds none.
+//
+// readyProgress, when non-empty, replaces the default (immediately
+// succeeding, no-progress-reported) WaitForGatewayReady fake with one that
+// reports each entry via onProgress, in order, before returning nil. This is
+// the harness's fake pod-waiter for the convergence-wait tests: the real
+// "poll until converged" loop lives entirely inside the production
+// K8sService this mock replaces, with nothing to hook in this harness, so
+// "waits for convergence, then proceeds" is modelled as the single mocked
+// call itself reporting an interim not-yet-converged progress tick before
+// its own converged return and nil — the simplest fake that both lets the
+// wait return and still proves the step observed an unconverged state
+// before succeeding (see the returned readyEvents recorder). Both
+// FenceGateway's and SwitchGateway's confirm step share this one mock
+// (neither this build's default capability nor detection is configured to
+// route either through a different wait mechanism — see confirmFence's
+// default case and VerifyTransition), so a non-empty readyProgress is
+// replayed on every call reaching it, fence's and switch's alike.
+func newAAOKillPointOrchestrator(
+	t *testing.T,
+	initiallyStopped []string,
+	readyProgress []gateway.GatewayReadinessProgress,
+) (orch *MigrationOrchestrator, config *MigrationConfig, patchCalls *int64, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
+	t.Helper()
+
+	topics := []string{"topic-a", "topic-b"}
+	stoppedSet := make(map[string]bool, len(initiallyStopped))
+	for _, tpc := range initiallyStopped {
+		stoppedSet[tpc] = true
+	}
+
+	config = &MigrationConfig{
+		MigrationId:         "test-migration-1",
+		KubeConfigPath:      "/fake/kubeconfig",
+		SourceBootstrap:     "source:9092",
+		ClusterBootstrap:    "dest:9092",
+		ClusterId:           "lkc-test",
+		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
+		ClusterLinkName:     "test-link",
+		Topics:              topics,
+		MigrateTopics:       topics,
+		InitialCrName:       "my-gateway",
+		K8sNamespace:        "confluent",
+		GatewayYAML:         testInitialCR,
+		Route:               "migration-route",
+		Mode:                "static",
+		FenceYAML:           testFenceYAML,
+		SwitchoverYAML:      testSwitchoverYAML,
+		RollbackFenceYAML:   testRollbackFenceYAML,
+		RollbackAllowed:     true,
+	}
+
+	var mu sync.Mutex
+	var patches int64
+	var promotes [][]string
+	var readyEvents []gateway.GatewayReadinessProgress
+	promotedTopics := make(map[string]bool, len(stoppedSet))
+	for topic := range stoppedSet {
+		promotedTopics[topic] = true
+	}
+
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			return []byte(testInitialCR), nil
+		},
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&patches, 1)
+			return configID, nil
+		},
+		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
+			return map[k8stypes.UID]struct{}{
+				"uid-1": {},
+				"uid-2": {},
+			}, nil
+		},
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			for _, p := range readyProgress {
+				mu.Lock()
+				readyEvents = append(readyEvents, p)
+				mu.Unlock()
+				onProgress(p)
+			}
+			return nil
+		},
+	}
+
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make([]clusterlink.MirrorTopic, len(topics))
+			for i, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if promotedTopics[name] {
+					status = clusterlink.MirrorStatusStopped
+				}
+				out[i] = clusterlink.MirrorTopic{
+					MirrorTopicName: name,
+					MirrorStatus:    status,
+				}
+			}
+			return out, nil
+		},
+		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
+			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
+		},
+		validateTopicsFn: func(reqTopics []string, clusterLinkTopics []string) error {
+			return nil
+		},
+		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			promotes = append(promotes, append([]string(nil), topicNames...))
+			for _, name := range topicNames {
+				promotedTopics[name] = true
+			}
+			mu.Unlock()
+			data := make([]struct {
+				MirrorTopicName string `json:"mirror_topic_name"`
+				ErrorMessage    string `json:"error_message,omitempty"`
+				ErrorCode       int    `json:"error_code,omitempty"`
+			}, len(topicNames))
+			for i, name := range topicNames {
+				data[i].MirrorTopicName = name
+			}
+			return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
+		},
+	}
+
+	zeroLagOffsets := map[int32]int64{0: 100, 1: 200}
+	srcOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return zeroLagOffsets, nil
+		},
+	}
+	dstOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return zeroLagOffsets, nil
+		},
+	}
+
+	actions := NewMigrationActionsWithOffsets(gw, cl, srcOffset, dstOffset)
+	actions.lagPollInterval = time.Millisecond
+	actions.promotePollInterval = time.Millisecond
+
+	orch = NewMigrationOrchestrator(config, actions)
+
+	return orch, config, &patches, &promotes, &readyEvents
+}
+
+// TestAAO_FreshFullRun: a pristine migration, never
+// fenced, mirrors ACTIVE, every topic migratable. A from-zero walk must
+// fence, promote both topics, and switch — and a second run, once reconcile
+// reports nothing left, must be a pure no-op.
+func TestAAO_FreshFullRun(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls), "one fence apply and one switch apply")
+	require.Len(t, *promoteCalls, 1, "both zero-lag topics promoted in one batch")
+	assert.ElementsMatch(t, []string{"topic-a", "topic-b"}, (*promoteCalls)[0])
+
+	// A second run: a fresh reconcile now reports nothing left at all. The
+	// from-zero walk still visits every step, but every step's
+	// plan-driven no-op guard must fire — zero new mutations.
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, rerun.fsm.Current())
+
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls),
+		"a completed migration's re-run must apply no gateway patches")
+	assert.Equal(t, promotesBefore, len(*promoteCalls),
+		"a completed migration's re-run must issue no promote calls")
+}
+
+// The test-only kill-point seam (killpoint.EnvVar) must interrupt a run right
+// after the named checkpoint state, simulating an abrupt kcp exit (Ctrl-C) via
+// a real context cancellation. A run that would otherwise reach StateSwitched
+// must instead stop at StateFenced with a cancellation error, having applied
+// the fence but neither promoted nor switched. This is the mechanism the live
+// resume suite drives to leave a real partial world, then re-run to completion.
+func TestOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, StateFenced)
+	orch, _, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+
+	require.Error(t, err, "execute must exit non-zero when the kill-point env var fires")
+	assert.ErrorIs(t, err, context.Canceled, "the interruption must surface as a context cancellation")
+	assert.Equal(t, StateFenced, orch.fsm.Current(), "the run must stop right after the fenced checkpoint")
+	assert.Equal(t, int64(1), atomic.LoadInt64(patchCalls), "only the fence apply happened — the switch must not run")
+	assert.Empty(t, *promoteCalls, "no promote occurred — interrupted before the promote stage")
+}
+
+// TestAAO_AlreadyFencedNoReapply: the world a kill
+// right after fencing leaves. The FSM walks the whole workflow — there is no
+// live read that could tell this run "the
+// route is already fenced" apart from a fresh one, so FenceGateway's apply is
+// unconditionally re-issued every run ("AAO reconciles every run").
+// What this row actually pins is that re-issuing that apply is safe: exactly
+// one fence patch, never doubled, and promotion/switch proceed normally from
+// mirrors that are still ACTIVE (nothing was promoted by the prior, killed
+// run) — landing at the same converged, idempotent-on-a-second-run place as
+// a fresh migration.
+func TestAAO_AlreadyFencedNoReapply(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls),
+		"one fence re-apply plus one switch apply — never doubled")
+	require.Len(t, *promoteCalls, 1)
+	assert.ElementsMatch(t, []string{"topic-a", "topic-b"}, (*promoteCalls)[0])
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
+}
+
+// TestAAO_FenceWaitsForConvergence: fenced, but the
+// serving pods have not yet converged on the fenced config. There is no
+// separate "poll until ready" loop in this test harness to hook — that loop
+// lives entirely inside the production K8sService the gateway mock replaces
+// — so "waits for convergence, then proceeds" is modelled as the single
+// mocked WaitForGatewayReady call itself reporting one not-yet-converged
+// progress tick before its own converged return (see
+// newAAOKillPointOrchestrator's doc comment on readyProgress). This is the
+// simplest fake that both lets the wait return and still proves the step
+// observed an unconverged state — not reported done while unconverged —
+// before succeeding.
+func TestAAO_FenceWaitsForConvergence(t *testing.T) {
+	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
+	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+
+	orch, config, patchCalls, promoteCalls, readyEvents := newAAOKillPointOrchestrator(
+		t, nil, []gateway.GatewayReadinessProgress{notReady, converged})
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
+	first := (*readyEvents)[0]
+	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
+	last := (*readyEvents)[len(*readyEvents)-1]
+	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls))
+	require.Len(t, *promoteCalls, 1)
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
+}
+
+// TestAAO_MidPromoteMix: a kill mid-promotion,
+// where topic-a has already reached STOPPED (SwitchOnly, per
+// reconcile/rules.go's Classify) and topic-b is still ACTIVE. A real
+// migplan.Reconcile excludes topic-a from the promote set entirely — the
+// filtering is reconcile's job, done once, live — so the constructed Result
+// here lists only topic-b. This must drive PromoteTopics to promote topic-b
+// alone, never re-issuing PromoteMirrorTopics for the already-STOPPED
+// topic-a.
+func TestAAO_MidPromoteMix(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
+		t, []string{"topic-a"}, nil)
+
+	midResult := &migplan.Result{
+		Route:          "migration-route",
+		PromoteTopics:  []string{"topic-b"},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, midResult)
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	require.Len(t, *promoteCalls, 1, "exactly one promote batch")
+	assert.Equal(t, []string{"topic-b"}, (*promoteCalls)[0],
+		"only the not-yet-stopped topic is promoted — topic-a (already STOPPED) is never re-promoted")
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls), "fence + switch, gated by the still-nonempty (single-topic) plan")
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
+}
+
+// TestAAO_PromotedNotSwitched: every mirror already STOPPED (nothing left to
+// promote) but the switch not yet applied. A real migplan.Reconcile for this
+// state returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (see
+// internal/services/migplan/reconcile/reconcile.go's reconcileStatic: its
+// 'promote' set excludes SwitchOnly topics, but its 'toMigrate' set — which
+// gates whether Artifacts are built at all — includes them). Fence and
+// Switch key their no-op on those artifacts, not on Topics (see workflow.go's
+// FenceGateway/SwitchGateway guards), so promote makes no call at all but
+// switch still applies and the run still converges.
+func TestAAO_PromotedNotSwitched(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
+		t, []string{"topic-a", "topic-b"}, nil)
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		PromoteTopics:  []string{},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	assert.Empty(t, *promoteCalls, "nothing left to promote — PromoteTopics must make no call at all")
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls),
+		"fence + switch must both still apply — a non-empty artifact is owed regardless of the empty promote set")
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
+}
+
+// TestAAO_SwitchWaitsForConvergence: the switch CR landed but the serving
+// pods have not yet converged on it. Like TestAAO_PromotedNotSwitched, this
+// needs Topics=[] (nothing left to promote) with a non-empty SwitchoverYAML
+// for the switch to actually run. The convergence wait is faked the same way
+// as TestAAO_FenceWaitsForConvergence: the mocked WaitForGatewayReady call
+// itself reports a not-yet-converged progress tick before its own converged
+// return, since there is no separate "poll until ready" loop in this harness
+// to hook (see newAAOKillPointOrchestrator's doc comment on readyProgress).
+func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
+	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
+	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+
+	orch, config, patchCalls, promoteCalls, readyEvents := newAAOKillPointOrchestrator(
+		t, []string{"topic-a", "topic-b"}, []gateway.GatewayReadinessProgress{notReady, converged})
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		PromoteTopics:  []string{},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+
+		// Part of the batch is already promoted, so reconcile forbids a rollback.
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   false,
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)
+	require.NoError(t, err, "the switch step must succeed once convergence is reported, not error out on the interim tick")
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
+	first := (*readyEvents)[0]
+	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
+	last := (*readyEvents)[len(*readyEvents)-1]
+	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+
+	assert.Empty(t, *promoteCalls)
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls))
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
+}
+
+// TestAAO_DoneIsNoop — live state: fully switched already, fence gone, every
+// mirror STOPPED. A real migplan.Reconcile classifies every topic Unchanged
+// and returns a Result with no artifacts at all (aaoDoneResult, mirroring
+// reconcileStatic's len(toMigrate)==0 early return): Topics, FenceYAML and
+// SwitchoverYAML all empty. Every one of Fence/Promote/Switch's plan-driven
+// no-op guards must fire — zero patches, zero promotes — and the FSM still
+// walks through every step to switched rather than needing any special-cased
+// short-circuit to get there.
+func TestAAO_DoneIsNoop(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
+		t, []string{"topic-a", "topic-b"}, nil)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+
+	assert.Equal(t, int64(0), atomic.LoadInt64(patchCalls), "zero gateway patches — fence and switch must both no-op")
+	assert.Empty(t, *promoteCalls, "zero promote calls")
+
+	// A second Execute is byte-for-byte identical: still zero mutations.
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, rerun.fsm.Current())
+	assert.Equal(t, int64(0), atomic.LoadInt64(patchCalls))
+	assert.Empty(t, *promoteCalls)
+}
+
+// alterRecorder wraps orch's cluster-link service to record the value of every
+// AlterConfigs SET, keeping the harness's mirror and promote behaviour.
+func alterRecorder(orch *MigrationOrchestrator) *[]string {
+	var mu sync.Mutex
+	var set []string
+	originalCL := orch.actions.clusterLinkService
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn:    originalCL.ListMirrorTopics,
+		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, a := range alts {
+				set = append(set, a.Value)
+			}
+			return nil
+		},
+	}
+	return &set
+}
+
+// TestAAO_KillAfterSwitch_LeavesTheRestore: a kill right after the switch, with
+// the pause opted in, leaves the route switched and offset sync still paused —
+// the restore has not run.
+func TestAAO_KillAfterSwitch_LeavesTheRestore(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, StateSwitched)
+	orch, config, patchCalls, _, _ := newAAOKillPointOrchestrator(t, nil, nil)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	alters := alterRecorder(orch)
+
+	res := aaoFullResult()
+	res.RestoreOffsetSync = true
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls), "fence and switch applied")
+	assert.Equal(t, []string{"false"}, *alters, "the pause ran; the restore did not")
+}
+
+// TestAAO_RestoreOwedAfterSwitch is the resume of that kill: every topic is
+// migrated, but reconcile found the link still paused, so the plan carries a
+// restore and nothing else. The walk makes no gateway patch and no promote,
+// applies the one baseline SET, and ends at offset_sync_restored. A further
+// re-run, with the restore no longer owed, touches nothing.
+func TestAAO_RestoreOwedAfterSwitch(t *testing.T) {
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, []string{"topic-a", "topic-b"}, nil)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	alters := alterRecorder(orch)
+
+	res := aaoDoneResult()
+	res.RestoreOffsetSync = true
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res))
+
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+	assert.Equal(t, int64(0), atomic.LoadInt64(patchCalls), "no gateway patch — the switch already landed")
+	assert.Empty(t, *promoteCalls, "no promote — every mirror is already STOPPED")
+	assert.Equal(t, []string{"true"}, *alters, "only the restore SET, to the enabled baseline")
+
+	rerun := NewMigrationOrchestrator(config, orch.actions)
+	require.NoError(t, rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult()))
+	assert.Equal(t, []string{"true"}, *alters, "with no restore owed, the re-run sets nothing")
+}
+
+// --- execute writes no files ---
+
+// TestOrchestrator_Execute_WritesNoFiles drives a full from-zero AAO run,
+// and its idempotent second run once reconcile reports nothing left, in a real
+// temporary working directory — the same harness (newAAOKillPointOrchestrator)
+// and Result fixtures (aaoFullResult/aaoDoneResult) as TestAAO_FreshFullRun
+// — and asserts that neither run writes any file there. The idempotency half
+// is covered by the kill-point matrix above; asserting it again here (zero
+// additional patches/promotes on the second run) confirms the no-file
+// guarantee holds across the same two-run shape.
+func TestOrchestrator_Execute_WritesNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	orch, config, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, nil, nil)
+
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, orch.fsm.Current())
+	assertNoFilesWritten(t, dir)
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+
+	// Second, idempotent run: a fresh reconcile now reports nothing left at
+	// all (aaoDoneResult). No new gateway patch or promote call is issued —
+	// same contract TestAAO_FreshFullRun pins — and still no file appears.
+	rerun := NewMigrationOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateOffsetSyncRestored, rerun.fsm.Current())
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls),
+		"a completed migration's re-run must apply no gateway patches")
+	assert.Equal(t, promotesBefore, len(*promoteCalls),
+		"a completed migration's re-run must issue no promote calls")
+
+	assertNoFilesWritten(t, dir)
+}
+
+// assertNoFilesWritten fails if dir contains anything at all: a migration
+// execute run writes nothing to its working directory.
+func assertNoFilesWritten(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "no file should be written to the working directory: %v", entries)
+}
+
+// fencedResume is the reconcile result a resume sees when the interrupted run
+// left kcp's fence on the route. Only Initialize's copy of the plan tells the
+// run so: config itself starts without it.
+func fencedResume(config *MigrationConfig) *migplan.Result {
+	res := resultFromConfig(config)
+	res.FencedAtStart = true
+	return res
+}
+
+// recordingGateway records every route patch the run applies.
+func recordingGateway(mu *sync.Mutex, patches *[]gateway.RoutePatch) orchestratorOverrides {
+	return orchestratorOverrides{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			*patches = append(*patches, rp)
+			mu.Unlock()
+			return "", nil
+		},
+	}
+}
+
+// recordingLink records every cluster-link config change the run applies.
+func recordingLink(mu *sync.Mutex, alters *[]clusterlink.ConfigAlteration) *mockClusterLinkService {
+	return &mockClusterLinkService{
+		alterConfigsFn: func(_ context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			mu.Lock()
+			*alters = append(*alters, alts...)
+			mu.Unlock()
+			return nil
+		},
+	}
+}
+
+// offsetSyncBackOn is the change that sets consumer offset sync back to an
+// "enabled" baseline.
+var offsetSyncBackOn = clusterlink.ConfigAlteration{Name: offsetSyncEnableKey, Value: "true", Operation: clusterlink.OperationSet}
+
+// TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack:
+// a resume starts with the route already fenced by the interrupted run. A step
+// that fails before this run's own fence lands rolls back like a failure after
+// it: it lifts the fence and sets consumer offset sync back to the baseline.
+func TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack(t *testing.T) {
+	for _, step := range []string{EventWaitForLags, EventFence} {
+		t.Run(step, func(t *testing.T) {
+			t.Setenv(killpoint.FailEnvVar, step)
+			var mu sync.Mutex
+			var patches []gateway.RoutePatch
+			var alters []clusterlink.ConfigAlteration
+			orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+			config.PauseConsumerOffsetSync = true
+			config.ConsumerOffsetSyncBaseline = "enabled"
+			orch.actions.clusterLinkService = recordingLink(&mu, &alters)
+			var buf strings.Builder
+			orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
+			require.Len(t, patches, 1, "the rollback only: this run never reached its own fence")
+			assert.Equal(t, "", patches[0].Field, "the rollback replaces the whole route with the rollback target")
+			assert.Contains(t, buf.String(), "removing fence to restore traffic")
+			assert.Contains(t, buf.String(), "Gateway unfenced")
+			assert.Contains(t, alters, offsetSyncBackOn, "the rollback sets consumer offset sync back to the baseline")
+		})
+	}
+}
+
+// TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift:
+// on a fresh run nothing is fenced before the fence step, so a failure there
+// changes nothing on the gateway.
+func TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_NothingToLift(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.Empty(t, patches, "nothing is fenced, so nothing is patched")
+	assert.NotContains(t, buf.String(), "removing fence")
+}
+
+// TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
+// resume of a partly promoted batch keeps the interrupted run's fence when a
+// step fails before this run's fence lands, and says so.
+func TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+	res := fencedResume(config)
+	res.RollbackAllowed = false
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.Empty(t, patches, "the fence stays: no patch")
+	assert.Contains(t, buf.String(), "keeping the fence", "the run must say it is not unfencing")
+}
+
+// TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence: a
+// route fenced at the start never unfences from promote onwards.
+func TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventPromote)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	orch, config := newHappyPathOrchestrator(t, nil, recordingGateway(&mu, &patches))
+	var buf strings.Builder
+	orch.reporter = &reporter{out: &buf, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+	require.Error(t, err)
+	require.Len(t, patches, 1, "this run's fence only: no rollback from promote onwards")
+	assert.NotContains(t, buf.String(), "removing fence")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync: restoring the
+// route after an unconfirmed fence also sets consumer offset sync back to the
+// baseline, in case an earlier, interrupted run paused it.
+func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var alters []clusterlink.ConfigAlteration
+	overrides := recordingGateway(&mu, &patches)
+	var readinessWaits int64
+	overrides.waitForGatewayReadyFn = func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		if atomic.AddInt64(&readinessWaits, 1) == 1 {
+			return fmt.Errorf("gateway pods did not converge") // the fence's wait; the restore's succeeds
+		}
+		return nil
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	orch.actions.clusterLinkService = recordingLink(&mu, &alters)
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
+
+	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	require.Len(t, patches, 2, "the fence, then the restoring apply")
+	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
 }

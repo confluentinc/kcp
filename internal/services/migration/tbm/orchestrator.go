@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
@@ -89,30 +91,24 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config         *migration.MigrationConfig
-	fsm            *fsm.FSM
-	actions        *TBMActions
-	migrationState *migration.MigrationState
-	stateFilePath  string
-	reporter       *reporter
+	config   *migration.MigrationConfig
+	fsm      *fsm.FSM
+	actions  *TBMActions
+	reporter *reporter
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
 func NewTBMOrchestrator(
 	config *migration.MigrationConfig,
 	actions *TBMActions,
-	migrationState *migration.MigrationState,
-	stateFilePath string,
 ) *TBMOrchestrator {
 	orchestrator := &TBMOrchestrator{
-		config:         config,
-		actions:        actions,
-		migrationState: migrationState,
-		stateFilePath:  stateFilePath,
-		reporter:       newReporter(),
+		config:   config,
+		actions:  actions,
+		reporter: newReporter(),
 	}
 
-	events := make(fsm.Events, 0, len(canonicalWorkflow)+3)
+	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
 	for _, step := range canonicalWorkflow {
 		events = append(events, fsm.EventDesc{
 			Name: step.Event,
@@ -125,19 +121,15 @@ func NewTBMOrchestrator(
 		Src:  []string{StateFenced},
 		Dst:  StateInitialized,
 	})
-	events = append(events, fsm.EventDesc{
-		Name: EventExpireVerification,
-		Src:  []string{StateFenceVerified},
-		Dst:  StateFenced,
-	})
-	events = append(events, fsm.EventDesc{
-		Name: EventExpireFence,
-		Src:  []string{StateFenced},
-		Dst:  StateInitialized,
-	})
 
+	// The FSM always starts at uninitialized on construction: the command
+	// layer calls migplan.Reconcile live on every invocation and hands its
+	// *migplan.Result to Execute, which walks canonicalWorkflow from the top
+	// and re-applies each step's artifact idempotently (the
+	// FenceYAML/SwitchoverYAML no-op guards make an already-complete
+	// migration a side-effect-free walk-through).
 	orchestrator.fsm = fsm.NewFSM(
-		config.CurrentState,
+		StateUninitialized,
 		events,
 		fsm.Callbacks{
 			"before_event":               orchestrator.beforeEventCallback,
@@ -154,36 +146,12 @@ func NewTBMOrchestrator(
 		},
 	)
 
-	// Key both demotions off the state the config was loaded in, captured
-	// once here — not off orchestrator.fsm.Is after the fact. The two are
-	// independent, single-level demotions (fence_verified -> fenced,
-	// fenced -> initialized), not a cascade: re-checking fsm.Is(StateFenced)
-	// after the first demotion has already landed the FSM on fenced would
-	// fire the second unconditionally on every fence_verified resume too,
-	// demoting all the way to initialized instead of stopping at fenced.
-	bootstrapState := config.CurrentState
-
-	// fence_verified is a point-in-time attestation and never survives a
-	// restart — see EventExpireVerification.
-	if bootstrapState == StateFenceVerified {
-		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
-			slog.Error("❌ failed to expire tbm fence verification at bootstrap", "error", err)
-		}
-	}
-	// The fence posture is a point-in-time fact for the same reason — see
-	// EventExpireFence.
-	if bootstrapState == StateFenced {
-		if err := orchestrator.fsm.Event(context.Background(), EventExpireFence); err != nil {
-			slog.Error("❌ failed to expire tbm fence posture at bootstrap", "error", err)
-		}
-	}
-
 	return orchestrator
 }
 
-// Execute runs the full TBM workflow from the current state, skipping any
-// already-completed steps so a re-run resumes. res is the reconcile plan the
-// caller already computed live for this manifest; onInitialize consumes it.
+// Execute runs the full TBM workflow, always from StateUninitialized (see
+// NewTBMOrchestrator). res is the reconcile plan the caller already computed
+// live for this manifest, on every invocation; onInitialize consumes it.
 // lagThreshold is the total replication lag tolerated before wait_for_lags
 // proceeds; onWaitForLags consumes it. detectUnroutedProducersDuration is the
 // monitoring window verify_fence uses to detect a producer bypassing the
@@ -191,67 +159,116 @@ func NewTBMOrchestrator(
 // authenticates the destination cluster-link REST surface; onPromote
 // consumes it.
 func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64, detectUnroutedProducersDuration time.Duration, restAuth clusterlink.Authenticator) error {
-	if !isKnownState(o.config.CurrentState) {
-		return fmt.Errorf("unrecognized tbm migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
-	}
+	// Own a cancellable child context so the test-only kill-point seam can
+	// interrupt the run after a chosen checkpoint via a real cancellation
+	// (inert unless killpoint.EnvVar is set — never fires in production).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
-		if !o.canTransition(step.Event) {
-			slog.Debug("skipping already-completed tbm step", "step", step.Description, "event", step.Event)
-			continue
-		}
-
 		if header, ok := stepHeaders[step.Event]; ok {
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
-		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+		// Test-only failure hook: fails this step in place of its action when
+		// killpoint.FailEnvVar names it. nil in production.
+		err := killpoint.FailAt(step.Event)
+		if err == nil {
+			err = o.fsm.Event(ctx, step.Event, params)
+		}
+		if err != nil {
 			return o.handleStepFailure(ctx, step, err)
 		}
-		if err := o.PersistState(); err != nil {
-			return fmt.Errorf("failed during %s: %w", step.Description, err)
-		}
 		o.reporter.stepDone()
+
+		// Test-only interruption seam: cancel the run after the configured
+		// checkpoint (real context cancellation, the Ctrl-C path) so the live
+		// resume suite is left with a genuine partial world. No-op in production.
+		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			cancel()
+			return ctx.Err()
+		}
 	}
 
 	o.reporter.complete("✅ TBM migration complete!")
 	return nil
 }
 
-// handleStepFailure maps a failed workflow step to its compensating rollback,
-// if any: only a verify_fence failure classified as ErrUnroutedProducers
-// triggers abort_fence; every other step failure just returns the wrapped
-// error and leaves the FSM at its last good state. Mirrors
-// migration.handleStepFailure, minus the ErrFenceUnconfirmed and
-// pause_offset_sync branches TBM has no equivalent of.
+// handleStepFailure maps a failed workflow step to its compensating rollback.
+// It rolls back for ANY halting error while the fence is up and nothing is
+// promoted yet — the only state abort_fence can legally leave (fenced). Promote
+// is the point of no return: once mirrors are promoted, unfencing would strand
+// them (producers routed back to source while the target mirrors are frozen
+// STOPPED), so we never abort past it — the FSM structurally has no abort_fence
+// edge from fence_verified onward. A cancelled context (Ctrl-C / kill /
+// deadline) cannot perform the unfence IO, so we leave the fenced world for the
+// idempotent resume. Mirrors migration.handleStepFailure, minus the
+// ErrFenceUnconfirmed and pause_offset_sync branches TBM has no equivalent of.
 func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
-	if !errors.Is(stepErr, ErrUnroutedProducers) {
+	// Roll back while kcp's fence is up and nothing is promoted yet: this run's
+	// fence has landed (fenced, the state abort_fence can leave), or an
+	// interrupted run's fence was up at the start and this run has not reached
+	// its own fence step. A cancelled context leaves the fence for the resume.
+	thisRunsFence := o.fsm.Can(EventAbortFence)
+	earlierRunsFence := o.config.FencedAtStart && beforeFenceStep(o.fsm.Current())
+	willRollback := (thisRunsFence || earlierRunsFence) && ctx.Err() == nil
+	if !willRollback {
 		return stepFailure
 	}
 
+	// Announce the rollback with the real reason here; onAbortFence owns only the
+	// unfence itself.
+	reason := strings.ToUpper(step.Description[:1]) + step.Description[1:] + " failed"
+	if errors.Is(stepErr, ErrUnroutedProducers) {
+		reason = "Unrouted producers detected"
+	}
+	if !o.config.RollbackAllowed {
+		o.reporter.warn("%s — keeping the fence: part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch", reason)
+		return stepFailure
+	}
+	o.reporter.warn("%s — removing fence to restore traffic", reason)
+
+	if !thisRunsFence {
+		// This run never reached fenced, so there is no abort_fence edge to take:
+		// only the gateway needs putting right.
+		if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			return stepFailure
+		}
+		o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
+		return stepFailure
+	}
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
 		slog.Error("❌ failed to roll back to initialized", "error", err)
 		return stepFailure
 	}
 
-	if err := o.PersistState(); err != nil {
-		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, err)
-	}
 	return stepFailure
+}
+
+// beforeFenceStep reports whether state comes before this run's fence step
+// lands: the FSM has not reached fenced yet.
+func beforeFenceStep(state string) bool {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		return true
+	}
+	return false
 }
 
 func (o *TBMOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.Event) {
 	slog.Debug("TBM FSM: before event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 }
 
-// afterEventCallback advances CurrentState and logs every committed
-// transition as a single Info line, mirroring migration.afterEventCallback.
+// afterEventCallback logs every committed transition as a single Info line,
+// mirroring migration.afterEventCallback. The FSM (o.fsm.Current(), which
+// e.Dst mirrors) is the only record of the run's state.
 func (o *TBMOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
-	o.config.CurrentState = e.Dst
 	slog.Info("tbm migration state advanced", "event", e.Event, "from", e.Src, "to", e.Dst, "migration_id", o.config.MigrationId)
 }
 
@@ -305,51 +322,18 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 
 // onAbortFence runs the abort_fence rollback: it unfences the gateway to
 // restore traffic to its pre-migration state. If unfencing fails, cancel the
-// rollback so the FSM stays at fenced — the bootstrap expire_fence demotion
-// re-asserts the fenced CR on the next run before anything trusts it. Mirrors
-// migration.onAbortFence, minus the reason branch (TBM's abort_fence has only
-// one source state, fenced — every rollback is an unrouted-producer
-// detection) and the sync-config restore (TBM has no pause_offset_sync stage).
+// rollback so the FSM stays at fenced — the next run's from-zero walk
+// re-applies the fence step (a no-op rollout if the gateway never diverged)
+// before anything downstream trusts it. Mirrors migration.onAbortFence,
+// minus the reason branch (TBM's abort_fence has only one source state,
+// fenced — every rollback is an unrouted-producer detection) and the
+// sync-config restore (TBM has no pause_offset_sync stage).
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
-	o.reporter.warn("Unrouted producers detected — removing fence to restore traffic")
+	// Reason is announced by handleStepFailure; this callback owns only the unfence.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
 	o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
-}
-
-// PersistState saves the current TBM config to the state file.
-func (o *TBMOrchestrator) PersistState() error {
-	if err := o.saveState(); err != nil {
-		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
-	}
-	slog.Debug("persisted tbm state", "migration_id", o.config.MigrationId, "state", o.config.CurrentState, "path", o.stateFilePath)
-	return nil
-}
-
-func (o *TBMOrchestrator) saveState() error {
-	o.migrationState.UpsertMigration(*o.config)
-	if err := o.migrationState.WriteToFile(o.stateFilePath); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-	return nil
-}
-
-func (o *TBMOrchestrator) canTransition(event string) bool {
-	return o.fsm.Can(event)
-}
-
-// HasPendingWork reports whether any canonical workflow step remains to run.
-func (o *TBMOrchestrator) HasPendingWork() bool {
-	if !isKnownState(o.config.CurrentState) {
-		return true
-	}
-	for _, step := range canonicalWorkflow {
-		if o.canTransition(step.Event) {
-			return true
-		}
-	}
-	return false
 }

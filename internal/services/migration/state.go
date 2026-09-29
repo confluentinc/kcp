@@ -1,41 +1,19 @@
 package migration
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"time"
-
-	"github.com/confluentinc/kcp/internal/atomicwrite"
-	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/confluentinc/kcp/internal/types"
-)
-
 // ----- migration FSM state and events -----
 
 // FSM State constants
 const (
-	StateUninitialized    = "uninitialized"
-	StateInitialized      = "initialized"
-	StateLagsOk           = "lags_ok"
-	StateFenced           = "fenced"
-	StateOffsetSyncPaused = "offset_sync_paused"
-	StateFenceVerified    = "fence_verified"
-	StatePromoted         = "promoted"
-	StateSwitched         = "switched"
+	StateUninitialized      = "uninitialized"
+	StateInitialized        = "initialized"
+	StateLagsOk             = "lags_ok"
+	StateFenced             = "fenced"
+	StateOffsetSyncPaused   = "offset_sync_paused"
+	StateFenceVerified      = "fence_verified"
+	StatePromoted           = "promoted"
+	StateSwitched           = "switched"
+	StateOffsetSyncRestored = "offset_sync_restored"
 )
-
-// isKnownState reports whether s is a state value this binary understands.
-// Execute refuses unknown values so a corrupted state file — or one written
-// by a newer kcp — fails loudly instead of skipping every workflow step.
-func isKnownState(s string) bool {
-	switch s {
-	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
-		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
-		return true
-	}
-	return false
-}
 
 // FSM Event constants
 const (
@@ -50,249 +28,15 @@ const (
 	EventVerifyFence     = "verify_fence"
 	EventPromote         = "promote"
 	EventSwitch          = "switch"
+	// EventRestoreOffsetSync sets cluster-link consumer offset sync back to
+	// the manifest's baseline after the switch, when the plan owes a restore.
+	// Otherwise the transition still fires as a pass-through, like
+	// pause_offset_sync.
+	EventRestoreOffsetSync = "restore_offset_sync"
 	// EventAbortFence rolls back to initialized when the pause_offset_sync
 	// step fails (from fenced) or the verify_fence step detects unrouted
 	// producers (from offset_sync_paused); the transition itself unfences
 	// the gateway and restores any paused sync config (see onAbortFence in
 	// orchestrator.go).
 	EventAbortFence = "abort_fence"
-	// EventExpireVerification demotes fence_verified to fenced at FSM
-	// bootstrap: the verification is a point-in-time attestation and never
-	// survives a restart, so a resume re-runs the verify_fence detection
-	// window. Fired only by NewMigrationOrchestrator; it has no action.
-	EventExpireVerification = "expire_verification"
-	// EventExpireFence demotes fenced and offset_sync_paused to lags_ok at FSM
-	// bootstrap: whether the live gateway still holds the fenced CR is equally
-	// a point-in-time fact. A crash or a partially-completed abort_fence
-	// rollback (initial CR applied, process gone before the rolled-back state
-	// reached disk) leaves the gateway unfenced while the state file still
-	// records a fenced-family state. Demoting makes the resume re-apply the
-	// fenced CR — a no-op rollout when the gateway never diverged — instead of
-	// verifying and promoting behind a fence that may not exist. Fired only by
-	// NewMigrationOrchestrator; it has no action.
-	EventExpireFence = "expire_fence"
 )
-
-// ----- migration configuration -----
-
-// MigrationConfig holds all domain configuration for a migration
-// This is pure data with no behavior - just fields that get serialized
-//
-// Every field added here must be classified for drift detection — see
-// TestMigrationConfig_EveryFieldClassifiedForDrift in cmd/migration/execute.
-type MigrationConfig struct {
-	MigrationId  string `json:"migration_id"`
-	CurrentState string `json:"current_state"`
-
-	// Gateway configuration
-	KubeConfigPath string `json:"kube_config_path"`
-
-	// Source cluster configuration
-	SourceBootstrap string `json:"source_bootstrap"`
-
-	// Destination cluster configuration
-	ClusterBootstrap    string   `json:"cluster_bootstrap"`
-	ClusterId           string   `json:"cluster_id"`
-	ClusterRestEndpoint string   `json:"cluster_rest_endpoint"`
-	ClusterLinkName     string   `json:"cluster_link_name"`
-	Topics              []string `json:"topics"`
-
-	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns snapshot,
-	// captured at registration alongside Route/TargetDomain — nil when the
-	// manifest instead used an explicit topics list. Unlike Topics (the
-	// resolved topic set, populated once reconcile runs), this is the raw
-	// declared patterns themselves, compared as-is on every resume so an
-	// edited pattern is caught as drift even if it happens to expand to the
-	// same topics today.
-	TopicPatterns []string `json:"topic_patterns,omitempty"`
-
-	// ClusterLinkConfigs is a snapshot of the cluster link's consumer.offset.*
-	// configs taken at init, before the pause-offset-sync bookend disables
-	// consumer.offset.sync.enable — the diff baseline RestoreOffsetSync
-	// compares the live post-disable state against to decide what to restore.
-	// Runtime data populated by init, not part of the operator's declared spec.
-	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
-
-	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
-	// PauseConsumerOffsetSync records the operator's choice at init time.
-	// PauseConsumerOffsetSyncFlipped is set when kcp has executed the disable AlterConfigs and
-	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
-	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
-	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
-
-	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
-	// safety check that verifies source offsets are not still increasing before
-	// promoting mirror topics. A value of 0 skips the check. An increasing offset
-	// after fencing indicates a producer that bypassed the gateway and is writing
-	// directly to the source cluster.
-	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
-
-	// ConsumerOffsetSyncDrainDuration is how long the pause_offset_sync stage
-	// waits after fencing before disabling the cluster link's
-	// consumer.offset.sync.enable. The fence freezes source consumer offsets
-	// (clients can no longer commit), so holding here lets the link run one or
-	// more further sync cycles and propagate those final committed offsets to
-	// the destination, minimising messages reprocessed after switchover. Only
-	// has effect when PauseConsumerOffsetSync is set. Best-effort: offset sync
-	// is asynchronous, so this reduces but does not eliminate duplicate
-	// processing. A value of 0 (the default) skips the wait — the link is
-	// disabled immediately after fencing, the prior behaviour.
-	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
-
-	// Gateway CR configuration
-	InitialCrName string `json:"initial_cr_name"`
-	K8sNamespace  string `json:"k8s_namespace"`
-
-	// GatewayYAML is the whole gateway CR migplan pulled and cleaned (see
-	// migplan/gatewayfile.go's cleanGatewayDoc), captured once at init — the
-	// fence/switch derivation base. Renamed from InitialCrYAML; no longer a
-	// separately re-cleaned []byte, since migplan strips server-managed
-	// metadata once, centrally.
-	GatewayYAML string `json:"gateway_yaml"`
-
-	// GatewayVerificationMode is how kcp confirms a gateway state transition
-	// landed, as resolved against the live cluster at init time. It records what
-	// the operator was told to expect; execute re-derives it and the re-derived
-	// value is the one that governs the run, because the cluster can be upgraded
-	// (or rolled back) between init and execute.
-	GatewayVerificationMode string `json:"gateway_verification_mode"`
-
-	// GatewayHotReloadEnabled records whether spec.hotReload.enabled was declared
-	// at init time by the live Gateway CR or by either of the CRs this migration
-	// will apply — the fence apply is what puts hot-reload into force, so the files
-	// count. Diagnostic: it explains which gate produced GatewayVerificationMode.
-	GatewayHotReloadEnabled bool `json:"gateway_hot_reload_enabled"`
-
-	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
-	// on. Configurable because the contract requires it to be; nothing fronts
-	// this port, so kcp dials pod IPs on it directly.
-	GatewayConfigPort int `json:"gateway_config_port"`
-
-	// Route is the single spec.route.name this migration fences and
-	// switches — captured once at init, mirroring TBMConfig.Route. AAO, like
-	// TBM, only ever operates on one route per migration.
-	Route string `json:"route"`
-
-	// TargetDomain is spec.route.targetStreamingDomain, captured
-	// directly from the manifest (not from migplan.Result, which does not
-	// carry it) specifically so detectDrift can still catch a manifest edit
-	// to the target domain between init and execute.
-	TargetDomain string `json:"target_domain"`
-
-	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
-	// migplan.Reconcile returns (a {fence: {...}} block, a
-	// {streamingDomain: {...}} block for a static route) — captured once at
-	// init, never re-derived. Applied by splicing onto Route's fence/
-	// streamingDomain key in GatewayYAML (see gateway.ReplaceRouteFenceObj/
-	// ReplaceRouteStreamingDomainObj) rather than the old whole-CR mutation.
-	FenceYAML      string `json:"fence_yaml"`
-	SwitchoverYAML string `json:"switchover_yaml"`
-
-	// Mode is the route mode migplan resolved this migration under ("static"
-	// today — a dynamic-mode result is refused at init, never persisted).
-	// Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
-	Mode string `json:"mode"`
-
-	// LastRunPolicies records the effective execute-time policy the most recent
-	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
-	// any per-run flag overrides applied. It is observational: written for the
-	// operator and support, never read back by kcp. Policy is re-read fresh from
-	// the manifest every run, so this snapshot is deliberately excluded from drift
-	// detection. A pointer with omitempty so a freshly-initialised migration does
-	// not carry an empty block until the first execute has actually run.
-	LastRunPolicies *LastRunPolicies `json:"last_run_policies,omitempty"`
-}
-
-// LastRunPolicies is the observational record of the effective policy an execute
-// run used (see MigrationConfig.LastRunPolicies). Its fields mirror
-// manifest.DefaultPolicies one-to-one; zero values are recorded verbatim because
-// zero is meaningful for every knob (0 skips the check / imposes no deadline /
-// promotes all at once), so an audit reader sees exactly what each was set to.
-type LastRunPolicies struct {
-	LagThreshold                    int           `json:"lag_threshold"`
-	PromoteBatchSize                int           `json:"promote_batch_size"`
-	RolloutTimeout                  time.Duration `json:"rollout_timeout"`
-	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
-	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
-	// HotReloadTimeout mirrors manifest.DefaultPolicies.HotReloadTimeout.
-	HotReloadTimeout time.Duration `json:"hot_reload_timeout"`
-	// GatewayConfigPort mirrors manifest.DefaultPolicies.GatewayConfigPort.
-	GatewayConfigPort int `json:"gateway_config_port"`
-}
-
-// ----- migration state file -----
-
-// MigrationState represents the migration state file structure
-// This is a dedicated state file for migration commands (init, execute, list)
-type MigrationState struct {
-	Migrations   []MigrationConfig  `json:"migrations"`
-	KcpBuildInfo types.KcpBuildInfo `json:"kcp_build_info"`
-	Timestamp    time.Time          `json:"timestamp"`
-}
-
-// NewMigrationState creates a new empty MigrationState with metadata
-func NewMigrationState() *MigrationState {
-	return &MigrationState{
-		Migrations: []MigrationConfig{},
-		KcpBuildInfo: types.KcpBuildInfo{
-			Version: build_info.Version,
-			Commit:  build_info.Commit,
-			Date:    build_info.Date,
-		},
-		Timestamp: time.Now(),
-	}
-}
-
-// NewMigrationStateFromFile loads a MigrationState from a JSON file
-func NewMigrationStateFromFile(filePath string) (*MigrationState, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read migration state file: %w", err)
-	}
-
-	var state MigrationState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal migration state: %w", err)
-	}
-
-	return &state, nil
-}
-
-// WriteToFile saves the MigrationState to a JSON file using atomic write
-func (ms *MigrationState) WriteToFile(filePath string) error {
-	// Update timestamp
-	ms.Timestamp = time.Now()
-
-	// Marshal to JSON with indentation
-	data, err := json.MarshalIndent(ms, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal migration state: %w", err)
-	}
-
-	// The migration state holds sensitive metadata, so it must never be
-	// group/world readable, even briefly or under an unusual umask — hence 0600
-	// through the atomic writer.
-	return atomicwrite.WriteFile(filePath, data, 0600)
-}
-
-// UpsertMigration adds a new migration or updates an existing one by ID
-func (ms *MigrationState) UpsertMigration(config MigrationConfig) {
-	for i, existing := range ms.Migrations {
-		if existing.MigrationId == config.MigrationId {
-			ms.Migrations[i] = config
-			return
-		}
-	}
-	ms.Migrations = append(ms.Migrations, config)
-}
-
-// GetMigrationById retrieves a migration by its ID
-func (ms *MigrationState) GetMigrationById(migrationId string) (*MigrationConfig, error) {
-	for _, config := range ms.Migrations {
-		if config.MigrationId == migrationId {
-			c := config
-			return &c, nil
-		}
-	}
-	return nil, fmt.Errorf("migration not found: %s", migrationId)
-}

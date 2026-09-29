@@ -134,6 +134,14 @@
             "pauseConsumerOffsetSync": {
               "type": "boolean",
               "description": "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true."
+            },
+            "consumerOffsetSyncBaseline": {
+              "type": "string",
+              "description": "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pauseConsumerOffsetSync is set; kcp restores sync to this value after the migration completes or fails.",
+              "enum": [
+                "enabled",
+                "disabled"
+              ]
             }
           },
           "required": [
