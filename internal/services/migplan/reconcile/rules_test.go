@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -187,5 +188,105 @@ func TestPrependConditionPreservesDifferentDomain(t *testing.T) {
 	}
 	if ce[1]["streamingDomain"] != "msk" {
 		t.Fatalf("preserved entry = %+v, want orders->msk", ce[1])
+	}
+}
+
+// batch is the topic set the operator-entry tests migrate.
+var batch = []string{"orders", "payments"}
+
+// operatorFencesOnBatch are operator-authored fence entries over exactly the
+// batch's topics. Each carries one key kcp never writes, so none is kcp's.
+func operatorFencesOnBatch() map[string]map[string]any {
+	return map[string]map[string]any{
+		"trafficType":   {"trafficType": "PRODUCE", "topics": []any{"orders", "payments"}, "blocked": true},
+		"topicPatterns": {"topics": []any{"orders", "payments"}, "topicPatterns": []any{`audit\..*`}, "blocked": true},
+	}
+}
+
+func rulesWithFence(t *testing.T, entry map[string]any) *RulesTree {
+	t.Helper()
+	rt, err := ParseRules(map[string]any{"fencing": []any{entry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt
+}
+
+// TestPrependFenceKeepsOperatorFenceOnTheBatchTopics: the fence step adds
+// kcp's entry and keeps an operator's entry over the same topics.
+func TestPrependFenceKeepsOperatorFenceOnTheBatchTopics(t *testing.T) {
+	for name, op := range operatorFencesOnBatch() {
+		t.Run(name, func(t *testing.T) {
+			rt := rulesWithFence(t, op)
+
+			rt.PrependFence(batch)
+
+			fe := fencingEntries(t, rt)
+			if len(fe) != 2 {
+				t.Fatalf("fencing entries = %d, want 2 (kcp's + the operator's): %+v", len(fe), fe)
+			}
+			if want := operatorFencesOnBatch()[name]; !reflect.DeepEqual(fe[1], want) {
+				t.Fatalf("the operator's entry must survive unchanged: got %+v, want %+v", fe[1], want)
+			}
+		})
+	}
+}
+
+// TestDropFenceKeepsOperatorFenceOnTheBatchTopics: the switchover and rollback
+// remove kcp's entry only, not an operator's entry over the same topics.
+func TestDropFenceKeepsOperatorFenceOnTheBatchTopics(t *testing.T) {
+	for name, op := range operatorFencesOnBatch() {
+		t.Run(name, func(t *testing.T) {
+			rt := rulesWithFence(t, op)
+			rt.PrependFence(batch)
+
+			rt.DropFence(batch)
+
+			fe := fencingEntries(t, rt)
+			if want := operatorFencesOnBatch()[name]; len(fe) != 1 || !reflect.DeepEqual(fe[0], want) {
+				t.Fatalf("only the operator's entry must remain: got %+v, want [%+v]", fe, want)
+			}
+		})
+	}
+}
+
+// TestIsKcpFenceForIgnoresEmptyKeys: kcp's entry read back with empty or null
+// values for the keys it doesn't write is still kcp's.
+func TestIsKcpFenceForIgnoresEmptyKeys(t *testing.T) {
+	e := map[string]any{"topics": []any{"payments", "orders"}, "blocked": true, "topicPatterns": []any{}, "trafficType": nil}
+	if !isKcpFenceFor(e, batch) {
+		t.Fatalf("%+v must be recognised as kcp's fence for %v", e, batch)
+	}
+}
+
+// TestPrependConditionKeepsOperatorConditionOnTheBatchTopics: the switchover
+// adds kcp's condition and keeps an operator's condition over the same topics
+// and domain that also routes other topics.
+func TestPrependConditionKeepsOperatorConditionOnTheBatchTopics(t *testing.T) {
+	op := func() map[string]any {
+		return map[string]any{"topics": []any{"orders", "payments"}, "topicPatterns": []any{`audit\..*`}, "streamingDomain": "cc"}
+	}
+	rt, err := ParseRules(map[string]any{"routing": map[string]any{"conditions": []any{op()}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt.PrependCondition(batch, "cc")
+
+	ce := conditionEntries(t, rt)
+	if len(ce) != 2 {
+		t.Fatalf("conditions = %d, want 2 (kcp's + the operator's): %+v", len(ce), ce)
+	}
+	if !reflect.DeepEqual(ce[1], op()) {
+		t.Fatalf("the operator's condition must survive unchanged: got %+v, want %+v", ce[1], op())
+	}
+}
+
+// TestIsKcpConditionForIgnoresEmptyKeys: kcp's condition read back with an
+// empty topicPatterns is still kcp's.
+func TestIsKcpConditionForIgnoresEmptyKeys(t *testing.T) {
+	c := map[string]any{"topics": []any{"orders", "payments"}, "streamingDomain": "cc", "topicPatterns": []any{}}
+	if !isKcpConditionFor(c, batch, "cc") {
+		t.Fatalf("%+v must be recognised as kcp's condition for %v -> cc", c, batch)
 	}
 }

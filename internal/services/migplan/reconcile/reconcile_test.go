@@ -957,6 +957,52 @@ func TestReconcileDynamic_RollbackFence(t *testing.T) {
 	})
 }
 
+// artifactFencing returns the rules.fencing entries of a serialized rules
+// artifact.
+func artifactFencing(t *testing.T, raw []byte) []any {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	rules, _ := doc["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	return fencing
+}
+
+// TestReconcileDynamic_OperatorFenceOnTheBatchTopicsSurvives: an operator's
+// fence over exactly the batch's topics, blocking only produce, is not kcp's.
+// The fence artifact adds kcp's fence beside it, and the switchover and
+// rollback artifacts keep it.
+func TestReconcileDynamic_OperatorFenceOnTheBatchTopicsSurvives(t *testing.T) {
+	operatorFence := func() map[string]any {
+		return map[string]any{"trafficType": "PRODUCE", "topics": []any{"t1", "t2"}, "blocked": true}
+	}
+	gw := dynGateway()
+	gw.Route.Rules = map[string]any{
+		"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"},
+		"fencing": []any{operatorFence()},
+	}
+	in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+
+	p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"},
+		map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+	if p.Artifacts == nil {
+		t.Fatalf("expected a plan, got %+v", p.Report)
+	}
+
+	fence := artifactFencing(t, p.Artifacts.FenceRules)
+	if len(fence) != 2 || !reflect.DeepEqual(fence[1], operatorFence()) {
+		t.Fatalf("the fence artifact must hold kcp's fence and the operator's unchanged:\n%s", p.Artifacts.FenceRules)
+	}
+	if sw := artifactFencing(t, p.Artifacts.SwitchoverRules); len(sw) != 1 || !reflect.DeepEqual(sw[0], operatorFence()) {
+		t.Fatalf("the switched route must keep the operator's fence:\n%s", p.Artifacts.SwitchoverRules)
+	}
+	if rb := artifactFencing(t, p.Artifacts.RollbackFenceRules); len(rb) != 1 || !reflect.DeepEqual(rb[0], operatorFence()) {
+		t.Fatalf("the rollback target must keep the operator's fence:\n%s", p.Artifacts.RollbackFenceRules)
+	}
+}
+
 // TestReconcileStatic_SwitchoverAndRollbackFenceAreWholeRoutes: a static
 // route's switch and rollback both remove the fence, which a route patch can
 // only do by replacing the whole route, so both are whole start-of-run routes

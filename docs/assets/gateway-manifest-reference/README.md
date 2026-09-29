@@ -20,9 +20,12 @@ This manifest drives an imperative, resumable state machine:
 Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to nothing to do — `execute` then runs no state machine and reports that — and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
 **Resume an interrupted migration with the same topic set (dynamic routes).**
-On a dynamic route, kcp recognises the fence it added by its exact topic set.
-If a run is interrupted after fencing, resume it with a manifest that resolves
-to the same topics. Resuming with a different set — a topic added or removed,
+On a dynamic route, kcp recognises the fence it added by its exact shape: a
+`rules.fencing` entry with only `topics` (the migration's exact topic set) and
+`blocked: true`. Any other entry, including one over the same topics that also
+sets `trafficType` or `topicPatterns`, is an operator's, and kcp leaves it in
+place. If a run is interrupted after fencing, resume it with a manifest that
+resolves to the same topics. Resuming with a different set — a topic added or removed,
 or a `topicPatterns` entry that now also matches a topic created on the source
 since the interrupted run — is a different migration: kcp fences the new set,
 treats the earlier fence as operator-authored, and leaves it on the route, so

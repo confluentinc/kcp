@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/goccy/go-yaml"
 )
@@ -134,11 +135,10 @@ func asAnySlice(ss []string) []any {
 // Gateway CR can do so unmodified.
 //
 // Idempotent: any pre-existing entry kcp itself would have authored for this
-// exact topic set (a blocked:true fence over the same names) is dropped
-// before the fresh one is prepended, so reconciling an already-fenced route
-// on a resume does not accumulate duplicate fences. Operator entries — a
-// different topic set, or blocked absent/false — never match and are
-// preserved in order.
+// exact topic set (see isKcpFenceFor) is dropped before the fresh one is
+// prepended, so reconciling an already-fenced route on a resume does not
+// accumulate duplicate fences. Operator entries never match and are preserved
+// in order.
 func (rt *RulesTree) PrependFence(topics []string) {
 	entry := map[string]any{"topics": asAnySlice(topics), "blocked": true}
 	existing, _ := sliceField(rt.root, "fencing")
@@ -174,22 +174,53 @@ func (rt *RulesTree) DropFence(topics []string) {
 }
 
 // isKcpFenceFor reports whether e is a fence entry kcp itself would author for
-// exactly this topic set: blocked==true and the same topics as a set. Operator
-// entries never match, so they are preserved by PrependFence's dedupe.
+// exactly this topic set: only the keys kcp writes (topics and blocked),
+// blocked==true, and the same topics as a set. Any other entry is an
+// operator's — including one over the same topics that also sets trafficType
+// or topicPatterns — so PrependFence and DropFence leave it in place.
 //
-// The exact-set match is kcp's only notion of fence ownership on a shared
-// route, so an interrupted batch must be resumed with the same resolved topic
-// set: a run with a different set treats the earlier run's fence as
+// The exact match is kcp's only notion of fence ownership on a shared route,
+// so an interrupted batch must be resumed with the same resolved topic set: a
+// run with a different set treats the earlier run's fence as
 // operator-authored, and it survives the switchover.
 func isKcpFenceFor(e any, topics []string) bool {
 	m, ok := e.(map[string]any)
 	if !ok {
 		return false
 	}
+	if !hasOnlyKeys(m, "topics", "blocked") {
+		return false
+	}
 	if b, _ := m["blocked"].(bool); !b {
 		return false
 	}
 	return sameStringSet(stringList(m, "topics"), topics)
+}
+
+// hasOnlyKeys reports whether every key of m outside allowed is empty: null,
+// "", or an empty list or map. A live CR can read an unset key back empty, so
+// an empty key does not make an entry someone else's.
+func hasOnlyKeys(m map[string]any, allowed ...string) bool {
+	for k, v := range m {
+		if !slices.Contains(allowed, k) && !isEmptyValue(v) {
+			return false
+		}
+	}
+	return true
+}
+
+func isEmptyValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
 }
 
 // sameStringSet reports whether a and b contain the same elements irrespective
@@ -214,10 +245,9 @@ func sameStringSet(a, b []string) bool {
 // rules.routing.conditions, preserving the operator's existing conditions.
 //
 // Idempotent: a pre-existing condition kcp itself would author for this exact
-// topic set AND target domain is dropped before the fresh one is prepended,
-// so a resume does not accumulate duplicate switchover conditions. A
-// condition for the same topics to a DIFFERENT domain is an operator's and is
-// preserved.
+// topic set AND target domain (see isKcpConditionFor) is dropped before the
+// fresh one is prepended, so a resume does not accumulate duplicate switchover
+// conditions. Any other condition is an operator's and is preserved.
 func (rt *RulesTree) PrependCondition(topics []string, domain string) {
 	routing := rt.ensureRouting()
 	entry := map[string]any{"topics": asAnySlice(topics), "streamingDomain": domain}
@@ -233,11 +263,16 @@ func (rt *RulesTree) PrependCondition(topics []string, domain string) {
 }
 
 // isKcpConditionFor reports whether c is a routing condition kcp itself would
-// author for exactly this topic set and target domain. A condition to a
-// different domain, or over a different topic set, never matches.
+// author for exactly this topic set and target domain: only the keys kcp writes
+// (topics and streamingDomain), the same domain, and the same topics as a set.
+// A condition to a different domain, over a different topic set, or that also
+// sets topicPatterns is an operator's.
 func isKcpConditionFor(c any, topics []string, domain string) bool {
 	m, ok := c.(map[string]any)
 	if !ok {
+		return false
+	}
+	if !hasOnlyKeys(m, "topics", "streamingDomain") {
 		return false
 	}
 	if stringField(m, "streamingDomain") != domain {
