@@ -1090,3 +1090,60 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovalFails_ReportsBoth(t *te
 	assert.Contains(t, err.Error(), "operator never reconciled", "the fence's own failure")
 	assert.Contains(t, err.Error(), "k8s API unavailable", "the removal's failure")
 }
+
+// failedAfterFenceTBM runs a fresh TBM batch, with nothing fenced at the start,
+// in which a step after verify_fence fails for real: the promote request
+// (EventPromote) or the switch patch (EventSwitch). It returns the number of
+// route patches applied, the output, the final state and the run's error.
+func failedAfterFenceTBM(t *testing.T, failAt string) (int, string, string, error) {
+	t.Helper()
+	orchestrator, _ := newTestOrchestrator(t)
+	var patches int
+	orchestrator.actions.gatewayService = &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			patches++
+			if failAt == EventSwitch && patches == 2 { // the fence is the first patch, the switch the second
+				return "", fmt.Errorf("k8s API unavailable")
+			}
+			return "", nil
+		},
+	}
+	if failAt == EventPromote {
+		orchestrator.actions.clusterLinkService = &mockClusterLinkService{
+			promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+				return nil, fmt.Errorf("503 promote boom")
+			},
+		}
+	}
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
+	return patches, out.String(), orchestrator.fsm.Current(), err
+}
+
+// TestTBMOrchestrator_Execute_PromoteFails_KeepsTheFence: promote is the point
+// of no return, so a failed promote on a fresh run keeps this run's fence and
+// rolls nothing back. The run stops at fence_verified for a re-run to finish.
+func TestTBMOrchestrator_Execute_PromoteFails_KeepsTheFence(t *testing.T) {
+	patches, out, state, err := failedAfterFenceTBM(t, EventPromote)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "503 promote boom")
+	assert.Equal(t, 1, patches, "the fence only: no rollback patch")
+	assert.NotContains(t, out, "removing fence")
+	assert.Equal(t, StateFenceVerified, state)
+}
+
+// TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence: a switch that fails
+// after a successful promote keeps the fence and rolls nothing back. The run
+// stops at promoted for a re-run to finish the switch.
+func TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence(t *testing.T) {
+	patches, out, state, err := failedAfterFenceTBM(t, EventSwitch)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "k8s API unavailable")
+	assert.Equal(t, 2, patches, "the fence and the failed switch: no rollback patch")
+	assert.NotContains(t, out, "removing fence")
+	assert.Equal(t, StatePromoted, state)
+}
