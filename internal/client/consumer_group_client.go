@@ -65,20 +65,34 @@ func NewConsumerGroupClient(brokerAddresses []string, region string, opts ...Adm
 // KIP-848 type, via the raw ListGroups v5 request (falling back to v4 — no type —
 // on brokers older than 3.8). No type filter is set, so all group types are
 // returned. resp.GroupsData is populated only for v4+, and GroupType only for v5;
-// on a v4 fallback Type stays "".
+// on a v4 fallback Type stays "". Best-effort: a broker that fails is warned
+// about and skipped; it errors only when no broker answers.
 func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing, error) {
-	var listings []types.ConsumerGroupListing
-	seen := map[string]bool{}
-	var lastErr error
-	responded := false
+	return mergeListings(c.listGroupsPerBroker(), false)
+}
+
+// ListGroupsAllBrokers is ListGroupsWithType without the tolerance: each broker
+// reports only the groups it coordinates, so one silent broker hides its groups,
+// and a caller making a safety decision from the listing must not get a partial
+// one. It errors if any broker fails or refuses.
+func (c *ConsumerGroupClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
+	return mergeListings(c.listGroupsPerBroker(), true)
+}
+
+// brokerListing is one broker's answer to ListGroups: a response, or the error
+// that stopped it.
+type brokerListing struct {
+	addr string
+	resp *sarama.ListGroupsResponse
+	err  error
+}
+
+// listGroupsPerBroker asks every known broker for the groups it coordinates.
+func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
+	var out []brokerListing
 	for _, b := range c.client.Brokers() {
 		if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-			// ListGroups is per-broker (each broker returns only the groups it
-			// coordinates), so a single broker failing silently drops that broker's
-			// groups from the result even when others answer. Warn so a partial
-			// result is observable, not just the all-brokers-failed case below.
-			slog.Warn("⚠️ failed to connect to broker for consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
-			lastErr = err
+			out = append(out, brokerListing{addr: b.Addr(), err: fmt.Errorf("connecting: %w", err)})
 			continue
 		}
 		resp, err := b.ListGroups(&sarama.ListGroupsRequest{Version: 5})
@@ -86,31 +100,48 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 			slog.Debug("⏭️ broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
 			resp, err = b.ListGroups(&sarama.ListGroupsRequest{Version: 4})
 		}
+		out = append(out, brokerListing{addr: b.Addr(), resp: resp, err: err})
+	}
+	return out
+}
+
+// mergeListings folds per-broker answers into one de-duplicated listing. A
+// broker that answered with an error code (e.g. ErrGroupAuthorizationFailed)
+// counts as failed. strict errors on the first failed broker, and when there are
+// no brokers at all; otherwise each failure is warned about and the run errors
+// only if no broker answered.
+func mergeListings(results []brokerListing, strict bool) ([]types.ConsumerGroupListing, error) {
+	if strict && len(results) == 0 {
+		return nil, fmt.Errorf("no brokers to list consumer groups from")
+	}
+	var listings []types.ConsumerGroupListing
+	seen := map[string]bool{}
+	var lastErr error
+	responded := false
+	for _, r := range results {
+		err := r.err
+		if err == nil && r.resp != nil && r.resp.Err != sarama.ErrNoError {
+			err = r.resp.Err
+		}
 		if err != nil {
-			slog.Warn("⚠️ failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
+			if strict {
+				return nil, fmt.Errorf("listing consumer groups on broker %s: %w", r.addr, err)
+			}
+			slog.Warn("⚠️ failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", r.addr, "error", err)
 			lastErr = err
 			continue
 		}
-		if resp == nil {
-			continue
-		}
-		if resp.Err != sarama.ErrNoError {
-			// The broker answered but refused (e.g. ErrGroupAuthorizationFailed /
-			// ErrClusterAuthorizationFailed). Treat as a broker failure so an all-denied
-			// cluster surfaces an error to the collector (which degrades + warns per
-			// design §8) instead of silently returning zero groups.
-			slog.Warn("⚠️ broker refused consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", resp.Err)
-			lastErr = resp.Err
+		if r.resp == nil {
 			continue
 		}
 		responded = true
-		for id := range resp.Groups {
+		for id := range r.resp.Groups {
 			if seen[id] {
 				continue
 			}
 			seen[id] = true
 			l := types.ConsumerGroupListing{GroupID: id}
-			if gd, ok := resp.GroupsData[id]; ok {
+			if gd, ok := r.resp.GroupsData[id]; ok {
 				l.Type = gd.GroupType
 				l.State = gd.GroupState
 			}
