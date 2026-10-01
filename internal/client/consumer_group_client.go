@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/types"
@@ -107,15 +108,17 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 
 // mergeListings folds per-broker answers into one de-duplicated listing. A
 // broker that answered with an error code (e.g. ErrGroupAuthorizationFailed)
-// counts as failed. strict errors on the first failed broker, and when there are
-// no brokers at all; otherwise each failure is warned about and the run errors
-// only if no broker answered.
+// counts as failed. strict errors on the first failed broker (including one that
+// returned neither a response nor an error), and when there are no brokers at
+// all; otherwise each failure is warned about and the run errors only if no
+// broker answered. A group reported by more than one broker keeps the most
+// conservative state (see groupStateRank), in both modes.
 func mergeListings(results []brokerListing, strict bool) ([]types.ConsumerGroupListing, error) {
 	if strict && len(results) == 0 {
 		return nil, fmt.Errorf("no brokers to list consumer groups from")
 	}
 	var listings []types.ConsumerGroupListing
-	seen := map[string]bool{}
+	seen := map[string]int{} // group id -> index in listings
 	var lastErr error
 	responded := false
 	for _, r := range results {
@@ -132,19 +135,28 @@ func mergeListings(results []brokerListing, strict bool) ([]types.ConsumerGroupL
 			continue
 		}
 		if r.resp == nil {
+			if strict {
+				return nil, fmt.Errorf("listing consumer groups on broker %s: no response", r.addr)
+			}
 			continue
 		}
 		responded = true
 		for id := range r.resp.Groups {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
 			l := types.ConsumerGroupListing{GroupID: id}
 			if gd, ok := r.resp.GroupsData[id]; ok {
 				l.Type = gd.GroupType
 				l.State = gd.GroupState
 			}
+			if i, dup := seen[id]; dup {
+				// During a coordinator move the old and the new coordinator
+				// can both report the group; keep the more live answer so
+				// broker order never hides an active group.
+				if groupStateRank(l.State) > groupStateRank(listings[i].State) {
+					listings[i] = l
+				}
+				continue
+			}
+			seen[id] = len(listings)
 			listings = append(listings, l)
 		}
 	}
@@ -152,6 +164,21 @@ func mergeListings(results []brokerListing, strict bool) ([]types.ConsumerGroupL
 		return nil, fmt.Errorf("failed to list consumer groups on all brokers: %w", lastErr)
 	}
 	return listings, nil
+}
+
+// groupStateRank orders a listed group state by how conservatively it must be
+// treated when two brokers disagree: Dead (0) < Empty (1) < anything else (2),
+// which covers the active states and an unknown/empty state alike — an unknown
+// state may be active, so it never loses to Empty or Dead. Case-insensitive.
+func groupStateRank(state string) int {
+	switch strings.ToLower(state) {
+	case "dead":
+		return 0
+	case "empty":
+		return 1
+	default:
+		return 2
+	}
 }
 
 // DescribeGroups describes the given consumer groups via the admin client's
