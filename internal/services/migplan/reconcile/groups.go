@@ -1,0 +1,62 @@
+package reconcile
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// GroupFacts is the consumer-group listing a conversion's split-brain check
+// reads, gathered by the I/O layer: every group id on the source, and each
+// destination group's state (as ListGroups reports it).
+type GroupFacts struct {
+	SourceGroups []string
+	TargetStates map[string]string
+}
+
+// GroupSplitBrainCheckName names the precondition CheckGroupSplitBrain returns.
+const GroupSplitBrainCheckName = "no source consumer group is active on the destination"
+
+// CheckGroupSplitBrain refuses when a group that exists on the source is
+// active on the destination: after the switch, coordination for the route's
+// clients moves to the destination and every source group goes with it, so
+// its members would join a group that already has members. Groups only on the
+// destination are ignored. A source group sitting Empty on the destination
+// (retained only while it has committed offsets) passes with a warning, since
+// the conversion will overwrite those offsets. Dead is ignored. Any other
+// state — including an empty or unrecognised one — counts as active, so an
+// unreadable state can't let a split-brain through.
+func CheckGroupSplitBrain(f GroupFacts) (PreconditionResult, []string) {
+	var active, idle []string
+	for _, g := range f.SourceGroups {
+		state, onTarget := f.TargetStates[g]
+		if !onTarget {
+			continue
+		}
+		switch strings.ToLower(state) {
+		case "empty":
+			idle = append(idle, g)
+		case "dead":
+		default:
+			if state == "" {
+				state = "unknown"
+			}
+			active = append(active, fmt.Sprintf("%s (%s)", g, state))
+		}
+	}
+	sort.Strings(active)
+	sort.Strings(idle)
+
+	var warnings []string
+	if len(idle) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"consumer group(s) %s exist on the destination with committed offsets but no members; the conversion will overwrite their offsets with the source's — check nothing consumed on the destination under these names",
+			strings.Join(idle, ", ")))
+	}
+	if len(active) > 0 {
+		return fail(GroupSplitBrainCheckName, fmt.Sprintf(
+			"consumer group(s) %s exist on the source and already have members on the destination; after the switch the source members would join the same group — stop the destination members first",
+			strings.Join(active, ", "))), warnings
+	}
+	return pass(GroupSplitBrainCheckName), warnings
+}
