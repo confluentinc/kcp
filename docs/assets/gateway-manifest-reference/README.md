@@ -13,15 +13,38 @@ see [gateway migration example](gateway-migration-example.md).
 
 This manifest drives an imperative, resumable state machine:
 
-- **`execute`** registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into its state file (`--migration-state-file`, defaulting to `<metadata.name>-state.json` in the current directory), reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.
-  - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
+- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and drives the fence → promote → switchover FSM forward. Every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
+  - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. Nothing is changed and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-**Drift between the manifest and the first-run registration** is forbidden outright: any manifest change to an already-registered migration refuses `execute` unconditionally, at any FSM state, with no override. The topology registered at first run must remain stable. To migrate with a different topology, use a new `metadata.name` to create a fresh registration in the same state file.
+Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to nothing to do — `execute` then runs no state machine and reports that — and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
-`spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
-run rather than frozen at registration — each field is a default that a matching
-CLI flag can override for a single run, without editing the file.
+**Resume an interrupted migration with the same topic set (dynamic routes).**
+On a dynamic route, kcp recognises the fence it added by its exact shape: a
+`rules.fencing` entry with only `topics` (the migration's exact topic set) and
+`blocked: true`. Any other entry, including one over the same topics that also
+sets `trafficType` or `topicPatterns`, is an operator's, and kcp leaves it in
+place. If a run is interrupted after fencing, resume it with a manifest that
+resolves to the same topics. Resuming with a different set — a topic added or
+removed, or a `topicPatterns` entry that now also matches a topic created on
+the source since the interrupted run — is a different migration: kcp fences
+the new set, treats the earlier fence as operator-authored, and leaves it on
+the route, so those topics stay blocked after switchover. Finish the
+interrupted migration first, then migrate the changed set. If this has already
+happened, remove the leftover `blocked` entry from the route's `rules.fencing`
+by hand.
+
+**A static route must not carry someone else's fence.** A static route has a
+single route-level `fence`. kcp recognises its own by its exact value,
+`{scope: ALL, errorCode: BROKER_NOT_AVAILABLE}`, and refuses a route that
+already carries any other fence, because the switchover and a rollback would
+remove it: remove that fence before migrating. `scope: NONE` counts as no
+fence. An operator's plain `scope: ALL` fence reads back with the same
+defaulted `errorCode`, so kcp cannot tell it from its own and would remove it
+too; remove it before migrating.
+
+Each `spec.defaultPolicies` field is a default that a matching CLI flag can
+override for a single run, without editing the file.
 
 ## At a glance
 
@@ -40,9 +63,8 @@ spec:
 ```
 
 `apiVersion` must equal `kcp.confluent.io/v1alpha1` and `kind` must equal
-`GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is
-written into the state file as the migration's identity (pre-manifest,
-uuid-keyed migrations keep working, addressed instead with `--migration-id`).
+`GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is the
+migration's identity, used as its `migration_id` in logs and output.
 `spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
 `spec.route` are always required; `spec.defaultPolicies` is optional.
 
@@ -104,7 +126,8 @@ destination (test/lab only).
 | `name`                    | string     | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
 | `bootstrapServers`        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
 | `linkCredentials`         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](#rest-credentials-specclusterlinklinkcredentials) below.  |
-| `pauseConsumerOffsetSync` | bool       | no       | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
+| `pauseConsumerOffsetSync` | bool       | no       | `false` | Static routes only; a dynamic route refuses it. Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `consumerOffsetSyncBaseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. |
+| `consumerOffsetSyncBaseline` | string | when pausing | — | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
 
 **Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
 authenticates a direct Kafka-protocol connection to the destination
@@ -135,8 +158,8 @@ the strict decode with an unknown-field error.
 | Field        | Type   | Required | Notes                                                                                               |
 | ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------- |
 | `namespace`  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                 |
-| `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
-| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on first migration registration (the first `execute` run), not a file path. |
+| `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. Unset: the pod's in-cluster service account when kcp runs in a pod, `~/.kube/config` otherwise. |
+| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on each `execute` run, not a file path. |
 
 ## `spec.route`
 
@@ -153,27 +176,31 @@ domain it switches to, and the topic selection(s) that migrate.
 
 | Field           | Type       | Required | Notes                                                                                                            |
 | --------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| `topics`        | `[]string` | see note | A flat list of **literal** topic names, exact-matched against the link's active mirror topics — **not** globs.    |
-| `topicPatterns` | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2). `['.*']` selects every active mirror topic.          |
+| `topics`        | `[]string` | see note | A flat list of **literal** topic names — **not** globs.                                                          |
+| `topicPatterns` | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2), matched against the topic names on the source cluster. `['.*']` selects every source topic. |
 
-**At least one of `topics` / `topicPatterns` is required.** If `topics` is set
-it is authoritative — `topicPatterns` is ignored. There is no
-omit-`topics`-means-all default anymore: to migrate every active mirror topic,
-write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
-absent.
+**At least one of `topics` / `topicPatterns` is required.** When both are set,
+the union is migrated: every literal name plus every source topic a pattern
+matches. Every selected topic must exist on the source and be a mirror topic on
+the cluster link; a selected topic that isn't refuses the run. There is no
+omit-`topics`-means-all default: to migrate every source topic, write an
+explicit match-all pattern, `topicPatterns: ['.*']`.
+
+`topicPatterns` are resolved against the live source on every run, so the
+selected set can change between runs without the manifest changing. On a
+dynamic route that matters when resuming an interrupted migration — see
+[Execution model](#execution-model).
 
 The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
-— is **not** declared here; kcp reads it from the live CR's route binding on the
-first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
+— is **not** declared here; kcp reads it from the live CR's route binding on
+every execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
-the manifest. Both modes are fully implemented: `kcp migration execute` resolves
-the mode once, at first registration, persists it on the migration's config
-entry, and dispatches every run after that to the matching engine and FSM —
-AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
-a resume. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
-dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
-warns and proceeds rather than refusing a manifest that sets it.
+the manifest. `kcp migration execute` resolves the mode from the live gateway CR
+each run and dispatches to the matching engine and FSM — AAO's for static routes,
+TBM's for dynamic. Reconcile refuses
+`spec.clusterLink.pauseConsumerOffsetSync` on a dynamic route, so `--dry-run`
+reports it too: a dynamic route requires consumer offset sync to be disabled.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.
@@ -182,7 +209,7 @@ topic.
 
 Optional. Every field is a default that a matching `kcp migration execute` flag
 can override for a single run; the section is re-read fresh from the manifest
-on every `execute`, never frozen at registration.
+on every `execute`, never fixed once.
 
 | Field                             | Type     | Default | Override flag                           | Notes                                                                                                                                                                                                                                                                          |
 | --------------------------------- | -------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -192,7 +219,7 @@ on every `execute`, never frozen at registration.
 | `detectUnroutedProducersDuration` | duration | `0`     | `--detect-unrouted-producers-duration`  | Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. `0` **skips the check entirely**; minimum `10s` when set — shorter can't span a producer's metadata refresh.                           |
 | `consumerOffsetSyncDrainDuration` | duration | `0`     | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait.                                                                                               |
 | `hotReloadTimeout`                | duration | `0`     | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
-| `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the persisted value, falling back to the gateway default (`9180`).                                                                                            |
+| `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
 
 ## Credentials
 
@@ -258,8 +285,6 @@ tables above:
 | Command                   | Flag                                                                                                                                                                                             | Required                            | Notes                                                                                                                                    |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
-|                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Created on first registration (first `execute` run); re-used on subsequent runs.                                                                                                                      |
-|                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
 |                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
 | `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 |                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds, `1`-`60`.                                                                                                      |
@@ -309,7 +334,7 @@ Key rules, beyond required/optional per field above:
   `detectUnroutedProducersDuration`, if greater than zero, must be at least
   `10s`.
 
-`kcp migration execute --dry-run` performs the same validation `execute` would on first registration (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but touches no migration state file and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
+`kcp migration execute --dry-run` performs the same validation `execute` would (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but takes no actions and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
 
 ## Field reference
 
@@ -331,7 +356,7 @@ Key rules, beyond required/optional per field above:
 | `spec.clusterLink.linkCredentials`                        | path           | yes                                                    | —                                            | file path; `api_key`/`api_secret`, `basic`, `bearer`, or `mtls` |
 | `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
-| `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |
+| `spec.gateway.kubeconfig`                                 | string         | no                                                     | in-cluster in a pod, else `~/.kube/config`   | `~/` expanded                                                |
 | `spec.gateway.cr-name`                                    | string         | yes                                                    | —                                            | K8s object name                                              |
 | `spec.route.name`                                         | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
 | `spec.route.topicGroup`                                   | list           | yes                                                    | —                                            | exactly one entry                                           |

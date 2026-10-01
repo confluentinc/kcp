@@ -4,10 +4,7 @@ package migration_tbm_e2e
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -38,20 +35,6 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
 
-	// Abuse: an unwritable --migration-state-file (missing parent directory) must
-	// fail cleanly — non-zero exit, no panic — because the command writes the
-	// state file early, before the reconcile.
-	t.Run("unwritable-state-file-fails-cleanly", func(t *testing.T) {
-		badState := filepath.Join(t.TempDir(), "missing-parent", "tbm-state.json")
-
-		out, err := runKCP(t, manifestPath, badState)
-		require.Error(t, err, "an unwritable --migration-state-file must fail")
-		require.NotContains(t, out, "panic", "a write failure must not panic")
-
-		_, statErr := os.Stat(badState)
-		require.True(t, os.IsNotExist(statErr), "no state file should be created under the bad path")
-	})
-
 	// zero-topic-batch-completes-cleanly-leaves-world-unchanged is the live
 	// regression test for the bug that once crashed Fence — and would have
 	// crashed Promote/Switch too, had they been real at the time — on a
@@ -61,27 +44,19 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	// Refused()-then-len(migratable)==0 split). By the time this runs,
 	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
 	// same suite) has already fully migrated batch-01's topics for real, so
-	// a fresh execute run against the same manifest — a brand-new
-	// throwaway state file, so runMigrationExecute's config lookup (state.
-	// GetMigrationById miss -> buildFreshMigrationConfig, cmd_migration_execute.go)
-	// sees this as a first-ever run and Reconcile really runs fresh — hits
-	// exactly this case. Every real transition (fence, promote, switch) must
-	// recognize it and no-op; this proves execute itself does, not just Decide.
+	// a fresh execute run against the same manifest reconciles live, finds
+	// nothing left to migrate, and hits exactly this case. Reconcile reports
+	// nothing to do, so execute runs no state machine; this proves execute
+	// itself does, not just Decide.
 	t.Run("zero-topic-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
-		stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
-
 		routesBefore := gatewayRoutes(t, h)
 		mirrorsBefore := mirrorStatuses(t, h)
 
-		out, err := runKCP(t, manifestPath, stateFile)
+		out, err := runKCP(t, manifestPath)
 		require.NoErrorf(t, err, "execute must exit 0 against an already-migrated batch:\n%s", out)
 		require.NotContains(t, out, "panic", "execute must not panic")
-
-		data, readErr := os.ReadFile(stateFile)
-		require.NoError(t, readErr, "execute must write --migration-state-file")
-		require.NotEmpty(t, data)
-		var parsed map[string]any
-		require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
+		require.Contains(t, out, "nothing to do: no topic in it still needs migrating", "execute must report nothing to do")
+		require.NotContains(t, out, "Initializing TBM migration", "no state machine may run when there is nothing to do")
 
 		// Zero topics to migrate: every real transition finds nothing to do,
 		// so neither the gateway route nor any mirror may have moved.
@@ -105,8 +80,9 @@ func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
 }
 
 // runKCP invokes the in-pod kcp binary's execute with only file-path args (no
-// secrets on argv) and returns the combined output.
-func runKCP(t *testing.T, manifestPath, stateFile string) (string, error) {
+// secrets on argv) and returns the combined output. execute reads only the
+// manifest and live cluster state.
+func runKCP(t *testing.T, manifestPath string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), execTBMTimeout)
 	defer cancel()
@@ -114,7 +90,6 @@ func runKCP(t *testing.T, manifestPath, stateFile string) (string, error) {
 	cmd := exec.CommandContext(ctx, kcpBinary(),
 		"migration", "execute",
 		"--migration-yaml", manifestPath,
-		"--migration-state-file", stateFile,
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

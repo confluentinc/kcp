@@ -13,8 +13,8 @@ func dynGateway() *GatewayConfig {
 // staticGateway builds a GatewayConfig for the static (all-at-once) route
 // strategy's precondition tests (staticpreconditions_test.go). The route is
 // built once and referenced from both obj (spec.routes[0]) and
-// RouteConfig.Raw — the same object, mirroring findRoute's real behavior
-// (Task 1): a test that mutates it via gw.RawObj[...] (as
+// RouteConfig.Raw — the same object, mirroring findRoute's real behavior:
+// a test that mutates it via gw.RawObj[...] (as
 // TestStaticPreconditionsRoutesToTargetWhenAlreadyBound does) must see that
 // mutation through gw.Route.Raw too, exactly as production code would after
 // a live re-Load.

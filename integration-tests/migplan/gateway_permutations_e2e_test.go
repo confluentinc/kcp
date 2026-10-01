@@ -27,21 +27,30 @@ func TestGatewayPermutationsLive(t *testing.T) {
 		secrets      migplan.SecretExistenceChecker // nil => fakeSecretChecker{} (no missing, no skip)
 		wantRefuse   bool
 		failPrecond  string // substring of the precondition name that must be failing
+		failFast     string // substring of a fail-fast topic's reason (refusal via fail-fast, not a precondition)
 	}{
-		{"rich dynamic route passes", "testdata/gateway.yaml", "cc", nil, false, ""},
-		{"three bound domains refused", "testdata/gateway-three-domains.yaml", "cc", nil, true, "binds exactly two"},
-		{"coordination on target refused", "testdata/gateway-coord-on-target.yaml", "cc", nil, true, "coordination.group pinned on source"},
-		{"unbound target domain refused", "testdata/gateway.yaml", "gcp", nil, true, "target domain is bound"},
+		{"rich dynamic route passes", "testdata/gateway.yaml", "cc", nil, false, "", ""},
+		{"three bound domains refused", "testdata/gateway-three-domains.yaml", "cc", nil, true, "binds exactly two", ""},
+		{"coordination on target refused", "testdata/gateway-coord-on-target.yaml", "cc", nil, true, "coordination.group pinned on source", ""},
+		{"unbound target domain refused", "testdata/gateway.yaml", "gcp", nil, true, "target domain is bound", ""},
 
 		// Static-route (AAO) strategy permutations — each fixture violates
 		// exactly one CheckStaticPreconditions check, same one-violation-per-row
 		// discipline as the dynamic rows above.
-		{"static route missing staged auth refused", "testdata/gateway-static.yaml", "cc", nil, true, "route carries pre-staged auth for the target domain"},
-		{"static route target domain not declared refused", "testdata/gateway-static-domain-not-declared.yaml", "cc", nil, true, "target domain is declared"},
-		{"static route multi-homed target domain refused", "testdata/gateway-static-multi-bootstrap.yaml", "cc", nil, true, "exactly one bootstrap server id"},
-		{"static route already bound to target refused", "testdata/gateway-static-already-bound.yaml", "cc", nil, true, "route is not already bound to the target domain"},
-		{"static route missing secrets refused", "testdata/gateway-static-redundant-auth.yaml", "cc", fakeSecretChecker{missing: []string{"cc-redundant-auth"}}, true, "staged auth secrets exist"},
-		{"static route already fenced refused", "testdata/gateway-static-already-fenced.yaml", "cc", nil, true, "route is not already fenced"},
+		{"static route missing staged auth refused", "testdata/gateway-static.yaml", "cc", nil, true, "route carries pre-staged auth for the target domain", ""},
+		{"static route target domain not declared refused", "testdata/gateway-static-domain-not-declared.yaml", "cc", nil, true, "target domain is declared", ""},
+		{"static route multi-homed target domain refused", "testdata/gateway-static-multi-bootstrap.yaml", "cc", nil, true, "exactly one bootstrap server id", ""},
+		{"static route missing secrets refused", "testdata/gateway-static-redundant-auth.yaml", "cc", fakeSecretChecker{missing: []string{"cc-redundant-auth"}}, true, "staged auth secrets exist", ""},
+
+		// Resume states, which no route-level precondition refuses:
+		//  - already BOUND to target while mirrors are still ACTIVE is an
+		//    inconsistent world (route says target, mirror not promoted) → each
+		//    topic fail-fasts.
+		//  - already FENCED by kcp is a legitimate resume (a prior run fenced,
+		//    then was interrupted) → a normal migratable plan that re-fences
+		//    idempotently.
+		{"static route already bound to target, mirrors not promoted -> fail-fast", "testdata/gateway-static-already-bound.yaml", "cc", nil, true, "", "routes to target but its mirror is not yet promoted"},
+		{"static route already fenced is a valid resume (not refused)", "testdata/gateway-static-already-fenced.yaml", "cc", nil, false, "", ""},
 	}
 
 	for _, c := range cases {
@@ -65,8 +74,11 @@ func TestGatewayPermutationsLive(t *testing.T) {
 				if plan.Artifacts != nil {
 					t.Errorf("a refused run must emit no artifacts, got %+v", plan.Artifacts)
 				}
-				if !hasFailedPrecondition(plan.Report, c.failPrecond) {
+				if c.failPrecond != "" && !hasFailedPrecondition(plan.Report, c.failPrecond) {
 					t.Errorf("expected a failed precondition matching %q, got %+v", c.failPrecond, plan.Report.Preconditions)
+				}
+				if c.failFast != "" && !hasFailFast(plan.Report, c.failFast) {
+					t.Errorf("expected a fail-fast topic whose reason matches %q, got %+v", c.failFast, plan.Report.FailFast)
 				}
 			}
 		})
@@ -105,6 +117,15 @@ func TestOffsetSyncEnabledRefusesLive(t *testing.T) {
 func hasFailedPrecondition(r reconcile.Report, nameSubstr string) bool {
 	for _, p := range r.Preconditions {
 		if !p.OK && strings.Contains(p.Name, nameSubstr) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFailFast(r reconcile.Report, reasonSubstr string) bool {
+	for _, tv := range r.FailFast {
+		if strings.Contains(tv.Reason, reasonSubstr) {
 			return true
 		}
 	}

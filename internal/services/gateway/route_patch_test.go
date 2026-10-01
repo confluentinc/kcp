@@ -20,23 +20,3 @@ func TestFragmentValue(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fence key is null")
 }
-
-func TestRouteObject(t *testing.T) {
-	cr := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-spec:
-  routes:
-    - name: other
-      streamingDomain: cp-x
-    - name: migration-route
-      streamingDomain: cp-a
-`)
-	route, err := RouteObject(cr, "migration-route")
-	require.NoError(t, err)
-	assert.Equal(t, "cp-a", route["streamingDomain"])
-
-	_, err = RouteObject(cr, "missing")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `route "missing" not found`)
-}

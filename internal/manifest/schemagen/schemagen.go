@@ -92,10 +92,11 @@ func GenerateGateway() ([]byte, error) {
 	stringCredential(source.Properties["credentials"])
 	stringCredential(kafka.Properties["clusterCredentials"])
 	stringCredential(clusterLink.Properties["linkCredentials"])
+	clusterLink.Properties["consumerOffsetSyncBaseline"].Enum = []any{manifest.OffsetSyncBaselineEnabled, manifest.OffsetSyncBaselineDisabled}
 	// The reflected schema requires only restEndpoint (the one field without
 	// omitempty), but Validate() also requires bootstrapServers and
 	// clusterCredentials. Patch the schema to match so an editor/CI lint cannot
-	// pass a manifest that init will then reject.
+	// pass a manifest that execute will then reject.
 	kafka.Required = []string{"restEndpoint", "bootstrapServers", "clusterCredentials"}
 
 	// lagThreshold's zero value is a legitimate, fail-safe setting (strictest:
@@ -104,8 +105,7 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
-	// gateway carries only namespace + cr-name; the retired crs/routes shape is
-	// gone from the struct, so reflection no longer emits it.
+	// gateway requires namespace and cr-name; kubeconfig is optional.
 	gateway.Required = []string{"namespace", "cr-name"}
 
 	// spec.route names the route to fence/switch, the target streaming domain
@@ -147,22 +147,23 @@ func GenerateGateway() ([]byte, error) {
 		kafka.Properties["restEndpoint"]:       "REST endpoint of the destination cluster.",
 		kafka.Properties["clusterCredentials"]: "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
 
-		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
-		clusterLink.Properties["bootstrapServers"]:        "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
-		clusterLink.Properties["linkCredentials"]:         "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
-		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["name"]:                       "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["bootstrapServers"]:           "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
+		clusterLink.Properties["linkCredentials"]:            "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
+		clusterLink.Properties["pauseConsumerOffsetSync"]:    "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["consumerOffsetSyncBaseline"]: "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pauseConsumerOffsetSync is set; kcp restores sync to this value after the migration completes or fails.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 
-		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
+		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster on every run — this is an object name, not a file path.",
 
 		route:                              "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
-		route.Properties["name"]:           "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
+		route.Properties["name"]:           "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own.",
 		topicGroup:                         "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
-		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
-		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
-		route.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
+		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names — not globs. Combined with topicPatterns: the union of the two is migrated. At least one of topics or topicPatterns is required. Each selected topic must exist on the source and be a mirror topic on the cluster link, or the run is refused.",
+		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Combined with topics: the union of the two is migrated. Use ['.*'] to select every source topic. At least one of topics or topicPatterns is required. Each selected topic must be a mirror topic on the cluster link, or the run is refused.",
+		route.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
@@ -170,7 +171,7 @@ func GenerateGateway() ([]byte, error) {
 		policy.Properties["detectUnroutedProducersDuration"]: "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
 		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
 		policy.Properties["hotReloadTimeout"]:                "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
-		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180).",
+		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180).",
 	})
 
 	return marshal(s)

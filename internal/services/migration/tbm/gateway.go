@@ -43,10 +43,9 @@ func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 }
 
 // deriveRulesRoutePatch builds the RoutePatch that grafts yamlSrc's rules
-// fragment onto config.Route. TBM's fence and switch write paths both patch
-// the same "rules" field — they differ only in which captured YAML the
-// fragment comes from — unlike AAO's fence/switch pair, which patch distinct
-// fields ("fence" vs "streamingDomain").
+// fragment onto config.Route. TBM's fence, switch and rollback all patch the
+// same "rules" field — they differ only in which reconcile artifact the
+// fragment comes from.
 func deriveRulesRoutePatch(config *migration.MigrationConfig, yamlSrc string) (gateway.RoutePatch, error) {
 	v, err := gateway.FragmentValue([]byte(yamlSrc), "rules")
 	if err != nil {
@@ -71,15 +70,11 @@ func deriveSwitchRoutePatch(config *migration.MigrationConfig) (gateway.RoutePat
 	return deriveRulesRoutePatch(config, config.SwitchoverYAML)
 }
 
-// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
-// its captured state in config.GatewayYAML — a whole-route replace (Field ==
-// "") rather than a single-key mutation.
+// deriveUnfenceRoutePatch builds the RoutePatch a rollback applies: reconcile's
+// rollback target (config.RollbackFenceYAML), set on config.Route's rules like
+// the fence and the switch.
 func deriveUnfenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
-	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+	return deriveRulesRoutePatch(config, config.RollbackFenceYAML)
 }
 
 // verifier builds the shared gateway apply/wait/verify mechanism, seeded
@@ -98,18 +93,14 @@ func (a *TBMActions) verifier() *gateway.TransitionVerifier {
 }
 
 // ensureGatewayCapability resolves gatewayCapability at most once per
-// process: the first of Fence or Switch to run this call actually resolves
-// it (and smoke-tests hot-reload); whichever runs second, if any, in the
-// same process is then a no-op. This fixes a real bug: gateway capability
-// used to be resolved only inside Fence, so a run resuming directly at
-// switch (fence/verify_fence/promote already done in an earlier, separate
-// execute-tbm process) would use the unresolved zero-value capability
-// (VerifyRollout) instead of the live cluster's real one. Mirrors, at
-// smaller scope, migration's own "Execute re-derives [capability]
-// authoritatively" comment on ResolveGatewayCapability — but only when a
-// gateway-touching step is about to run, not unconditionally on every
-// invocation (TBM's single command can legitimately resume at wait_for_lags
-// or promote alone, neither of which touches the gateway).
+// process: the first gateway-touching step to run (Fence, Switch or a
+// rollback's unfence) resolves it and smoke-tests hot-reload; later calls in
+// the same process are no-ops. Each of those steps calls it, because which one
+// runs first varies (a plan with no fence artifact skips Fence's work), and a
+// step that ran without it would verify with the unresolved zero-value
+// capability (VerifyRollout). It runs only when a gateway-touching step is
+// about to, not on every invocation: a run can do only wait_for_lags or
+// promote, neither of which touches the gateway.
 func (a *TBMActions) ensureGatewayCapability(ctx context.Context, config *migration.MigrationConfig) error {
 	if a.capabilityResolved {
 		return nil
