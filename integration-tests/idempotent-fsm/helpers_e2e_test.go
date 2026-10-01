@@ -307,6 +307,33 @@ func (e *env) mirrorStatus(t *testing.T, ctx context.Context) map[string]string 
 	return out
 }
 
+// promoteStatusTimeout bounds mirrorStatusAfterPromote's wait.
+const promoteStatusTimeout = time.Minute
+
+// mirrorStatusAfterPromote polls the live mirror status until at least n of
+// topics have left ACTIVE (PENDING_STOPPED or STOPPED), then returns it. The
+// cluster link reports an accepted promote with a short lag, so a read made
+// straight after a kill at the promote point can still see every mirror
+// ACTIVE. After promoteStatusTimeout it returns the last status read, for the
+// caller's assertions to report.
+func (e *env) mirrorStatusAfterPromote(t *testing.T, ctx context.Context, topics []string, n int) map[string]string {
+	t.Helper()
+	deadline := time.Now().Add(promoteStatusTimeout)
+	for {
+		ms := e.mirrorStatus(t, ctx)
+		left := 0
+		for _, tp := range topics {
+			if s := ms[tp]; s == "PENDING_STOPPED" || s == "STOPPED" {
+				left++
+			}
+		}
+		if left >= n || time.Now().After(deadline) {
+			return ms
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // linkOffsetSync reads the live cluster link's consumer.offset.sync.enable value
 // ("true" or "false").
 func (e *env) linkOffsetSync(t *testing.T, ctx context.Context) string {

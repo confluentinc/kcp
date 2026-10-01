@@ -76,9 +76,9 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoteAccepted, "migration", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted mid-batch must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
+	ms := e.mirrorStatusAfterPromote(t, ctx, topics, midBatchPromoteSize)
 	e.snapshot(t, ctx, "after-interrupt", "AFTER the mid-batch interrupt (expect fenced, 2 promoting/promoted, 3 ACTIVE)", topics)
 	cr := e.readCR(t, ctx)
-	ms := e.mirrorStatus(t, ctx)
 	var promoted int
 	for _, tp := range topics {
 		require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — promote runs after the fence step", tp)

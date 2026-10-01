@@ -39,6 +39,10 @@ func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics
 	require.Containsf(t, out1, "kill-point", "the non-zero exit at %q must be OUR seam firing, not a real failure", checkpoint)
 	require.NotContains(t, strings.ToLower(out1), "migration complete", "the interrupted run must NOT have completed")
 
+	if checkpoint == cpPromoteAccepted {
+		// Let the accepted promote show in the mirror status before the snapshot.
+		e.mirrorStatusAfterPromote(t, ctx, topics, 1)
+	}
 	e.snapshot(t, ctx, "after-interrupt", "AFTER interrupt at "+checkpoint, topics)
 	assertPartial(t, ctx)
 
@@ -102,7 +106,7 @@ func TestResume_InterruptDuringPromote(t *testing.T) {
 	e := newEnv()
 	topics := e.topicRange(71, 75)
 	runResumeScenario(t, e, cpPromoteAccepted, "resume-promote-accepted", topics, func(t *testing.T, ctx context.Context) {
-		ms := e.mirrorStatus(t, ctx)
+		ms := e.mirrorStatusAfterPromote(t, ctx, topics, len(topics))
 		for _, tp := range topics {
 			require.Containsf(t, []string{"PENDING_STOPPED", "STOPPED"}, ms[tp],
 				"%s must be mid/finished promotion (not ACTIVE) after the intra-promote interrupt, got %q", tp, ms[tp])
@@ -221,7 +225,7 @@ func TestResume_InterruptMidBatch(t *testing.T) {
 	runResumeScenarioWith(t, e, cpPromoteAccepted, "resume-mid-batch", topics, writeManifest,
 		func(t *testing.T, ctx context.Context) {
 			cr := e.readCR(t, ctx)
-			ms := e.mirrorStatus(t, ctx)
+			ms := e.mirrorStatusAfterPromote(t, ctx, topics, midBatchPromoteSize)
 			var promoting, active []string
 			for _, tp := range topics {
 				require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — promote runs after the fence step", tp)
