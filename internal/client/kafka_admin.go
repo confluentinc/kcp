@@ -297,6 +297,7 @@ type ClusterKafkaMetadata struct {
 type KafkaAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
 	ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicInternalFlags() (map[string]bool, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
@@ -343,6 +344,29 @@ func (k *KafkaAdminClient) ListTopicsWithNonDefaultConfigs() (map[string]sarama.
 	return k.listTopicsWithConfigs(func(entry *sarama.ConfigEntry) bool {
 		return entry.Source == sarama.SourceTopic
 	})
+}
+
+// ListTopicInternalFlags returns every topic of an all-topics metadata request,
+// keyed by name, with the broker's own IsInternal flag. Brokers include the
+// Kafka-internal topics (__consumer_offsets, __transaction_state) in that
+// response; unlike ListTopicsWithConfigs (which reports them like any other
+// topic, and whose output scan depends on), this exposes the flag so a caller
+// that wants user topics only can drop them by the broker's word rather than by
+// a name prefix. It sends no DescribeConfigs request.
+func (k *KafkaAdminClient) ListTopicInternalFlags() (map[string]bool, error) {
+	controller, err := k.admin.Controller()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get controller: %w", err)
+	}
+	metadataResp, err := controller.GetMetadata(sarama.NewMetadataRequest(k.saramaConfig.Version, nil))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata: %w", err)
+	}
+	flags := make(map[string]bool, len(metadataResp.Topics))
+	for _, topic := range metadataResp.Topics {
+		flags[topic.Name] = topic.IsInternal
+	}
+	return flags, nil
 }
 
 // listTopicsWithConfigs is the shared controller + metadata + DescribeConfigs flow
