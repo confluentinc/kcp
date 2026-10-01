@@ -243,3 +243,26 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 	_, err := buildSecretExistenceChecker(g)
 	require.NoError(t, err, "building the checker from ~/.kube/config must succeed")
 }
+
+func TestBuildReconcileInput_Conversion(t *testing.T) {
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	g.Spec.Target.ClusterID = "lkc-123"
+
+	in, err := buildReconcileInput(g)
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.ReconcileInput{
+		Route: "migration-route", TargetDomain: "cc", TargetClusterID: "lkc-123",
+		ConvertTo: "static", OffsetSyncBaselineEnabled: true,
+	}, in)
+}
+
+func TestBuildReconcileInput_ConversionStillNeedsRouteAndTarget(t *testing.T) {
+	for _, c := range []struct{ route, target string }{{"", "cc"}, {"r", ""}} {
+		g := gm(c.route, c.target, nil)
+		g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+		_, err := buildReconcileInput(g)
+		assert.Error(t, err, "route=%q target=%q", c.route, c.target)
+	}
+}

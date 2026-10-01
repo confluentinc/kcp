@@ -169,7 +169,29 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		}
 	}
 
-	plan, err := NewReconciliationEngine(gw, src, tgt, link, secrets).Run(ctx, in)
+	engine := NewReconciliationEngine(gw, src, tgt, link, secrets)
+	if in.ConvertTo != "" {
+		srcConn, err := sourceConn(g)
+		if err != nil {
+			return nil, err
+		}
+		srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = srcGroupsCloser.Close() }()
+		tgtConn, err := targetConn(g)
+		if err != nil {
+			return nil, err
+		}
+		tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tgtGroupsCloser.Close() }()
+		engine = engine.WithGroupListers(srcGroups, tgtGroups)
+	}
+	plan, err := engine.Run(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -255,10 +277,27 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 }
 
 // buildReconcileInput maps the manifest's spec.route onto the engine-owned
-// ReconcileInput. The reconcile engine handles one route per run, so exactly
-// one topicGroup entry is required.
+// ReconcileInput: a conversion (convertTo set) carries no topic selection;
+// otherwise exactly one topicGroup entry is required.
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
 	r := g.Spec.Route
+	if r.ConvertTo != "" {
+		if r.Name == "" {
+			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.name: required")
+		}
+		if r.TargetStreamingDomain == "" {
+			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.targetStreamingDomain: required")
+		}
+		return reconcile.ReconcileInput{
+			Route:           r.Name,
+			TargetDomain:    r.TargetStreamingDomain,
+			TargetClusterID: g.Spec.Target.ClusterID,
+			ConvertTo:       r.ConvertTo,
+
+			PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
+			OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
+		}, nil
+	}
 	tgs := r.TopicGroup
 	if len(tgs) != 1 {
 		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup: exactly one entry is required, got %d", len(tgs))
@@ -319,29 +358,25 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 	return NewClusterLinkStatus(svc, cfg), nil
 }
 
-// buildSourceTopicLister builds the source-cluster topic lister from the manifest
-// source credentials, following the same auth resolution as `kcp migration
-// execute`. The returned io.Closer is the underlying Kafka admin; the caller owns
-// closing it.
-func buildSourceTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+// sourceConn resolves the source Kafka leg from the manifest, following the
+// same auth resolution as `kcp migration execute`.
+func sourceConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	creds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.source.credentials", errs)
 	}
-	conn := types.MigrateConn(g.Spec.Source.BootstrapServers, creds)
-	return buildTopicLister(conn)
+	return types.MigrateConn(g.Spec.Source.BootstrapServers, creds), nil
 }
 
-// buildTargetTopicLister builds the destination-cluster topic lister from the
-// destination KAFKA leg (not the REST leg — they may differ). The returned
-// io.Closer is the underlying Kafka admin; the caller owns closing it.
-func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+// targetConn resolves the destination KAFKA leg (not the REST leg — they may
+// differ).
+func targetConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	if g.Spec.Target.Kafka == nil {
-		return nil, nil, fmt.Errorf("spec.target.kafka: required")
+		return types.KafkaSourceConn{}, fmt.Errorf("spec.target.kafka: required")
 	}
 	creds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
 
@@ -352,17 +387,15 @@ func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Close
 	if sp := conn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
 		sp.UseTLS = true
 	}
-	return buildTopicLister(conn)
+	return conn, nil
 }
 
-// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
-// Auth is dispatched through the shared client.AdminOptionForAuthMethod mapper;
-// the encryption-in-transit arg is inert (the auth option determines TLS). The
-// returned io.Closer is the admin itself; the caller owns closing it.
-func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error) {
+// adminAuth resolves conn's auth into the shared admin option, and the IAM
+// region when the auth is IAM.
+func adminAuth(conn types.KafkaSourceConn) (string, client.AdminOption, error) {
 	authType, err := conn.GetSelectedAuthType()
 	if err != nil {
-		return nil, nil, fmt.Errorf("determining auth type: %w", err)
+		return "", nil, fmt.Errorf("determining auth type: %w", err)
 	}
 	region := ""
 	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
@@ -370,11 +403,58 @@ func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error
 	}
 	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolving auth option: %w", err)
+		return "", nil, fmt.Errorf("resolving auth option: %w", err)
+	}
+	return region, authOpt, nil
+}
+
+// buildSourceTopicLister builds the source-cluster topic lister. The returned
+// io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildSourceTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := sourceConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTargetTopicLister builds the destination-cluster topic lister. The
+// returned io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := targetConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
+// The encryption-in-transit arg is inert (the auth option determines TLS). The
+// returned io.Closer is the admin itself; the caller owns closing it.
+func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
 	}
 	admin, err := client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, defaultKafkaVersion, authOpt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to cluster: %w", err)
 	}
 	return NewKafkaTopicLister(admin), admin, nil
+}
+
+// buildGroupLister opens a consumer-group client for conn (pinned at Kafka
+// 3.8.0 for ListGroups v5 — see client.NewConsumerGroupClient) and wraps its
+// strict listing as a GroupLister. The returned io.Closer is the client; the
+// caller owns closing it.
+func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	cg, err := client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
+	}
+	return NewKafkaGroupLister(cg), cg, nil
 }
