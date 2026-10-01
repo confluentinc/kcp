@@ -260,6 +260,11 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
+	if in.ConvertTo != "" {
+		return &Plan{Mode: "convert", Report: Report{Preconditions: []PreconditionResult{fail(
+			"conversion reconciled by ReconcileConvert",
+			"spec.route.convertTo is set, so this run must be reconciled by ReconcileConvert, not the topic-migration strategies")}}}
+	}
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
 	}
