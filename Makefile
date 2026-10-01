@@ -157,7 +157,7 @@ test-idempotent-fsm-setup: ## Set up the idempotent-fsm resume cluster (GATEWAY_
 	@bash integration-tests/idempotent-fsm/setup.sh
 
 test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static picks it. Arg: a -test.run selector
-	@bash integration-tests/idempotent-fsm/run.sh $(RUN)
+	@bash integration-tests/idempotent-fsm/run.sh "$(RUN)"
 
 test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, or static)
 	@bash integration-tests/idempotent-fsm/teardown.sh
