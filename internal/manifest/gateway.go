@@ -45,11 +45,10 @@ type GatewaySpec struct {
 	// with the target streaming domain it switches to, and carries the topic
 	// selection (literal names and/or anchored regex patterns) that migrates.
 	// The bootstrap server id and the migration mode are not carried here: both
-	// are read from the live CR at init.
+	// are read from the live CR on every run.
 	Route Route `yaml:"route" json:"route"`
-	// DefaultPolicies is read fresh on every execute and never snapshotted, which
-	// is what lets a caller vary execute-time policy between init and execute.
-	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
+	// DefaultPolicies is read fresh on every execute, so a change takes effect on
+	// the next run. Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
 	// (e.g. --detect-unrouted-producers-duration) that overrides the value here
 	// for a single run.
 	DefaultPolicies DefaultPolicies `yaml:"defaultPolicies,omitempty" json:"defaultPolicies,omitempty"`
@@ -70,6 +69,14 @@ type GatewayTarget struct {
 	Kafka     *TargetKafka `yaml:"kafka" json:"kafka"`
 }
 
+// Offset-sync baseline values: the operator-declared state of the cluster
+// link's consumer.offset.sync.enable BEFORE the migration started. Required
+// when pauseConsumerOffsetSync is set; a later run restores sync to this value.
+const (
+	OffsetSyncBaselineEnabled  = "enabled"
+	OffsetSyncBaselineDisabled = "disabled"
+)
+
 type GatewayClusterLink struct {
 	// Name identifies an ALREADY EXISTING cluster link; this kind never creates one.
 	Name string `yaml:"name" json:"name"`
@@ -83,6 +90,12 @@ type GatewayClusterLink struct {
 	// from the Kafka leg.
 	LinkCredentials         CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
 	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
+	// ConsumerOffsetSyncBaseline is the state consumer.offset.sync.enable was in
+	// before the migration started ("enabled" or "disabled"). Required when
+	// PauseConsumerOffsetSync is set: because a resumed run cannot observe the
+	// pre-migration value (a fenced link with sync disabled is ambiguous), the
+	// operator declares it here and kcp restores sync to it at the end.
+	ConsumerOffsetSyncBaseline string `yaml:"consumerOffsetSyncBaseline,omitempty" json:"consumerOffsetSyncBaseline,omitempty"`
 }
 
 // Route names the route on the live Gateway CR to fence/switch, the target
@@ -91,10 +104,11 @@ type GatewayClusterLink struct {
 // (topic-based) modes.
 //
 // There is no bootstrapServerId or mode field: both are read from the live CR
-// at init.
+// on every run.
 type Route struct {
 	// Name is the spec.routes[].name of the route to fence and switch over.
-	// Must exist in the initial CR and must not already be fenced.
+	// Must exist in the initial CR. On a static route it must carry no fence
+	// other than kcp's own.
 	Name string `yaml:"name" json:"name"`
 	// TopicGroup pairs the topic selections that migrate on this route.
 	// Exactly one entry today.
@@ -104,7 +118,7 @@ type Route struct {
 	// to bind the route to from that declaration in the live CR — it is not
 	// written here. Safe with no secret or auth change at cutover only because
 	// the route's security.cluster already carries pre-staged ("redundant")
-	// auth for this domain, which kcp proves at init.
+	// auth for this domain, which kcp checks on a static route on every run.
 	TargetStreamingDomain string `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
 }
 
@@ -122,10 +136,10 @@ type Gateway struct {
 	Namespace string `yaml:"namespace" json:"namespace"`
 	// Kubeconfig is the one field in the manifest where a leading ~/ is
 	// expanded — nothing else in the repo expands ~, and client-go's loader
-	// does not either.
+	// does not either. Unset, it defaults as KubeconfigPath describes.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
-	// from the cluster at init. The route to fence and the domain it switches to
+	// from the cluster on every run. The route to fence and the domain it switches to
 	// live in spec.route; there is no fenced-CR or switchover-CR file — both
 	// are derived from this live CR at cutover.
 	CrName string `yaml:"cr-name" json:"cr-name"`
@@ -154,7 +168,7 @@ type DefaultPolicies struct {
 	HotReloadTimeout time.Duration `yaml:"hotReloadTimeout,omitempty" json:"hotReloadTimeout,omitempty"`
 	// GatewayConfigPort is the port serving the gateway's /config endpoint,
 	// polled per pod to confirm a config revision was applied. 0 uses the
-	// persisted value, falling back to the gateway default (9180).
+	// gateway default (9180).
 	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
 }
 
@@ -284,6 +298,19 @@ func (g *GatewayMigration) Validate() []error {
 		add("spec.clusterLink.linkCredentials: must not be empty")
 	}
 
+	// consumerOffsetSyncBaseline: required (enabled|disabled) when pausing;
+	// if set at all it must be a valid value.
+	switch b := g.Spec.ClusterLink.ConsumerOffsetSyncBaseline; {
+	case b == "":
+		if g.Spec.ClusterLink.PauseConsumerOffsetSync {
+			add("spec.clusterLink.consumerOffsetSyncBaseline: required when pauseConsumerOffsetSync is set; must be %q or %q",
+				OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled)
+		}
+	case b != OffsetSyncBaselineEnabled && b != OffsetSyncBaselineDisabled:
+		add("spec.clusterLink.consumerOffsetSyncBaseline: must be %q or %q (got %q)",
+			OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled, b)
+	}
+
 	// --- gateway ---
 	if blank(g.Spec.Gateway.Namespace) {
 		add("spec.gateway.namespace: must not be empty")
@@ -305,7 +332,7 @@ func (g *GatewayMigration) Validate() []error {
 // and target streaming domain, exactly one topicGroup entry, and at least one
 // of topics/topicPatterns on it, each pattern compiling as an anchored RE2
 // full-match. It does no I/O — the mode and the bootstrap server id are
-// resolved from the live CR at init, not the manifest.
+// resolved from the live CR on every run, not the manifest.
 func validateRoute(r Route) []error {
 	var errs []error
 	add := func(format string, args ...any) {
@@ -407,9 +434,8 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // then fail opaquely at connection time. Every other method (sasl_plain,
 // sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
 // end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
-// already uses — including a custom ca_cert on sasl_plain, now that
-// createDestinationOffset routes through the mapper instead of a hardcoded
-// empty-CA client.
+// already uses — including a custom ca_cert on sasl_plain (the destination leg
+// dials through the mapper; see cmd/migration/execute's destinationConn).
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(
@@ -454,10 +480,19 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	return g.Spec.ClusterLink.LinkCredentials.ResolveTarget()
 }
 
-// KubeconfigPath returns spec.gateway.kubeconfig with a leading ~/ expanded.
+// KubeconfigPath returns the kubeconfig every Kubernetes client kcp builds from
+// this manifest uses: spec.gateway.kubeconfig with a leading ~/ expanded, or,
+// when it is unset, the empty path inside a pod (client-go then uses the pod's
+// in-cluster service account) and ~/.kube/config anywhere else.
 func (g *GatewayMigration) KubeconfigPath() (string, error) {
 	p := g.Spec.Gateway.Kubeconfig
-	if p == "" || !strings.HasPrefix(p, "~/") {
+	if p == "" {
+		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+			return "", nil
+		}
+		p = "~/.kube/config"
+	}
+	if !strings.HasPrefix(p, "~/") {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()

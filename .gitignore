@@ -107,3 +107,6 @@ integration-tests/.run-all.lock/
 
 # Local cache (fetched test archives, etc.)
 .cache/
+
+# Local TUI cloud credentials (generated; never commit)
+integration-tests/tui/env.sh

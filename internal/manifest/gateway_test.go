@@ -284,8 +284,8 @@ func TestGateway_RejectsIAMDestination(t *testing.T) {
 }
 
 // TestGateway_AllowsDestinationSASLPlainCACert — a private-CA sasl_plain
-// destination now that createDestinationOffset routes through
-// AdminOptionForAuthMethod instead of a hardcoded empty-CA client.
+// destination is allowed: the destination leg dials through
+// AdminOptionForAuthMethod, which honours its ca_cert.
 func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
 	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
 	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
@@ -300,7 +300,7 @@ func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
 // --- cluster-link REST credentials (linkCredentials) ---
 
 // TestGateway_RequiresLinkCredentials — the cluster-link REST credential is
-// always required; there is no derivation from the Kafka leg (R4).
+// always required; it is not derived from the Kafka leg.
 func TestGateway_RequiresLinkCredentials(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"    linkCredentials: ./link-creds.yaml", "    linkCredentials: \"\"", 1)
@@ -388,6 +388,47 @@ func TestGateway_RequiresClusterLinkName(t *testing.T) {
 func TestGateway_PauseConsumerOffsetSyncDefaultsFalse(t *testing.T) {
 	g := parseGateway(t, validGatewayDoc)
 	assert.False(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
+}
+
+// TestValidate_ConsumerOffsetSyncBaseline — spec.clusterLink.consumerOffsetSyncBaseline
+// is required (enabled|disabled) when pauseConsumerOffsetSync is set (a resumed
+// run cannot observe the pre-migration value), and, if set at all, must be one
+// of those two values regardless of pause.
+func TestValidate_ConsumerOffsetSyncBaseline(t *testing.T) {
+	cases := []struct {
+		name       string
+		pause      bool
+		baseline   string
+		wantErrHas string // "" = expect NO error about the baseline field
+	}{
+		{"pause+enabled ok", true, OffsetSyncBaselineEnabled, ""},
+		{"pause+disabled ok", true, OffsetSyncBaselineDisabled, ""},
+		{"pause+missing baseline errors", true, "", "consumerOffsetSyncBaseline"},
+		{"pause+invalid baseline errors", true, "on", "consumerOffsetSyncBaseline"},
+		{"no pause, baseline omitted ok", false, "", ""},
+		{"no pause, invalid baseline still errors", false, "yes", "consumerOffsetSyncBaseline"},
+		{"no pause, valid baseline ok", false, OffsetSyncBaselineEnabled, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := parseGateway(t, validGatewayDoc)
+			g.Spec.ClusterLink.PauseConsumerOffsetSync = c.pause
+			g.Spec.ClusterLink.ConsumerOffsetSyncBaseline = c.baseline
+			errs := g.Validate()
+
+			var joined []string
+			for _, e := range errs {
+				joined = append(joined, e.Error())
+			}
+			got := strings.Join(joined, "; ")
+
+			if c.wantErrHas == "" {
+				assert.NotContains(t, got, "consumerOffsetSyncBaseline", "unexpected baseline error: %s", got)
+			} else {
+				requireErrContains(t, errs, c.wantErrHas)
+			}
+		})
+	}
 }
 
 func TestGateway_RequiresGatewayNamespace(t *testing.T) {
@@ -587,10 +628,27 @@ func TestGateway_KubeconfigTildeIsExpanded(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
 }
 
-func TestGateway_KubeconfigEmptyStaysEmpty(t *testing.T) {
+// TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig: an unset
+// spec.gateway.kubeconfig outside a pod resolves to ~/.kube/config, for every
+// Kubernetes client kcp builds from the manifest.
+func TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "") // not in a pod
 	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
 	require.NoError(t, err)
-	assert.Empty(t, got)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
+}
+
+// TestGateway_KubeconfigUnsetInAPodIsInCluster: in a pod an unset
+// spec.gateway.kubeconfig resolves to the empty path, which client-go reads as
+// the pod's in-cluster service account — ~/.kube/config does not exist there.
+func TestGateway_KubeconfigUnsetInAPodIsInCluster(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
+	require.NoError(t, err)
+	assert.Empty(t, got, "an unset kubeconfig in a pod must resolve to in-cluster (empty path)")
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {

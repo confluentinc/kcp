@@ -18,7 +18,7 @@ func assertRefusedNoArtifacts(t *testing.T, res *migplan.Result) {
 	require.True(t, res.Refused, "the engine must refuse this batch")
 	require.Empty(t, res.FenceYAML, "a refused run must emit no fence artifact")
 	require.Empty(t, res.SwitchoverYAML, "a refused run must emit no switchover artifact")
-	require.Empty(t, res.Topics, "a refused run must promote no topics")
+	require.Empty(t, res.PromoteTopics, "a refused run must promote no topics")
 }
 
 // decideRaw runs the engine against the live gateway without the harness's
@@ -28,8 +28,34 @@ func decideRaw(h *tbmHarness, g *manifest.GatewayMigration) (*migplan.Result, er
 	return migplan.Reconcile(h.ctx, g, migplan.WithOutput(io.Discard))
 }
 
+// TestPromotedNotSwitchedResumesAsSwitchOnly: a mirror promoted (STOPPED) while
+// the route still sends it to the source is where a run killed between promote
+// and switch leaves the world. It is a resume, not a halt: the engine classifies
+// it SwitchOnly and emits artifacts that switch it without promoting it again.
+//
+// Uses reserved topic 045. Promotion is irreversible, so there is nothing to
+// restore; isolation relies on 045 being reserved out of the success range.
+// Decide only reconciles, so the route itself is not switched.
+func TestPromotedNotSwitchedResumesAsSwitchOnly(t *testing.T) {
+	h := newHarness(t)
+	reserved := h.e.topicName(h.e.reservedTopic)
+	h.PromoteMirrors(t, []string{reserved})
+
+	g := h.loadManifest(t, "resume-promoted-not-switched.yaml")
+	res := h.Decide(t, g)
+
+	require.Falsef(t, res.Refused, "promoted-not-switched is a resume, not a refusal; reasons=%v", res.Reasons)
+	require.Len(t, res.Report.SwitchOnly, 1)
+	require.Equal(t, reserved, res.Report.SwitchOnly[0].Topic)
+	require.Empty(t, res.Report.FailFast)
+	require.Empty(t, res.PromoteTopics, "an already-STOPPED mirror must not be promoted again")
+	require.Empty(t, res.AwaitStopped)
+	require.Contains(t, res.SwitchoverYAML, reserved, "the switchover must route the promoted topic")
+	require.Contains(t, res.SwitchoverYAML, g.Spec.Route.TargetStreamingDomain, "…to the target domain")
+}
+
 // TestHaltScenarios proves migplan.Reconcile refuses each known-bad condition with
-// no artifacts and the correct reason (U6). Topic-level inconsistencies land in
+// no artifacts and the correct reason. Topic-level inconsistencies land in
 // res.Reasons (fail-fast, from reconcile/verdict.go); run-level and route-shape
 // problems land as failed preconditions (reconcile/preconditions.go). Every
 // sub-test is self-contained: order-sensitive ones set up and restore their own
@@ -58,19 +84,6 @@ func TestHaltScenarios(t *testing.T) {
 		require.Truef(t, reasonsContain(res, "exists on target but is not a mirror of the source"), "reasons=%v", res.Reasons)
 	})
 
-	// Reserved topic 045: promote its mirror (STOPPED) without switching the route,
-	// then Decide. Promotion is irreversible, so there is nothing to restore;
-	// isolation relies on 045 being reserved out of the success range, never
-	// selected by a success batch or the steady-state accounting.
-	t.Run("promoted-not-switched", func(t *testing.T) {
-		reserved := h.e.topicName(h.e.reservedTopic)
-		h.PromoteMirrors(t, []string{reserved})
-
-		res := h.Decide(t, h.loadManifest(t, "halt-promoted-not-switched.yaml"))
-		assertRefusedNoArtifacts(t, res)
-		require.Truef(t, reasonsContain(res, "is promoted but not switched over"), "reasons=%v", res.Reasons)
-	})
-
 	// --- run-level precondition halts (failed precondition) ---
 
 	// Self-contained: enable offset sync on the live link on entry, restore it on
@@ -82,6 +95,15 @@ func TestHaltScenarios(t *testing.T) {
 		res := h.Decide(t, h.loadManifest(t, "halt-offset-sync-enabled.yaml"))
 		assertRefusedNoArtifacts(t, res)
 		require.Truef(t, hasFailedPrecondition(res.Report, "consumer offset sync disabled on link"),
+			"preconditions=%+v", res.Report.Preconditions)
+	})
+
+	// The manifest asks for the offset-sync pause, which a dynamic route has no
+	// use for: its link runs with consumer offset sync off.
+	t.Run("offset-sync-pause-requested", func(t *testing.T) {
+		res := h.Decide(t, h.loadManifest(t, "halt-offset-sync-pause-requested.yaml"))
+		assertRefusedNoArtifacts(t, res)
+		require.Truef(t, hasFailedPrecondition(res.Report, "offset-sync pause not requested"),
 			"preconditions=%+v", res.Report.Preconditions)
 	})
 

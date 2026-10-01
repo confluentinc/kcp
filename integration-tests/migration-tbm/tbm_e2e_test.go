@@ -4,7 +4,6 @@ package migration_tbm_e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 )
 
 // TestSuccessBatchesMigrate drives batch-01..04 through the real execute
-// command (U7): Decide (a cheap, read-only pre-check confirming the batch is
+// command: Decide (a cheap, read-only pre-check confirming the batch is
 // genuinely migratable and how many topics it selects) → runKCP (the actual
 // kcp binary, exercising internal/services/migration/tbm's real FSM, not the
 // harness's own hand-rolled apply methods) — something nothing else in this
@@ -58,33 +57,24 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 			res := h.Decide(t, g)
 			require.Falsef(t, res.Refused, "batch %s must be migratable: %v", name, res.Reasons)
-			require.Lenf(t, res.Topics, perBatch, "batch %s must select %d migratable topics", name, perBatch)
+			require.Lenf(t, res.PromoteTopics, perBatch, "batch %s must select %d migratable topics", name, perBatch)
 			require.NotEmpty(t, res.FenceYAML)
 			require.NotEmpty(t, res.SwitchoverYAML)
-			for _, tp := range res.Topics {
+			for _, tp := range res.PromoteTopics {
 				require.Falsef(t, fenced[tp], "topic %s appeared in more than one batch", tp)
 			}
-			batchTopics := append([]string(nil), res.Topics...)
+			batchTopics := append([]string(nil), res.PromoteTopics...)
 
 			manifestPath := h.e.manifestPath(name + ".yaml")
-			stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
-			out, err := runKCP(t, manifestPath, stateFile)
+			out, err := runKCP(t, manifestPath)
 			require.NoErrorf(t, err, "execute must exit 0 for %s:\n%s", name, out)
 			require.NotContains(t, out, "panic", "execute must not panic")
 
-			data, readErr := os.ReadFile(stateFile)
-			require.NoError(t, readErr, "execute must write --migration-state-file")
-			var parsed struct {
-				Migrations []struct {
-					MigrationId  string `json:"migration_id"`
-					CurrentState string `json:"current_state"`
-				} `json:"migrations"`
-			}
-			require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
-			require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration for %s", name)
-			require.Equal(t, "switched", parsed.Migrations[0].CurrentState,
-				"the real FSM must walk every transition through to switched for "+name)
-
+			// The real FSM must walk every transition through to switched for
+			// name: the mirrors below reach STOPPED and the live route below
+			// is switched to the target domain, which cannot happen unless
+			// promote and switch both ran.
+			//
 			// A full batch run always reaches switched in one synchronous
 			// execute call, and switch legitimately clears the fence
 			// switchover applies (migplan derives SwitchoverYAML from the
@@ -122,7 +112,8 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 		g := h.manifestForTopics(t, "batch-01.yaml", h.e.topicRange(1, h.e.successHi))
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "a steady-state re-run refuses nothing: %v", res.Reasons)
-		require.Empty(t, res.Topics, "a steady-state re-run migrates nothing")
+		require.Empty(t, res.PromoteTopics, "a steady-state re-run migrates nothing")
+		require.True(t, res.NothingToDo, "a steady-state re-run has nothing to do")
 		require.Lenf(t, res.Report.Unchanged, h.e.successHi,
 			"every batch-selected topic must classify Unchanged at steady state")
 	})
@@ -138,7 +129,8 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 		res := h.Decide(t, g)
 		require.Falsef(t, res.Refused, "an already-migrated member must not halt the batch: %v", res.Reasons)
-		require.Equal(t, []string{fresh}, res.Topics, "only the not-yet-migrated member is promoted")
+		require.Equal(t, []string{fresh}, res.PromoteTopics, "only the not-yet-migrated member is promoted")
+		require.False(t, res.NothingToDo, "a batch with a not-yet-migrated member has work to do")
 		require.NotEmpty(t, res.FenceYAML)
 		require.NotEmpty(t, res.SwitchoverYAML)
 		require.Truef(t, unchangedTopics(res.Report)[already], "%s must classify Unchanged", already)
@@ -175,7 +167,7 @@ func TestUnroutedProducerDetection(t *testing.T) {
 
 	res := h.Decide(t, g)
 	require.Falsef(t, res.Refused, "topic %s must be migratable: %v", topic, res.Reasons)
-	require.Equal(t, []string{topic}, res.Topics)
+	require.Equal(t, []string{topic}, res.PromoteTopics)
 
 	// The repo enforces a 10s floor on a nonzero detectUnroutedProducersDuration
 	// (internal/manifest/gateway.go's minDetectUnroutedProducersDuration) — also
@@ -187,7 +179,6 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	require.NoError(t, err)
 	manifestPath := filepath.Join(t.TempDir(), "unrouted-producer.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, manifestBytes, 0o600))
-	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 
 	rogueCtx, stopRogue := context.WithCancel(context.Background())
 	rogueDone := startRogueProducer(t, rogueCtx, h.e.sourceBootstrap, topic)
@@ -199,25 +190,15 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	// handleStepFailure returns the original step error even after a
 	// successful rollback (orchestrator.go:224-240), so execute exits
 	// non-zero here — this is expected, not a test failure.
-	out, err := runKCP(t, manifestPath, stateFile)
+	out, err := runKCP(t, manifestPath)
 	require.Errorf(t, err, "execute must exit non-zero on unrouted-producer detection:\n%s", out)
 	require.NotContains(t, out, "panic", "execute must not panic")
 	require.Contains(t, out, "Unrouted producers detected", "execute's narrative must show detection fired")
 	require.Contains(t, out, "Gateway unfenced", "execute's narrative must show the rollback completed")
 
-	data, readErr := os.ReadFile(stateFile)
-	require.NoError(t, readErr, "execute must write --migration-state-file even on a rolled-back run")
-	var parsed struct {
-		Migrations []struct {
-			MigrationId  string `json:"migration_id"`
-			CurrentState string `json:"current_state"`
-		} `json:"migrations"`
-	}
-	require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
-	require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration")
-	require.Equal(t, "initialized", parsed.Migrations[0].CurrentState,
-		"abort_fence must roll the FSM back to initialized (not lags_ok), so a resume re-checks lag for real before re-fencing")
-
+	// The abort_fence rollback must guarantee that neither promote nor
+	// switch ran; the two checks below prove that directly against the live
+	// cluster.
 	require.Falsef(t, routeSwitchedToTargetForAll(t, h, []string{topic}),
 		"a rolled-back batch must never reach switch — %s must not be routed to the target domain", topic)
 

@@ -116,7 +116,7 @@ func TestEngineRunHappyPath(t *testing.T) {
 	if plan.Report.Refused() {
 		t.Fatalf("expected success, refused: %+v", plan.Report)
 	}
-	if plan.Artifacts == nil || len(plan.Artifacts.Topics) != 1 {
+	if plan.Artifacts == nil || len(plan.Artifacts.PromoteTopics) != 1 {
 		t.Fatalf("expected 1 migratable topic, got %+v", plan.Artifacts)
 	}
 }
@@ -233,8 +233,7 @@ func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefus
 
 	// The precondition line itself must record the skip too — not a plain
 	// pass — so the rendered report never claims "✓ staged auth secrets
-	// exist" for a check that never ran (a real bug: the warning above and a
-	// false "✓" pass on this line used to coexist, contradicting each other).
+	// exist" for a check that never ran, contradicting the warning above.
 	foundPrecondition := false
 	for _, pc := range plan.Report.Preconditions {
 		if pc.Name == "staged auth secrets exist" {

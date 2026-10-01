@@ -12,7 +12,7 @@ import (
 )
 
 func TestResolveGatewayCapability(t *testing.T) {
-	t.Run("adopts per-pod configId verification and records it", func(t *testing.T) {
+	t.Run("adopts per-pod configId verification", func(t *testing.T) {
 		gw := &mockGatewayService{
 			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{
@@ -28,15 +28,14 @@ func TestResolveGatewayCapability(t *testing.T) {
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
 			Route:          "migration-route",
-			Mode:           "static",
 			FenceYAML:      testFenceYAML,
 			SwitchoverYAML: testSwitchoverYAML,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		assert.Equal(t, string(gateway.VerifyPerPodConfigID), config.GatewayVerificationMode)
-		assert.True(t, config.GatewayHotReloadEnabled)
+		assert.Equal(t, gateway.VerifyPerPodConfigID, actions.gatewayCapability.Mode)
+		assert.True(t, actions.gatewayCapability.HotReloadEnabled)
 		assert.True(t, actions.gatewayCapability.InjectsConfigID())
 	})
 
@@ -58,7 +57,6 @@ func TestResolveGatewayCapability(t *testing.T) {
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
 			Route:          "migration-route",
-			Mode:           "static",
 			FenceYAML:      testFenceYAML,
 			SwitchoverYAML: testSwitchoverYAML,
 		}
@@ -88,14 +86,13 @@ func TestResolveGatewayCapability(t *testing.T) {
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
 			Route:          "migration-route",
-			Mode:           "static",
 			FenceYAML:      testFenceYAML,
 			SwitchoverYAML: testSwitchoverYAML,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		assert.Equal(t, string(gateway.VerifyRollout), config.GatewayVerificationMode)
+		assert.Equal(t, gateway.VerifyRollout, actions.gatewayCapability.Mode)
 		assert.False(t, actions.gatewayCapability.InjectsConfigID(),
 			"a rollout-mode cluster must never be sent a configId")
 	})
@@ -104,64 +101,13 @@ func TestResolveGatewayCapability(t *testing.T) {
 		gw := &mockGatewayService{}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 
-		unset := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+		unset := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), unset))
 		assert.Equal(t, gateway.DefaultGatewayConfigPort, unset.GatewayConfigPort)
 
-		explicit := &MigrationConfig{GatewayConfigPort: 19180, GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+		explicit := &MigrationConfig{GatewayConfigPort: 19180, GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), explicit))
 		assert.Equal(t, 19180, explicit.GatewayConfigPort)
-	})
-
-	t.Run("a live downgrade overrides the mode recorded at init", func(t *testing.T) {
-		// The correctness-critical direction: the CRD no longer declares
-		// spec.configId, so continuing to inject it would make every apply fail.
-		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
-				return gateway.Capability{Mode: gateway.VerifyRollout, Advisory: "no configId"}, nil
-			},
-		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := &MigrationConfig{
-			GatewayVerificationMode: string(gateway.VerifyPerPodConfigID),
-			GatewayYAML:             testInitialCR,
-			Route:                   "migration-route",
-			Mode:                    "static",
-			FenceYAML:               testFenceYAML,
-			SwitchoverYAML:          testSwitchoverYAML,
-		}
-
-		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-
-		assert.Equal(t, string(gateway.VerifyRollout), config.GatewayVerificationMode)
-		assert.False(t, actions.gatewayCapability.InjectsConfigID())
-	})
-
-	t.Run("a live upgrade overrides the mode recorded at init", func(t *testing.T) {
-		// The operator upgraded CFK between init and execute; the live cluster wins.
-		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
-				return gateway.Capability{
-					Mode:                gateway.VerifyPerPodConfigID,
-					CRDSupportsConfigID: true,
-					HotReloadEnabled:    true,
-				}, nil
-			},
-		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := &MigrationConfig{
-			GatewayVerificationMode: string(gateway.VerifyRollout),
-			GatewayYAML:             testInitialCR,
-			Route:                   "migration-route",
-			Mode:                    "static",
-			FenceYAML:               testFenceYAML,
-			SwitchoverYAML:          testSwitchoverYAML,
-		}
-
-		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-
-		assert.Equal(t, string(gateway.VerifyPerPodConfigID), config.GatewayVerificationMode)
-		assert.True(t, actions.gatewayCapability.InjectsConfigID())
 	})
 
 	t.Run("a detection failure aborts", func(t *testing.T) {
@@ -172,7 +118,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 
-		config := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+		config := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 		err := actions.ResolveGatewayCapability(context.Background(), config)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "403")

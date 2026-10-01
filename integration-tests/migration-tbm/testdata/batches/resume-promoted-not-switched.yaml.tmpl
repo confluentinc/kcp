@@ -1,14 +1,14 @@
-# TBM halt — mirror promoted but the route was not switched over.
+# TBM resume — mirror promoted but the route was not switched over.
 #
-# Selects tbm-topic-045, the RESERVED mirrored topic. The halt sub-test stops the
-# mirror on 045 (promoting it) without switching the route, then Decide; the engine
-# fails fast per-topic: res.Reasons contains "is promoted but not switched over"
-# (reconcile/verdict.go). 045 is never selected by a success batch, and the sub-test
-# restores link state via t.Cleanup. Runs against the LIVE gateway.
+# Selects tbm-topic-045, the RESERVED mirrored topic. The test stops the mirror
+# on 045 (promoting it) without switching the route, then Decide; the engine
+# classifies it SwitchOnly (reconcile/verdict.go): not refused, nothing to
+# promote, switchover routes 045 to the target. 045 is never selected by a
+# success batch. Runs against the LIVE gateway.
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
-  name: tbm-halt-promoted-not-switched
+  name: tbm-resume-promoted-not-switched
 spec:
   source:
     type: apache-kafka

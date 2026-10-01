@@ -14,7 +14,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // defaultKafkaVersion mirrors the version the other migrate/scan admin builders
@@ -28,11 +27,38 @@ const defaultKafkaVersion = "3.6.0"
 // A returned error is an I/O failure, NOT a refusal — a refusal is data.
 type Result struct {
 	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
-	Topics         []string // the promote list to feed to cluster-link promotion
-	FenceYAML      string   // the whole rules: block, fenced
-	SwitchoverYAML string   // the whole rules: block, switched over
+	PromoteTopics  []string // topics that must still reach STOPPED before switch (Migratable + AwaitStopped); exclude AwaitStopped before promoting. SwitchOnly topics are migrated but absent here
+	AwaitStopped   []string // subset of PromoteTopics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
+	FenceYAML      string   // dynamic: the whole rules: block, fenced; static: the {fence: …} block
+	SwitchoverYAML string   // dynamic: the whole rules: block, switched over; static: the whole switched {route: …}
 	Refused        bool     // true ⇔ infeasible; the three above are empty
 	Reasons        []string // why, when Refused (failed checks + blocked topics)
+
+	// RestoreOffsetSync is reconcile.Report.RestoreOffsetSync: a static run
+	// must set the link's consumer offset sync back to the manifest's baseline
+	// after the switch. Can be true with no topic left to migrate.
+	RestoreOffsetSync bool
+
+	// RollbackFenceYAML is the route as a pre-promote rollback leaves it: the
+	// start-of-run route with kcp's fence for this batch taken out (dynamic:
+	// the whole rules: block; static: the whole {route: …}). RollbackAllowed
+	// is false once any topic in the batch is promoted or promoting, and then
+	// the run must not roll back at all.
+	RollbackFenceYAML string
+	RollbackAllowed   bool
+
+	// FencedAtStart is true when the start-of-run route already carries kcp's
+	// fence for this migration, left by an earlier, interrupted run.
+	FencedAtStart bool
+
+	// MigrateTopics is every topic this run migrates, already-promoted ones
+	// included: the topics the fence check watches for producers writing
+	// straight to the source.
+	MigrateTopics []string
+
+	// NothingToDo is reconcile.Plan.NothingToDo: not refused, no topic left to
+	// migrate and no offset-sync restore owed, so the run executes nothing.
+	NothingToDo bool
 
 	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
 	// server-managed metadata (managedFields, resourceVersion, uid,
@@ -49,9 +75,9 @@ type Result struct {
 
 	// Mode is the route mode this plan was reconciled under ("dynamic" or
 	// "static"), mirroring reconcile.Plan.Mode — so a caller knows how to
-	// interpret FenceYAML/SwitchoverYAML: a rules: fragment for dynamic, a
-	// fence/streamingDomain block fragment for static — both meaning "splice
-	// this onto the named route," never "apply this as the whole CR."
+	// interpret the artifacts (see reconcile.Plan.Mode): whole rules: blocks
+	// for dynamic; a {fence: …} block and whole {route: …} documents for
+	// static. Each applies to the named route, never as the whole CR.
 	Mode string
 }
 
@@ -165,11 +191,17 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 }
 
 func newResult(plan *reconcile.Plan) *Result {
-	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
-		r.Topics = plan.Artifacts.Topics
+		r.PromoteTopics = plan.Artifacts.PromoteTopics
+		r.AwaitStopped = plan.Artifacts.AwaitStopped
 		r.FenceYAML = string(plan.Artifacts.FenceRules)
 		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
+		r.RollbackFenceYAML = string(plan.Artifacts.RollbackFenceRules)
+		r.RollbackAllowed = plan.Artifacts.RollbackAllowed
+		r.FencedAtStart = plan.Artifacts.FencedAtStart
+		r.MigrateTopics = plan.Artifacts.MigrateTopics
 	}
 	if r.Refused {
 		for _, p := range plan.Report.Preconditions {
@@ -186,7 +218,8 @@ func newResult(plan *reconcile.Plan) *Result {
 
 // buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
 // read from Kubernetes by namespace + cr-name via the existing gateway service,
-// using the manifest's kubeconfig (a leading ~/ is expanded).
+// using the manifest's kubeconfig (see manifest.GatewayMigration.KubeconfigPath
+// for its default).
 func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConfigSource, error) {
 	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {
@@ -201,7 +234,7 @@ func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConf
 // buildGatewaySource does. gateway.K8sService itself does not expose a
 // clientset (each of its methods builds one internally, ad hoc, from its own
 // kubeConfigPath — see internal/services/gateway/gateway.go), so this
-// mirrors that same clientcmd.BuildConfigFromFlags + kubernetes.NewForConfig
+// mirrors that same gateway.RESTConfig + kubernetes.NewForConfig
 // pattern directly rather than hand-rolling a new one. Built unconditionally
 // (mirroring every other provider builder here) even for a dynamic-route
 // manifest, which will simply never invoke it — see engine.go's Run.
@@ -210,7 +243,7 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 	if err != nil {
 		return nil, err
 	}
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config, err := gateway.RESTConfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("building kubeconfig: %w", err)
 	}
@@ -254,6 +287,9 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		Route:           r.Name,
 		TargetDomain:    r.TargetStreamingDomain,
 		TargetClusterID: g.Spec.Target.ClusterID,
+
+		PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
 	}, nil
 }
 

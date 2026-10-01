@@ -1,8 +1,8 @@
 # Permutation fixture: a static route that is otherwise fully valid (same
 # shape as gateway-static-redundant-auth.yaml) but already carries a non-null
-# `fence` block. The "route is not already fenced" precondition must fail and
-# refuse — fencing an already-fenced route means this batch was already
-# fenced by a prior run, or something upstream lost track of state.
+# `fence` block — the route a resume pulls after an earlier run fenced it and
+# was interrupted. Reconcile plans it normally; its switch and rollback routes
+# carry no fence.
 apiVersion: gateway.confluent.io/v1
 kind: Gateway
 metadata:
