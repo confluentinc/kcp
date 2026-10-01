@@ -7,15 +7,16 @@ const convertMode = "convert"
 // ReconcileConvert reconciles a dynamic-to-static route conversion
 // (spec.route.convertTo: static). It reuses CheckPreconditions for the route
 // checks, adds the conversion's own (the target binding's bootstrap id, auth
-// for the target domain, no fence kcp didn't write, no source group active on
-// the destination), and classifies every live source topic — there is no
+// for the target domain, no fence kcp didn't write, no live route-level fence,
+// no source group active on the destination), and classifies every live source topic — there is no
 // selector — refusing unless all of them are Unchanged: the topic-based
 // migration must already be finished. On success the artifacts are the route's
 // rules with kcp's convert fence, the route converted to static, and the rules
 // without the fence for a rollback.
 //
 // A route that is already static and bound to the target is a completed
-// conversion: nothing to do. A static route bound anywhere else is refused.
+// conversion: nothing to do — unless it carries a live route-level fence, which
+// is refused. A static route bound anywhere else is refused.
 func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
 
@@ -23,7 +24,13 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		if sd, ok := mapField(gw.Route.Raw, "streamingDomain"); ok && stringField(sd, "name") == in.TargetDomain {
-			report.Preconditions = []PreconditionResult{pass("route is already static on the target domain")}
+			// A completed conversion is nothing to do only while the static
+			// route blocks nothing: a live fence there is not "done".
+			fenceCheck := routeLevelFenceCheck(gw.Route)
+			report.Preconditions = []PreconditionResult{pass("route is already static on the target domain"), fenceCheck}
+			if !fenceCheck.OK {
+				return &Plan{Report: report, Mode: convertMode}
+			}
 			return &Plan{Report: report, Mode: convertMode, NothingToDo: true}
 		}
 		report.Preconditions = []PreconditionResult{fail("route is dynamic", fmt.Sprintf(
@@ -61,6 +68,11 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	} else {
 		report.Preconditions = append(report.Preconditions, pass("route has no fence kcp didn't write"))
 	}
+
+	// BuildConvertedStaticRoute keeps every other route key, so a route-level
+	// fence on the dynamic route would ride into the static route, where the
+	// gateway enforces it.
+	report.Preconditions = append(report.Preconditions, routeLevelFenceCheck(rc))
 
 	groupCheck, groupWarnings := CheckGroupSplitBrain(groups)
 	report.Preconditions = append(report.Preconditions, groupCheck)
@@ -134,6 +146,34 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		RollbackAllowed:    true,
 		FencedAtStart:      base.HasConvertFence(),
 	}}
+}
+
+// routeLevelFenceCheckName names the precondition that refuses a route-level
+// fence on a route being converted (or already converted) to static.
+const routeLevelFenceCheckName = "route has no route-level fence"
+
+// routeLevelFenceCheck passes when the route carries no route-level fence, or
+// an inert one (empty, or scope NONE as the CRD may default it — see
+// isUnfencedStatic). Any other fence — including one that is not a map — would
+// be enforced by the gateway once the route is static, so it refuses. kcp never
+// writes a route-level fence for a conversion (its fence is a rules.fencing
+// entry), so there is no kcp-owned exception here.
+func routeLevelFenceCheck(rc *RouteConfig) PreconditionResult {
+	v, present := rc.Raw["fence"]
+	if !present || v == nil {
+		return pass(routeLevelFenceCheckName)
+	}
+	f, isMap := v.(map[string]any)
+	if isMap && isUnfencedStatic(f) {
+		return pass(routeLevelFenceCheckName)
+	}
+	rendered := fmt.Sprintf("%v", v)
+	if isMap {
+		rendered = renderFence(f)
+	}
+	return fail(routeLevelFenceCheckName, fmt.Sprintf(
+		"route %q carries a route-level fence (%s) that the static route would enforce; remove it before converting",
+		rc.Name, rendered))
 }
 
 // renderFences renders fencing entries for a refusal message.

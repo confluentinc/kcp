@@ -217,3 +217,85 @@ func TestReconcile_RefusesAConversionInput(t *testing.T) {
 		t.Fatal("Reconcile must refuse an input with ConvertTo set, never plan it as a topic migration")
 	}
 }
+
+const routeFenceCheckName = "route has no route-level fence"
+
+// A route-level fence on the dynamic route is carried into the static route
+// unchanged, where the gateway would enforce it; the conversion refuses it.
+func TestReconcileConvert_RefusesARouteLevelFence(t *testing.T) {
+	gw := convertGateway()
+	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
+
+	p := reconcileConverged(gw, GroupFacts{})
+
+	if !p.Report.Refused() || p.Artifacts != nil {
+		t.Fatal("a route-level fence the static route would enforce must refuse the conversion")
+	}
+	pc := convertPrecondition(t, p.Report, routeFenceCheckName)
+	if pc.OK {
+		t.Fatalf("route-fence precondition = %+v, want a failure", pc)
+	}
+	for _, want := range []string{"migration-route", `"scope":"ALL"`, "remove it"} {
+		if !strings.Contains(pc.Detail, want) {
+			t.Errorf("detail = %q, want it to contain %q", pc.Detail, want)
+		}
+	}
+}
+
+// An inert route-level fence (empty, or scope NONE as the CRD may default it)
+// blocks nothing and does not refuse.
+func TestReconcileConvert_InertRouteLevelFencePasses(t *testing.T) {
+	for name, fence := range map[string]map[string]any{
+		"empty":      {},
+		"scope NONE": {"scope": "NONE"},
+		"scope none": {"scope": "none", "errorCode": "BROKER_NOT_AVAILABLE"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gw := convertGateway()
+			gw.Route.Raw["fence"] = fence
+
+			p := reconcileConverged(gw, GroupFacts{})
+
+			if p.Report.Refused() || p.Artifacts == nil {
+				t.Fatalf("an inert route-level fence must not refuse, got %+v", p.Report)
+			}
+			if pc := convertPrecondition(t, p.Report, routeFenceCheckName); !pc.OK {
+				t.Errorf("route-fence precondition = %+v, want a pass", pc)
+			}
+		})
+	}
+}
+
+// A completed conversion re-reconciles to nothing to do only when the static
+// route is unfenced; a static route on the target that carries a live fence is
+// refused, never reported as done.
+func TestReconcileConvert_AlreadyStaticOnTargetWithAFenceIsRefused(t *testing.T) {
+	gw := staticGateway()
+	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
+
+	p := reconcileConverged(gw, GroupFacts{})
+
+	if p.NothingToDo {
+		t.Fatal("a fenced static route must not be reported as nothing to do")
+	}
+	if !p.Report.Refused() {
+		t.Fatal("a fenced static route on the target must refuse")
+	}
+	if pc := convertPrecondition(t, p.Report, routeFenceCheckName); pc.OK {
+		t.Errorf("route-fence precondition = %+v, want a failure", pc)
+	}
+}
+
+// An inert fence on a completed conversion is still nothing to do.
+func TestReconcileConvert_AlreadyStaticOnTargetWithAnInertFenceIsNothingToDo(t *testing.T) {
+	gw := staticGateway()
+	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+	gw.Route.Raw["fence"] = map[string]any{"scope": "NONE"}
+
+	p := reconcileConverged(gw, GroupFacts{})
+
+	if p.Report.Refused() || !p.NothingToDo {
+		t.Fatalf("an inert fence on a completed conversion is still nothing to do, got %+v", p)
+	}
+}
