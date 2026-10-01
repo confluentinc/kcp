@@ -93,18 +93,14 @@ func (a *TBMActions) verifier() *gateway.TransitionVerifier {
 }
 
 // ensureGatewayCapability resolves gatewayCapability at most once per
-// process: the first of Fence or Switch to run this call actually resolves
-// it (and smoke-tests hot-reload); whichever runs second, if any, in the
-// same process is then a no-op. This fixes a real bug: gateway capability
-// used to be resolved only inside Fence, so a run resuming directly at
-// switch (fence/verify_fence/promote already done in an earlier, separate
-// execute-tbm process) would use the unresolved zero-value capability
-// (VerifyRollout) instead of the live cluster's real one. Mirrors, at
-// smaller scope, migration's own "Execute re-derives [capability]
-// authoritatively" comment on ResolveGatewayCapability — but only when a
-// gateway-touching step is about to run, not unconditionally on every
-// invocation (TBM's single command can legitimately resume at wait_for_lags
-// or promote alone, neither of which touches the gateway).
+// process: the first gateway-touching step to run (Fence, Switch or a
+// rollback's unfence) resolves it and smoke-tests hot-reload; later calls in
+// the same process are no-ops. Each of those steps calls it, because which one
+// runs first varies (a plan with no fence artifact skips Fence's work), and a
+// step that ran without it would verify with the unresolved zero-value
+// capability (VerifyRollout). It runs only when a gateway-touching step is
+// about to, not on every invocation: a run can do only wait_for_lags or
+// promote, neither of which touches the gateway.
 func (a *TBMActions) ensureGatewayCapability(ctx context.Context, config *migration.MigrationConfig) error {
 	if a.capabilityResolved {
 		return nil

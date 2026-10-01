@@ -92,12 +92,13 @@ spec:
   # kcp reads the live initial CR, injects fence: {scope: ALL, errorCode:
   # BROKER_NOT_AVAILABLE} onto the named route, and applies the patched CR —
   # there is no separate fenced-CR file to create or keep in sync. The route
-  # must exist in the initial CR and must not already be fenced. At cutover kcp
+  # must exist in the initial CR; on a static route it must carry no fence
+  # other than kcp's own. At cutover kcp
   # derives the switched CR the same way, flipping the route's streamingDomain
   # to the target declared here. This is safe with NO secret or auth change at
   # cutover only because the route's security.cluster already carries pre-staged
-  # ("redundant") swap auth for the target domain; kcp proves that staging holds
-  # at init (see checkRedundantAuthStaged), before anything is fenced.
+  # ("redundant") swap auth for the target domain; on a static route kcp checks
+  # that staging on every run, before anything is fenced.
   #
   # The route's migration MODE (all-at-once vs topic-based) is read from the
   # live CR's route binding, not declared here.
@@ -122,11 +123,11 @@ spec:
 
     # The target streaming domain — declared in the initial CR's
     # spec.streamingDomains. The bootstrap server id kcp binds the route to is
-    # DERIVED from that declaration in the live CR at init, not written here.
+    # DERIVED from that declaration in the live CR on every run, not written here.
     targetStreamingDomain: confluent-cloud
 
-  # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
-  # lets policy be varied between init and execute. Each value is a DEFAULT:
+  # OPTIONAL, and read FRESH on every execute, so a change takes effect on the
+  # next run. Each value is a DEFAULT:
   # `kcp migration execute` can override any of them for a single run with the
   # matching flag (e.g. --detect-unrouted-producers-duration 60s), no edit needed.
   defaultPolicies:
@@ -136,4 +137,4 @@ spec:
     detectUnroutedProducersDuration: 30s # 0 = CHECK SKIPPED; min 10s when set
     consumerOffsetSyncDrainDuration: 15s # 0 = no wait; needs pauseConsumerOffsetSync
     hotReloadTimeout: 90s # 0 = built-in 90s budget; never unbounded
-    gatewayConfigPort: 0 # 0 = persisted value, falling back to the gateway default (9180)
+    gatewayConfigPort: 0 # 0 = the gateway default (9180)

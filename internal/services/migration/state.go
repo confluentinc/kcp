@@ -21,7 +21,7 @@ const (
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
 	// EventPauseOffsetSync pauses cluster-link consumer offset sync
-	// (--pause-consumer-offset-sync) immediately after fencing. Without the
+	// (spec.clusterLink.pauseConsumerOffsetSync) immediately after fencing. Without the
 	// opt-in the transition still fires as a pass-through so the forward
 	// walk is identical either way.
 	EventPauseOffsetSync = "pause_offset_sync"

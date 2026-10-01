@@ -55,7 +55,7 @@ func TestPromotedNotSwitchedResumesAsSwitchOnly(t *testing.T) {
 }
 
 // TestHaltScenarios proves migplan.Reconcile refuses each known-bad condition with
-// no artifacts and the correct reason (U6). Topic-level inconsistencies land in
+// no artifacts and the correct reason. Topic-level inconsistencies land in
 // res.Reasons (fail-fast, from reconcile/verdict.go); run-level and route-shape
 // problems land as failed preconditions (reconcile/preconditions.go). Every
 // sub-test is self-contained: order-sensitive ones set up and restore their own

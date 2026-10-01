@@ -99,10 +99,11 @@ Every run prints its evidence and `run.sh` saves it to
 `.reports/<date>-<time>-<mode>/` (see [Tangible evidence](#tangible-evidence)),
 printing the path at the end.
 
-## Status
+## Coverage
 
-New suite (2026-09-23), local on `feat/idempotent-migration-fsm`. Covers **both
-routes** — dynamic/TBM and static/AAO (`GATEWAY_MODE=dynamic|static`) — across all
+CI runs the whole suite in both modes, as the two jobs of the Semaphore block
+`integration: idempotent-fsm e2e`. It covers **both routes** — dynamic/TBM and
+static/AAO (`GATEWAY_MODE=dynamic|static`) — across all
 five kill-points: baseline, after-fence, after-promote, during-promote
 (intra-promote / PENDING_STOPPED), after-switch — plus, on static,
 after-offset-sync-pause and after-switch with the pause on, which leaves the
@@ -116,14 +117,13 @@ failure hook (`KCP_TEST_FAIL_AT`): after a kill at the fence the rollback must
 lift the interrupted run's fence; after a mid-batch kill it must keep the fence,
 and a plain re-run then completes. A third fails a resume at `wait_for_lags`,
 before its own fence step: it must still lift the interrupted run's fence and,
-on static, set consumer offset sync back to the baseline. A detection test (`detection_e2e_test.go`)
-writes straight to the source of already-promoted topics during a mid-batch
+on static, set consumer offset sync back to the baseline. A detection test
+(`detection_e2e_test.go`) writes straight to the source of already-promoted topics during a mid-batch
 resume; the fence check must catch it and keep the fence. Two operator-fence
 tests (`operator_fence_e2e_test.go`, dynamic only) add an operator's own
 produce-only fence over exactly the batch's topics to the live route: the fence
 step, a resume, the switch and a rollback must all keep it, and remove only
 kcp's fence. On static, a third (`TestOperatorFence_StaticRouteIsRefused`)
 fences the route with the operator's own fence first: execute must refuse and
-leave the route and the mirrors as they were. Env-var names are still
-`KCP_TBM_*` (inherited from the copied `migration-tbm` spine) pending a cosmetic
-rename.
+leave the route and the mirrors as they were. The env vars are named
+`KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.

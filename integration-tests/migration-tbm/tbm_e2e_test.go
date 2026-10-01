@@ -16,7 +16,7 @@ import (
 )
 
 // TestSuccessBatchesMigrate drives batch-01..04 through the real execute
-// command (U7): Decide (a cheap, read-only pre-check confirming the batch is
+// command: Decide (a cheap, read-only pre-check confirming the batch is
 // genuinely migratable and how many topics it selects) → runKCP (the actual
 // kcp binary, exercising internal/services/migration/tbm's real FSM, not the
 // harness's own hand-rolled apply methods) — something nothing else in this

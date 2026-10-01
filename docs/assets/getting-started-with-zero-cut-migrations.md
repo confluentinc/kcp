@@ -18,7 +18,7 @@ Migration scope is organized into groups. A group is any set of topics you defin
 
 There are three active components in the migration:
 
-**KCP CLI** orchestrates the cutover through two commands: `kcp migration execute` (validates setup, registers the migration, and runs the cutover — all in one command; `--dry-run` validates without executing) and `kcp migration lag-check` (monitors replication lag). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.
+**KCP CLI** orchestrates the cutover through two commands: `kcp migration execute` (validates setup and runs the cutover in one command; `--dry-run` validates without executing) and `kcp migration lag-check` (monitors replication lag). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.
 
 **CC Gateway** is a Kafka protocol proxy deployed in (or adjacent to) the source cluster's network. Clients connect to the gateway instead of the source cluster directly. The gateway forwards traffic to the source cluster during the migration window, handles auth translation between source credentials and Confluent Cloud credentials, and switches routing to Confluent Cloud at cutover, all without a restart. It is deployed on Kubernetes via Confluent for Kubernetes and requires a Confluent Platform license.
 
@@ -127,7 +127,7 @@ One important configuration best practice from the official docs: each client sh
 
 ## 6. Cluster Linking
 
-Cluster Linking must be configured before running any KCP cutover commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
+Cluster Linking must be configured before running any KCP cutover commands. This includes the cluster link itself, mirror topics for all topics in the migration group, and the link in a healthy replicating state. For a topic-based (dynamic) route, consumer offset sync must be disabled on the link; KCP refuses the run otherwise. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
 
 KCP's `kcp migration execute` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 
@@ -227,7 +227,7 @@ KCP sits outside the data path. It configures and orchestrates the gateway (patc
 Before running any `kcp migration` command, confirm the following are in place:
 
 - **CC Gateway** deployed in Kubernetes, configured with two streaming domains (source cluster and CC), auth configured per §5, and clients already pointing at the gateway bootstrap URL
-- **Cluster Linking** active: cluster link in CC, mirror topics replicating for all topics in the group, consumer offset sync enabled
+- **Cluster Linking** active: cluster link in CC, mirror topics replicating for all topics in the group; for a topic-based (dynamic) route, consumer offset sync disabled on the link
 - **KCP** has `CloudClusterAdmin` + `MetricsViewer` on the CC cluster and `get`/`patch`/`update` on the Gateway CR in Kubernetes
 
 ![Description](images/image-20260112-174645.png)
@@ -273,16 +273,16 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in seven automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
+Performs the cutover in seven automatic phases. The operation is resumable: if interrupted at any point, re-running the same command reads the live state of the gateway and the cluster link and continues from there — phases already done are no-ops.
 
 | Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
-| **Block**             | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                                                         | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Block**             | Fences the route in the gateway CR; the route stops accepting produce/consume requests                                                             | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
 | **Pause offset sync** | With `spec.clusterLink.pauseConsumerOffsetSync`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise. `--consumer-offset-sync-drain-duration` optionally holds here first (sync still enabled) so final offsets propagate before the pause | Still retrying                                                          |
 | **Verify fence**      | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped) | Still retrying                                                          |
 | **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
-| **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
+| **Switch + unblock**  | Switches the route to CC in the gateway CR; traffic is unblocked                                                                                   | First retry succeeds; clients now on CC                                 |
 | **Restore offset sync** | With the offset-sync pause on, sets cluster-link consumer offset sync back to its declared baseline; skipped otherwise. If it fails, or the run stops before it, re-running execute performs it | On CC                                                                   |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).

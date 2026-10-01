@@ -300,7 +300,7 @@ func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
 // --- cluster-link REST credentials (linkCredentials) ---
 
 // TestGateway_RequiresLinkCredentials — the cluster-link REST credential is
-// always required; there is no derivation from the Kafka leg (R4).
+// always required; it is not derived from the Kafka leg.
 func TestGateway_RequiresLinkCredentials(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"    linkCredentials: ./link-creds.yaml", "    linkCredentials: \"\"", 1)

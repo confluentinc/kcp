@@ -2,11 +2,9 @@ package reconcile
 
 import "github.com/goccy/go-yaml"
 
-// staticFenceScope and staticFenceErrorCode are the fence parameters this
-// migration injects — the same values gateway.FenceRoutes hardcodes today
-// (see internal/services/gateway/fence.go). Duplicated here rather than
-// imported, to avoid a new dependency from reconcile on
-// internal/services/gateway.
+// staticFenceScope and staticFenceErrorCode are the fence kcp writes on a
+// static route (BuildFenceFragment), and the exact value it recognises as its
+// own fence (isKcpStaticFence).
 const (
 	staticFenceScope     = "ALL"
 	staticFenceErrorCode = "BROKER_NOT_AVAILABLE"
@@ -14,9 +12,8 @@ const (
 
 // BuildFenceFragment returns the fence block's value as a small,
 // route-agnostic fragment — {fence: {scope, errorCode}} — mirroring
-// RulesTree.Serialize's shape (a wrapped value, not a whole CR). Splicing
-// this onto the named route's fence key in a whole CR, and applying the
-// result, is deferred to later FSM-integration work — not done here.
+// RulesTree.Serialize's shape (a wrapped value, not a whole CR). The static
+// FSM's fence step sets it on the named route's fence key.
 func BuildFenceFragment() ([]byte, error) {
 	return yaml.Marshal(map[string]any{"fence": map[string]any{
 		"scope":     staticFenceScope,

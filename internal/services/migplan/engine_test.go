@@ -233,8 +233,7 @@ func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefus
 
 	// The precondition line itself must record the skip too — not a plain
 	// pass — so the rendered report never claims "✓ staged auth secrets
-	// exist" for a check that never ran (a real bug: the warning above and a
-	// false "✓" pass on this line used to coexist, contradicting each other).
+	// exist" for a check that never ran, contradicting the warning above.
 	foundPrecondition := false
 	for _, pc := range plan.Report.Preconditions {
 		if pc.Name == "staged auth secrets exist" {

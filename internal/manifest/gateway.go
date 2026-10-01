@@ -45,11 +45,10 @@ type GatewaySpec struct {
 	// with the target streaming domain it switches to, and carries the topic
 	// selection (literal names and/or anchored regex patterns) that migrates.
 	// The bootstrap server id and the migration mode are not carried here: both
-	// are read from the live CR at init.
+	// are read from the live CR on every run.
 	Route Route `yaml:"route" json:"route"`
-	// DefaultPolicies is read fresh on every execute and never snapshotted, which
-	// is what lets a caller vary execute-time policy between init and execute.
-	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
+	// DefaultPolicies is read fresh on every execute, so a change takes effect on
+	// the next run. Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
 	// (e.g. --detect-unrouted-producers-duration) that overrides the value here
 	// for a single run.
 	DefaultPolicies DefaultPolicies `yaml:"defaultPolicies,omitempty" json:"defaultPolicies,omitempty"`
@@ -105,10 +104,11 @@ type GatewayClusterLink struct {
 // (topic-based) modes.
 //
 // There is no bootstrapServerId or mode field: both are read from the live CR
-// at init.
+// on every run.
 type Route struct {
 	// Name is the spec.routes[].name of the route to fence and switch over.
-	// Must exist in the initial CR and must not already be fenced.
+	// Must exist in the initial CR. On a static route it must carry no fence
+	// other than kcp's own.
 	Name string `yaml:"name" json:"name"`
 	// TopicGroup pairs the topic selections that migrate on this route.
 	// Exactly one entry today.
@@ -118,7 +118,7 @@ type Route struct {
 	// to bind the route to from that declaration in the live CR — it is not
 	// written here. Safe with no secret or auth change at cutover only because
 	// the route's security.cluster already carries pre-staged ("redundant")
-	// auth for this domain, which kcp proves at init.
+	// auth for this domain, which kcp checks on a static route on every run.
 	TargetStreamingDomain string `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
 }
 
@@ -139,7 +139,7 @@ type Gateway struct {
 	// does not either. Unset, it defaults as KubeconfigPath describes.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
-	// from the cluster at init. The route to fence and the domain it switches to
+	// from the cluster on every run. The route to fence and the domain it switches to
 	// live in spec.route; there is no fenced-CR or switchover-CR file — both
 	// are derived from this live CR at cutover.
 	CrName string `yaml:"cr-name" json:"cr-name"`
@@ -168,7 +168,7 @@ type DefaultPolicies struct {
 	HotReloadTimeout time.Duration `yaml:"hotReloadTimeout,omitempty" json:"hotReloadTimeout,omitempty"`
 	// GatewayConfigPort is the port serving the gateway's /config endpoint,
 	// polled per pod to confirm a config revision was applied. 0 uses the
-	// persisted value, falling back to the gateway default (9180).
+	// gateway default (9180).
 	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
 }
 
@@ -332,7 +332,7 @@ func (g *GatewayMigration) Validate() []error {
 // and target streaming domain, exactly one topicGroup entry, and at least one
 // of topics/topicPatterns on it, each pattern compiling as an anchored RE2
 // full-match. It does no I/O — the mode and the bootstrap server id are
-// resolved from the live CR at init, not the manifest.
+// resolved from the live CR on every run, not the manifest.
 func validateRoute(r Route) []error {
 	var errs []error
 	add := func(format string, args ...any) {

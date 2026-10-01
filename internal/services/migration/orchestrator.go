@@ -506,9 +506,8 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	// The rollback reason is announced by handleStepFailure (which holds the
 	// failing step and error); this callback owns only the unfence and its
-	// success line. abort_fence now fires for any halting pre-promote error, not
-	// just the two the source state used to imply, so the reason is no longer
-	// inferable here.
+	// success line. abort_fence fires for any halting pre-promote error, so the
+	// reason can't be inferred from the source state here.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))

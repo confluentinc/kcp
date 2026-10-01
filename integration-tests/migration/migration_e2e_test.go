@@ -1100,12 +1100,6 @@ func TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled(t *testing
 		"the restore stage must still bring the link to the declared baseline (enabled), regardless of how it started")
 }
 
-// TestMigrationE2E_PauseOffsetSync_RestoresFilters was removed:
-// the pause/restore is now an incremental AlterConfigs of only
-// consumer.offset.sync.enable and never touches consumer.offset.group.filters,
-// so there is nothing to restore. The old test guarded a diff-based restore that
-// no longer exists.
-
 // TestMigrationE2E_RogueProducerDetection exercises the unrouted-producer
 // safety check against real infrastructure.
 //
@@ -1313,10 +1307,6 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 // the gateway but also restore consumer.offset.sync.enable on the real
 // cluster link.
 //
-// (This test used to also assert consumer.offset.group.filters round-tripped;
-// dropped because the restore only sets consumer.offset.sync.enable
-// and never touches filters — see RestoresFilters above.)
-//
 // Phase A: execute runs with spec.clusterLink.pauseConsumerOffsetSync while a
 // rogue producer writes directly to source. The pause stage disables sync,
 // then detection trips, and the rollback restores enable=true.
@@ -1521,7 +1511,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T)
 		require.NoErrorf(t, err, "execute must succeed despite a mid-run drift:\n%s", combined)
 		assert.Contains(t, combined, "Pausing consumer.offset.sync", "the pause stage must still run")
 		assert.Contains(t, combined, "Restoring consumer.offset.sync", "the post-switchover restore stage must run")
-		assert.NotContains(t, combined, "refused", "the pause stage no longer performs a live drift check")
+		assert.NotContains(t, combined, "refused", "the pause stage sets the value without checking the live one first")
 	})
 
 	if t.Failed() {

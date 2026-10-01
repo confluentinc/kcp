@@ -42,15 +42,13 @@ func TestGatewayPermutationsLive(t *testing.T) {
 		{"static route multi-homed target domain refused", "testdata/gateway-static-multi-bootstrap.yaml", "cc", nil, true, "exactly one bootstrap server id", ""},
 		{"static route missing secrets refused", "testdata/gateway-static-redundant-auth.yaml", "cc", fakeSecretChecker{missing: []string{"cc-redundant-auth"}}, true, "staged auth secrets exist", ""},
 
-		// Resume states the static-idempotency fixes made valid — they no longer
-		// refuse on a now-removed precondition:
+		// Resume states, which no route-level precondition refuses:
 		//  - already BOUND to target while mirrors are still ACTIVE is an
 		//    inconsistent world (route says target, mirror not promoted) → each
-		//    topic fail-fasts; it is NOT the old "route is not already bound"
-		//    precondition refusal.
-		//  - already FENCED is a legitimate resume (a prior run fenced, then was
-		//    interrupted) → a normal migratable plan that re-fences idempotently,
-		//    NOT a refusal.
+		//    topic fail-fasts.
+		//  - already FENCED by kcp is a legitimate resume (a prior run fenced,
+		//    then was interrupted) → a normal migratable plan that re-fences
+		//    idempotently.
 		{"static route already bound to target, mirrors not promoted -> fail-fast", "testdata/gateway-static-already-bound.yaml", "cc", nil, true, "", "routes to target but its mirror is not yet promoted"},
 		{"static route already fenced is a valid resume (not refused)", "testdata/gateway-static-already-fenced.yaml", "cc", nil, false, "", ""},
 	}

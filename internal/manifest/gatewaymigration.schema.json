@@ -163,7 +163,7 @@
             },
             "cr-name": {
               "type": "string",
-              "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
+              "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster on every run — this is an object name, not a file path."
             }
           },
           "required": [
@@ -177,7 +177,7 @@
           "properties": {
             "name": {
               "type": "string",
-              "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced."
+              "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own."
             },
             "topicGroup": {
               "type": [
@@ -226,7 +226,7 @@
             },
             "targetStreamingDomain": {
               "type": "string",
-              "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init."
+              "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
             }
           },
           "description": "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
@@ -270,7 +270,7 @@
             },
             "gatewayConfigPort": {
               "type": "integer",
-              "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180)."
+              "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
             }
           },
           "required": [

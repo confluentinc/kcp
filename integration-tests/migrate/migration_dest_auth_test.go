@@ -19,7 +19,8 @@
 //     at those listeners exercises identical code.
 //   - REST leg: targets.Credentials.HTTPClient()/Authenticator() driving a real
 //     clusterlink call against dest-basic/dest-mtls/dest-bearer, the wiring
-//     migration init (ListMirrorTopics) and execute (PromoteTopics) use.
+//     migration execute uses (ListMirrorTopics to reconcile, PromoteTopics to
+//     promote).
 
 package migrate
 
@@ -121,9 +122,9 @@ func TestMigrationDestAuth_KafkaLeg(t *testing.T) {
 // TestMigrationDestAuth_RESTLeg proves every new destination REST auth method
 // authenticates a real clusterlink.ConfluentCloudService call. GetKafkaClusterID
 // (GET /kafka/v3/clusters) is an authenticated request that returns 200 with the
-// cluster id — the exact HTTPClient() + Config.Auth wiring migration init
-// (ListMirrorTopics) and execute (PromoteTopics) drive, without needing a
-// pre-existing cluster link.
+// cluster id — the exact HTTPClient() + Config.Auth wiring migration execute
+// drives (ListMirrorTopics to reconcile, PromoteTopics to promote), without
+// needing a pre-existing cluster link.
 func TestMigrationDestAuth_RESTLeg(t *testing.T) {
 	ctx := context.Background()
 	// Each dest* service varies only its REST auth surface (Kafka is plaintext);

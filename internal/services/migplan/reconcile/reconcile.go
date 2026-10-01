@@ -7,10 +7,8 @@ import (
 
 const MaxRulesBytes = 512 * 1024
 
-// reconcileDynamic is today's dynamic-route reconciliation, unchanged —
-// renamed from the former top-level Reconcile so Reconcile itself can
-// dispatch by resolved route mode. See reconcileStatic for the static-route
-// counterpart.
+// reconcileDynamic reconciles a dynamic route. Reconcile dispatches to it or
+// to reconcileStatic by the resolved route mode.
 func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs) *Plan {
 
