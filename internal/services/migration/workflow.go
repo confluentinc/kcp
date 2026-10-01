@@ -270,7 +270,6 @@ func (s *MigrationActions) Initialize(
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
-	config.Mode = res.Mode
 	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
@@ -675,7 +674,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 }
 
 // PauseOffsetSync runs the pause_offset_sync stage: with the operator's
-// --pause-consumer-offset-sync opt-in, and only when this run has an actual
+// spec.clusterLink.pauseConsumerOffsetSync opt-in, and only when this run has an actual
 // cutover in flight (config.FenceYAML set by the plan), it applies an
 // idempotent AlterConfigs SET disabling cluster-link consumer offset sync;
 // otherwise it passes through so the FSM still records offset_sync_paused.

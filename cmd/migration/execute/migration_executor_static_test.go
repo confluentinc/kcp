@@ -87,14 +87,12 @@ func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, edi
 	if editGateway != nil {
 		editGateway(g)
 	}
-	kubeConfigPath, err := g.KubeconfigPath()
-	require.NoError(t, err)
-	config := buildFreshMigrationConfig(g, g.Metadata.Name, kubeConfigPath)
+	config := buildFreshMigrationConfig(g, g.Metadata.Name)
 
 	var out strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
-	err = runStaticBranch(cmd, g, &config, res, deps, runReportPath)
+	err := runStaticBranch(cmd, g, &config, res, deps, runReportPath)
 	return out.String(), err
 }
 

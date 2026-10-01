@@ -37,14 +37,14 @@ var (
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
-Every run reads the manifest and the live cluster state via migplan.Reconcile, and
-the FSM always starts at uninitialized. Each step's action is idempotent, so a
-migration already partway through cutover walks forward re-applying
-already-completed steps as no-ops and picking up wherever the live state says work
-remains. When reconcile finds nothing left to do (every topic already migrated and
-no consumer offset-sync restore owed), no state machine runs and execute reports
-that. Policy defaults and credentials are read FRESH from the
-manifest on every run, so they can be varied between runs or overridden with flags.
+Every run reads the manifest and the live state of the gateway and the cluster
+link, works out what is left to do, and starts the cutover from its first step.
+Each step is idempotent, so a migration already partway through cutover re-applies
+its completed steps as no-ops and continues wherever the live state says work
+remains. When nothing is left to do (every topic already migrated and no consumer
+offset-sync restore owed), execute changes nothing and says so. Policy defaults
+and credentials are read FRESH from the manifest on every run, so they can be
+varied between runs or overridden with flags.
 
 Each spec.defaultPolicies value can also be overridden for a single run with its flag
 (e.g. --detect-unrouted-producers-duration), without editing the manifest.
@@ -83,7 +83,7 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; run no FSM transition.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; change nothing.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
 	// for this run only; omit the flag to use the manifest's default. Only a flag
@@ -111,31 +111,21 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 }
 
 // buildFreshMigrationConfig builds a run's MigrationConfig from the manifest
-// alone — no live call. Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are not
-// set here: the FSM's initialize transition copies them in from the reconcile
-// result.
-func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
-	entry := g.Spec.Route.TopicGroup[0] // manifest validation guarantees exactly one entry
-	var topicPatterns []string
-	if entry.TopicPatterns != nil {
-		topicPatterns = *entry.TopicPatterns
-	}
+// alone — no live call. The plan fields (Topics, FenceYAML, SwitchoverYAML,
+// GatewayYAML and the rest) are not set here: the FSM's initialize transition
+// copies them in from the reconcile result. The effective policy, including
+// the gateway config port, is applied by applyEffectivePolicy.
+func buildFreshMigrationConfig(g *manifest.GatewayMigration, id string) migration.MigrationConfig {
 	return migration.MigrationConfig{
 		MigrationId:                id,
-		SourceBootstrap:            strings.Join(g.Spec.Source.BootstrapServers, ","),
-		ClusterBootstrap:           strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
 		K8sNamespace:               g.Spec.Gateway.Namespace,
 		InitialCrName:              g.Spec.Gateway.CrName,
-		KubeConfigPath:             kubeConfigPath,
 		ClusterId:                  g.Spec.Target.ClusterID,
 		ClusterRestEndpoint:        g.Spec.Target.Kafka.RestEndpoint,
 		ClusterLinkName:            g.Spec.ClusterLink.Name,
 		Route:                      g.Spec.Route.Name,
-		TargetDomain:               g.Spec.Route.TargetStreamingDomain,
-		TopicPatterns:              topicPatterns,
 		PauseConsumerOffsetSync:    g.Spec.ClusterLink.PauseConsumerOffsetSync,
 		ConsumerOffsetSyncBaseline: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline,
-		GatewayConfigPort:          g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 }
 
@@ -180,11 +170,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	// Build this run's MigrationConfig from the manifest (no live call); live
 	// reconcile (below) observes the cluster and decides what remains
 	// outstanding.
-	kubeConfigPathResolved, kerr := g.KubeconfigPath()
-	if kerr != nil {
-		return kerr
-	}
-	config := buildFreshMigrationConfig(g, id, kubeConfigPathResolved)
+	config := buildFreshMigrationConfig(g, id)
 
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
@@ -251,8 +237,7 @@ func applyEffectivePolicy(config *migration.MigrationConfig, p manifest.DefaultP
 // effectivePolicyLogArgs renders the effective execute-time policy as slog
 // key/value pairs for the audit log line. It is the single place the log's copy
 // of DefaultPolicies is spelled out, so a new field cannot silently drop out of
-// it the way the previous hand-inlined call had dropped hotReloadTimeout and
-// gatewayConfigPort.
+// it.
 func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []any {
 	return []any{
 		"migration_id", migrationID,

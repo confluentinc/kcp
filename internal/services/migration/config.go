@@ -7,14 +7,7 @@ import "time"
 type MigrationConfig struct {
 	MigrationId string
 
-	// Gateway configuration
-	KubeConfigPath string
-
-	// Source cluster configuration
-	SourceBootstrap string
-
 	// Destination cluster configuration
-	ClusterBootstrap    string
 	ClusterId           string
 	ClusterRestEndpoint string
 	ClusterLinkName     string
@@ -33,13 +26,6 @@ type MigrationConfig struct {
 	// them to reach STOPPED and never re-issues a promote on an already-
 	// promoting mirror. Empty on a first run (nothing promoted yet).
 	AwaitStopped []string
-
-	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns,
-	// read fresh from the manifest each run alongside Route/TargetDomain —
-	// nil when the manifest instead used an explicit topics list. Unlike
-	// Topics (the resolved topic set, populated once reconcile runs), this is
-	// the raw declared patterns themselves.
-	TopicPatterns []string
 
 	// PauseConsumerOffsetSync is the operator's opt-in (manifest
 	// spec.clusterLink.pauseConsumerOffsetSync, read each run) to pause
@@ -84,9 +70,7 @@ type MigrationConfig struct {
 
 	// GatewayYAML is the whole gateway CR migplan pulled and cleaned (see
 	// migplan/gatewayfile.go's cleanGatewayDoc), set each run from the reconcile
-	// result — the fence/switch derivation base. Renamed from InitialCrYAML; no
-	// longer a separately re-cleaned []byte, since migplan strips server-managed
-	// metadata once, centrally.
+	// result — the fence/switch derivation base.
 	GatewayYAML string
 
 	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
@@ -98,10 +82,6 @@ type MigrationConfig struct {
 	// switches, read from the manifest each run. AAO, like TBM, only ever
 	// operates on one route per migration.
 	Route string
-
-	// TargetDomain is spec.route.targetStreamingDomain, read directly from
-	// the manifest (not from migplan.Result, which does not carry it).
-	TargetDomain string
 
 	// FenceYAML, SwitchoverYAML and RollbackFenceYAML are the route shapes
 	// migplan.Reconcile returns, set each run from the reconcile result and
@@ -123,8 +103,4 @@ type MigrationConfig struct {
 	// route already carried kcp's fence for this migration at the start of the
 	// run, left by an earlier, interrupted run.
 	FencedAtStart bool
-
-	// Mode is the route mode migplan resolved this migration under ("static" for
-	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
-	Mode string
 }

@@ -77,10 +77,7 @@ const (
 func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := g.KubeconfigPath()
-	require.NoError(t, err)
-	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
-	cfg.Mode = "dynamic"
+	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
 	cfg.Topics = []string{"t1.order"}
 	cfg.GatewayYAML = dynamicRouteGatewayYAML
 	cfg.FenceYAML = dynamicFenceYAML
@@ -101,7 +98,7 @@ func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 		FenceYAML:      config.FenceYAML,
 		SwitchoverYAML: config.SwitchoverYAML,
 		GatewayYAML:    config.GatewayYAML,
-		Mode:           config.Mode,
+		Mode:           "dynamic",
 
 		RollbackFenceYAML: dynamicRollbackFenceYAML,
 		RollbackAllowed:   true,

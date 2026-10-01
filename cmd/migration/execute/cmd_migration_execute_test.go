@@ -133,9 +133,7 @@ func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
 func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migration.MigrationConfig) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := g.KubeconfigPath()
-	require.NoError(t, err)
-	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
+	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
 	return g, &cfg
 }
 
@@ -415,7 +413,7 @@ func TestExecute_MapsSourceAuthOntoSourceConn(t *testing.T) {
 
 // TestExecute_InsecureSkipIsPerLegFile — each credentials file opts into
 // skipping TLS verification independently, so all three legs can be relaxed by
-// setting it on each file. There is no longer a single fan-out flag.
+// setting it on each file.
 func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		source:    "insecure_skip_tls_verify: true\n" + defaultSourceCred,
@@ -589,36 +587,27 @@ func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
-	kubeConfigPath, err := g.KubeconfigPath()
-	require.NoError(t, err)
 
-	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
+	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
 
 	assert.Equal(t, "msk-prod-to-cc-batch-1", cfg.MigrationId)
-	assert.Equal(t, "b-1.msk.us-east-1.amazonaws.com:9096", cfg.SourceBootstrap)
-	assert.Equal(t, "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092", cfg.ClusterBootstrap)
 	assert.Equal(t, "lkc-abc123", cfg.ClusterId)
 	assert.Equal(t, "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443", cfg.ClusterRestEndpoint)
 	assert.Equal(t, "msk-to-cc", cfg.ClusterLinkName)
 	assert.Equal(t, "confluent", cfg.K8sNamespace)
 	assert.Equal(t, "gateway-initial", cfg.InitialCrName)
 	assert.Equal(t, "migration-route", cfg.Route)
-	assert.Equal(t, "confluent-cloud", cfg.TargetDomain)
-	assert.Equal(t, []string{".*"}, cfg.TopicPatterns, "declared topicPatterns is read straight off the manifest")
 	assert.False(t, cfg.PauseConsumerOffsetSync)
 	assert.Empty(t, cfg.ConsumerOffsetSyncBaseline, "fixture manifest declares no baseline")
 	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
 	assert.Empty(t, cfg.FenceYAML)
-	assert.Empty(t, cfg.Mode)
 }
 
 // --- --dry-run ---
 
-// TestExecute_DryRun_ValidatesPolicyOverrides is a regression test: --dry-run
-// used to return before command-line policy overrides were applied and
-// validated, so an invalid override (e.g. a negative lag threshold, rejected
-// on a real run) silently passed under --dry-run instead. The override must
-// now be rejected before reconcile is ever attempted.
+// TestExecute_DryRun_ValidatesPolicyOverrides: --dry-run applies and validates
+// command-line policy overrides as a real run does, so an invalid override
+// (e.g. a negative lag threshold) is rejected before reconcile is attempted.
 func TestExecute_DryRun_ValidatesPolicyOverrides(t *testing.T) {
 	f := newFixture(t, nil)
 

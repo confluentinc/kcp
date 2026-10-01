@@ -137,7 +137,6 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 	assert.Equal(t, res.MigrateTopics, config.MigrateTopics)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
 	assert.Equal(t, res.Route, config.Route)
-	assert.Equal(t, res.Mode, config.Mode)
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {

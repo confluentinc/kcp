@@ -44,9 +44,6 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 
 	config := &MigrationConfig{
 		MigrationId:         "test-migration-1",
-		KubeConfigPath:      "/fake/kubeconfig",
-		SourceBootstrap:     "source:9092",
-		ClusterBootstrap:    "dest:9092",
 		ClusterId:           "lkc-test",
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
 		ClusterLinkName:     "test-link",
@@ -56,7 +53,6 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		K8sNamespace:        "confluent",
 		GatewayYAML:         testInitialCR,
 		Route:               "migration-route",
-		Mode:                "static",
 		FenceYAML:           testFenceYAML,
 		SwitchoverYAML:      testSwitchoverYAML,
 		RollbackFenceYAML:   testRollbackFenceYAML,
@@ -223,7 +219,7 @@ func resultFromConfig(config *MigrationConfig) *migplan.Result {
 		FenceYAML:      config.FenceYAML,
 		SwitchoverYAML: config.SwitchoverYAML,
 		GatewayYAML:    config.GatewayYAML,
-		Mode:           config.Mode,
+		Mode:           "static",
 
 		RestoreOffsetSync: config.RestoreOffsetSync,
 		RollbackFenceYAML: config.RollbackFenceYAML,
@@ -1196,13 +1192,11 @@ func TestOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
 	assert.Equal(t, StateInitialized, orch.fsm.Current())
 }
 
-// TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized
-// replaces the former pair of ListConfigs-fail / AlterConfigs-fail rollback
-// tests: restore no longer calls ListConfigs at all (it is a single
-// idempotent AlterConfigs SET), so the only way it can fail now is the SET
-// itself failing. The restore half is still soft-fail — the unfence already
-// completed, so the run lands at initialized regardless, with loud
-// rollback-context remediation (not the post-switchover wording).
+// TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized:
+// the rollback's offset-sync restore is a single idempotent AlterConfigs SET,
+// so the SET itself failing is the way it fails. The restore is soft-fail: the
+// unfence already completed, so the run lands at initialized regardless, with
+// loud rollback-context remediation (not the post-switchover wording).
 func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t *testing.T) {
 	orch, config := newHappyPathOrchestrator(t, nil)
 	config.PauseConsumerOffsetSync = true
@@ -1733,9 +1727,6 @@ func newAAOKillPointOrchestrator(
 
 	config = &MigrationConfig{
 		MigrationId:         "test-migration-1",
-		KubeConfigPath:      "/fake/kubeconfig",
-		SourceBootstrap:     "source:9092",
-		ClusterBootstrap:    "dest:9092",
 		ClusterId:           "lkc-test",
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
 		ClusterLinkName:     "test-link",
@@ -1745,7 +1736,6 @@ func newAAOKillPointOrchestrator(
 		K8sNamespace:        "confluent",
 		GatewayYAML:         testInitialCR,
 		Route:               "migration-route",
-		Mode:                "static",
 		FenceYAML:           testFenceYAML,
 		SwitchoverYAML:      testSwitchoverYAML,
 		RollbackFenceYAML:   testRollbackFenceYAML,
