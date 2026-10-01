@@ -15,10 +15,22 @@ type ReconciliationEngine struct {
 	target  TopicLister
 	link    LinkStatusProvider
 	secrets SecretExistenceChecker
+
+	// sourceGroups/targetGroups are set by WithGroupListers; only a route
+	// conversion reads them.
+	sourceGroups GroupLister
+	targetGroups GroupLister
 }
 
 func NewReconciliationEngine(gateway GatewayConfigSource, source, target TopicLister, link LinkStatusProvider, secrets SecretExistenceChecker) *ReconciliationEngine {
 	return &ReconciliationEngine{gateway: gateway, source: source, target: target, link: link, secrets: secrets}
+}
+
+// WithGroupListers adds the consumer-group listers a route conversion needs for
+// its split-brain check. A topic migration never calls them.
+func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *ReconciliationEngine {
+	e.sourceGroups, e.targetGroups = source, target
+	return e
 }
 
 // Run gathers the live inputs and reconciles. A provider read failure is
@@ -26,6 +38,9 @@ func NewReconciliationEngine(gateway GatewayConfigSource, source, target TopicLi
 // (with Artifacts nil), not as an error. The secrets provider is only
 // consulted for a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
+// A route conversion (in.ConvertTo set) also lists consumer groups on both
+// clusters and reconciles through reconcile.ReconcileConvert; the secrets
+// provider is not consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
 	gw, err := e.gateway.Load(ctx)
 	if err != nil {
@@ -55,6 +70,10 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	}
 	ids := reconcile.ClusterIDs{Source: srcID, Target: tgtID, LinkSource: link.SourceClusterID}
 
+	if in.ConvertTo != "" {
+		return e.runConvert(ctx, in, gw, src, tgt, link, ids)
+	}
+
 	var missingSecrets []string
 	var secretCheckSkipped string
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
@@ -82,6 +101,27 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	}
 	// Carry the gateway CR the plan was computed against, so a caller can re-pull
 	// it before mutating and diff for drift.
+	plan.GatewayYAML = gw.RawYAML
+	return plan, nil
+}
+
+// runConvert gathers the consumer-group listings a conversion needs and
+// reconciles it. A listing failure is an I/O error, never a refusal: a partial
+// listing could hide a split-brain.
+func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput, gw *reconcile.GatewayConfig,
+	src, tgt []string, link *LinkStatus, ids reconcile.ClusterIDs) (*reconcile.Plan, error) {
+	if e.sourceGroups == nil || e.targetGroups == nil {
+		return nil, fmt.Errorf("a route conversion needs consumer-group listers for both clusters")
+	}
+	srcGroups, err := e.sourceGroups.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing source consumer groups: %w", err)
+	}
+	tgtGroups, err := e.targetGroups.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing destination consumer groups: %w", err)
+	}
+	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups))
 	plan.GatewayYAML = gw.RawYAML
 	return plan, nil
 }
