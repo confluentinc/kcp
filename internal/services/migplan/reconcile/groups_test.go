@@ -34,6 +34,26 @@ func TestCheckGroupSplitBrain_UnknownStateRefuses(t *testing.T) {
 	}
 }
 
+// A group whose destination state could not be read is refused as active, but
+// the message must not claim it has members: it says the state is unknown.
+func TestCheckGroupSplitBrain_UnknownStateDetailDoesNotClaimMembers(t *testing.T) {
+	res, _ := CheckGroupSplitBrain(GroupFacts{
+		SourceGroups: []string{"g", "orders-app"},
+		TargetStates: map[string]string{"g": "", "orders-app": "Stable"},
+	})
+	if res.OK {
+		t.Fatal("an unknown state must refuse")
+	}
+	for _, want := range []string{"g (state unknown; treated as active)", "orders-app (Stable)"} {
+		if !strings.Contains(res.Detail, want) {
+			t.Errorf("detail = %q, want it to contain %q", res.Detail, want)
+		}
+	}
+	if strings.Contains(res.Detail, "already have members") {
+		t.Errorf("detail = %q must not claim an unknown-state group already has members", res.Detail)
+	}
+}
+
 func TestCheckGroupSplitBrain_EmptyGroupWarnsOnly(t *testing.T) {
 	res, warnings := CheckGroupSplitBrain(GroupFacts{
 		SourceGroups: []string{"billing"},

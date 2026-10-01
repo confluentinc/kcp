@@ -73,11 +73,13 @@ type Result struct {
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
 
-	// Mode is the route mode this plan was reconciled under ("dynamic" or
-	// "static"), mirroring reconcile.Plan.Mode — so a caller knows how to
-	// interpret the artifacts (see reconcile.Plan.Mode): whole rules: blocks
-	// for dynamic; a {fence: …} block and whole {route: …} documents for
-	// static. Each applies to the named route, never as the whole CR.
+	// Mode is the strategy this plan was reconciled under ("dynamic",
+	// "static" or "convert"), mirroring reconcile.Plan.Mode — so a caller
+	// knows how to interpret the artifacts (see reconcile.Plan.Mode): whole
+	// rules: blocks for dynamic; a {fence: …} block and whole {route: …}
+	// documents for static; whole rules: blocks for the fence and rollback and
+	// a whole {route: …} (the route converted to static) for the switchover
+	// under convert. Each applies to the named route, never as the whole CR.
 	Mode string
 }
 

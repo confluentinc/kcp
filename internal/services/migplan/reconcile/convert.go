@@ -4,6 +4,13 @@ import "fmt"
 
 const convertMode = "convert"
 
+// convertToStatic is the only ReconcileInput.ConvertTo this strategy runs. It
+// mirrors manifest.RouteConvertToStatic (the core does not import manifest).
+const convertToStatic = "static"
+
+// convertTargetCheckName names the precondition that refuses any other target.
+const convertTargetCheckName = "conversion target is static"
+
 // ReconcileConvert reconciles a dynamic-to-static route conversion
 // (spec.route.convertTo: static). It reuses CheckPreconditions for the route
 // checks, adds the conversion's own (the target binding's bootstrap id, auth
@@ -21,6 +28,15 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
 
 	report := Report{}
+
+	// This strategy is the conversion to static only; a future
+	// convertTo: dynamic (or a caller dispatching here without ConvertTo) must
+	// never run it, nor be told a static route is "nothing to do".
+	if in.ConvertTo != convertToStatic {
+		report.Preconditions = []PreconditionResult{fail(convertTargetCheckName, fmt.Sprintf(
+			"convertTo is %q; this strategy converts a route to %q only", in.ConvertTo, convertToStatic))}
+		return &Plan{Report: report, Mode: convertMode}
+	}
 
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		if sd, ok := mapField(gw.Route.Raw, "streamingDomain"); ok && stringField(sd, "name") == in.TargetDomain {
@@ -132,6 +148,9 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		report.Preconditions = append(report.Preconditions, fail("converted route builds", err.Error()))
 		return &Plan{Report: report, Mode: convertMode}
 	}
+	// Only the fence artifact is size-checked: the rollback is the same rules
+	// minus kcp's fence, so never larger, and the switchover is a route, not a
+	// rules block.
 	if len(fenceBytes) > MaxRulesBytes {
 		report.Preconditions = append(report.Preconditions, fail("rules block within size limit",
 			fmt.Sprintf("rules block is %d bytes (> %d)", len(fenceBytes), MaxRulesBytes)))

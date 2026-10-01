@@ -256,7 +256,9 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 // (gw == nil || gw.Route == nil) defaults to the dynamic path, matching this
 // function's pre-existing behavior for that case — both strategies' own
 // preconditions independently fail loudly on "route not found" as their
-// first check either way.
+// first check either way. An input with ConvertTo set is a route conversion,
+// not a topic migration: Reconcile refuses it (Mode "convert") and the caller
+// must use ReconcileConvert instead.
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 

@@ -28,6 +28,7 @@ const GroupSplitBrainCheckName = "no source consumer group is active on the dest
 // unreadable state can't let a split-brain through.
 func CheckGroupSplitBrain(f GroupFacts) (PreconditionResult, []string) {
 	var active, idle []string
+	anyUnknown := false
 	for _, g := range f.SourceGroups {
 		state, onTarget := f.TargetStates[g]
 		if !onTarget {
@@ -37,10 +38,10 @@ func CheckGroupSplitBrain(f GroupFacts) (PreconditionResult, []string) {
 		case "empty":
 			idle = append(idle, g)
 		case "dead":
+		case "":
+			anyUnknown = true
+			active = append(active, g+" (state unknown; treated as active)")
 		default:
-			if state == "" {
-				state = "unknown"
-			}
 			active = append(active, fmt.Sprintf("%s (%s)", g, state))
 		}
 	}
@@ -54,9 +55,14 @@ func CheckGroupSplitBrain(f GroupFacts) (PreconditionResult, []string) {
 			strings.Join(idle, ", ")))
 	}
 	if len(active) > 0 {
+		// Only claim members when every listed state was actually read.
+		onDest := "already have members on the destination"
+		if anyUnknown {
+			onDest = "are active, or of unreadable state, on the destination"
+		}
 		return fail(GroupSplitBrainCheckName, fmt.Sprintf(
-			"consumer group(s) %s exist on the source and already have members on the destination; after the switch the source members would join the same group — stop the destination members first",
-			strings.Join(active, ", "))), warnings
+			"consumer group(s) %s exist on the source and %s; after the switch the source members would join the same group — stop the destination members first",
+			strings.Join(active, ", "), onDest)), warnings
 	}
 	return pass(GroupSplitBrainCheckName), warnings
 }

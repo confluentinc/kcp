@@ -218,6 +218,36 @@ func TestReconcile_RefusesAConversionInput(t *testing.T) {
 	}
 }
 
+// ReconcileConvert runs only a conversion to static; any other ConvertTo (a
+// future convertTo: dynamic, or none) is refused before anything else.
+func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
+	for _, to := range []string{"dynamic", "", "Static"} {
+		t.Run(to, func(t *testing.T) {
+			in := convertInput()
+			in.ConvertTo = to
+
+			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, convergedMirrors(), false, ClusterIDs{}, GroupFacts{})
+
+			if !p.Report.Refused() || p.Artifacts != nil || p.NothingToDo {
+				t.Fatalf("ConvertTo %q must refuse, got %+v", to, p)
+			}
+			pc := convertPrecondition(t, p.Report, "conversion target is static")
+			if pc.OK || !strings.Contains(pc.Detail, `"`+to+`"`) {
+				t.Errorf("precondition = %+v, want a failure naming %q", pc, to)
+			}
+		})
+	}
+	// Also refused on a route that is already static on the target: the
+	// strategy never reports nothing-to-do for a conversion it doesn't run.
+	gw := staticGateway()
+	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
+	in := convertInput()
+	in.ConvertTo = "dynamic"
+	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, convergedMirrors(), false, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
+		t.Fatalf("ConvertTo dynamic on a static route must refuse, got %+v", p)
+	}
+}
+
 const routeFenceCheckName = "route has no route-level fence"
 
 // A route-level fence on the dynamic route is carried into the static route
