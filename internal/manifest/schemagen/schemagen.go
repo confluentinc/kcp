@@ -92,6 +92,7 @@ func GenerateGateway() ([]byte, error) {
 	stringCredential(source.Properties["credentials"])
 	stringCredential(kafka.Properties["clusterCredentials"])
 	stringCredential(clusterLink.Properties["linkCredentials"])
+	clusterLink.Properties["consumerOffsetSyncBaseline"].Enum = []any{manifest.OffsetSyncBaselineEnabled, manifest.OffsetSyncBaselineDisabled}
 	// The reflected schema requires only restEndpoint (the one field without
 	// omitempty), but Validate() also requires bootstrapServers and
 	// clusterCredentials. Patch the schema to match so an editor/CI lint cannot
@@ -147,10 +148,11 @@ func GenerateGateway() ([]byte, error) {
 		kafka.Properties["restEndpoint"]:       "REST endpoint of the destination cluster.",
 		kafka.Properties["clusterCredentials"]: "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
 
-		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
-		clusterLink.Properties["bootstrapServers"]:        "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
-		clusterLink.Properties["linkCredentials"]:         "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
-		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["name"]:                       "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["bootstrapServers"]:           "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
+		clusterLink.Properties["linkCredentials"]:            "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
+		clusterLink.Properties["pauseConsumerOffsetSync"]:    "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["consumerOffsetSyncBaseline"]: "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pauseConsumerOffsetSync is set; kcp restores sync to this value after the migration completes or fails.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
@@ -160,8 +162,8 @@ func GenerateGateway() ([]byte, error) {
 		route:                              "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
 		route.Properties["name"]:           "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
 		topicGroup:                         "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
-		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
-		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
+		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names — not globs. Combined with topicPatterns: the union of the two is migrated. At least one of topics or topicPatterns is required. Each selected topic must exist on the source and be a mirror topic on the cluster link, or the run is refused.",
+		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Combined with topics: the union of the two is migrated. Use ['.*'] to select every source topic. At least one of topics or topicPatterns is required. Each selected topic must be a mirror topic on the cluster link, or the run is refused.",
 		route.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",

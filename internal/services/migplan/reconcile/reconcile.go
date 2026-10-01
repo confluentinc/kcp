@@ -39,7 +39,6 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 
 	// Classify each resolved topic against source/target presence, mirror state
 	// and current routing.
-	var migratable []string
 	for _, topic := range batch {
 		_, onSource := srcSet[topic]
 		_, onTarget := tgtSet[topic]
@@ -51,7 +50,10 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		switch tv.Verdict {
 		case Migratable:
 			report.Migratable = append(report.Migratable, tv)
-			migratable = append(migratable, topic)
+		case SwitchOnly:
+			report.SwitchOnly = append(report.SwitchOnly, tv)
+		case AwaitStopped:
+			report.AwaitStopped = append(report.AwaitStopped, tv)
 		case Unchanged:
 			report.Unchanged = append(report.Unchanged, tv)
 		default:
@@ -59,36 +61,62 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		}
 	}
 
+	// Topic sets for the resume plan:
+	//   promote   = topics that still need to reach STOPPED (Active + Pending)
+	//   toMigrate = every topic to route to target this run (Active + Pending + already-Stopped)
+	// Unchanged topics are already switched and appear in neither.
+	promote := topicsOf(report.Migratable, report.AwaitStopped)
+	toMigrate := topicsOf(report.Migratable, report.AwaitStopped, report.SwitchOnly)
+
 	// Warn when a topic we are about to migrate already appears in an
 	// operator-authored exact-name routing condition: our prepended entry will
 	// shadow theirs. Advisory only — we never remove the operator's condition.
-	report.Warnings = append(report.Warnings, shadowWarnings(migratable, view.Conditions)...)
+	report.Warnings = append(report.Warnings, shadowWarnings(toMigrate, view.Conditions)...)
 
 	// Refusal gate: any failed precondition or fail-fast topic means we emit no
 	// artifacts at all (all-or-nothing).
 	if report.Refused() {
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	if len(migratable) == 0 {
-		return &Plan{Report: report, Mode: "dynamic"} // nothing to do; artifacts nil (no-op)
+	if len(toMigrate) == 0 {
+		return &Plan{Report: report, Mode: "dynamic", NothingToDo: true}
 	}
 
 	// Build both artifacts from one pristine copy of the operator's rules, so the
-	// fence and switchover derive independently from the same baseline.
+	// fence and switchover derive independently from the same baseline. Both
+	// derive from every topic to migrate (Migratable + AwaitStopped +
+	// SwitchOnly) — including already-promoted SwitchOnly topics, since they
+	// still need fencing ahead of their switchover and still need to switch.
 	base, _ := ParseRules(gw.Route.Rules)
 	fence, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules clone", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	fence.PrependFence(migratable)
+	fence.PrependFence(toMigrate)
 
 	switchover, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover rules clone", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	switchover.PrependCondition(migratable, view.TargetDomain)
+	// The switched state is unfenced for our topics: on a resume the base was
+	// pulled already-fenced, so drop kcp's own fence before routing to target
+	// (operator fences are preserved). Without this a resumed migration leaves a
+	// stale kcp fence on the switched route.
+	switchover.DropFence(toMigrate)
+	switchover.PrependCondition(toMigrate, view.TargetDomain)
+
+	// The rollback target is the start-of-run rules with kcp's fence for this
+	// batch taken out: the start-of-run rules themselves on a fresh run; on a
+	// resume, without the fence the interrupted run left (operator fences are
+	// preserved).
+	rollback, err := base.Clone()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback rules clone", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
+	rollback.DropFence(toMigrate)
 
 	fenceBytes, err := fence.Serialize()
 	if err != nil {
@@ -100,6 +128,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		report.Preconditions = append(report.Preconditions, fail("switchover rules serialize", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
+	rollbackBytes, err := rollback.Serialize()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback rules serialize", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
 
 	// Guardrail: refuse if either serialized rules block exceeds the size limit.
 	if len(fenceBytes) > MaxRulesBytes || len(switchBytes) > MaxRulesBytes {
@@ -108,9 +141,14 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
-	promote := append([]string(nil), migratable...)
-	sort.Strings(promote)
-	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+	promoteSorted := append([]string(nil), promote...)
+	sort.Strings(promoteSorted)
+	awaitStoppedSorted := topicsOf(report.AwaitStopped)
+	sort.Strings(awaitStoppedSorted)
+	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report),
+		FencedAtStart: base.HasFence(toMigrate),
+		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
@@ -123,9 +161,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 // refusal logic is needed. Unlike dynamic mode, there is no shadow-warning
 // concept (no per-topic routing conditions exist to shadow) and no
 // rules-size guardrail (the fragments are a few dozen bytes, never
-// realistically oversized).
+// realistically oversized). It alone decides whether the run owes an
+// offset-sync restore (Report.RestoreOffsetSync), from the manifest's pause
+// opt-in and baseline and the link's live offsetSyncEnabled.
 func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
+	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	report := Report{}
 
@@ -144,7 +184,6 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	srcSet := toSet(sourceTopics)
 	tgtSet := toSet(targetTopics)
 
-	var migratable []string
 	for _, topic := range batch {
 		_, onSource := srcSet[topic]
 		_, onTarget := tgtSet[topic]
@@ -154,7 +193,10 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		switch tv.Verdict {
 		case Migratable:
 			report.Migratable = append(report.Migratable, tv)
-			migratable = append(migratable, topic)
+		case SwitchOnly:
+			report.SwitchOnly = append(report.SwitchOnly, tv)
+		case AwaitStopped:
+			report.AwaitStopped = append(report.AwaitStopped, tv)
 		case Unchanged:
 			report.Unchanged = append(report.Unchanged, tv)
 		default:
@@ -162,11 +204,24 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		}
 	}
 
+	// promote = topics still needing STOPPED (Active+Pending); toMigrate =
+	// every topic to migrate, incl. already-promoted SwitchOnly topics. The
+	// static fence/switchover fragments are whole-route (no topic list), so
+	// only the refusal/no-op gate and the promote set change here.
+	promote := topicsOf(report.Migratable, report.AwaitStopped)
+	toMigrate := topicsOf(report.Migratable, report.AwaitStopped, report.SwitchOnly)
+
 	if report.Refused() {
 		return &Plan{Report: report, Mode: "static"}
 	}
-	if len(migratable) == 0 {
-		return &Plan{Report: report, Mode: "static"}
+	// A restore is owed when the pause is opted in and either this run pauses
+	// (a cutover is in flight) or an earlier run's pause was never restored
+	// (the link's live offset sync still differs from the baseline).
+	restoreOffsetSync := in.PauseConsumerOffsetSync &&
+		(len(toMigrate) > 0 || offsetSyncEnabled != in.OffsetSyncBaselineEnabled)
+	if len(toMigrate) == 0 {
+		report.RestoreOffsetSync = restoreOffsetSync
+		return &Plan{Report: report, Mode: "static", NothingToDo: !restoreOffsetSync}
 	}
 
 	fenceFragment, err := BuildFenceFragment()
@@ -174,15 +229,26 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		report.Preconditions = append(report.Preconditions, fail("fence fragment builds", err.Error()))
 		return &Plan{Report: report, Mode: "static"}
 	}
-	switchoverFragment, err := BuildSwitchoverFragment(in.TargetDomain, view.BootstrapServerID)
+	switchoverRoute, err := BuildSwitchoverRoute(gw.Route.Raw, in.TargetDomain, view.BootstrapServerID)
 	if err != nil {
-		report.Preconditions = append(report.Preconditions, fail("switchover fragment builds", err.Error()))
+		report.Preconditions = append(report.Preconditions, fail("switchover route builds", err.Error()))
+		return &Plan{Report: report, Mode: "static"}
+	}
+	rollbackRoute, err := BuildRollbackFenceRoute(gw.Route.Raw)
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("rollback route builds", err.Error()))
 		return &Plan{Report: report, Mode: "static"}
 	}
 
-	promote := append([]string(nil), migratable...)
-	sort.Strings(promote)
-	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
+	report.RestoreOffsetSync = restoreOffsetSync
+	promoteSorted := append([]string(nil), promote...)
+	sort.Strings(promoteSorted)
+	awaitStoppedSorted := topicsOf(report.AwaitStopped)
+	sort.Strings(awaitStoppedSorted)
+	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report),
+		FencedAtStart: hasKcpStaticFence(gw.Route.Raw),
+		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
 // Reconcile is the single entry point for both route-mode strategies. It
@@ -197,9 +263,37 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
-		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets, secretCheckSkipped)
+		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
 	}
 	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
+}
+
+// rollbackAllowed reports whether a pre-promote failure may roll the batch back
+// (unfence it): only while no topic in it is promoted (SwitchOnly) or promoting
+// (AwaitStopped). Once a mirror is promoted it no longer replicates, so sending
+// its clients back to the source would split them from the target; the run
+// must go forward instead.
+func rollbackAllowed(report Report) bool {
+	return len(report.SwitchOnly) == 0 && len(report.AwaitStopped) == 0
+}
+
+// sortedCopy returns a sorted copy of ss, leaving ss unchanged.
+func sortedCopy(ss []string) []string {
+	out := append([]string(nil), ss...)
+	sort.Strings(out)
+	return out
+}
+
+// topicsOf flattens the Topic field of one or more verdict buckets into a single
+// slice, preserving classification order across buckets.
+func topicsOf(groups ...[]TopicVerdict) []string {
+	var out []string
+	for _, g := range groups {
+		for _, tv := range g {
+			out = append(out, tv.Topic)
+		}
+	}
+	return out
 }
 
 func toSet(ss []string) map[string]struct{} {

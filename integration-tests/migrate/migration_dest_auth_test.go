@@ -1,19 +1,19 @@
 //go:build integration
 
-// This file is the LIVE proof for `kcp migration init | execute`'s new
-// destination auth methods. Unlike migrate_clusterlink_*_test.go (which shell
-// out to `kcp migrate apply`), the `kcp migration` init/execute commands cannot
-// run against docker-compose alone — both require a live Kubernetes gateway CR
+// This file is the LIVE proof for `kcp migration execute`'s destination auth
+// methods. Unlike migrate_clusterlink_*_test.go (which shell out to
+// `kcp migrate apply`), `kcp migration execute` cannot run against
+// docker-compose alone — it requires a live Kubernetes gateway CR
 // (GetGatewayYAML / ResolveGatewayCapability), which only the Minikube e2e tier
 // (integration-tests/migration/) provides. But the destination-auth code those
-// commands run is NOT gated by the gateway: createDestinationOffset dials the
-// destination broker BEFORE the gateway is ever touched, and the REST leg's auth
+// command runs is NOT gated by the gateway: the destination offset provider
+// dials the destination broker BEFORE the gateway is ever touched, and the REST leg's auth
 // wiring is the same clusterlink.ConfluentCloudService the FSM uses. So this
 // file proves those exact production paths directly, in-process, against the
 // same cp-server brokers `make test-migrate` brings up — no CLI, no k8s.
 //
 //   - Kafka leg: MigrateConn → AdminOptionForAuthMethod → NewKafkaClient, the
-//     chain buildExecutorOpts + createDestinationOffset run. Reuses the source
+//     chain destinationConn + newKafkaClientForConn run. Reuses the source
 //     broker's listeners (which already expose the full SASL_SSL/SSL/plaintext
 //     matrix); the destination Kafka client is broker-agnostic, so pointing it
 //     at those listeners exercises identical code.
@@ -44,8 +44,8 @@ type destKafkaCase struct {
 	bootstrap string
 }
 
-// resolveDestKafkaAuth mirrors buildExecutorOpts
-// (cmd/migration/execute/cmd_migration_execute.go:401-421): it resolves the
+// resolveDestKafkaAuth mirrors destinationConn
+// (cmd/migration/execute/migration_dependencies.go): it resolves the
 // destination Kafka auth from the migration destination credentials via
 // MigrateConn and applies the SASL_SSL backward-compat default. Kept in lockstep
 // with that function so this live test proves the same resolution the CLI runs.
@@ -61,7 +61,7 @@ func resolveDestKafkaAuth(t *testing.T, credsYAML string) (types.AuthType, types
 
 	// SASL_SSL compat default: a sasl_plain destination with neither ca_cert nor
 	// tls dials SASL_SSL (a managed/CC destination is always TLS), never cleartext
-	// SASL_PLAINTEXT. buildExecutorOpts applies this and
+	// SASL_PLAINTEXT. destinationConn applies this and
 	// TestExecute_DestSASLPlainDefaultsToTLS asserts it at the unit level — here we
 	// prove the defaulted method actually connects to a SASL_SSL listener.
 	if sp := method.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
@@ -72,7 +72,7 @@ func resolveDestKafkaAuth(t *testing.T, credsYAML string) (types.AuthType, types
 
 // TestMigrationDestAuth_KafkaLeg proves every new destination Kafka auth method
 // completes a real SASL/TLS handshake and an authenticated metadata read via the
-// exact mapper createDestinationOffset uses. Listeners (source HOST): SASL_SSL
+// exact mapper the destination leg uses. Listeners (source HOST): SASL_SSL
 // 19093 (accepts SCRAM-256/512 + PLAIN), SSL 19094 (client-auth "requested", so
 // both mtls and unauthenticated_tls), SASL_PLAINTEXT 19095, PLAINTEXT 19092.
 func TestMigrationDestAuth_KafkaLeg(t *testing.T) {
@@ -110,7 +110,7 @@ func TestMigrationDestAuth_KafkaLeg(t *testing.T) {
 			defer func() { _ = svc.Close() }()
 
 			// An authenticated metadata read (RefreshMetadata + list topics): proves
-			// createDestinationOffset's client can actually talk to the broker, not
+			// the destination leg's client can actually talk to the broker, not
 			// merely complete the SASL/TLS handshake.
 			_, err = svc.Exists("__consumer_offsets")
 			require.NoError(t, err, "authenticated metadata read against %s must succeed", c.bootstrap)

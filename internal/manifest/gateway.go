@@ -70,6 +70,14 @@ type GatewayTarget struct {
 	Kafka     *TargetKafka `yaml:"kafka" json:"kafka"`
 }
 
+// Offset-sync baseline values: the operator-declared state of the cluster
+// link's consumer.offset.sync.enable BEFORE the migration started. Required
+// when pauseConsumerOffsetSync is set; a later run restores sync to this value.
+const (
+	OffsetSyncBaselineEnabled  = "enabled"
+	OffsetSyncBaselineDisabled = "disabled"
+)
+
 type GatewayClusterLink struct {
 	// Name identifies an ALREADY EXISTING cluster link; this kind never creates one.
 	Name string `yaml:"name" json:"name"`
@@ -83,6 +91,12 @@ type GatewayClusterLink struct {
 	// from the Kafka leg.
 	LinkCredentials         CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
 	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
+	// ConsumerOffsetSyncBaseline is the state consumer.offset.sync.enable was in
+	// before the migration started ("enabled" or "disabled"). Required when
+	// PauseConsumerOffsetSync is set: because a resumed run cannot observe the
+	// pre-migration value (a fenced link with sync disabled is ambiguous), the
+	// operator declares it here and kcp restores sync to it at the end.
+	ConsumerOffsetSyncBaseline string `yaml:"consumerOffsetSyncBaseline,omitempty" json:"consumerOffsetSyncBaseline,omitempty"`
 }
 
 // Route names the route on the live Gateway CR to fence/switch, the target
@@ -122,7 +136,7 @@ type Gateway struct {
 	Namespace string `yaml:"namespace" json:"namespace"`
 	// Kubeconfig is the one field in the manifest where a leading ~/ is
 	// expanded — nothing else in the repo expands ~, and client-go's loader
-	// does not either.
+	// does not either. Unset, it defaults as KubeconfigPath describes.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
 	// from the cluster at init. The route to fence and the domain it switches to
@@ -284,6 +298,19 @@ func (g *GatewayMigration) Validate() []error {
 		add("spec.clusterLink.linkCredentials: must not be empty")
 	}
 
+	// consumerOffsetSyncBaseline: required (enabled|disabled) when pausing;
+	// if set at all it must be a valid value.
+	switch b := g.Spec.ClusterLink.ConsumerOffsetSyncBaseline; {
+	case b == "":
+		if g.Spec.ClusterLink.PauseConsumerOffsetSync {
+			add("spec.clusterLink.consumerOffsetSyncBaseline: required when pauseConsumerOffsetSync is set; must be %q or %q",
+				OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled)
+		}
+	case b != OffsetSyncBaselineEnabled && b != OffsetSyncBaselineDisabled:
+		add("spec.clusterLink.consumerOffsetSyncBaseline: must be %q or %q (got %q)",
+			OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled, b)
+	}
+
 	// --- gateway ---
 	if blank(g.Spec.Gateway.Namespace) {
 		add("spec.gateway.namespace: must not be empty")
@@ -407,9 +434,8 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // then fail opaquely at connection time. Every other method (sasl_plain,
 // sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
 // end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
-// already uses — including a custom ca_cert on sasl_plain, now that
-// createDestinationOffset routes through the mapper instead of a hardcoded
-// empty-CA client.
+// already uses — including a custom ca_cert on sasl_plain (the destination leg
+// dials through the mapper; see cmd/migration/execute's destinationConn).
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(
@@ -454,10 +480,19 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	return g.Spec.ClusterLink.LinkCredentials.ResolveTarget()
 }
 
-// KubeconfigPath returns spec.gateway.kubeconfig with a leading ~/ expanded.
+// KubeconfigPath returns the kubeconfig every Kubernetes client kcp builds from
+// this manifest uses: spec.gateway.kubeconfig with a leading ~/ expanded, or,
+// when it is unset, the empty path inside a pod (client-go then uses the pod's
+// in-cluster service account) and ~/.kube/config anywhere else.
 func (g *GatewayMigration) KubeconfigPath() (string, error) {
 	p := g.Spec.Gateway.Kubeconfig
-	if p == "" || !strings.HasPrefix(p, "~/") {
+	if p == "" {
+		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+			return "", nil
+		}
+		p = "~/.kube/config"
+	}
+	if !strings.HasPrefix(p, "~/") {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()

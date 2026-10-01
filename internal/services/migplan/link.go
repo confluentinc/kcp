@@ -65,13 +65,17 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*LinkStatus, error)
 }
 
 // mapStatus maps a cluster-link mirror status to the core's MirrorState.
-// ACTIVE → mirroring, STOPPED → promoted, anything else → bad (fail-fast).
+// ACTIVE → mirroring, STOPPED → promoted, PENDING_STOPPED → pending (await),
+// anything else → bad (fail-fast). Fail-closed: only these three named statuses
+// are recognised; every other value (FAILED, PAUSED, PENDING_MIRROR, …) is bad.
 func mapStatus(status string) reconcile.MirrorState {
 	switch status {
 	case clusterlink.MirrorStatusActive:
 		return reconcile.MirrorActive
 	case clusterlink.MirrorStatusStopped:
 		return reconcile.MirrorStopped
+	case clusterlink.MirrorStatusPendingStopped:
+		return reconcile.MirrorPending
 	default:
 		return reconcile.MirrorBad
 	}

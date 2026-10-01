@@ -37,8 +37,9 @@ type manifestOpts struct {
 	DestKafkaCredPath string
 	LinkCredPath      string
 
-	PauseConsumerOffsetSync bool
-	Policy                  policyOpts
+	PauseConsumerOffsetSync    bool
+	ConsumerOffsetSyncBaseline string
+	Policy                     policyOpts
 }
 
 // credentialFiles are the three credentials files the manifest references.
@@ -87,7 +88,7 @@ func renderCredentialFiles(opts manifestOpts) (credentialFiles, error) {
 // topicPatterns is only still correct in the single-scenario case, since this
 // suite's ten scenarios share one source/destination Kafka pair: resolving
 // ".*" against the full source topic list (spec.route.topicGroup's real
-// semantics — see the AAO-migplan integration design doc's Decision 3) pulls
+// semantics) pulls
 // in every OTHER scenario's own topics too, tripping an all-or-nothing
 // refusal. Found live, the hard way. Empty falls back to the old match-all
 // rendering, so callers that don't care (unit tests asserting the fixture's

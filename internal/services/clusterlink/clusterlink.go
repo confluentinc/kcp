@@ -66,6 +66,10 @@ const (
 	// confirmed by waiting for this state; any other (transient) status is
 	// treated as "not done yet".
 	MirrorStatusStopped = "STOPPED"
+	// MirrorStatusPendingStopped is the transient status a mirror holds after a
+	// promote request is accepted but before it reaches STOPPED. Distinct from a
+	// genuine failure: the promotion is in flight and will settle to STOPPED.
+	MirrorStatusPendingStopped = "PENDING_STOPPED"
 )
 
 // Config holds cluster link configuration
