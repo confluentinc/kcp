@@ -920,6 +920,36 @@ func TestLoadGatewayMigrationFile_RejectsWrongKind(t *testing.T) {
 	assert.Contains(t, err.Error(), KindGatewayMigration)
 }
 
+// TestValidate_ConvertTo — spec.route.convertTo declares a dynamic-to-static
+// conversion; it replaces topicGroup and accepts only "static".
+func TestValidate_ConvertTo(t *testing.T) {
+	const convert = "    convertTo: static\n"
+
+	t.Run("convertTo static without topicGroup is valid", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1))
+		assert.Empty(t, g.Validate())
+		assert.Equal(t, RouteConvertToStatic, g.Spec.Route.ConvertTo)
+		assert.Nil(t, g.Spec.Route.TopicGroup)
+	})
+
+	t.Run("convertTo with topicGroup is rejected", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+convert, 1))
+		requireErrContains(t, g.Validate(), "mutually exclusive")
+	})
+
+	t.Run("convertTo other than static is rejected", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    convertTo: dynamic\n", 1))
+		requireErrContains(t, g.Validate(), "spec.route.convertTo")
+	})
+
+	t.Run("a conversion still needs a route name and target domain", func(t *testing.T) {
+		doc := strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1)
+		doc = strings.Replace(doc, "    targetStreamingDomain: confluent-cloud\n", "", 1)
+		g := parseGateway(t, doc)
+		requireErrContains(t, g.Validate(), "spec.route.targetStreamingDomain")
+	})
+}
+
 // captureSlog redirects the default logger into buf and returns a restore func.
 func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	t.Helper()
