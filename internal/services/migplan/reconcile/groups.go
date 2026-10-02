@@ -6,12 +6,40 @@ import (
 	"strings"
 )
 
-// GroupFacts is the consumer-group listing a conversion's split-brain check
-// reads, gathered by the I/O layer: every group id on the source, and each
-// destination group's state (as ListGroups reports it).
+// GroupFacts is the consumer-group data a conversion reads, gathered by the I/O
+// layer: every group id on the source, each destination group's state (as
+// ListGroups reports it), and, per source group, the topics it has committed
+// offsets on. The split-brain check reads the first two; the convergence check
+// is scoped to the third.
+//
+// SourceListingIncomplete and TargetListingIncomplete are empty when that
+// cluster's listing is known to be complete. A non-empty value says why it may
+// not be (the listing credential can only see the groups it can describe
+// individually), and refuses the conversion: a source group the listing hides
+// is a set of topics never verified, and a destination group it hides is a
+// split-brain the check cannot see.
 type GroupFacts struct {
-	SourceGroups []string
-	TargetStates map[string]string
+	SourceGroups            []string
+	TargetStates            map[string]string
+	TrackedTopics           map[string][]string
+	SourceListingIncomplete string
+	TargetListingIncomplete string
+}
+
+// SourceGroupVisibilityCheckName and TargetGroupVisibilityCheckName name the
+// preconditions ReconcileConvert adds for the completeness of each cluster's
+// group listing.
+const (
+	SourceGroupVisibilityCheckName = "source credential can list every consumer group"
+	TargetGroupVisibilityCheckName = "destination credential can list every consumer group"
+)
+
+// checkGroupVisibility refuses with reason when a group listing may be partial.
+func checkGroupVisibility(name, reason string) PreconditionResult {
+	if reason != "" {
+		return fail(name, reason)
+	}
+	return pass(name)
 }
 
 // GroupSplitBrainCheckName names the precondition CheckGroupSplitBrain returns.

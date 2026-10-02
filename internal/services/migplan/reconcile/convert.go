@@ -1,6 +1,10 @@
 package reconcile
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 const convertMode = "convert"
 
@@ -15,9 +19,17 @@ const convertTargetCheckName = "conversion target is static"
 // (spec.route.convertTo: static). It reuses CheckPreconditions for the route
 // checks, adds the conversion's own (the target binding's bootstrap id, auth
 // for the target domain, no fence kcp didn't write, no live route-level fence,
-// no source group active on the destination), and classifies every live source topic — there is no
-// selector — refusing unless all of them are Unchanged: the topic-based
-// migration must already be finished. On success the artifacts are the route's
+// no source group active on the destination), and classifies the source
+// topics that a source consumer group has committed offsets on
+// (groups.TrackedTopics) — there is no selector — refusing unless all of them
+// are Unchanged: the topic-based migration must already be finished for every
+// topic whose consumers' positions the conversion carries. A topic no group
+// tracks is not checked: if it is also unmigrated it is listed in a warning,
+// never a refusal. A tracked topic absent from the source is either created
+// natively on the destination (still tracked, because coordination is pinned to
+// source; nothing to migrate, so converged — but the route must already send it
+// to the destination, or it is refused) or on neither cluster (a stale commit,
+// skipped with a warning). On success the artifacts are the route's
 // rules with kcp's convert fence, the route converted to static, and the rules
 // without the fence for a rollback.
 //
@@ -90,6 +102,10 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// gateway enforces it.
 	report.Preconditions = append(report.Preconditions, routeLevelFenceCheck(rc))
 
+	report.Preconditions = append(report.Preconditions,
+		checkGroupVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
+		checkGroupVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete))
+
 	groupCheck, groupWarnings := CheckGroupSplitBrain(groups)
 	report.Preconditions = append(report.Preconditions, groupCheck)
 	report.Warnings = append(report.Warnings, groupWarnings...)
@@ -98,15 +114,31 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: convertMode}
 	}
 
+	tracked := map[string]struct{}{}
+	for _, topics := range groups.TrackedTopics {
+		for _, t := range topics {
+			tracked[t] = struct{}{}
+		}
+	}
+	srcSet := toSet(sourceTopics)
 	tgtSet := toSet(targetTopics)
+	var untrackedUnmigrated []string
 	for _, topic := range sourceTopics {
 		_, onTarget := tgtSet[topic]
 		domain, _ := OwnerRoute(topic, view.Conditions, view.DefaultDomain)
 		tv := Classify(topic, true, onTarget, mirrors[topic], domain == view.TargetDomain)
-		switch tv.Verdict {
-		case Unchanged:
+		_, isTracked := tracked[topic]
+		switch {
+		case !isTracked:
+			// Not checked: no group's position on it is carried. Only an
+			// unmigrated one is worth telling the operator about, because the
+			// static route will send its traffic to the destination.
+			if tv.Verdict != Unchanged {
+				untrackedUnmigrated = append(untrackedUnmigrated, topic)
+			}
+		case tv.Verdict == Unchanged:
 			report.Unchanged = append(report.Unchanged, tv)
-		case FailFast:
+		case tv.Verdict == FailFast:
 			report.FailFast = append(report.FailFast, tv)
 		default:
 			// Migratable, SwitchOnly and AwaitStopped are in-flight states a
@@ -115,6 +147,48 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 			tv.Verdict = FailFast
 			report.FailFast = append(report.FailFast, tv)
 		}
+	}
+	if len(untrackedUnmigrated) > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"topic(s) %s are not migrated and no source consumer group has committed offsets on them, so they are not checked; after the switch their traffic goes to the destination — migrate them first if anything still reads or writes them",
+			joinCapped(untrackedUnmigrated, 20)))
+	}
+
+	// A tracked topic absent from the source is either destination-native (still
+	// tracked, because coordination is pinned to source: nothing to migrate, so
+	// converged; Classify would wrongly fail it as "not found on the source") or
+	// on neither cluster (a stale commit: skipped with a warning).
+	var absent []string
+	for t := range tracked {
+		if _, ok := srcSet[t]; !ok {
+			absent = append(absent, t)
+		}
+	}
+	sort.Strings(absent)
+	var gone []string
+	for _, t := range absent {
+		if _, ok := tgtSet[t]; !ok {
+			gone = append(gone, t)
+			continue
+		}
+		tv := TopicVerdict{Topic: t, Verdict: Unchanged, S: "absent", M: MirrorNone.String(), T: "present", R: "->target"}
+		// Nothing to migrate, but the route must already send it to the
+		// destination: otherwise its consumers cannot reach it through the
+		// gateway today, so the offsets their groups hold may be stale and
+		// cannot be trusted to carry over.
+		if domain, _ := OwnerRoute(t, view.Conditions, view.DefaultDomain); domain != view.TargetDomain {
+			tv.R = "->source"
+			tv.Verdict = FailFast
+			tv.Reason = fmt.Sprintf("%s exists only on the destination but the route does not send it there, so its consumers cannot reach it through the gateway and the offsets their groups hold may be stale; route it to %q before converting", t, view.TargetDomain)
+			report.FailFast = append(report.FailFast, tv)
+			continue
+		}
+		report.Unchanged = append(report.Unchanged, tv)
+	}
+	if len(gone) > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"consumer group(s) hold committed offsets on topic(s) %s, which exist on neither cluster; they are skipped",
+			joinCapped(gone, 20)))
 	}
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}
@@ -209,4 +283,13 @@ func renderFences(entries []any) string {
 		}
 	}
 	return out
+}
+
+// joinCapped joins names for a message, showing at most max and a count of the
+// rest.
+func joinCapped(names []string, max int) string {
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:max], ", "), len(names)-max)
 }
