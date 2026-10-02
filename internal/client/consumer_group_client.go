@@ -368,3 +368,64 @@ func canDescribeAnyGroup(f groupDescriber, group string) (bool, error) {
 	}
 	return true, nil
 }
+
+// metadataFetcher is the slice of *sarama.Broker the topic-describe probe needs.
+type metadataFetcher interface {
+	GetMetadata(request *sarama.MetadataRequest) (*sarama.MetadataResponse, error)
+}
+
+// CanDescribeAnyTopic reports whether the connected principal may describe an arbitrary topic, by asking
+// about one that does not exist. A credential that may not gets a silently filtered topic list and, worse,
+// an all-topics OffsetFetch that quietly leaves out the topics it can't see: a group's commit on such a
+// topic never appears, so the conversion would treat the topic as untracked and never verify it.
+//
+// The broker authorizes DESCRIBE on the topic name before saying whether it exists: a principal that may
+// describe the name is told UNKNOWN_TOPIC_OR_PARTITION, one that may not is told TOPIC_AUTHORIZATION_FAILED.
+// The group probe cannot see this: a credential that may describe every group can still be unable to
+// describe some topics.
+func (c *ConsumerGroupClient) CanDescribeAnyTopic() (bool, error) {
+	return c.canDescribeAnyTopicNamed(fmt.Sprintf("__kcp_probe_topic_%x", time.Now().UnixNano()))
+}
+
+// canDescribeAnyTopicNamed asks one broker directly. It deliberately does not go through the client's
+// metadata refresh, whose sarama default allows auto-creating a missing topic.
+func (c *ConsumerGroupClient) canDescribeAnyTopicNamed(topic string) (bool, error) {
+	b := c.client.LeastLoadedBroker()
+	if b == nil {
+		return false, fmt.Errorf("no broker available to probe topic describe access")
+	}
+	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
+		return false, fmt.Errorf("connecting to %s to probe topic describe access: %w", b.Addr(), err)
+	}
+	return canDescribeAnyTopic(b, topic)
+}
+
+// canDescribeAnyTopic requests metadata for exactly topic, which must not exist, with auto-creation off.
+// Any answer other than "unknown" (allowed), "not authorized" (denied) or "exists" (allowed) is an error: a
+// probe that could not be asked is neither. A response below Metadata v4 is an error too: sarama clamps
+// the request to the broker's advertised range, and before v4 there is no auto-create flag, so a broker
+// with auto.create.topics.enable would create the probe topic.
+func canDescribeAnyTopic(f metadataFetcher, topic string) (bool, error) {
+	resp, err := f.GetMetadata(&sarama.MetadataRequest{
+		Version:                10,
+		Topics:                 []string{topic},
+		AllowAutoTopicCreation: false,
+	})
+	if err != nil {
+		return false, fmt.Errorf("probing topic describe access: %w", err)
+	}
+	if resp.Version < 4 {
+		return false, fmt.Errorf("probing topic describe access: the broker only speaks Metadata v%d, which cannot be told not to auto-create the probe topic", resp.Version)
+	}
+	if len(resp.Topics) != 1 || resp.Topics[0].Name != topic {
+		return false, fmt.Errorf("probing topic describe access: the broker did not answer for %q", topic)
+	}
+	switch resp.Topics[0].Err {
+	case sarama.ErrUnknownTopicOrPartition, sarama.ErrNoError:
+		return true, nil
+	case sarama.ErrTopicAuthorizationFailed:
+		return false, nil
+	default:
+		return false, fmt.Errorf("probing topic describe access: %w", resp.Topics[0].Err)
+	}
+}

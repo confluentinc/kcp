@@ -18,24 +18,32 @@ import (
 // individually), and refuses the conversion: a source group the listing hides
 // is a set of topics never verified, and a destination group it hides is a
 // split-brain the check cannot see.
+//
+// SourceTopicsIncomplete and TargetTopicsIncomplete are the same for topics: a
+// credential that may not describe every topic gets an offset fetch that
+// silently leaves out the topics it can't see (so a tracked topic is never
+// verified), and a topic list that omits them.
 type GroupFacts struct {
 	SourceGroups            []string
 	TargetStates            map[string]string
 	TrackedTopics           map[string][]string
 	SourceListingIncomplete string
 	TargetListingIncomplete string
+	SourceTopicsIncomplete  string
+	TargetTopicsIncomplete  string
 }
 
-// SourceGroupVisibilityCheckName and TargetGroupVisibilityCheckName name the
-// preconditions ReconcileConvert adds for the completeness of each cluster's
-// group listing.
+// The visibility preconditions ReconcileConvert adds: whether each cluster's
+// credential can see every consumer group and every topic.
 const (
 	SourceGroupVisibilityCheckName = "source credential can list every consumer group"
 	TargetGroupVisibilityCheckName = "destination credential can list every consumer group"
+	SourceTopicVisibilityCheckName = "source credential can describe every topic"
+	TargetTopicVisibilityCheckName = "destination credential can describe every topic"
 )
 
-// checkGroupVisibility refuses with reason when a group listing may be partial.
-func checkGroupVisibility(name, reason string) PreconditionResult {
+// checkVisibility refuses with reason when a credential's view may be partial.
+func checkVisibility(name, reason string) PreconditionResult {
 	if reason != "" {
 		return fail(name, reason)
 	}

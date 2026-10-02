@@ -354,6 +354,50 @@ func TestReconcileConvert_RefusesWhenTheDestinationGroupListingIsIncomplete(t *t
 	}
 }
 
+func TestReconcileConvert_RefusesWhenACredentialCannotDescribeEveryTopic(t *testing.T) {
+	for _, tc := range []struct {
+		side   string
+		set    func(*GroupFacts, string)
+		name   string
+		others []string // the other visibility preconditions, which must stay unaffected
+	}{
+		{"source", func(g *GroupFacts, r string) { g.SourceTopicsIncomplete = r }, SourceTopicVisibilityCheckName,
+			[]string{SourceGroupVisibilityCheckName, TargetGroupVisibilityCheckName, TargetTopicVisibilityCheckName}},
+		{"destination", func(g *GroupFacts, r string) { g.TargetTopicsIncomplete = r }, TargetTopicVisibilityCheckName,
+			[]string{SourceGroupVisibilityCheckName, TargetGroupVisibilityCheckName, SourceTopicVisibilityCheckName}},
+	} {
+		t.Run(tc.side, func(t *testing.T) {
+			groups := trackedGroups()
+			tc.set(&groups, "the "+tc.side+" credential cannot describe arbitrary topics")
+
+			p := reconcileConverged(convertGateway(), groups)
+
+			if !p.Report.Refused() || p.Artifacts != nil {
+				t.Fatal("a credential that may not describe every topic silently loses topics from the offset fetch: refuse")
+			}
+			pc := convertPrecondition(t, p.Report, tc.name)
+			if pc.OK || !strings.Contains(pc.Detail, "cannot describe arbitrary topics") {
+				t.Errorf("%s = %+v, want a failure carrying the reason", tc.name, pc)
+			}
+			for _, other := range tc.others {
+				if o := convertPrecondition(t, p.Report, other); !o.OK {
+					t.Errorf("%s = %+v, want it unaffected", other, o)
+				}
+			}
+		})
+	}
+}
+
+func TestReconcileConvert_CompleteTopicVisibilityPasses(t *testing.T) {
+	p := reconcileConverged(convertGateway(), trackedGroups())
+
+	for _, name := range []string{SourceTopicVisibilityCheckName, TargetTopicVisibilityCheckName} {
+		if pc := convertPrecondition(t, p.Report, name); !pc.OK {
+			t.Errorf("%s = %+v, want a pass", name, pc)
+		}
+	}
+}
+
 func TestReconcileConvert_CompleteGroupListingsPass(t *testing.T) {
 	p := reconcileConverged(convertGateway(), trackedGroups())
 

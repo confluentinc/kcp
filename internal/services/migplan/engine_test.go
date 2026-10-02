@@ -278,15 +278,17 @@ func TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider(t *testi
 }
 
 type fakeGroupLister struct {
-	groups     []types.ConsumerGroupListing
-	err        error
-	calls      int
-	tracked    map[string][]string
-	trackedErr error
-	trackedFor []string // the group ids CommittedTopics was asked about
-	trackedN   int
-	denied     bool // CanDescribeAnyGroup reports false
-	accessErr  error
+	groups       []types.ConsumerGroupListing
+	err          error
+	calls        int
+	tracked      map[string][]string
+	trackedErr   error
+	trackedFor   []string // the group ids CommittedTopics was asked about
+	trackedN     int
+	denied       bool // CanDescribeAnyGroup reports false
+	accessErr    error
+	topicsDenied bool // CanDescribeAnyTopic reports false
+	topicsErr    error
 }
 
 func (f *fakeGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
@@ -422,6 +424,53 @@ func TestEngineRun_ConversionRefusesWhenTheDestinationCredentialCannotSeeEveryGr
 			}
 			if !failed[reconcile.TargetGroupVisibilityCheckName] || failed[reconcile.SourceGroupVisibilityCheckName] {
 				t.Errorf("failed preconditions = %v, want only %q", failed, reconcile.TargetGroupVisibilityCheckName)
+			}
+		})
+	}
+}
+
+func (f *fakeGroupLister) CanDescribeAnyTopic(context.Context) (bool, error) {
+	if f.topicsErr != nil {
+		return false, f.topicsErr
+	}
+	return !f.topicsDenied, nil
+}
+
+func TestEngineRun_ConversionRefusesWhenACredentialCannotDescribeEveryTopic(t *testing.T) {
+	for name, tc := range map[string]struct {
+		src, tgt *fakeGroupLister
+		failing  string
+	}{
+		"source":      {&fakeGroupLister{topicsDenied: true}, &fakeGroupLister{}, reconcile.SourceTopicVisibilityCheckName},
+		"destination": {&fakeGroupLister{}, &fakeGroupLister{topicsDenied: true}, reconcile.TargetTopicVisibilityCheckName},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := convertEngine(tc.src, tc.tgt).Run(context.Background(), convertIn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failed := map[string]bool{}
+			for _, pc := range plan.Report.Preconditions {
+				if !pc.OK {
+					failed[pc.Name] = true
+				}
+			}
+			if len(failed) != 1 || !failed[tc.failing] {
+				t.Errorf("failed preconditions = %v, want only %q", failed, tc.failing)
+			}
+		})
+	}
+}
+
+func TestEngineRun_ConversionTopicProbeFailureIsAnError(t *testing.T) {
+	boom := errors.New("metadata failed")
+	for name, eng := range map[string]*ReconciliationEngine{
+		"source":      convertEngine(&fakeGroupLister{topicsErr: boom}, &fakeGroupLister{}),
+		"destination": convertEngine(&fakeGroupLister{}, &fakeGroupLister{topicsErr: boom}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := eng.Run(context.Background(), convertIn); !errors.Is(err, boom) {
+				t.Fatalf("Run error = %v, want the topic probe failure as an error, not a refusal", err)
 			}
 		})
 	}

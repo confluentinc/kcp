@@ -125,6 +125,14 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("checking the destination credential's group access: %w", err)
 	}
+	srcTopics, err := e.sourceGroups.CanDescribeAnyTopic(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking the source credential's topic access: %w", err)
+	}
+	tgtTopics, err := e.targetGroups.CanDescribeAnyTopic(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking the destination credential's topic access: %w", err)
+	}
 	srcGroups, err := e.sourceGroups.ListGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups: %w", err)
@@ -141,7 +149,12 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}
-	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGap("source", srcCan), listingGap("destination", tgtCan)))
+	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGaps{
+		sourceGroups: listingGap("source", srcCan),
+		targetGroups: listingGap("destination", tgtCan),
+		sourceTopics: topicGap("source", srcTopics),
+		targetTopics: topicGap("destination", tgtTopics),
+	}))
 	plan.GatewayYAML = gw.RawYAML
 	return plan, nil
 }

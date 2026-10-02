@@ -103,8 +103,10 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	report.Preconditions = append(report.Preconditions, routeLevelFenceCheck(rc))
 
 	report.Preconditions = append(report.Preconditions,
-		checkGroupVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
-		checkGroupVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete))
+		checkVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
+		checkVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete),
+		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
+		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete))
 
 	groupCheck, groupWarnings := CheckGroupSplitBrain(groups)
 	report.Preconditions = append(report.Preconditions, groupCheck)

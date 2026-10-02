@@ -315,16 +315,16 @@ func TestCanDescribeAnyGroup_OtherFailuresAreErrorsNotRefusals(t *testing.T) {
 // newClientAgainstMockBroker returns a real ConsumerGroupClient (pinned at 3.8, like production) talking to a
 // mock broker, so the probe is exercised through sarama's own coordinator lookup and request encoding rather
 // than a fake of it. handlers supplies the group-related responses; ApiVersions and Metadata are filled in.
-func newClientAgainstMockBroker(t *testing.T, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) *ConsumerGroupClient {
+func newClientAgainstMockBroker(t *testing.T, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) *ConsumerGroupClient {
 	t.Helper()
 	mb := sarama.NewMockBroker(t, 1)
 	t.Cleanup(mb.Close)
 	all := map[string]sarama.MockResponse{
 		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
-			{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
-			{ApiKey: 3, MinVersion: 0, MaxVersion: 10}, // Metadata
-			{ApiKey: 10, MinVersion: 0, MaxVersion: 4}, // FindCoordinator
-			{ApiKey: 15, MinVersion: 0, MaxVersion: 5}, // DescribeGroups
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 3},          // ApiVersions
+			{ApiKey: 3, MinVersion: 0, MaxVersion: metadataMax}, // Metadata
+			{ApiKey: 10, MinVersion: 0, MaxVersion: 4},          // FindCoordinator
+			{ApiKey: 15, MinVersion: 0, MaxVersion: 5},          // DescribeGroups
 		}),
 		"MetadataRequest": sarama.NewMockMetadataResponse(t).SetBroker(mb.Addr(), mb.BrokerID()).SetController(mb.BrokerID()),
 	}
@@ -370,10 +370,107 @@ func TestCanDescribeAnyGroup_ThroughARealClient(t *testing.T) {
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newClientAgainstMockBroker(t, tc.handlers)
+			c := newClientAgainstMockBroker(t, 10, tc.handlers)
 
 			got, err := canDescribeAnyGroup(c.admin, probe)
 
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// fakeTopicMetadata answers GetMetadata with a canned response and records the requests.
+type fakeTopicMetadata struct {
+	resp *sarama.MetadataResponse
+	err  error
+	reqs []*sarama.MetadataRequest
+}
+
+func (f *fakeTopicMetadata) GetMetadata(r *sarama.MetadataRequest) (*sarama.MetadataResponse, error) {
+	f.reqs = append(f.reqs, r)
+	return f.resp, f.err
+}
+
+func topicMetadata(version int16, name string, kerr sarama.KError) *sarama.MetadataResponse {
+	return &sarama.MetadataResponse{Version: version, Topics: []*sarama.TopicMetadata{{Name: name, Err: kerr}}}
+}
+
+func TestCanDescribeAnyTopic_AllowedWhenTheBrokerSaysTheTopicDoesNotExist(t *testing.T) {
+	// The broker authorizes DESCRIBE on the name first: a principal that may describe it is told the topic
+	// does not exist, one that may not is told it is not authorized.
+	f := &fakeTopicMetadata{resp: topicMetadata(10, "probe", sarama.ErrUnknownTopicOrPartition)}
+	got, err := canDescribeAnyTopic(f, "probe")
+	require.NoError(t, err)
+	assert.True(t, got)
+	require.Len(t, f.reqs, 1)
+	assert.Equal(t, []string{"probe"}, f.reqs[0].Topics, "must ask about exactly the probe topic, never all topics")
+	assert.False(t, f.reqs[0].AllowAutoTopicCreation, "the probe must never be allowed to create the topic")
+}
+
+func TestCanDescribeAnyTopic_AllowedWhenTheTopicExistsToo(t *testing.T) {
+	got, err := canDescribeAnyTopic(&fakeTopicMetadata{resp: topicMetadata(10, "probe", sarama.ErrNoError)}, "probe")
+	require.NoError(t, err)
+	assert.True(t, got)
+}
+
+func TestCanDescribeAnyTopic_DeniedWhenNotAuthorized(t *testing.T) {
+	got, err := canDescribeAnyTopic(&fakeTopicMetadata{resp: topicMetadata(10, "probe", sarama.ErrTopicAuthorizationFailed)}, "probe")
+	require.NoError(t, err)
+	assert.False(t, got)
+}
+
+func TestCanDescribeAnyTopic_OtherFailuresAreErrorsNotRefusals(t *testing.T) {
+	for name, f := range map[string]*fakeTopicMetadata{
+		"call error":        {err: errors.New("connection reset")},
+		"other topic error": {resp: topicMetadata(10, "probe", sarama.ErrLeaderNotAvailable)},
+		"no topic back":     {resp: &sarama.MetadataResponse{Version: 10}},
+		"different topic":   {resp: topicMetadata(10, "something-else", sarama.ErrUnknownTopicOrPartition)},
+		// Below Metadata v4 the request has no auto-create flag, so a broker with
+		// auto.create.topics.enable would create the probe topic. Never read that as an answer.
+		"pre-v4 response": {resp: topicMetadata(3, "probe", sarama.ErrUnknownTopicOrPartition)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := canDescribeAnyTopic(f, "probe")
+			require.Error(t, err, "a probe that could not be asked safely is neither allowed nor denied")
+		})
+	}
+}
+
+func TestCanDescribeAnyTopic_ThroughARealClient(t *testing.T) {
+	const probe = "__kcp_probe_topic_test"
+	base := func(mb *sarama.MockBroker) *sarama.MockMetadataResponse {
+		return sarama.NewMockMetadataResponse(t).SetBroker(mb.Addr(), mb.BrokerID()).SetController(mb.BrokerID())
+	}
+	for _, tc := range []struct {
+		name        string
+		metadataMax int16
+		handlers    func(mb *sarama.MockBroker) map[string]sarama.MockResponse
+		want        bool
+		wantErr     bool
+	}{
+		// MockMetadataResponse answers an unknown topic with UNKNOWN_TOPIC_OR_PARTITION, as a real broker does
+		// for a principal that may describe the name.
+		{"allowed", 10, func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{"MetadataRequest": base(mb)}
+		}, true, false},
+		{"denied", 10, func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{"MetadataRequest": base(mb).SetError(probe, sarama.ErrTopicAuthorizationFailed)}
+		}, false, false},
+		// sarama clamps the request to the broker's advertised Metadata range; a v3 broker cannot be probed safely.
+		{"broker advertising only Metadata v3 is an error", 3, func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{"MetadataRequest": base(mb)}
+		}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClientAgainstMockBroker(t, tc.metadataMax, tc.handlers)
+
+			got, err := c.canDescribeAnyTopicNamed(probe)
+
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
