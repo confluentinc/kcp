@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/types"
@@ -212,4 +215,163 @@ func (c *ConsumerGroupClient) Coordinators(groupIDs []string) map[string]string 
 // separately here — that would double-close it.
 func (c *ConsumerGroupClient) Close() error {
 	return c.client.Close()
+}
+
+// groupOffsetFetcher is the slice of sarama.ClusterAdmin CommittedTopics needs.
+type groupOffsetFetcher interface {
+	ListConsumerGroupOffsets(group string, topicPartitions map[string][]int32) (*sarama.OffsetFetchResponse, error)
+}
+
+// committedTopicsWorkers is the fixed fetch concurrency. The cost of one
+// OffsetFetch per group is unmeasured; making this configurable is future work.
+const committedTopicsWorkers = 8
+
+// CommittedTopics returns, for each group, the sorted topics it has committed an
+// offset on. A conversion checks only these topics, so a failure to read any
+// group is an error: skipping it would leave its topics unverified.
+func (c *ConsumerGroupClient) CommittedTopics(groups []string) (map[string][]string, error) {
+	return committedTopics(c.admin, groups, committedTopicsWorkers)
+}
+
+func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[string][]string, error) {
+	if workers < 1 {
+		workers = 1
+	}
+	type result struct {
+		group  string
+		topics []string
+		err    error
+	}
+	jobs := make(chan string)
+	results := make(chan result, len(groups))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for g := range jobs {
+				topics, err := committedTopicsOf(f, g)
+				results <- result{group: g, topics: topics, err: err}
+			}
+		}()
+	}
+	go func() {
+		for _, g := range groups {
+			jobs <- g
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+
+	out := make(map[string][]string, len(groups))
+	var firstErr error
+	for r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
+		}
+		out[r.group] = r.topics
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return out, nil
+}
+
+// committedTopicsOf fetches every committed offset of one group. A topic counts
+// as tracked only if some partition has a committed offset >= 0 (-1 means a
+// subscription with no commit). Any block-level error fails the whole fetch.
+func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
+	resp, err := f.ListConsumerGroupOffsets(group, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetching committed offsets for consumer group %s: %w", group, err)
+	}
+	var topics []string
+	for topic, parts := range resp.Blocks {
+		tracked := false
+		for part, b := range parts {
+			if b.Err != sarama.ErrNoError {
+				return nil, fmt.Errorf("fetching committed offset for consumer group %s, topic %s partition %d: %w", group, topic, part, b.Err)
+			}
+			if b.Offset >= 0 {
+				tracked = true
+			}
+		}
+		if tracked {
+			topics = append(topics, topic)
+		}
+	}
+	sort.Strings(topics)
+	return topics, nil
+}
+
+// DescribeAccess is whether the connected principal holds DESCRIBE on the
+// cluster resource. ListGroups returns every group only to a principal that
+// does; without it the broker silently returns just the groups the principal
+// can describe individually, with no error.
+type DescribeAccess int
+
+const (
+	// DescribeUnknown means the broker did not report the principal's cluster
+	// operations (a broker too old for Metadata v8, or one that left the field
+	// at its default).
+	DescribeUnknown DescribeAccess = iota
+	DescribeGranted
+	DescribeDenied
+)
+
+// metadataFetcher is the slice of *sarama.Broker the access probe needs.
+type metadataFetcher interface {
+	GetMetadata(request *sarama.MetadataRequest) (*sarama.MetadataResponse, error)
+}
+
+// ClusterDescribeAccess asks the cluster whether this principal holds DESCRIBE
+// on it, via the authorized-operations bitfield of a Metadata request.
+func (c *ConsumerGroupClient) ClusterDescribeAccess() (DescribeAccess, error) {
+	b := c.client.LeastLoadedBroker()
+	if b == nil {
+		return DescribeUnknown, fmt.Errorf("no broker available to check cluster access")
+	}
+	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
+		return DescribeUnknown, fmt.Errorf("connecting to %s to check cluster access: %w", b.Addr(), err)
+	}
+	return clusterDescribeAccess(b)
+}
+
+// clusterAuthzProbeTopic is the one topic the probe names. A Metadata request
+// with no topic list means "all topics", and sarama cannot send an empty list,
+// so the probe asks for a single topic that always exists and is small.
+const clusterAuthzProbeTopic = "__consumer_offsets"
+
+// clusterDescribeAccess requests the cluster's authorized operations at
+// Metadata v10, then v8 for older brokers (v11 dropped the field in favour of
+// DescribeCluster). The bitfield has bit n set for ACL operation code n: a
+// principal without cluster DESCRIBE gets 0, a cluster with no authorizer gets
+// every operation, and a broker that did not compute it leaves Int.MinValue.
+func clusterDescribeAccess(f metadataFetcher) (DescribeAccess, error) {
+	for _, version := range []int16{10, 8} {
+		resp, err := f.GetMetadata(&sarama.MetadataRequest{
+			Version:                            version,
+			Topics:                             []string{clusterAuthzProbeTopic},
+			IncludeClusterAuthorizedOperations: true,
+		})
+		if errors.Is(err, sarama.ErrUnsupportedVersion) {
+			continue
+		}
+		if err != nil {
+			return DescribeUnknown, fmt.Errorf("checking cluster access (metadata v%d): %w", version, err)
+		}
+		ops := resp.ClusterAuthorizedOperations
+		if ops == math.MinInt32 {
+			return DescribeUnknown, nil
+		}
+		if ops&(1<<int32(sarama.AclOperationDescribe)) != 0 {
+			return DescribeGranted, nil
+		}
+		return DescribeDenied, nil
+	}
+	return DescribeUnknown, nil
 }
