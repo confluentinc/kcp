@@ -39,8 +39,9 @@ func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *Rec
 // consulted for a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
 // A route conversion (in.ConvertTo set) also lists consumer groups on both
-// clusters and reconciles through reconcile.ReconcileConvert; the secrets
-// provider is not consulted for it.
+// clusters, fetches the topics the source groups have committed on, and
+// reconciles through reconcile.ReconcileConvert; the secrets provider is not
+// consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
 	gw, err := e.gateway.Load(ctx)
 	if err != nil {
@@ -105,13 +106,24 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	return plan, nil
 }
 
-// runConvert gathers the consumer-group listings a conversion needs and
-// reconciles it. A listing failure is an I/O error, never a refusal: a partial
-// listing could hide a split-brain.
+// runConvert gathers the consumer-group data a conversion needs (both clusters'
+// listings, and the topics the source groups have committed on) and reconciles
+// it. A listing or fetch failure is an I/O error, never a refusal: a partial
+// result could hide a split-brain or leave a tracked topic unverified.
 func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput, gw *reconcile.GatewayConfig,
 	src, tgt []string, link *LinkStatus, ids reconcile.ClusterIDs) (*reconcile.Plan, error) {
 	if e.sourceGroups == nil || e.targetGroups == nil {
 		return nil, fmt.Errorf("a route conversion needs consumer-group listers for both clusters")
+	}
+	// Checked before each listing is trusted: a credential without cluster
+	// DESCRIBE gets a silently filtered list, not an error.
+	srcAccess, err := e.sourceGroups.ClusterDescribeAccess(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking the source credential's cluster access: %w", err)
+	}
+	tgtAccess, err := e.targetGroups.ClusterDescribeAccess(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking the destination credential's cluster access: %w", err)
 	}
 	srcGroups, err := e.sourceGroups.ListGroups(ctx)
 	if err != nil {
@@ -121,7 +133,15 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("listing destination consumer groups: %w", err)
 	}
-	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups))
+	srcIDs := make([]string, 0, len(srcGroups))
+	for _, g := range srcGroups {
+		srcIDs = append(srcIDs, g.GroupID)
+	}
+	tracked, err := e.sourceGroups.CommittedTopics(ctx, srcIDs)
+	if err != nil {
+		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
+	}
+	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGap("source", srcAccess), listingGap("destination", tgtAccess)))
 	plan.GatewayYAML = gw.RawYAML
 	return plan, nil
 }
