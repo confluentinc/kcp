@@ -23,6 +23,10 @@ type ReconcileInput struct {
 	// link's consumer offset sync (spec.clusterLink.consumerOffsetSyncBaseline):
 	// true for "enabled", false for "disabled".
 	OffsetSyncBaselineEnabled bool
+	// ConvertTo is the manifest's spec.route.convertTo ("static"), set only for
+	// a route conversion. A conversion reconciles through ReconcileConvert;
+	// Reconcile refuses an input that carries it.
+	ConvertTo string
 }
 
 // ClusterIDs carries the live cluster identities gathered by the I/O layer, used

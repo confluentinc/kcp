@@ -18,7 +18,9 @@ type GatewayConfigSource interface {
 }
 
 // TopicLister lists topics on one cluster (source or target) and reports that
-// cluster's own Kafka cluster id. Implementations list non-internal topics only.
+// cluster's own Kafka cluster id. Implementations list non-internal topics only:
+// topics the broker flags IsInternal (__consumer_offsets, __transaction_state)
+// are excluded.
 type TopicLister interface {
 	ListTopics(ctx context.Context) ([]string, error)
 	ClusterID(ctx context.Context) (string, error)

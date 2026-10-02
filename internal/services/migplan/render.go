@@ -134,12 +134,15 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	if r.RestoreOffsetSync {
 		parts = append(parts, "offset-sync restore")
 	}
+	if r.ConvertToStatic {
+		parts = append(parts, "route to static")
+	}
 
 	var outcome string
 	switch {
 	case r.Refused():
 		outcome = red.Sprint("(refused — no artifacts)")
-	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync:
+	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync && !r.ConvertToStatic:
 		outcome = faint.Sprint("(nothing to do)")
 	default:
 		note := v.ArtifactNote

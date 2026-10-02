@@ -3,9 +3,11 @@ package migplan
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 type fakeGateway struct {
@@ -272,5 +274,218 @@ func TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider(t *testi
 	}
 	if secrets.calledWith != nil {
 		t.Fatalf("secrets provider must never be called for a dynamic-mode route, calledWith=%v", secrets.calledWith)
+	}
+}
+
+type fakeGroupLister struct {
+	groups     []types.ConsumerGroupListing
+	err        error
+	calls      int
+	tracked    map[string][]string
+	trackedErr error
+	trackedFor []string // the group ids CommittedTopics was asked about
+	trackedN   int
+	denied     bool // CanDescribeAnyGroup reports false
+	accessErr  error
+}
+
+func (f *fakeGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
+	if f.accessErr != nil {
+		return false, f.accessErr
+	}
+	return !f.denied, nil
+}
+
+func (f *fakeGroupLister) ListGroups(context.Context) ([]types.ConsumerGroupListing, error) {
+	f.calls++
+	return f.groups, f.err
+}
+
+func (f *fakeGroupLister) CommittedTopics(_ context.Context, groups []string) (map[string][]string, error) {
+	f.trackedN++
+	f.trackedFor = groups
+	return f.tracked, f.trackedErr
+}
+
+// convertEngineGateway is a fully-migrated dynamic route the conversion can plan.
+func convertEngineGateway() *reconcile.GatewayConfig {
+	rules := map[string]any{"routing": map[string]any{
+		"coordination": map[string]any{"group": "msk"},
+		"conditions":   []any{map[string]any{"topics": []any{"orders"}, "streamingDomain": "cc"}},
+	}}
+	raw := map[string]any{
+		"name": "migration-route",
+		"streamingDomains": []any{
+			map[string]any{"name": "msk", "bootstrapServerId": "MSK"},
+			map[string]any{"name": "cc", "bootstrapServerId": "CC"},
+		},
+		"security": map[string]any{"cluster": map[string]any{"cc": map[string]any{"auth": "passthrough"}}},
+		"rules":    rules,
+	}
+	return &reconcile.GatewayConfig{Route: &reconcile.RouteConfig{
+		Name: "migration-route", Mode: "dynamic", BoundDomains: []string{"msk", "cc"}, Rules: rules, Raw: raw,
+	}}
+}
+
+func convertEngine(src, tgt GroupLister) *ReconciliationEngine {
+	return NewReconciliationEngine(
+		&fakeGateway{gw: convertEngineGateway()},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLink{ls: &LinkStatus{Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped}}},
+		&fakeSecretChecker{},
+	).WithGroupListers(src, tgt)
+}
+
+var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
+
+func TestEngineRun_ConversionUsesBothGroupListers(t *testing.T) {
+	src := &fakeGroupLister{groups: []types.ConsumerGroupListing{{GroupID: "orders-app"}}}
+	tgt := &fakeGroupLister{groups: []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Stable"}}}
+
+	plan, err := convertEngine(src, tgt).Run(context.Background(), convertIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "convert" {
+		t.Fatalf("Mode = %q, want convert", plan.Mode)
+	}
+	if !plan.Report.Refused() {
+		t.Fatal("the group listing must reach the split-brain check: orders-app is active on the destination")
+	}
+	if src.calls != 1 || tgt.calls != 1 {
+		t.Errorf("group lister calls = %d/%d, want 1/1", src.calls, tgt.calls)
+	}
+}
+
+func TestEngineRun_ConversionFetchesCommittedTopicsForSourceGroupsOnly(t *testing.T) {
+	src := &fakeGroupLister{
+		groups:  []types.ConsumerGroupListing{{GroupID: "a"}, {GroupID: "b"}},
+		tracked: map[string][]string{"a": {"orders"}},
+	}
+	tgt := &fakeGroupLister{}
+
+	plan, err := convertEngine(src, tgt).Run(context.Background(), convertIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(src.trackedFor, []string{"a", "b"}) || src.trackedN != 1 {
+		t.Errorf("source CommittedTopics asked about %v (%d calls), want [a b] once", src.trackedFor, src.trackedN)
+	}
+	if tgt.trackedN != 0 {
+		t.Errorf("destination CommittedTopics called %d times, want 0", tgt.trackedN)
+	}
+	if len(plan.Report.Unchanged) != 1 || plan.Report.Unchanged[0].Topic != "orders" {
+		t.Errorf("Unchanged = %v, want the tracked topic orders checked", plan.Report.Unchanged)
+	}
+}
+
+func TestEngineRun_ConversionRefusesWhenTheSourceCredentialCannotSeeEveryGroup(t *testing.T) {
+	for name, src := range map[string]*fakeGroupLister{
+		"denied": {denied: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := convertEngine(src, &fakeGroupLister{}).Run(context.Background(), convertIn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !plan.Report.Refused() {
+				t.Fatal("a source credential whose group listing may be partial must refuse the conversion")
+			}
+			refused := false
+			for _, pc := range plan.Report.Preconditions {
+				if pc.Name == reconcile.SourceGroupVisibilityCheckName && !pc.OK {
+					refused = true
+				}
+			}
+			if !refused {
+				t.Errorf("preconditions = %+v, want %q to fail", plan.Report.Preconditions, reconcile.SourceGroupVisibilityCheckName)
+			}
+		})
+	}
+}
+
+func TestEngineRun_ConversionRefusesWhenTheDestinationCredentialCannotSeeEveryGroup(t *testing.T) {
+	for name, tgt := range map[string]*fakeGroupLister{
+		"denied": {denied: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := convertEngine(&fakeGroupLister{}, tgt).Run(context.Background(), convertIn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failed := map[string]bool{}
+			for _, pc := range plan.Report.Preconditions {
+				if !pc.OK {
+					failed[pc.Name] = true
+				}
+			}
+			if !failed[reconcile.TargetGroupVisibilityCheckName] || failed[reconcile.SourceGroupVisibilityCheckName] {
+				t.Errorf("failed preconditions = %v, want only %q", failed, reconcile.TargetGroupVisibilityCheckName)
+			}
+		})
+	}
+}
+
+func TestEngineRun_ConversionAccessCheckFailureIsAnError(t *testing.T) {
+	boom := errors.New("metadata failed")
+	for name, eng := range map[string]*ReconciliationEngine{
+		"source":      convertEngine(&fakeGroupLister{accessErr: boom}, &fakeGroupLister{}),
+		"destination": convertEngine(&fakeGroupLister{}, &fakeGroupLister{accessErr: boom}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := eng.Run(context.Background(), convertIn); !errors.Is(err, boom) {
+				t.Fatalf("Run error = %v, want the access check failure as an error, not a refusal", err)
+			}
+		})
+	}
+}
+
+func TestEngineRun_ConversionCommittedTopicsFailureIsAnError(t *testing.T) {
+	boom := errors.New("coordinator not available")
+	src := &fakeGroupLister{groups: []types.ConsumerGroupListing{{GroupID: "a"}}, trackedErr: boom}
+	if _, err := convertEngine(src, &fakeGroupLister{}).Run(context.Background(), convertIn); !errors.Is(err, boom) {
+		t.Fatalf("Run error = %v, want the committed-offsets failure as an error, not a refusal", err)
+	}
+}
+
+func TestEngineRun_ConversionGroupListingFailureIsAnError(t *testing.T) {
+	boom := errors.New("broker b2 failed")
+	for name, eng := range map[string]*ReconciliationEngine{
+		"source": convertEngine(&fakeGroupLister{err: boom}, &fakeGroupLister{}),
+		"target": convertEngine(&fakeGroupLister{}, &fakeGroupLister{err: boom}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := eng.Run(context.Background(), convertIn); !errors.Is(err, boom) {
+				t.Fatalf("Run error = %v, want the group listing failure as an error, not a refusal", err)
+			}
+		})
+	}
+}
+
+func TestEngineRun_ConversionWithoutGroupListersIsAnError(t *testing.T) {
+	eng := NewReconciliationEngine(&fakeGateway{gw: convertEngineGateway()}, &fakeLister{}, &fakeLister{},
+		&fakeLink{ls: &LinkStatus{}}, &fakeSecretChecker{})
+	if _, err := eng.Run(context.Background(), convertIn); err == nil {
+		t.Fatal("a conversion with no group listers must error")
+	}
+}
+
+func TestEngineRun_TopicMigrationNeverListsGroups(t *testing.T) {
+	src, tgt := &fakeGroupLister{}, &fakeGroupLister{}
+	eng := NewReconciliationEngine(
+		&fakeGateway{gw: dynGatewayConfig()},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLink{ls: &LinkStatus{Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorActive}}},
+		&fakeSecretChecker{},
+	).WithGroupListers(src, tgt)
+
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	if _, err := eng.Run(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if src.calls != 0 || tgt.calls != 0 {
+		t.Errorf("a topic migration listed groups %d/%d times, want 0", src.calls, tgt.calls)
 	}
 }
