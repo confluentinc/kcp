@@ -738,3 +738,29 @@ func TestExecutePlan_Refused_RunsNothing(t *testing.T) {
 	assert.Contains(t, err.Error(), "t1: not found on the source")
 	assert.Zero(t, builds.total())
 }
+
+// A conversion plan must never reach the static branch (executePlan's default
+// case): until the d2s state machine exists, execute refuses it without
+// building any service.
+func TestExecutePlan_ConversionRefusesUntilSupported(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Route: "migration-route", Mode: "convert", FenceYAML: "rules: {}"}
+
+	_, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--dry-run")
+	assert.Zero(t, builds.total(), "no service may be built for a conversion yet")
+}
+
+// A completed conversion re-runs as nothing to do, reported in conversion terms.
+func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Route: "migration-route", Mode: "convert", NothingToDo: true}
+
+	out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+	require.NoError(t, err)
+	assert.Zero(t, builds.total())
+	assert.Contains(t, out, "already static on its target domain")
+}
