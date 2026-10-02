@@ -110,6 +110,11 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	report.Preconditions = append(report.Preconditions, groupCheck)
 	report.Warnings = append(report.Warnings, groupWarnings...)
 
+	// A refusal here returns before the convergence check below, on purpose: the
+	// convergence check reads the group listing, and the visibility
+	// preconditions say that listing may be partial, so its verdict would not
+	// be trustworthy. The cost is that an operator who fixes a credential can
+	// then meet a second, convergence refusal.
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}
 	}
@@ -171,7 +176,18 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 			gone = append(gone, t)
 			continue
 		}
-		tv := TopicVerdict{Topic: t, Verdict: Unchanged, S: "absent", M: MirrorNone.String(), T: "present", R: "->target"}
+		mirror := mirrors[t]
+		tv := TopicVerdict{Topic: t, Verdict: Unchanged, S: "absent", M: mirror.String(), T: "present", R: "->target"}
+		// Its source topic is gone but it can still be a mirror on the link.
+		// Only a promoted mirror (or none) is converged; a live, pending or
+		// failed one is still mid-migration, and Classify (which handles mirror
+		// state) is not run for a topic that is not on the source.
+		if mirror != MirrorNone && mirror != MirrorStopped {
+			tv.Verdict = FailFast
+			tv.Reason = fmt.Sprintf("%s exists only on the destination but its mirror on the cluster link is %s, not promoted; promote or delete the mirror before converting", t, mirror)
+			report.FailFast = append(report.FailFast, tv)
+			continue
+		}
 		// Nothing to migrate, but the route must already send it to the
 		// destination: otherwise its consumers cannot reach it through the
 		// gateway today, so the offsets their groups hold may be stale and

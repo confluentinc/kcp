@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -208,6 +210,52 @@ func TestCommittedTopics_ABlockErrorIsAnError(t *testing.T) {
 	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
 }
 
+// countingFetcher fails the groups in failing, answers the rest with an empty
+// response, and counts the calls it receives. If barrier is set, every call
+// waits at it until barrier.n callers have arrived, so a test can hold that many
+// fetches in flight at once.
+type countingFetcher struct {
+	failing map[string]bool
+	calls   atomic.Int64
+	barrier *sync.WaitGroup
+}
+
+func (f *countingFetcher) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
+	f.calls.Add(1)
+	if f.barrier != nil {
+		f.barrier.Done()
+		f.barrier.Wait()
+	}
+	if f.failing[group] {
+		return nil, fmt.Errorf("denied for %s", group)
+	}
+	return offsetsResponse(nil), nil
+}
+
+func TestCommittedTopics_StopsFetchingAfterAFailure(t *testing.T) {
+	f := &countingFetcher{failing: map[string]bool{"g000": true}}
+	var groups []string
+	for i := 0; i < 200; i++ {
+		groups = append(groups, fmt.Sprintf("g%03d", i))
+	}
+	_, err := committedTopics(f, groups, 1)
+	require.Error(t, err)
+	assert.Less(t, f.calls.Load(), int64(10), "a failed group means the run fails; it must not go on to fetch the other ~200 groups")
+}
+
+func TestCommittedTopics_ReportsTheLowestFailedGroupWhenSeveralFail(t *testing.T) {
+	// Hold all three fetches in flight so they fail together, then check the error
+	// does not depend on which worker happened to finish first.
+	for i := 0; i < 20; i++ {
+		barrier := &sync.WaitGroup{}
+		barrier.Add(3)
+		f := &countingFetcher{failing: map[string]bool{"g3": true, "g1": true, "g2": true}, barrier: barrier}
+		_, err := committedTopics(f, []string{"g3", "g1", "g2"}, 3)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "g1", "run %d: want the error for the lowest-named failed group", i)
+	}
+}
+
 func TestCommittedTopics_NoGroups(t *testing.T) {
 	got, err := committedTopics(fakeOffsetFetcher{}, nil, 4)
 	require.NoError(t, err)
@@ -219,8 +267,12 @@ func TestCommittedTopics_NoGroups(t *testing.T) {
 type fakeMetadataFetcher struct {
 	resp map[int16]*sarama.MetadataResponse
 	errs map[int16]error
-	seen []int16
-	incl []bool
+	// clamp maps a requested version to the version sarama would actually send
+	// after clamping it to the broker's advertised range; the response then
+	// carries the clamped version, as the real Broker.GetMetadata does.
+	clamp map[int16]int16
+	seen  []int16
+	incl  []bool
 }
 
 func (f *fakeMetadataFetcher) GetMetadata(r *sarama.MetadataRequest) (*sarama.MetadataResponse, error) {
@@ -229,7 +281,12 @@ func (f *fakeMetadataFetcher) GetMetadata(r *sarama.MetadataRequest) (*sarama.Me
 	if err := f.errs[r.Version]; err != nil {
 		return nil, err
 	}
-	return f.resp[r.Version], nil
+	resp := *f.resp[r.Version]
+	resp.Version = r.Version
+	if v, ok := f.clamp[r.Version]; ok {
+		resp.Version = v
+	}
+	return &resp, nil
 }
 
 // opsMask builds the authorized-operations bitfield a broker returns: bit n set
@@ -292,6 +349,19 @@ func TestClusterDescribeAccess_FallsBackToV8OnAnOlderBroker(t *testing.T) {
 	assert.Equal(t, []int16{10, 8}, f.seen)
 }
 
+// A client pinned at 3.8 asks for Metadata v10, but sarama clamps the request to
+// what the broker advertises. A broker older than 2.3 gets (say) v7, which never
+// carries the field, so the response's 0 means "not reported", not "denied".
+func TestClusterDescribeAccess_AClampedBelowV8ResponseIsUnknownNotDenied(t *testing.T) {
+	f := &fakeMetadataFetcher{
+		resp:  map[int16]*sarama.MetadataResponse{10: metadataWithOps(0)},
+		clamp: map[int16]int16{10: 7},
+	}
+	got, err := clusterDescribeAccess(f)
+	require.NoError(t, err)
+	assert.Equal(t, DescribeUnknown, got, "a v7 response cannot carry the cluster's authorized operations")
+}
+
 func TestClusterDescribeAccess_NoSupportedVersionIsUnknown(t *testing.T) {
 	f := &fakeMetadataFetcher{errs: map[int16]error{10: sarama.ErrUnsupportedVersion, 8: sarama.ErrUnsupportedVersion}}
 	got, err := clusterDescribeAccess(f)
@@ -304,4 +374,57 @@ func TestClusterDescribeAccess_OtherFailuresAreErrors(t *testing.T) {
 	_, err := clusterDescribeAccess(f)
 	require.Error(t, err)
 	assert.Equal(t, []int16{10}, f.seen, "a connection failure must not be retried at another version")
+}
+
+// newClientAgainstMockBroker returns a real ConsumerGroupClient (pinned at 3.8,
+// like production) talking to a mock broker that advertises Metadata up to
+// metadataMax and answers every Metadata request with md. Unlike
+// fakeMetadataFetcher, this exercises sarama's own request-version clamping and
+// response decoding.
+func newClientAgainstMockBroker(t *testing.T, metadataMax int16, md *sarama.MetadataResponse) *ConsumerGroupClient {
+	t.Helper()
+	mb := sarama.NewMockBroker(t, 1)
+	t.Cleanup(mb.Close)
+	md.ControllerID = 1
+	md.AddBroker(mb.Addr(), 1)
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
+			{ApiKey: 3, MinVersion: 0, MaxVersion: metadataMax},
+		}),
+		"MetadataRequest": sarama.NewMockWrapper(md),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V3_8_0_0
+	c, err := sarama.NewClient([]string{mb.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	return &ConsumerGroupClient{client: c}
+}
+
+func TestClusterDescribeAccess_ThroughARealClient(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		metadataMax int16
+		respVersion int16
+		mask        int32
+		want        DescribeAccess
+	}{
+		{"modern broker, describe granted", 10, 10, opsMask(sarama.AclOperationDescribe), DescribeGranted},
+		{"modern broker, no cluster operations", 10, 10, 0, DescribeDenied},
+		// The mask is 0 only because a v7 response carries no such field. Sarama
+		// clamps the v10 request down to the broker's advertised v7 before
+		// sending, which a mocked fetcher cannot reproduce.
+		{"broker older than 2.3 (Metadata max v7)", 7, 7, 0, DescribeUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := &sarama.MetadataResponse{Version: tc.respVersion, ClusterAuthorizedOperations: tc.mask}
+			c := newClientAgainstMockBroker(t, tc.metadataMax, md)
+
+			got, err := c.ClusterDescribeAccess()
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

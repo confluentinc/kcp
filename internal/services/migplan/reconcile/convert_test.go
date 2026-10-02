@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -229,6 +230,94 @@ func TestReconcileConvert_RefusesATrackedDestinationNativeTopicNotRoutedToTarget
 	}
 	if checked["audit-native"] || !checked["ledger-native"] {
 		t.Errorf("Unchanged = %v, want the routed ledger-native converged and the unrouted audit-native not", p.Report.Unchanged)
+	}
+}
+
+// A destination-only tracked topic can still be a mirror on the link whose source
+// topic was deleted. Only a promoted (stopped) mirror, or no mirror at all, is
+// converged; a live, pending or failed one is still mid-migration.
+func TestReconcileConvert_DestinationNativeTopicMirrorState(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mirror  MirrorState
+		refused bool
+	}{
+		{"not a mirror", MirrorNone, false},
+		{"promoted mirror", MirrorStopped, false},
+		{"active mirror", MirrorActive, true},
+		{"pending promotion", MirrorPending, true},
+		{"failed mirror", MirrorBad, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targets := append([]string{"audit-native"}, convergedTopics...)
+			mirrors := convergedMirrors()
+			mirrors["audit-native"] = tc.mirror
+			groups := GroupFacts{
+				SourceGroups:  []string{"audit-app"},
+				TrackedTopics: map[string][]string{"audit-app": {"orders", "payments", "audit-native"}},
+			}
+			gw := convertGateway()
+			routeToTarget(gw, "audit-native")
+
+			p := ReconcileConvert(convertInput(), gw, convergedTopics, targets, mirrors, false, ClusterIDs{}, groups)
+
+			if p.Report.Refused() != tc.refused {
+				t.Fatalf("refused = %v, want %v (report %+v)", p.Report.Refused(), tc.refused, p.Report)
+			}
+			if tc.refused {
+				if len(p.Report.FailFast) != 1 || p.Report.FailFast[0].Topic != "audit-native" ||
+					!strings.Contains(p.Report.FailFast[0].Reason, "mirror") {
+					t.Errorf("FailFast = %v, want audit-native refused with a reason naming the mirror", p.Report.FailFast)
+				}
+			}
+		})
+	}
+}
+
+// A topic tracked by two groups is one topic: checked once, reported once.
+func TestReconcileConvert_ATopicTrackedByTwoGroupsIsCheckedOnce(t *testing.T) {
+	groups := GroupFacts{
+		SourceGroups: []string{"orders-app", "audit-app"},
+		TrackedTopics: map[string][]string{
+			"orders-app": {"orders", "payments"},
+			"audit-app":  {"orders"},
+		},
+	}
+	p := reconcileConverged(convertGateway(), groups)
+
+	if p.Report.Refused() {
+		t.Fatalf("got %+v, want a clean plan", p.Report)
+	}
+	count := map[string]int{}
+	for _, tv := range p.Report.Unchanged {
+		count[tv.Topic]++
+	}
+	if count["orders"] != 1 || count["payments"] != 1 || len(p.Report.Unchanged) != 2 {
+		t.Errorf("Unchanged topic counts = %v, want orders and payments once each", count)
+	}
+}
+
+func TestJoinCapped(t *testing.T) {
+	names := func(n int) []string {
+		var out []string
+		for i := 1; i <= n; i++ {
+			out = append(out, fmt.Sprintf("t%02d", i))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{0, ""},
+		{1, "t01"},
+		{20, strings.Join(names(20), ", ")}, // exactly the cap: everything shown, no tail
+		{21, strings.Join(names(20), ", ") + " and 1 more"},
+		{25, strings.Join(names(20), ", ") + " and 5 more"},
+	} {
+		if got := joinCapped(names(tc.n), 20); got != tc.want {
+			t.Errorf("joinCapped(%d names, 20) = %q, want %q", tc.n, got, tc.want)
+		}
 	}
 }
 

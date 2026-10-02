@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/types"
@@ -244,19 +245,31 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	}
 	jobs := make(chan string)
 	results := make(chan result, len(groups))
+	// failed stops the run once any group fails: the call returns an error
+	// either way, so fetching the rest of a large cluster's groups is wasted.
+	var failed atomic.Bool
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for g := range jobs {
+				if failed.Load() {
+					continue
+				}
 				topics, err := committedTopicsOf(f, g)
+				if err != nil {
+					failed.Store(true)
+				}
 				results <- result{group: g, topics: topics, err: err}
 			}
 		}()
 	}
 	go func() {
 		for _, g := range groups {
+			if failed.Load() {
+				break
+			}
 			jobs <- g
 		}
 		close(jobs)
@@ -265,11 +278,14 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	}()
 
 	out := make(map[string][]string, len(groups))
+	var firstGroup string
 	var firstErr error
 	for r := range results {
 		if r.err != nil {
-			if firstErr == nil {
-				firstErr = r.err
+			// Several fetches can fail at once; report the lowest-named group so
+			// the error does not depend on which worker finished first.
+			if firstErr == nil || r.group < firstGroup {
+				firstGroup, firstErr = r.group, r.err
 			}
 			continue
 		}
@@ -363,6 +379,12 @@ func clusterDescribeAccess(f metadataFetcher) (DescribeAccess, error) {
 		}
 		if err != nil {
 			return DescribeUnknown, fmt.Errorf("checking cluster access (metadata v%d): %w", version, err)
+		}
+		// sarama clamps the request to the broker's advertised Metadata range
+		// before sending, and the response carries the clamped version. Below
+		// v8 the field is never encoded, so a 0 there means "not reported".
+		if resp.Version < 8 {
+			return DescribeUnknown, nil
 		}
 		ops := resp.ClusterAuthorizedOperations
 		if ops == math.MinInt32 {
