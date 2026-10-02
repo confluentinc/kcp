@@ -7,19 +7,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type fakeStrictClient struct {
-	groups  []types.ConsumerGroupListing
-	err     error
-	tracked map[string][]string
-	access  client.DescribeAccess
+	groups      []types.ConsumerGroupListing
+	err         error
+	tracked     map[string][]string
+	canDescribe bool
 }
 
-func (f *fakeStrictClient) ClusterDescribeAccess() (client.DescribeAccess, error) {
-	return f.access, f.err
+func (f *fakeStrictClient) CanDescribeAnyGroup() (bool, error) {
+	return f.canDescribe, f.err
 }
 
 func (f *fakeStrictClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
@@ -54,30 +53,29 @@ func TestKafkaGroupLister_CommittedTopicsUsesTheClient(t *testing.T) {
 	}
 }
 
-func TestKafkaGroupLister_ClusterDescribeAccessUsesTheClient(t *testing.T) {
-	got, err := NewKafkaGroupLister(&fakeStrictClient{access: client.DescribeDenied}).ClusterDescribeAccess(context.Background())
-	if err != nil || got != client.DescribeDenied {
-		t.Fatalf("ClusterDescribeAccess = %v, %v; want denied", got, err)
+func TestKafkaGroupLister_CanDescribeAnyGroupUsesTheClient(t *testing.T) {
+	got, err := NewKafkaGroupLister(&fakeStrictClient{canDescribe: true}).CanDescribeAnyGroup(context.Background())
+	if err != nil || !got {
+		t.Fatalf("CanDescribeAnyGroup = %v, %v; want true", got, err)
 	}
-	boom := errors.New("metadata failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).ClusterDescribeAccess(context.Background()); !errors.Is(err, boom) {
-		t.Fatalf("ClusterDescribeAccess error = %v, want the client's error", err)
+	boom := errors.New("describe failed")
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CanDescribeAnyGroup(context.Background()); !errors.Is(err, boom) {
+		t.Fatalf("CanDescribeAnyGroup error = %v, want the client's error", err)
 	}
 }
 
 func TestListingGap(t *testing.T) {
 	for _, side := range []string{"source", "destination"} {
 		t.Run(side, func(t *testing.T) {
-			if got := listingGap(side, client.DescribeGranted); got != "" {
-				t.Errorf("granted: gap = %q, want none", got)
+			if got := listingGap(side, true); got != "" {
+				t.Errorf("allowed: gap = %q, want none", got)
 			}
-			denied := listingGap(side, client.DescribeDenied)
-			if !strings.Contains(denied, "the "+side+" credential lacks DESCRIBE on the cluster") {
-				t.Errorf("denied: gap = %q, want it to name the %s and the missing cluster DESCRIBE", denied, side)
+			denied := listingGap(side, false)
+			if !strings.Contains(denied, "the "+side+" credential") || !strings.Contains(denied, "DESCRIBE") || !strings.Contains(denied, "group") {
+				t.Errorf("denied: gap = %q, want it to name the %s credential and the missing group DESCRIBE", denied, side)
 			}
-			unknown := listingGap(side, client.DescribeUnknown)
-			if !strings.Contains(unknown, "the "+side+" credential") || !strings.Contains(unknown, "could not") {
-				t.Errorf("unknown: gap = %q, want a refusal naming the %s and saying the check could not be made", unknown, side)
+			if strings.Contains(denied, "cluster") {
+				t.Errorf("denied: gap = %q must not tell the operator to grant cluster DESCRIBE: that is not what makes a listing complete", denied)
 			}
 		})
 	}

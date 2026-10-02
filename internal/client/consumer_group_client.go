@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/types"
@@ -324,76 +324,47 @@ func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
 	return topics, nil
 }
 
-// DescribeAccess is whether the connected principal holds DESCRIBE on the
-// cluster resource. ListGroups returns every group only to a principal that
-// does; without it the broker silently returns just the groups the principal
-// can describe individually, with no error.
-type DescribeAccess int
-
-const (
-	// DescribeUnknown means the broker did not report the principal's cluster
-	// operations (a broker too old for Metadata v8, or one that left the field
-	// at its default).
-	DescribeUnknown DescribeAccess = iota
-	DescribeGranted
-	DescribeDenied
-)
-
-// metadataFetcher is the slice of *sarama.Broker the access probe needs.
-type metadataFetcher interface {
-	GetMetadata(request *sarama.MetadataRequest) (*sarama.MetadataResponse, error)
+// groupDescriber is the slice of sarama.ClusterAdmin the group-describe probe needs.
+type groupDescriber interface {
+	DescribeConsumerGroups(groups []string) ([]*sarama.GroupDescription, error)
 }
 
-// ClusterDescribeAccess asks the cluster whether this principal holds DESCRIBE
-// on it, via the authorized-operations bitfield of a Metadata request.
-func (c *ConsumerGroupClient) ClusterDescribeAccess() (DescribeAccess, error) {
-	b := c.client.LeastLoadedBroker()
-	if b == nil {
-		return DescribeUnknown, fmt.Errorf("no broker available to check cluster access")
-	}
-	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-		return DescribeUnknown, fmt.Errorf("connecting to %s to check cluster access: %w", b.Addr(), err)
-	}
-	return clusterDescribeAccess(b)
+// CanDescribeAnyGroup reports whether the connected principal may describe an arbitrary consumer group,
+// by asking about a group that does not exist. A credential that may not describe groups gets a
+// silently filtered ListGroups (no error) and cannot read the offsets of the groups it can't see, so a
+// conversion that trusted its listing would verify only part of the cluster.
+//
+// The broker authorizes DESCRIBE on the group name before saying anything about it: a principal that may
+// describe it is told the group is "Dead" (it does not exist), one that may not is told
+// GROUP_AUTHORIZATION_FAILED. This tests what actually matters on every authorizer seen so far. Cluster
+// DESCRIBE does not: on open-source Kafka it shows every group but not their offsets, and on MSK IAM it
+// neither implies nor is needed for a complete listing, so a "cluster DESCRIBE" probe can pass while the
+// listing is empty.
+func (c *ConsumerGroupClient) CanDescribeAnyGroup() (bool, error) {
+	return canDescribeAnyGroup(c.admin, fmt.Sprintf("__kcp_probe_group_%x", time.Now().UnixNano()))
 }
 
-// clusterAuthzProbeTopic is the one topic the probe names. A Metadata request
-// with no topic list means "all topics", and sarama cannot send an empty list,
-// so the probe asks for a single topic that always exists and is small.
-const clusterAuthzProbeTopic = "__consumer_offsets"
-
-// clusterDescribeAccess requests the cluster's authorized operations at
-// Metadata v10, then v8 for older brokers (v11 dropped the field in favour of
-// DescribeCluster). The bitfield has bit n set for ACL operation code n: a
-// principal without cluster DESCRIBE gets 0, a cluster with no authorizer gets
-// every operation, and a broker that did not compute it leaves Int.MinValue.
-func clusterDescribeAccess(f metadataFetcher) (DescribeAccess, error) {
-	for _, version := range []int16{10, 8} {
-		resp, err := f.GetMetadata(&sarama.MetadataRequest{
-			Version:                            version,
-			Topics:                             []string{clusterAuthzProbeTopic},
-			IncludeClusterAuthorizedOperations: true,
-		})
-		if errors.Is(err, sarama.ErrUnsupportedVersion) {
-			continue
-		}
-		if err != nil {
-			return DescribeUnknown, fmt.Errorf("checking cluster access (metadata v%d): %w", version, err)
-		}
-		// sarama clamps the request to the broker's advertised Metadata range
-		// before sending, and the response carries the clamped version. Below
-		// v8 the field is never encoded, so a 0 there means "not reported".
-		if resp.Version < 8 {
-			return DescribeUnknown, nil
-		}
-		ops := resp.ClusterAuthorizedOperations
-		if ops == math.MinInt32 {
-			return DescribeUnknown, nil
-		}
-		if ops&(1<<int32(sarama.AclOperationDescribe)) != 0 {
-			return DescribeGranted, nil
-		}
-		return DescribeDenied, nil
+// canDescribeAnyGroup asks DescribeGroups about group, which must not exist. The denial can arrive as the
+// call's own error (the coordinator lookup authorizes the group too) or in the group's description. Any
+// other failure is an error: a probe that could not be asked is neither allowed nor denied.
+func canDescribeAnyGroup(f groupDescriber, group string) (bool, error) {
+	descs, err := f.DescribeConsumerGroups([]string{group})
+	if errors.Is(err, sarama.ErrGroupAuthorizationFailed) {
+		return false, nil
 	}
-	return DescribeUnknown, nil
+	if err != nil {
+		return false, fmt.Errorf("probing group describe access: %w", err)
+	}
+	if len(descs) == 0 {
+		return false, fmt.Errorf("probing group describe access: the broker returned no description for %q", group)
+	}
+	for _, d := range descs {
+		switch {
+		case d.Err == sarama.ErrGroupAuthorizationFailed:
+			return false, nil
+		case d.Err != sarama.ErrNoError:
+			return false, fmt.Errorf("probing group describe access: %w", d.Err)
+		}
+	}
+	return true, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -17,10 +16,11 @@ import (
 type GroupLister interface {
 	ListGroups(ctx context.Context) ([]types.ConsumerGroupListing, error)
 	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
-	// ClusterDescribeAccess reports whether the listing credential holds
-	// DESCRIBE on the cluster. Without it ListGroups silently returns only the
-	// groups the credential can describe individually.
-	ClusterDescribeAccess(ctx context.Context) (client.DescribeAccess, error)
+	// CanDescribeAnyGroup reports whether the listing credential may describe an
+	// arbitrary consumer group. Without it ListGroups silently returns only the
+	// groups the credential can describe individually, and the offsets of the
+	// rest can't be read.
+	CanDescribeAnyGroup(ctx context.Context) (bool, error)
 }
 
 // strictGroupClient is the slice of client.ConsumerGroupClient the lister
@@ -28,7 +28,7 @@ type GroupLister interface {
 type strictGroupClient interface {
 	ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error)
 	CommittedTopics(groups []string) (map[string][]string, error)
-	ClusterDescribeAccess() (client.DescribeAccess, error)
+	CanDescribeAnyGroup() (bool, error)
 }
 
 var _ GroupLister = (*KafkaGroupLister)(nil)
@@ -51,24 +51,19 @@ func (l *KafkaGroupLister) CommittedTopics(_ context.Context, groups []string) (
 	return l.client.CommittedTopics(groups)
 }
 
-func (l *KafkaGroupLister) ClusterDescribeAccess(context.Context) (client.DescribeAccess, error) {
-	return l.client.ClusterDescribeAccess()
+func (l *KafkaGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
+	return l.client.CanDescribeAnyGroup()
 }
 
-// listingGap turns a listing credential's cluster access into the reason a
-// conversion must refuse, or "" when the listing is complete. side is "source"
-// or "destination". Both a denied and an unverifiable answer refuse. A hidden
-// source group is a topic the convergence check never verifies; a hidden
-// destination group is a split-brain the check cannot see.
-func listingGap(side string, access client.DescribeAccess) string {
-	switch access {
-	case client.DescribeGranted:
+// listingGap turns a listing credential's group-describe access into the reason a
+// conversion must refuse, or "" when the listing is complete. side is "source" or
+// "destination". A hidden source group is a topic the convergence check never
+// verifies; a hidden destination group is a split-brain the check cannot see.
+func listingGap(side string, canDescribe bool) string {
+	if canDescribe {
 		return ""
-	case client.DescribeDenied:
-		return fmt.Sprintf("the %s credential lacks DESCRIBE on the cluster, so its group listing returns only the groups it can describe individually and the conversion's group checks would miss the rest; grant cluster DESCRIBE (or use a credential that has it) and retry", side)
-	default:
-		return fmt.Sprintf("kcp could not determine whether the %s credential holds DESCRIBE on the cluster (the broker did not report its authorized operations), so a complete group listing cannot be confirmed; use a broker version that reports them or a credential known to hold cluster DESCRIBE", side)
 	}
+	return fmt.Sprintf("the %s credential cannot describe arbitrary consumer groups, so its group listing returns only the groups it can describe individually and the offsets of the rest cannot be read; the conversion's group checks would miss them. Grant it DESCRIBE on all consumer groups (a group ACL on '*'; with MSK IAM, the DescribeGroup action on every group resource) and retry", side)
 }
 
 // groupFacts folds the two listings and the source's committed topics into the

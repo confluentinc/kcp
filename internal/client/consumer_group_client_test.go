@@ -3,7 +3,6 @@ package client
 import (
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -262,166 +261,118 @@ func TestCommittedTopics_NoGroups(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-// fakeMetadataFetcher answers GetMetadata per request version and records what
-// it was asked.
-type fakeMetadataFetcher struct {
-	resp map[int16]*sarama.MetadataResponse
-	errs map[int16]error
-	// clamp maps a requested version to the version sarama would actually send
-	// after clamping it to the broker's advertised range; the response then
-	// carries the clamped version, as the real Broker.GetMetadata does.
-	clamp map[int16]int16
-	seen  []int16
-	incl  []bool
+// fakeGroupDescriber answers DescribeConsumerGroups from a canned result and records what it was asked.
+type fakeGroupDescriber struct {
+	descs []*sarama.GroupDescription
+	err   error
+	asked [][]string
 }
 
-func (f *fakeMetadataFetcher) GetMetadata(r *sarama.MetadataRequest) (*sarama.MetadataResponse, error) {
-	f.seen = append(f.seen, r.Version)
-	f.incl = append(f.incl, r.IncludeClusterAuthorizedOperations)
-	if err := f.errs[r.Version]; err != nil {
-		return nil, err
-	}
-	resp := *f.resp[r.Version]
-	resp.Version = r.Version
-	if v, ok := f.clamp[r.Version]; ok {
-		resp.Version = v
-	}
-	return &resp, nil
+func (f *fakeGroupDescriber) DescribeConsumerGroups(groups []string) ([]*sarama.GroupDescription, error) {
+	f.asked = append(f.asked, groups)
+	return f.descs, f.err
 }
 
-// opsMask builds the authorized-operations bitfield a broker returns: bit n set
-// for ACL operation code n.
-func opsMask(ops ...sarama.AclOperation) int32 {
-	var m int32
-	for _, op := range ops {
-		m |= 1 << int32(op)
-	}
-	return m
-}
-
-func metadataWithOps(mask int32) *sarama.MetadataResponse {
-	return &sarama.MetadataResponse{ClusterAuthorizedOperations: mask}
-}
-
-func TestClusterDescribeAccess_Granted(t *testing.T) {
-	f := &fakeMetadataFetcher{resp: map[int16]*sarama.MetadataResponse{
-		10: metadataWithOps(opsMask(sarama.AclOperationDescribe, sarama.AclOperationAlter)),
-	}}
-	got, err := clusterDescribeAccess(f)
+func TestCanDescribeAnyGroup_AllowedWhenTheBrokerAnswersDead(t *testing.T) {
+	// A group that does not exist is answered as state "Dead", with no error, to a principal that may describe it.
+	f := &fakeGroupDescriber{descs: []*sarama.GroupDescription{{GroupId: "probe", State: "Dead"}}}
+	got, err := canDescribeAnyGroup(f, "probe")
 	require.NoError(t, err)
-	assert.Equal(t, DescribeGranted, got)
-	assert.Equal(t, []int16{10}, f.seen)
-	assert.Equal(t, []bool{true}, f.incl, "must ask the broker for the cluster's authorized operations")
+	assert.True(t, got)
+	assert.Equal(t, [][]string{{"probe"}}, f.asked, "must ask about exactly the probe group")
 }
 
-func TestClusterDescribeAccess_DeniedWhenTheDescribeBitIsClear(t *testing.T) {
-	for name, mask := range map[string]int32{
-		"no operations":               0,
-		"other operations only":       opsMask(sarama.AclOperationRead, sarama.AclOperationAlter),
-		"describe configs not enough": opsMask(sarama.AclOperationDescribeConfigs),
+func TestCanDescribeAnyGroup_DeniedByTheDescription(t *testing.T) {
+	f := &fakeGroupDescriber{descs: []*sarama.GroupDescription{{GroupId: "probe", Err: sarama.ErrGroupAuthorizationFailed}}}
+	got, err := canDescribeAnyGroup(f, "probe")
+	require.NoError(t, err)
+	assert.False(t, got)
+}
+
+func TestCanDescribeAnyGroup_DeniedByTheCoordinatorLookup(t *testing.T) {
+	// FindCoordinator authorizes DESCRIBE on the group too, so the denial can arrive as the call's own error.
+	f := &fakeGroupDescriber{err: fmt.Errorf("looking up the coordinator: %w", sarama.ErrGroupAuthorizationFailed)}
+	got, err := canDescribeAnyGroup(f, "probe")
+	require.NoError(t, err)
+	assert.False(t, got)
+}
+
+func TestCanDescribeAnyGroup_OtherFailuresAreErrorsNotRefusals(t *testing.T) {
+	for name, f := range map[string]*fakeGroupDescriber{
+		"call error":        {err: errors.New("connection reset")},
+		"description error": {descs: []*sarama.GroupDescription{{GroupId: "probe", Err: sarama.ErrNotCoordinatorForConsumer}}},
+		"no answer":         {},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := &fakeMetadataFetcher{resp: map[int16]*sarama.MetadataResponse{10: metadataWithOps(mask)}}
-			got, err := clusterDescribeAccess(f)
-			require.NoError(t, err)
-			assert.Equal(t, DescribeDenied, got)
+			_, err := canDescribeAnyGroup(f, "probe")
+			require.Error(t, err, "a failure to ask must be an error, never read as allowed or denied")
 		})
 	}
+	_, err := canDescribeAnyGroup(&fakeGroupDescriber{descs: []*sarama.GroupDescription{{Err: sarama.ErrNotCoordinatorForConsumer}}}, "probe")
+	require.ErrorIs(t, err, sarama.ErrNotCoordinatorForConsumer)
 }
 
-func TestClusterDescribeAccess_NotReportedIsUnknown(t *testing.T) {
-	// Int.MinValue is the schema default a broker leaves when it did not compute
-	// the field.
-	f := &fakeMetadataFetcher{resp: map[int16]*sarama.MetadataResponse{10: metadataWithOps(math.MinInt32)}}
-	got, err := clusterDescribeAccess(f)
-	require.NoError(t, err)
-	assert.Equal(t, DescribeUnknown, got)
-}
-
-func TestClusterDescribeAccess_FallsBackToV8OnAnOlderBroker(t *testing.T) {
-	f := &fakeMetadataFetcher{
-		errs: map[int16]error{10: sarama.ErrUnsupportedVersion},
-		resp: map[int16]*sarama.MetadataResponse{8: metadataWithOps(opsMask(sarama.AclOperationDescribe))},
-	}
-	got, err := clusterDescribeAccess(f)
-	require.NoError(t, err)
-	assert.Equal(t, DescribeGranted, got)
-	assert.Equal(t, []int16{10, 8}, f.seen)
-}
-
-// A client pinned at 3.8 asks for Metadata v10, but sarama clamps the request to
-// what the broker advertises. A broker older than 2.3 gets (say) v7, which never
-// carries the field, so the response's 0 means "not reported", not "denied".
-func TestClusterDescribeAccess_AClampedBelowV8ResponseIsUnknownNotDenied(t *testing.T) {
-	f := &fakeMetadataFetcher{
-		resp:  map[int16]*sarama.MetadataResponse{10: metadataWithOps(0)},
-		clamp: map[int16]int16{10: 7},
-	}
-	got, err := clusterDescribeAccess(f)
-	require.NoError(t, err)
-	assert.Equal(t, DescribeUnknown, got, "a v7 response cannot carry the cluster's authorized operations")
-}
-
-func TestClusterDescribeAccess_NoSupportedVersionIsUnknown(t *testing.T) {
-	f := &fakeMetadataFetcher{errs: map[int16]error{10: sarama.ErrUnsupportedVersion, 8: sarama.ErrUnsupportedVersion}}
-	got, err := clusterDescribeAccess(f)
-	require.NoError(t, err)
-	assert.Equal(t, DescribeUnknown, got)
-}
-
-func TestClusterDescribeAccess_OtherFailuresAreErrors(t *testing.T) {
-	f := &fakeMetadataFetcher{errs: map[int16]error{10: errors.New("connection reset")}}
-	_, err := clusterDescribeAccess(f)
-	require.Error(t, err)
-	assert.Equal(t, []int16{10}, f.seen, "a connection failure must not be retried at another version")
-}
-
-// newClientAgainstMockBroker returns a real ConsumerGroupClient (pinned at 3.8,
-// like production) talking to a mock broker that advertises Metadata up to
-// metadataMax and answers every Metadata request with md. Unlike
-// fakeMetadataFetcher, this exercises sarama's own request-version clamping and
-// response decoding.
-func newClientAgainstMockBroker(t *testing.T, metadataMax int16, md *sarama.MetadataResponse) *ConsumerGroupClient {
+// newClientAgainstMockBroker returns a real ConsumerGroupClient (pinned at 3.8, like production) talking to a
+// mock broker, so the probe is exercised through sarama's own coordinator lookup and request encoding rather
+// than a fake of it. handlers supplies the group-related responses; ApiVersions and Metadata are filled in.
+func newClientAgainstMockBroker(t *testing.T, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) *ConsumerGroupClient {
 	t.Helper()
 	mb := sarama.NewMockBroker(t, 1)
 	t.Cleanup(mb.Close)
-	md.ControllerID = 1
-	md.AddBroker(mb.Addr(), 1)
-	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+	all := map[string]sarama.MockResponse{
 		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
 			{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
-			{ApiKey: 3, MinVersion: 0, MaxVersion: metadataMax},
+			{ApiKey: 3, MinVersion: 0, MaxVersion: 10}, // Metadata
+			{ApiKey: 10, MinVersion: 0, MaxVersion: 4}, // FindCoordinator
+			{ApiKey: 15, MinVersion: 0, MaxVersion: 5}, // DescribeGroups
 		}),
-		"MetadataRequest": sarama.NewMockWrapper(md),
-	})
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).SetBroker(mb.Addr(), mb.BrokerID()).SetController(mb.BrokerID()),
+	}
+	for k, v := range handlers(mb) {
+		all[k] = v
+	}
+	mb.SetHandlerByMap(all)
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V3_8_0_0
 	c, err := sarama.NewClient([]string{mb.Addr()}, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
-	return &ConsumerGroupClient{client: c}
+	admin, err := sarama.NewClusterAdminFromClient(c)
+	require.NoError(t, err)
+	return &ConsumerGroupClient{client: c, admin: admin}
 }
 
-func TestClusterDescribeAccess_ThroughARealClient(t *testing.T) {
+func TestCanDescribeAnyGroup_ThroughARealClient(t *testing.T) {
+	const probe = "__kcp_probe_group_test"
 	for _, tc := range []struct {
-		name        string
-		metadataMax int16
-		respVersion int16
-		mask        int32
-		want        DescribeAccess
+		name     string
+		handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse
+		want     bool
 	}{
-		{"modern broker, describe granted", 10, 10, opsMask(sarama.AclOperationDescribe), DescribeGranted},
-		{"modern broker, no cluster operations", 10, 10, 0, DescribeDenied},
-		// The mask is 0 only because a v7 response carries no such field. Sarama
-		// clamps the v10 request down to the broker's advertised v7 before
-		// sending, which a mocked fetcher cannot reproduce.
-		{"broker older than 2.3 (Metadata max v7)", 7, 7, 0, DescribeUnknown},
+		{"allowed: coordinator found, group answered Dead", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(t).SetCoordinator(sarama.CoordinatorGroup, probe, mb),
+				"DescribeGroupsRequest":  sarama.NewMockDescribeGroupsResponse(t),
+			}
+		}, true},
+		{"denied at the coordinator lookup", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(t).SetError(sarama.CoordinatorGroup, probe, sarama.ErrGroupAuthorizationFailed),
+			}
+		}, false},
+		{"denied in the group description", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(t).SetCoordinator(sarama.CoordinatorGroup, probe, mb),
+				"DescribeGroupsRequest": sarama.NewMockDescribeGroupsResponse(t).
+					// sarama encodes ErrorCode and derives Err from it on decode.
+					AddGroupDescription(probe, &sarama.GroupDescription{GroupId: probe, ErrorCode: int16(sarama.ErrGroupAuthorizationFailed)}),
+			}
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			md := &sarama.MetadataResponse{Version: tc.respVersion, ClusterAuthorizedOperations: tc.mask}
-			c := newClientAgainstMockBroker(t, tc.metadataMax, md)
+			c := newClientAgainstMockBroker(t, tc.handlers)
 
-			got, err := c.ClusterDescribeAccess()
+			got, err := canDescribeAnyGroup(c.admin, probe)
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)

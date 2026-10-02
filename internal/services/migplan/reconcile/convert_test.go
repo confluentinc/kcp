@@ -323,7 +323,7 @@ func TestJoinCapped(t *testing.T) {
 
 func TestReconcileConvert_RefusesWhenTheSourceGroupListingIsIncomplete(t *testing.T) {
 	groups := trackedGroups()
-	groups.SourceListingIncomplete = "the source credential lacks DESCRIBE on the cluster"
+	groups.SourceListingIncomplete = "the source credential cannot describe arbitrary consumer groups"
 
 	p := reconcileConverged(convertGateway(), groups)
 
@@ -331,14 +331,14 @@ func TestReconcileConvert_RefusesWhenTheSourceGroupListingIsIncomplete(t *testin
 		t.Fatal("a conversion whose source group listing may be partial must refuse: a hidden group's topics are never verified")
 	}
 	pc := convertPrecondition(t, p.Report, SourceGroupVisibilityCheckName)
-	if pc.OK || !strings.Contains(pc.Detail, "lacks DESCRIBE on the cluster") {
+	if pc.OK || !strings.Contains(pc.Detail, "cannot describe arbitrary consumer groups") {
 		t.Errorf("visibility precondition = %+v, want a failure carrying the reason", pc)
 	}
 }
 
 func TestReconcileConvert_RefusesWhenTheDestinationGroupListingIsIncomplete(t *testing.T) {
 	groups := trackedGroups()
-	groups.TargetListingIncomplete = "the destination credential lacks DESCRIBE on the cluster"
+	groups.TargetListingIncomplete = "the destination credential cannot describe arbitrary consumer groups"
 
 	p := reconcileConverged(convertGateway(), groups)
 
@@ -346,7 +346,7 @@ func TestReconcileConvert_RefusesWhenTheDestinationGroupListingIsIncomplete(t *t
 		t.Fatal("a destination group listing that may be partial must refuse: a hidden active group is a missed split-brain")
 	}
 	pc := convertPrecondition(t, p.Report, TargetGroupVisibilityCheckName)
-	if pc.OK || !strings.Contains(pc.Detail, "destination credential lacks DESCRIBE") {
+	if pc.OK || !strings.Contains(pc.Detail, "destination credential cannot describe arbitrary consumer groups") {
 		t.Errorf("visibility precondition = %+v, want a failure carrying the reason", pc)
 	}
 	if src := convertPrecondition(t, p.Report, SourceGroupVisibilityCheckName); !src.OK {

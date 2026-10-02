@@ -115,15 +115,15 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if e.sourceGroups == nil || e.targetGroups == nil {
 		return nil, fmt.Errorf("a route conversion needs consumer-group listers for both clusters")
 	}
-	// Checked before each listing is trusted: a credential without cluster
-	// DESCRIBE gets a silently filtered list, not an error.
-	srcAccess, err := e.sourceGroups.ClusterDescribeAccess(ctx)
+	// Checked before each listing is trusted: a credential that may not describe
+	// arbitrary groups gets a silently filtered list, not an error.
+	srcCan, err := e.sourceGroups.CanDescribeAnyGroup(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("checking the source credential's cluster access: %w", err)
+		return nil, fmt.Errorf("checking the source credential's group access: %w", err)
 	}
-	tgtAccess, err := e.targetGroups.ClusterDescribeAccess(ctx)
+	tgtCan, err := e.targetGroups.CanDescribeAnyGroup(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("checking the destination credential's cluster access: %w", err)
+		return nil, fmt.Errorf("checking the destination credential's group access: %w", err)
 	}
 	srcGroups, err := e.sourceGroups.ListGroups(ctx)
 	if err != nil {
@@ -141,7 +141,7 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}
-	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGap("source", srcAccess), listingGap("destination", tgtAccess)))
+	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGap("source", srcCan), listingGap("destination", tgtCan)))
 	plan.GatewayYAML = gw.RawYAML
 	return plan, nil
 }

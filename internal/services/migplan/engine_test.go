@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -286,21 +285,15 @@ type fakeGroupLister struct {
 	trackedErr error
 	trackedFor []string // the group ids CommittedTopics was asked about
 	trackedN   int
-	denied     bool // ClusterDescribeAccess reports DescribeDenied
-	unknown    bool // ClusterDescribeAccess reports DescribeUnknown
+	denied     bool // CanDescribeAnyGroup reports false
 	accessErr  error
 }
 
-func (f *fakeGroupLister) ClusterDescribeAccess(context.Context) (client.DescribeAccess, error) {
-	switch {
-	case f.accessErr != nil:
-		return client.DescribeUnknown, f.accessErr
-	case f.denied:
-		return client.DescribeDenied, nil
-	case f.unknown:
-		return client.DescribeUnknown, nil
+func (f *fakeGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
+	if f.accessErr != nil {
+		return false, f.accessErr
 	}
-	return client.DescribeGranted, nil
+	return !f.denied, nil
 }
 
 func (f *fakeGroupLister) ListGroups(context.Context) ([]types.ConsumerGroupListing, error) {
@@ -389,8 +382,7 @@ func TestEngineRun_ConversionFetchesCommittedTopicsForSourceGroupsOnly(t *testin
 
 func TestEngineRun_ConversionRefusesWhenTheSourceCredentialCannotSeeEveryGroup(t *testing.T) {
 	for name, src := range map[string]*fakeGroupLister{
-		"denied":  {denied: true},
-		"unknown": {unknown: true},
+		"denied": {denied: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			plan, err := convertEngine(src, &fakeGroupLister{}).Run(context.Background(), convertIn)
@@ -415,8 +407,7 @@ func TestEngineRun_ConversionRefusesWhenTheSourceCredentialCannotSeeEveryGroup(t
 
 func TestEngineRun_ConversionRefusesWhenTheDestinationCredentialCannotSeeEveryGroup(t *testing.T) {
 	for name, tgt := range map[string]*fakeGroupLister{
-		"denied":  {denied: true},
-		"unknown": {unknown: true},
+		"denied": {denied: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			plan, err := convertEngine(&fakeGroupLister{}, tgt).Run(context.Background(), convertIn)
