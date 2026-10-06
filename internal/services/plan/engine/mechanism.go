@@ -33,6 +33,14 @@ func connectsToday(p Profile) string {
 	}
 }
 
+// asksConnectsToday reports whether the connects_today question is asked: private
+// networking required on an AWS target, and not for an on-prem source (the VPC
+// options don't apply). The question's Applies and the connection_other trigger
+// both read it, so a withheld answer is always one the customer was asked.
+func asksConnectsToday(p Profile) bool {
+	return requiresPrivate(p) && targetCloud(p) == "AWS" && !IsOnPremSource(p)
+}
+
 // clusterLinkingAvailable — Cluster Linking needs a Dedicated or Enterprise
 // destination.
 func clusterLinkingAvailable(tier Tier) bool {

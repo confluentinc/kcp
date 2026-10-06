@@ -423,6 +423,13 @@ func startFreshAlternative(p Profile, tier Tier) string {
 	if p.isOSKorCP() && p.SourceCloud == "On-prem or other" && willBePrivate(p) && mechanismUsesClusterLink(p, tier, "Yes") {
 		return "If you need your existing messages on the new cluster, we'd design the private link with you, since your brokers run outside a cloud network. Change your answer above and we will plan that instead."
 	}
+	// Same for the two other handoffs flipping the answer would fire: an IAM source to a
+	// non-AWS target that resolves to a jump cluster (iam_cross_cloud_jump_cluster), and a
+	// private-source cluster link into Google Cloud (gcp_private_source_cluster_link).
+	if iamCrossCloudJumpCluster(p, tier, "Yes") ||
+		(targetCloud(p) == "GCP" && clusterLinkNeedsPrivateEgress(p, tier, "Yes")) {
+		return "If you need your existing messages on the new cluster, we'd design the path with you, since a self-serve mirror is not available for this setup. Change your answer above and we will plan that instead."
+	}
 	lead := "If you need your existing messages on the new cluster, we would use "
 	tail := " Change your answer above and we will plan that instead."
 	if m.Mechanism == "jump-cluster" {

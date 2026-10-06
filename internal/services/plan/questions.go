@@ -180,10 +180,8 @@ var catalog = []question{
 		// Asked only when you require private networking on an AWS target, and not for
 		// an on-prem source (the VPC options don't apply). A plan that crosses to
 		// private by size alone has no stated private requirement to refine.
-		Applies: func(p engine.Profile) bool {
-			return engine.RequiresPrivate(p) && engine.TargetCloudOf(p) == "AWS" && !engine.IsOnPremSource(p)
-		},
-		set: func(in *IntakeInputs, v []string) { in.ConnectsToday = first(v) }},
+		Applies: engine.AsksConnectsToday,
+		set:     func(in *IntakeInputs, v []string) { in.ConnectsToday = first(v) }},
 
 	{Key: "cc_egress_required", Prompt: "Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?", Disp: dispRequired,
 		Hint:    "For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.",

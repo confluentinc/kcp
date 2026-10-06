@@ -207,9 +207,9 @@ func humanAssistDecision(p Profile, ctx haCtx) HumanAssistResult {
 			"Declared a workload beyond the standard sizing bands ("+joinComma(enterpriseLimits())+"). Route to a specialist: sizing needs a human.")
 	}
 
-	// Compound topology — only on the private path, on an AWS target, where we ask
-	// (connects_today is only asked when WillBePrivate(p) && TargetCloudOf(p) == "AWS").
-	if requiresPrivate(p) && targetCloud(p) == "AWS" && connectsToday(p) == connectsOther {
+	// Compound topology — only where connects_today is asked, so a stale or hand-edited
+	// answer can't withhold a plan whose question never appeared.
+	if asksConnectsToday(p) && connectsToday(p) == connectsOther {
 		add("connection_other",
 			specialistWhy("your answer that you connect over more than one method",
 				"the right combination depends on details we can't see from here, so we'd like to go through it with you."),

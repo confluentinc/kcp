@@ -64,6 +64,9 @@ func TargetCloudOf(p Profile) string { return targetCloud(p) }
 func StandardLimitsQuestion() string   { return standardLimitsQuestion() }
 func EnterpriseLimitsQuestion() string { return enterpriseLimitsQuestion() }
 
+// AsksConnectsToday reports whether the connects_today question is asked.
+func AsksConnectsToday(p Profile) bool { return asksConnectsToday(p) }
+
 // willBePrivate: private required, or crossed to private from the public path.
 func willBePrivate(p Profile) bool {
 	if requiresPrivate(p) {
