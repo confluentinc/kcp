@@ -138,7 +138,9 @@ func writeInputsHeader(b *strings.Builder, ep *EnginePlan, layered bool) {
 	b.WriteString("# Re-running reads this file and writes it back; your answers are preserved (it only adds any new follow-up questions).\n")
 	b.WriteString("# Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):\n")
 	b.WriteString("#   " + rerunCommand(ep) + "\n")
-	if n := ep.Summary.OpenRequired; n > 0 {
+	if len(ep.Clusters) == 0 {
+		b.WriteString("# No clusters were found in the scan, so there is nothing to plan yet.\n")
+	} else if n := ep.Summary.OpenRequired; n > 0 {
 		fmt.Fprintf(b, "# %d required question%s still open before a full plan.\n", n, plural(n))
 	} else {
 		b.WriteString("# All required questions answered. The plan is ready.\n")
@@ -155,7 +157,7 @@ func writeInputsHeader(b *strings.Builder, ep *EnginePlan, layered bool) {
 // RenderPlanInputsYAML generates a round-trip plan-inputs.yaml. A single-cluster
 // fleet renders flat: one section under `clusters:` carrying every question with
 // its full wording inline. A multi-cluster fleet uses progressive disclosure —
-// fleet-wide decisions live in a `defaults:` block (answered once, full wording),
+// fleet-wide decisions live in a `all_clusters:` block (answered once, full wording),
 // per-cluster questions are documented once in a reference catalog, and each
 // cluster's section is terse: `key: token  # [tok | tok | …]` one-liners.
 // Re-running after answering may reveal follow-ups.
@@ -167,7 +169,7 @@ func RenderPlanInputsYAML(ep *EnginePlan) string {
 }
 
 // renderPlanInputsFlat renders a single cluster with all its questions inline —
-// no `defaults:` block, since there is nothing to share across a fleet of one.
+// no `all_clusters:` block, since there is nothing to share across a fleet of one.
 func renderPlanInputsFlat(ep *EnginePlan) string {
 	var b strings.Builder
 	writeInputsHeader(&b, ep, false)
@@ -175,12 +177,9 @@ func renderPlanInputsFlat(ep *EnginePlan) string {
 
 	cp := ep.Clusters[0]
 	req, opt := openCounts(cp.Questions)
-	header := "region: " + cp.Region
-	if pc := factValue(cp, "partitions"); pc != "" {
-		header += " · partitions (scanned): " + commaNum(pc)
-	}
-	header += fmt.Sprintf(" · %d open required, %d open optional", req, opt)
-	b.WriteString("  " + yamlKey(cp.Key) + ":   # " + header + "\n")
+	parts := clusterHeaderParts(cp)
+	parts = append(parts, fmt.Sprintf("%d open required, %d open optional", req, opt))
+	b.WriteString("  " + yamlKey(cp.Key) + ":   # " + strings.Join(parts, " · ") + "\n")
 
 	const ind = "    "
 	scanless := ep.Header.StateFilePath == ""
@@ -189,15 +188,17 @@ func renderPlanInputsFlat(ep *EnginePlan) string {
 		answeredTitle = "ALREADY ANSWERED / PRESET: edit to override"
 	}
 	writeQuestionGroup(&b, ind, "REQUIRED: answer these", cp.Questions, scanless, func(q ResolvedQuestion) bool { return q.Status == "open_required" })
-	writeQuestionGroup(&b, ind, "OPTIONAL: defaults pre-selected, change if needed", cp.Questions, scanless, func(q ResolvedQuestion) bool {
+	writeQuestionGroup(&b, ind, "OPTIONAL: a default applies; uncomment a line to change it", cp.Questions, scanless, func(q ResolvedQuestion) bool {
 		return q.Status == statusOpenOptional || q.Status == statusOpenInert
 	})
 	writeQuestionGroup(&b, ind, answeredTitle, cp.Questions, scanless, func(q ResolvedQuestion) bool { return q.Status == "answered" || q.Status == "scan" })
+	// A single-cluster file has no all_clusters block, so inherited answers are kept here too.
+	writeUnusedAnswers(&b, ind, mergeUnused(cp.unusedOwn, cp.unusedDefaults))
 	writeApps(&b, ind, cp)
 	return b.String()
 }
 
-// renderPlanInputsLayered renders a `defaults:` block with the fleet-wide
+// renderPlanInputsLayered renders a `all_clusters:` block with the fleet-wide
 // decisions (full wording, answered once) plus a one-time reference catalog for
 // the per-cluster questions, followed by a terse per-cluster section — each line
 // a `key: token  # [tok | tok | …]` one-liner, so a large fleet stays legible.
@@ -227,31 +228,113 @@ func renderPlanInputsLayered(ep *EnginePlan) string {
 		return q.Scan && !q.ReadOnly && q.Key != "target_auth"
 	})
 
+	writeUnusedAnswers(&b, ind, fleetUnused(ep))
+
 	// clusters: each cluster's scanned values (live, auto-updating) and the
 	// per-cluster override knobs for the all_clusters answers above.
 	b.WriteString("\nclusters:\n")
 	for _, cp := range ep.Clusters {
-		header := "region: " + cp.Region
-		if pc := factValue(cp, "partitions"); pc != "" {
-			header += " · partitions (scanned): " + commaNum(pc)
+		line := "  " + yamlKey(cp.Key) + ":"
+		if parts := clusterHeaderParts(cp); len(parts) > 0 {
+			line += "   # " + strings.Join(parts, " · ")
 		}
-		b.WriteString("  " + yamlKey(cp.Key) + ":   # " + header + "\n")
+		b.WriteString(line + "\n")
 		const cind = "    "
 		writeClusterScanLines(&b, cind, ep, fleet, cp)
 		writeClusterOverrides(&b, cind, ep, fleet, cp)
+		writeUnusedAnswers(&b, cind, cp.unusedOwn)
 		writeApps(&b, cind, cp)
 	}
 	return b.String()
 }
 
+// clusterHeaderParts are the scanned facts shown in a cluster's header comment. A
+// scanless or non-MSK cluster has no region, so it is left out rather than shown empty.
+func clusterHeaderParts(cp ClusterPlan) []string {
+	var parts []string
+	if cp.Region != "" {
+		parts = append(parts, "region: "+cp.Region)
+	}
+	if pc := factValue(cp, "partitions"); pc != "" {
+		parts = append(parts, "partitions (scanned): "+commaNum(pc))
+	}
+	return parts
+}
+
+// writeUnusedAnswers writes answers whose question doesn't apply to the plan as
+// live lines, annotated, so a re-run keeps them: they have no effect now, but would
+// otherwise be deleted on the rewrite and lost if a later change makes the question
+// relevant again.
+func writeUnusedAnswers(b *strings.Builder, indent string, items []unusedAnswer) {
+	if len(items) == 0 {
+		return
+	}
+	b.WriteString(indent + "# ── Answers not used for this plan (kept in case your plan changes) ──\n")
+	for _, u := range items {
+		b.WriteString(indent + u.Key + ": " + fmtVal(u.Value, u.Multi) + "   # not used for this plan\n")
+	}
+}
+
+// mergeUnused combines a cluster's own unused answers with those it inherits from
+// all_clusters (the cluster's own wins on a repeated key).
+func mergeUnused(own, inherited []unusedAnswer) []unusedAnswer {
+	out := append([]unusedAnswer(nil), own...)
+	seen := map[string]bool{}
+	for _, u := range own {
+		seen[u.Key] = true
+	}
+	for _, u := range inherited {
+		if !seen[u.Key] {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// fleetUnused returns the all_clusters answers unused by every cluster. One that
+// some cluster still consumes is already written back under all_clusters by the
+// question itself, so only those nothing consumes need this separate block.
+func fleetUnused(ep *EnginePlan) []unusedAnswer {
+	if len(ep.Clusters) == 0 {
+		return nil
+	}
+	var out []unusedAnswer
+	for _, u := range ep.Clusters[0].unusedDefaults {
+		all := true
+		for _, cp := range ep.Clusters[1:] {
+			found := false
+			for _, v := range cp.unusedDefaults {
+				if v.Key == u.Key {
+					found = true
+					break
+				}
+			}
+			if !found {
+				all = false
+				break
+			}
+		}
+		if all {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // allQuestionsUnion returns every question across the fleet, deduped by key in
 // first-seen (reading) order; wording and flags come from the first occurrence.
+// source_platform is left out unless every cluster asks it: in a fleet whose
+// sources differ the scan already determines the platform for some clusters, and a
+// fleet-wide answer would fail validation against those, so it is answered per cluster.
 func allQuestionsUnion(ep *EnginePlan) []ResolvedQuestion {
 	seen := map[string]bool{}
 	var out []ResolvedQuestion
 	for _, cp := range ep.Clusters {
 		for _, q := range cp.Questions {
 			if seen[q.Key] {
+				continue
+			}
+			if q.Key == "source_platform" && !fleetHas(fleetWideQuestions(ep), q.Key) {
 				continue
 			}
 			seen[q.Key] = true
@@ -334,11 +417,51 @@ func allClustersValueLine(q ResolvedQuestion, ep *EnginePlan, fleet []ResolvedQu
 		}
 		return q.Key + ":   # not set"
 	}
+	if hasDerivedDefault(q.Key) {
+		// The default follows each cluster's own profile (e.g. its source cloud), so a
+		// single fleet-wide default token would be wrong and a written-back one would
+		// pin it. Only a declared answer is written live.
+		if answered {
+			if declaredAnywhere(ep, q.Key) {
+				return q.Key + ": " + fmtVal(val, q.Multi)
+			}
+			return "# " + q.Key + ": " + fmtVal(val, q.Multi) + "   # default"
+		}
+		return "# " + q.Key + ":   # default follows each cluster's own settings" + tokHint
+	}
 	def := questionDefault(q.Key)
-	if answered && !sameAnswer(val, def, q.Multi) {
-		return q.Key + ": " + fmtVal(val, q.Multi) // set fleet-wide to a non-default value
+	if answered {
+		_, declared := allClustersSourced(ep, q.Key)
+		if declared || !sameAnswer(val, def, q.Multi) {
+			// Set fleet-wide: a non-default value, or a line the customer declared
+			// (even at the default) so it stays live on write-back.
+			return q.Key + ": " + fmtVal(val, q.Multi)
+		}
 	}
 	return "# " + q.Key + ": " + fmtVal(def, q.Multi) + "   # default"
+}
+
+// hasDerivedDefault reports whether a declared question's default depends on the
+// cluster's profile (defaultFn), so it differs per cluster and must never be
+// written back as a pinned value.
+func hasDerivedDefault(key string) bool {
+	for _, q := range catalog {
+		if q.Key == key {
+			return q.defaultFn != nil
+		}
+	}
+	return false
+}
+
+// declaredAnywhere reports whether any cluster carries a declared (non-default)
+// answer for the key.
+func declaredAnywhere(ep *EnginePlan, key string) bool {
+	for i := range ep.Clusters {
+		if q := findResolved(ep.Clusters[i].Questions, key); q != nil && q.Source != "" && q.Source != sourceBuiltInDefault {
+			return true
+		}
+	}
+	return false
 }
 
 // answeredByAllClusters reports whether every cluster that NEEDS the question has a
@@ -374,10 +497,30 @@ func fleetAnswer(ep *EnginePlan, fleet []ResolvedQuestion, q ResolvedQuestion) (
 	if !fleetHas(fleet, q.Key) {
 		return "", false
 	}
+	if answeredPerCluster(ep, q.Key) {
+		// Every cluster set its own answer: keep it under each cluster rather than
+		// hoisting it to all_clusters, so a re-run doesn't change where it came from.
+		return "", false
+	}
 	if cv, common := commonClusterValue(ep, q.Key); common && cv != "" {
 		return cv, true
 	}
 	return "", false
+}
+
+// answeredPerCluster reports whether every cluster carries its own cluster-level
+// answer for the key (none inherits one from all_clusters or a default).
+func answeredPerCluster(ep *EnginePlan, key string) bool {
+	if len(ep.Clusters) < 2 {
+		return false
+	}
+	for i := range ep.Clusters {
+		q := findResolved(ep.Clusters[i].Questions, key)
+		if q == nil || q.Source != sourceCluster || q.Value == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // fmtVal formats a value for a YAML line — a multi renders as a [list].
@@ -486,12 +629,17 @@ func writeClusterOverrides(b *strings.Builder, indent string, ep *EnginePlan, fl
 			if scv, ok := allClustersSourced(ep, q.Key); ok {
 				effective = scv
 			} else {
-				effective = questionDefault(q.Key)
+				effective = q.defaultVal // what this cluster resolves when the key is unset
 			}
 		}
-		if q.Value != "" && !sameAnswer(q.Value, effective, q.Multi) {
+		switch {
+		case q.Value != "" && !sameAnswer(q.Value, effective, q.Multi):
 			lines = append(lines, q.Key+": "+fmtVal(q.Value, q.Multi)+"   # override for this cluster")
-		} else {
+		case q.Status == statusOpenRequired && q.Value == "" && !fleetLineAsksFor(ep, fleet, q.Key):
+			// Required for this cluster, but the all_clusters line doesn't ask for it
+			// (it's optional on other clusters): ask here so the open count is findable.
+			lines = append(lines, q.Key+":   # not set"+tokHint)
+		default:
 			lines = append(lines, "# "+q.Key+":   # override for this cluster"+tokHint)
 		}
 	}
@@ -502,6 +650,18 @@ func writeClusterOverrides(b *strings.Builder, indent string, ep *EnginePlan, fl
 	for _, l := range lines {
 		b.WriteString(indent + l + "\n")
 	}
+}
+
+// fleetLineAsksFor reports whether the key's all_clusters line is an active
+// `# not set` (so answering it there covers every cluster).
+func fleetLineAsksFor(ep *EnginePlan, fleet []ResolvedQuestion, key string) bool {
+	for _, q := range allQuestionsUnion(ep) {
+		if q.Key == key {
+			line := allClustersValueLine(q, ep, fleet)
+			return strings.HasPrefix(line, key+":") && strings.Contains(line, "# not set")
+		}
+	}
+	return false
 }
 
 // derivedTargetAuthToken picks the target auth kcp would default to from the
@@ -540,18 +700,13 @@ func commonClusterValue(ep *EnginePlan, key string) (string, bool) {
 // whether such a value exists. It lets the writer keep a fleet-wide answer under
 // all_clusters on write-back even when the question no longer applies to every
 // cluster — without it, the value would be demoted to the one cluster that still
-// consumes it and re-open as required for the others on the next run. Clusters
-// inheriting an all_clusters answer all share its value, so the first is
-// representative; a cluster that overrode it carries Source == sourceCluster and is
-// skipped.
+// consumes it and re-open as required for the others on the next run. The value is
+// the one declared under all_clusters even when every cluster overrides it.
 func allClustersSourced(ep *EnginePlan, key string) (string, bool) {
 	for i := range ep.Clusters {
 		cp := ep.Clusters[i]
-		if cp.Plan.Withheld {
-			continue
-		}
-		if q := findResolved(cp.Questions, key); q != nil && q.Source == sourceAllClusters {
-			return q.Value, true
+		if q := findResolved(cp.Questions, key); q != nil && q.fleetSet {
+			return q.fleetVal, true
 		}
 	}
 	return "", false
@@ -719,9 +874,10 @@ func writeQuestionGroup(b *strings.Builder, indent, title string, qs []ResolvedQ
 // list. A scan-detected fact is rendered COMMENTED — a re-scan refreshes it;
 // uncomment to pin it as an override.
 func yamlLine(q ResolvedQuestion, scanless bool) string {
-	if q.Status == statusOpenInert {
-		// Required in the catalog, but inert for this cluster: a commented, answerable
-		// knob (uncomment to set), never an active `# not set` blocker.
+	if q.Status == statusOpenInert || (q.Scan && q.Value == "" && q.Status != "open_required") {
+		// Required in the catalog, but inert for this cluster (or a scan fact this plan
+		// doesn't need): a commented, answerable knob (uncomment to set), never an
+		// active `# not set` blocker.
 		line := "# " + q.Key + ":   # optional here — doesn't change this cluster's plan"
 		if len(q.Tokens) > 0 {
 			line += " · [" + strings.Join(q.Tokens, " | ") + "]"
@@ -731,6 +887,12 @@ func yamlLine(q ResolvedQuestion, scanless bool) string {
 	if q.Status == "open_required" || (q.Scan && q.Value == "") {
 		return q.Key + ":   # not set\n"
 	}
+	if q.Status == statusOpenOptional && hasDerivedDefault(q.Key) {
+		// The default follows this cluster's own settings (e.g. its source cloud), so
+		// it is shown commented: writing it live would pin today's value and stop it
+		// following a later change to the answer it derives from.
+		return "# " + q.Key + ": " + q.Value + "   # default (follows your source cloud; uncomment to pin)\n"
+	}
 	valuePart := q.Value
 	if q.Multi {
 		if q.Value == "" {
@@ -738,6 +900,11 @@ func yamlLine(q ResolvedQuestion, scanless bool) string {
 		} else {
 			valuePart = "[" + q.Value + "]"
 		}
+	}
+	if q.Status == statusOpenOptional && !q.Scan {
+		// A built-in default is shown commented so a re-run still reads it as the
+		// default (not as an answer you gave); uncomment to set it yourself.
+		return "# " + q.Key + ": " + valuePart + "   # default\n"
 	}
 	// Scan facts render commented (a re-scan refreshes them) UNLESS the customer
 	// overrode this one, in which case it stays live so the override persists. With no

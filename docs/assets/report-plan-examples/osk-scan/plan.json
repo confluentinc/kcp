@@ -13,8 +13,8 @@
     "ready": 0,
     "needs_answers": 1,
     "needs_specialist": 0,
-    "open_required": 9,
-    "open_optional": 7
+    "open_required": 10,
+    "open_optional": 6
   },
   "clusters": [
     {
@@ -63,17 +63,15 @@
           "key": "source_platform",
           "prompt": "What is your source platform?",
           "legend": [
-            "msk → Amazon MSK",
             "apache-kafka → Apache Kafka",
             "confluent-platform → Confluent Platform"
           ],
           "tokens": [
-            "msk",
             "apache-kafka",
             "confluent-platform"
           ],
-          "required": false,
-          "status": "open_inert",
+          "required": true,
+          "status": "open_required",
           "value": ""
         },
         {
@@ -118,7 +116,7 @@
           "prompt": "Do you need to move your existing data?",
           "legend": [
             "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
-            "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+            "false → No, we can start fresh: Moves producers to the new cluster first, then consumers once they finish the old one"
           ],
           "tokens": [
             "true",
@@ -255,7 +253,7 @@
         {
           "key": "target_auth",
           "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
-          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "hint": "A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
           "legend": [
             "api-keys → API keys (SASL/PLAIN)",
             "oauth → OAuth",
@@ -311,7 +309,7 @@
           "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
           "legend": [
             "3.0-plus → 3.0 or newer",
-            "2.4-2.9 → 2.4-2.9",
+            "2.4-2.9 → 2.4–2.9",
             "older → Older than 2.4"
           ],
           "tokens": [
@@ -333,13 +331,15 @@
             "scram → SASL/SCRAM",
             "sasl-plain → SASL/PLAIN",
             "mtls → TLS client certificates (mTLS)",
-            "unauth → None / plaintext"
+            "unauth → None / plaintext",
+            "kerberos → Kerberos (GSSAPI)"
           ],
           "tokens": [
             "scram",
             "sasl-plain",
             "mtls",
-            "unauth"
+            "unauth",
+            "kerberos"
           ],
           "required": false,
           "status": "scan",
@@ -431,8 +431,7 @@
           "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html"
         },
         "sizing": {
-          "value": "",
-          "pending": true,
+          "value": "Autoscales, nothing to provision",
           "band": 1,
           "partitions_dim": {
             "display": "743",
@@ -475,7 +474,7 @@
         },
         "auth": {
           "value": "API keys (SASL/PLAIN)",
-          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: `kcp create-asset migrate-acls kafka` turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them.",
           "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
           "action": "Set up API keys (SASL/PLAIN)",
           "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
@@ -490,7 +489,7 @@
           "source_credential_handling": [
             {
               "method": "API keys (SASL/PLAIN)",
-              "note": "The migration link signs in over SASL/SCRAM, so if your source is SASL/PLAIN-only, add a SASL/SCRAM listener and create a SCRAM user for the link, in place before you apply the migration-link step above. Your application clients keep their SASL/PLAIN credentials unchanged, and the listener is only for the migration — you can remove it after cutover."
+              "note": "Cluster Linking can sign in with SASL/PLAIN, but the link kcp generates signs in over SASL/SCRAM only. Create a SASL/PLAIN link by hand, or add SCRAM to use kcp's generated link. Your application clients keep their SASL/PLAIN credentials unchanged. To use kcp's generated link, add a SASL/SCRAM listener and create a SCRAM user for the link, in place before you apply the migration-link step below; you can remove the listener after cutover. The link's user needs READ and DESCRIBE_CONFIGS on the topics you mirror, and DESCRIBE on the consumer groups."
             }
           ]
         },
@@ -533,8 +532,7 @@
       "partition_count": 743,
       "contingent": {
         "Cluster type": [
-          "private_networking_required",
-          "source_cloud"
+          "private_networking_required"
         ],
         "Connectors": [
           "self_managed_connectors"
@@ -554,9 +552,6 @@
         "Schema": [
           "schema_registry_edition",
           "schema_strategy"
-        ],
-        "Sizing": [
-          "source_cloud"
         ]
       },
       "schema_source": {

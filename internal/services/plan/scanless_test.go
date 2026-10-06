@@ -71,6 +71,32 @@ func TestScanless_MarkdownCopy(t *testing.T) {
 	}
 }
 
+// The no-scan banner names the scan tool for the declared source: `kcp discover` is
+// MSK-only, so a declared Apache Kafka source is not pointed at it.
+func TestScanless_BannerIsSourceAware(t *testing.T) {
+	fixed := func() time.Time { return time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC) }
+	banner := func(inputs string) string {
+		declared, _, err := ParseDeclaredInputs([]byte(inputs))
+		if err != nil {
+			t.Fatal(err)
+		}
+		md := RenderEnginePlanMarkdown(BuildEnginePlan(ScanlessState(), declared, "", fixed))
+		for _, l := range strings.Split(md, "\n") {
+			if strings.Contains(l, "generated from your answers alone") {
+				return l
+			}
+		}
+		t.Fatalf("no banner in:\n%s", md)
+		return ""
+	}
+	if got := banner("all_clusters:\n  source_platform: apache-kafka\n"); strings.Contains(got, "kcp discover") || !strings.Contains(got, "kcp scan clusters") {
+		t.Errorf("Apache Kafka banner: %q", got)
+	}
+	if got := banner(""); !strings.Contains(got, "kcp discover") || !strings.Contains(got, "kcp scan clusters") {
+		t.Errorf("open-source banner should name both tools: %q", got)
+	}
+}
+
 // hasOpenRequired reports whether a resolved question with the given key is open
 // and required.
 func hasOpenRequired(qs []ResolvedQuestion, key string) bool {

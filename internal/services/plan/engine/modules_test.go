@@ -62,22 +62,22 @@ func TestSchema_Decisions(t *testing.T) {
 }
 
 func TestConnectors_Decisions(t *testing.T) {
-	no := connectorsDecision(Profile{MSKConnectPresent: strptr("No"), SelfManagedConnectors: strptr("No")})
+	no := connectorsDecision(Profile{MSKConnectPresent: strptr("No"), SelfManagedConnectors: strptr("No")}, viaLink)
 	if no.Value != "None to move" {
 		t.Errorf("none present: value=%q, want None to move", no.Value)
 	}
-	if got := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes"), ConnectorDestination: "Move to Confluent-managed"}).Value; got != "Rebuild as Confluent-managed connectors" {
+	if got := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes"), ConnectorDestination: "Move to Confluent-managed"}, viaLink).Value; got != "Rebuild as Confluent-managed connectors" {
 		t.Errorf("move to managed: value=%q", got)
 	}
-	if got := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Keep self-managed"}).Value; got != "Run them yourself on your own Connect cluster" {
+	if got := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Keep self-managed"}, viaLink).Value; got != "Run them yourself on your own Connect cluster" {
 		t.Errorf("keep self-managed: value=%q", got)
 	}
 	// Destination unset: defaults to Confluent-managed (the connector_destination
 	// built-in default) rather than dead-ending on "not chosen".
-	if got := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes")}).Value; got != "Rebuild as Confluent-managed connectors" {
+	if got := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes")}, viaLink).Value; got != "Rebuild as Confluent-managed connectors" {
 		t.Errorf("destination defaulted: value=%q, want Rebuild as Confluent-managed connectors", got)
 	}
-	if got := connectorsDecision(Profile{}).Value; got != "Not assessed" {
+	if got := connectorsDecision(Profile{}, viaLink).Value; got != "Not assessed" {
 		t.Errorf("never asked: value=%q, want Not assessed", got)
 	}
 }
@@ -86,7 +86,7 @@ func TestTopics_Decisions(t *testing.T) {
 	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("Yes")}).Value; got != "Set matching topic settings on Confluent Cloud" {
 		t.Errorf("needs remediation: value=%q", got)
 	}
-	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("No")}).Value; got != "Topics carry over as they are" {
+	if got := topicReadinessDecision(Profile{TopicRemediationFlag: strptr("No")}).Value; got != "Topics should mirror as they are" {
 		t.Errorf("clean: value=%q", got)
 	}
 	if got := topicReadinessDecision(Profile{}).Value; got != "Not assessed" {
@@ -114,6 +114,16 @@ func TestHistorical_Decisions(t *testing.T) {
 	if unk.Value != "Backfill the full history (default)" || unk.Action == nil {
 		t.Errorf("tiered+unknown: value=%q action=%v", unk.Value, unk.Action)
 	}
+	if !strings.Contains(unk.Reason, "you haven't confirmed whether your consumers need their history") || !strings.Contains(unk.Reason, "from the earliest offset. Confirm to lock this in.") {
+		t.Errorf("tiered+unknown reason: %q", unk.Reason)
+	}
+	if !strings.Contains(notReq.Reason, "The migration still mirrors your topics up to cutover.") {
+		t.Errorf("tiered+not required reason: %q", notReq.Reason)
+	}
+	noTier := historicalDataDecision(Profile{StorageMode: strptr("No")})
+	if noTier.Value != "No separate backfill to plan" || !strings.Contains(noTier.Reason, "(no tiered storage)") || !strings.Contains(noTier.Reason, "nothing to re-fetch from object storage") || strings.Contains(noTier.Reason, "long-retention") {
+		t.Errorf("scanless no-tiered: value=%q reason=%q", noTier.Value, noTier.Reason)
+	}
 	if historicalDataDecision(Profile{}).Value != "Not assessed" {
 		t.Errorf("never asked: want Not assessed")
 	}
@@ -139,5 +149,148 @@ func TestHistorical_Decisions(t *testing.T) {
 	small := historicalDataDecision(Profile{RetainedDataGB: f(50), ConsumerHistoryRequirement: "Required"})
 	if small.Value != "No separate backfill to plan" || strings.Contains(small.Reason, "backfill time scales") {
 		t.Errorf("small measured size: value=%q reason=%q", small.Value, small.Reason)
+	}
+}
+
+// Start fresh copies nothing, so the topics verdict tells the customer to create them
+// rather than claiming they mirror.
+func TestTopics_StartFreshCreatesTopics(t *testing.T) {
+	const create = "Create your topics on the new cluster before you move producers, because automatic topic creation is off by default on Confluent Cloud."
+	fresh := func(flag string) Profile {
+		return Profile{NeedsDataMigration: "No", TopicRemediationFlag: strptr(flag)}
+	}
+	got := topicReadinessDecision(fresh("No"))
+	if got.Value != "Create your topics on the new cluster" || !strings.HasPrefix(got.Reason, create) || strings.Contains(got.Reason, "carry over as they are") {
+		t.Errorf("start fresh, defaults: %+v", got)
+	}
+	got = topicReadinessDecision(fresh("Yes"))
+	if got.Value != "Set matching topic settings on Confluent Cloud" || !strings.HasPrefix(got.Reason, create) || strings.Contains(got.Reason, "carry over as they are") {
+		t.Errorf("start fresh, remediation: %+v", got)
+	}
+	got = topicReadinessDecision(Profile{NeedsDataMigration: "No"})
+	if got.Value != "Not assessed" || !strings.HasPrefix(got.Reason, create) {
+		t.Errorf("start fresh, unasked: %+v", got)
+	}
+	if got := topicReadinessDecision(Profile{NeedsDataMigration: "Yes", TopicRemediationFlag: strptr("No")}); got.Value != "Topics should mirror as they are" {
+		t.Errorf("data moves: value = %q", got.Value)
+	}
+}
+
+// The Connect Migration Utility needs a self-managed Connect REST endpoint, so MSK
+// Connect plans never recommend it and say how offsets behave for the generated definitions.
+func TestConnectors_UtilityOnlyForSelfManagedConnect(t *testing.T) {
+	const utility = "stop_create_latest_offset"
+	msk := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes")}, viaLink).Reason
+	for _, want := range []string{
+		"Generate the connector definitions with kcp create-asset migrate-connectors msk, and apply them only after you promote the mirror topics, so they do not start early.",
+		"Confluent-managed sink connectors read with their own consumer group, so create each one with the offsets of its MSK Connect consumer group (connect-<connector-name>); see Create connectors with offsets (https://docs.confluent.io/cloud/current/connectors/offsets.html).",
+		"Source connectors don't carry offsets over, so check where each one should start.",
+	} {
+		if !strings.Contains(msk, want) {
+			t.Errorf("MSK Connect reason missing %q: %s", want, msk)
+		}
+	}
+	if strings.Contains(msk, "consumer.offset.group.filters") {
+		t.Errorf("MSK Connect reason still mentions the offset group filters: %s", msk)
+	}
+	if strings.Contains(msk, utility) || strings.Contains(msk, "Migration Utility") {
+		t.Errorf("MSK Connect reason recommends the utility: %s", msk)
+	}
+	self := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes")}, viaLink).Reason
+	if !strings.Contains(self, utility) || !strings.Contains(self, "Use one creation path per connector: the utility or generated definitions, not both.") {
+		t.Errorf("self-managed reason = %s", self)
+	}
+	kept := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Keep self-managed"}, viaLink).Reason
+	if strings.Contains(kept, utility) {
+		t.Errorf("keep self-managed reason mentions %s: %s", utility, kept)
+	}
+	mixed := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes"), SelfManagedConnectors: strptr("Yes")}, viaLink).Reason
+	if !strings.Contains(mixed, "the utility for self-managed Connect, the generated definitions for MSK Connect, not both for the same connector.") {
+		t.Errorf("mixed reason = %s", mixed)
+	}
+}
+
+// Item: the promote, sink-offset and utility-timing wording only applies when a cluster
+// link moves the data; Replicator and start-fresh plans drop it, and connectors that stay
+// self-managed use neither migrate-connectors msk nor the utility.
+func TestConnectors_WordingFollowsDataMovement(t *testing.T) {
+	both := Profile{MSKConnectPresent: strptr("Yes"), SelfManagedConnectors: strptr("Yes")}
+	const promote = "promote the mirror topics"
+	const sink = "Confluent-managed sink connectors read with their own consumer group"
+	const afterPromote = "Run the utility only after you promote the mirror topics, since it creates the Confluent-managed connectors right away."
+
+	link := connectorsDecision(both, viaLink).Reason
+	for _, want := range []string{promote, sink, afterPromote} {
+		if !strings.Contains(link, want) {
+			t.Errorf("link reason missing %q: %s", want, link)
+		}
+	}
+	for _, via := range []string{viaReplicator, viaNone} {
+		got := connectorsDecision(both, via).Reason
+		for _, bad := range []string{promote, sink, "consumer.offset.group.filters", afterPromote} {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s reason contains %q: %s", via, bad, got)
+			}
+		}
+		if !strings.Contains(got, "Generate the connector definitions with kcp create-asset migrate-connectors msk.") {
+			t.Errorf("%s reason dropped generate-definitions: %s", via, got)
+		}
+	}
+	// Connectors that stay self-managed: no msk generation, no utility.
+	keep := both
+	keep.ConnectorDestination = "Keep self-managed"
+	got := connectorsDecision(keep, viaLink).Reason
+	for _, bad := range []string{"migrate-connectors msk", "Migration Utility", afterPromote, promote} {
+		if strings.Contains(got, bad) {
+			t.Errorf("keep self-managed reason contains %q: %s", bad, got)
+		}
+	}
+}
+
+// A nil/empty via is treated as the Cluster Linking path, so the promote sentences
+// appear; Replicator and start-fresh never carry them.
+func TestConnectorsDecision_ViaGating(t *testing.T) {
+	p := Profile{MSKConnectPresent: strptr("Yes"), SelfManagedConnectors: strptr("Yes")}
+	for _, via := range []string{"", viaLink} {
+		r := connectorsDecision(p, via).Reason
+		if !strings.Contains(r, utilityAfterPromoteSentence) || !strings.Contains(r, managedSinkOffsetsSentence) {
+			t.Errorf("via %q reason missing link sentences: %q", via, r)
+		}
+	}
+	for _, via := range []string{viaReplicator, viaNone} {
+		r := connectorsDecision(p, via).Reason
+		if strings.Contains(r, utilityAfterPromoteSentence) || strings.Contains(r, managedSinkOffsetsSentence) || strings.Contains(r, "promote") {
+			t.Errorf("via %q reason has link-only sentences: %q", via, r)
+		}
+	}
+}
+
+// With MSK Connect and self-managed connectors both moving over Replicator, the sink
+// offsets sentence appears once.
+func TestConnectors_ReplicatorBothMovedSinkSentenceOnce(t *testing.T) {
+	p := Profile{MSKConnectPresent: strptr("Yes"), SelfManagedConnectors: strptr("Yes")}
+	r := connectorsDecision(p, viaReplicator).Reason
+	if strings.Count(r, replicatorSinkOffsetsSentence) != 1 || strings.Count(r, sourceOffsetsSentence) != 1 {
+		t.Errorf("want each offsets sentence once: %s", r)
+	}
+}
+
+// On a link plan the source-offsets sentence follows one that ends "before you apply it",
+// and self-managed sinks wait for the promote.
+func TestConnectors_LinkPlanCopy(t *testing.T) {
+	const after = "Source connectors don't carry offsets over, so check where each one should start."
+	msk := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes")}, viaLink).Reason
+	if !strings.Contains(msk, "before you apply it. "+after) || strings.Contains(msk, after+"before") || strings.Contains(msk, "should start before you apply it") {
+		t.Errorf("MSK Connect link reason: %s", msk)
+	}
+	if r := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes")}, viaReplicator).Reason; !strings.Contains(r, "should start before you apply it.") {
+		t.Errorf("replicator reason: %s", r)
+	}
+	keep := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Keep self-managed"}, viaLink).Reason
+	if !strings.Contains(keep, sinkAfterPromoteSentence) {
+		t.Errorf("self-managed link reason missing sink sentence: %s", keep)
+	}
+	if r := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Keep self-managed"}, viaReplicator).Reason; strings.Contains(r, sinkAfterPromoteSentence) {
+		t.Errorf("replicator reason has the link sink sentence: %s", r)
 	}
 }

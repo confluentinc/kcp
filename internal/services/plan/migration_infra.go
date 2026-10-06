@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -114,20 +113,27 @@ func targetInfraCommand(cp ClusterPlan, stateFilePath string) string {
 	}
 	state := "kcp-state.json"
 	if stateFilePath != "" {
-		state = filepath.Base(stateFilePath)
+		state = stateFilePath
 	}
 	tier := targetClusterTypeFlag(cp)
 	if tier == "" {
 		tier = "enterprise" // the migration path targets Enterprise or Dedicated
 	}
-	lines := []string{
-		"kcp create-asset target-infra \\",
+	// An MSK source reads its VPC and region from the scanned cluster. An Apache Kafka /
+	// Confluent Platform source has no MSK cluster in the state file (--source-cluster-id
+	// expects an MSK ARN), so name the AWS region and VPC directly instead.
+	sourceFlags := []string{
 		"  --state-file " + state + " \\",
 		"  --source-cluster-id " + clusterID + " \\",
-		"  --needs-environment --env-name <your-env-name> \\",
-		"  --needs-cluster --cluster-name <your-cluster-name> --cluster-type " + tier + " \\",
-		"  --needs-private-link --subnet-cidrs <your-subnet-cidrs>",
 	}
+	if cp.SourcePlatform != "" {
+		sourceFlags = []string{"  --aws-region <your-aws-region> --vpc-id <your-vpc-id> \\"}
+	}
+	lines := append([]string{"kcp create-asset target-infra \\"}, sourceFlags...)
+	lines = append(lines,
+		"  --needs-environment --env-name <your-env-name> \\",
+		"  --needs-cluster --cluster-name <your-cluster-name> --cluster-type "+tier+" \\",
+		"  --needs-private-link --subnet-cidrs <your-subnet-cidrs>")
 	return strings.Join(lines, "\n")
 }
 
@@ -140,10 +146,10 @@ func migrationInfraCommand(cp ClusterPlan, stateFilePath string) string {
 	if clusterID == "" {
 		clusterID = cp.ClusterID
 	}
-	// File name only, not the absolute path — the plan is a shareable artifact.
+	// The path exactly as the plan was run with, so the command finds the same file.
 	state := "kcp-state.json"
 	if stateFilePath != "" {
-		state = filepath.Base(stateFilePath)
+		state = stateFilePath
 	}
 	// Emit every flag the CLI requires for this type, so the printed command runs
 	// as-is (see the per-type MarkFlagRequired switch in the migration-infra command).
@@ -170,10 +176,10 @@ func migrationInfraCommand(cp ClusterPlan, stateFilePath string) string {
 				"--security-group-id <your-source-security-group-id>",
 			)
 		}
-		// Types 1/2/4 link over SASL/SCRAM. A non-SCRAM source (mTLS / SASL-PLAIN /
-		// unauthenticated) has no SCRAM mechanism in state, so the CLI needs it named —
-		// the recommended new SASL/SCRAM listener supplies it.
-		if (mi.Type == 1 || mi.Type == 2 || mi.Type == 4) && !sourceHasSCRAM(cp) {
+		// Types 1/2/4 link over SASL/SCRAM. A source whose state records no SCRAM
+		// mechanism (mTLS / SASL-PLAIN / unauthenticated, or SCRAM declared by an answer
+		// rather than scanned) needs it named on the command.
+		if (mi.Type == 1 || mi.Type == 2 || mi.Type == 4) && !scramMechanismKnown(cp) {
 			flags = append(flags, "--source-sasl-scram-mechanism <SCRAM-SHA-256|SCRAM-SHA-512>")
 		}
 	}
@@ -226,7 +232,7 @@ func migrateTopicsCommand(cp ClusterPlan, mode, stateFilePath string) string {
 	}
 	state := "kcp-state.json"
 	if stateFilePath != "" {
-		state = filepath.Base(stateFilePath)
+		state = stateFilePath
 	}
 	flags := []string{
 		"--mode " + mode,
@@ -281,7 +287,7 @@ func migrateSchemasCommand(cp ClusterPlan, schemaKind engine.SchemaKind, stateFi
 	}
 	state := "kcp-state.json"
 	if stateFilePath != "" {
-		state = filepath.Base(stateFilePath)
+		state = stateFilePath
 	}
 	flags := append([]string{}, srcFlags...)
 	flags = append(flags,
@@ -305,7 +311,7 @@ func migrateConnectorsCommands(cp ClusterPlan, src ConnectorSource, stateFilePat
 	}
 	state := "kcp-state.json"
 	if stateFilePath != "" {
-		state = filepath.Base(stateFilePath)
+		state = stateFilePath
 	}
 	// Flags shared by both subcommands.
 	ccFlags := []string{
@@ -344,12 +350,13 @@ func targetClusterTypeFlag(cp ClusterPlan) string {
 // sourceTypeFlag renders the `--source-type` flag for a create-asset command. A
 // non-MSK source is known to be Apache Kafka (Confluent Platform scans as
 // apache-kafka too), so the flag is resolved. For MSK: a scan-based run is known
-// to be `msk`; a scanless run emits a placeholder the reader fills in.
+// to be `msk`; a scanless run emits a placeholder the reader fills in unless the
+// source_platform answer already names it.
 func sourceTypeFlag(cp ClusterPlan, stateFilePath string) string {
 	if cp.SourcePlatform != "" {
 		return "--source-type apache-kafka"
 	}
-	if stateFilePath == "" {
+	if stateFilePath == "" && !cp.sourceDeclaredMSK {
 		return "--source-type <msk|apache-kafka>"
 	}
 	return "--source-type msk"
@@ -365,6 +372,13 @@ func sourceHasSCRAM(cp ClusterPlan) bool {
 		}
 	}
 	return false
+}
+
+// scramMechanismKnown reports whether the state file already supplies the source's
+// SASL/SCRAM mechanism: the source authenticates with SCRAM and the scan recorded
+// which mechanism. Otherwise the migration-infra command must name it.
+func scramMechanismKnown(cp ClusterPlan) bool {
+	return sourceHasSCRAM(cp) && cp.scanScramMechanism != ""
 }
 
 // itoa is the plan package's small int-to-string helper.

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/plan/engine"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // enterprisePlan is a settled Enterprise plan result (the common target tier), for
@@ -90,10 +91,19 @@ func TestMigrationInfraCommand_OSKFlags(t *testing.T) {
 
 	// OSK type 2 with a SCRAM source: mechanism comes from state, so no placeholder.
 	oskSCRAM := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
-		effectiveSourceAuths: []string{SourceAuthSCRAM},
-		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+		effectiveSourceAuths: []string{SourceAuthSCRAM}, scanScramMechanism: "SCRAM-SHA-512",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
 	if c := migrationInfraCommand(oskSCRAM, "kcp-state.json"); strings.Contains(c, "--source-sasl-scram-mechanism") {
 		t.Errorf("OSK SCRAM source must not carry --source-sasl-scram-mechanism:\n%s", c)
+	}
+
+	// SCRAM declared by an answer (the scan recorded no mechanism): the state file
+	// can't supply it, so the command names it.
+	oskDeclared := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthSCRAM},
+		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	if c := migrationInfraCommand(oskDeclared, "kcp-state.json"); !strings.Contains(c, "--source-sasl-scram-mechanism <SCRAM-SHA-256|SCRAM-SHA-512>") {
+		t.Errorf("OSK SCRAM source with no scanned mechanism must name it:\n%s", c)
 	}
 
 	// MSK derives all of these from state; the command must carry none of them.
@@ -166,6 +176,18 @@ func TestMigrationInfraCommand_JumpClusterFlags(t *testing.T) {
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("type-5 serverless command missing %q:\n%s", want, cmd)
+		}
+	}
+}
+
+// Only a recorded SCRAM mechanism counts: another SASL mechanism (PLAIN) leaves the
+// command to name one.
+func TestScannedScramMechanism(t *testing.T) {
+	for in, want := range map[string]string{"SHA512": "SCRAM-SHA-512", "SCRAM-SHA-256": "SCRAM-SHA-256", "PLAIN": "", "": ""} {
+		var c report.ProcessedCluster
+		c.KafkaAdminClientInformation.SaslMechanism = in
+		if got := scannedScramMechanism(c); got != want {
+			t.Errorf("scannedScramMechanism(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
