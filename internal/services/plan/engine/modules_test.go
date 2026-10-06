@@ -294,3 +294,16 @@ func TestConnectors_LinkPlanCopy(t *testing.T) {
 		t.Errorf("replicator reason has the link sink sentence: %s", r)
 	}
 }
+
+// On a mixed fleet the Migration Utility sentence is scoped to self-managed Connect, since MSK
+// Connect definitions are generated rather than copied by the utility.
+func TestConnectorsDecision_MixedFleetScopesUtility(t *testing.T) {
+	mixed := connectorsDecision(Profile{MSKConnectPresent: strptr("Yes"), SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Move to Confluent-managed"}, viaLink).Reason
+	if !strings.Contains(mixed, "For your self-managed Connect connectors, Confluent's Connect Migration Utility copies") {
+		t.Fatalf("mixed fleet: utility sentence not scoped to self-managed Connect: %s", mixed)
+	}
+	selfOnly := connectorsDecision(Profile{SelfManagedConnectors: strptr("Yes"), ConnectorDestination: "Move to Confluent-managed"}, viaLink).Reason
+	if strings.Contains(selfOnly, "For your self-managed Connect connectors") || !strings.Contains(selfOnly, "Confluent's Connect Migration Utility copies each connector's configuration across") {
+		t.Fatalf("self-managed only: unexpected utility wording: %s", selfOnly)
+	}
+}

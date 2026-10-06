@@ -133,7 +133,12 @@ func connectorsDecision(p Profile, via string) ConnectorsResult {
 		reason += " " + sinkAfterPromoteSentence
 	}
 	if selfManaged && moved {
-		reason += " Confluent's Connect Migration Utility copies each connector's configuration across, so you are not retyping them."
+		if mskConnect {
+			// Mixed fleet: the utility reads self-managed Connect only; MSK Connect definitions are generated.
+			reason += " For your self-managed Connect connectors, Confluent's Connect Migration Utility copies each connector's configuration across, so you are not retyping them."
+		} else {
+			reason += " Confluent's Connect Migration Utility copies each connector's configuration across, so you are not retyping them."
+		}
 		if byLink {
 			reason += " When you move a connector, use the Connect Migration Utility with stop_create_latest_offset so it resumes from its last offsets instead of re-reading or re-snapshotting. " + utilityVersionSentence
 		} else {
