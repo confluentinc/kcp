@@ -2,11 +2,16 @@
 # Re-running reads this file and writes it back; your answers are preserved (it only adds any new follow-up questions).
 # Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):
 #   kcp report plan --state-file demo-osk-scan.json --plan-inputs plan-inputs.yaml
-# 9 required questions still open before a full plan.
+# 10 required questions still open before a full plan.
 
 clusters:
-  osk-playground:   # region:  · partitions (scanned): 743 · 9 open required, 7 open optional
+  osk-playground:   # partitions (scanned): 743 · 10 open required, 6 open optional
     # ── REQUIRED: answer these ──
+    # What is your source platform?
+    #   apache-kafka → Apache Kafka
+    #   confluent-platform → Confluent Platform
+    source_platform:   # not set
+
     # Which cloud does your source run in?
     #   (Where your Kafka runs today. It sets the default target cloud (you can still choose a different one below) and shapes the networking plan.)
     #   aws → AWS
@@ -23,7 +28,7 @@ clusters:
 
     # Do you need to move your existing data?
     #   true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.
-    #   false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire
+    #   false → No, we can start fresh: Moves producers to the new cluster first, then consumers once they finish the old one
     move_existing_data:   # not set
 
     # Is private networking a hard requirement?
@@ -56,7 +61,7 @@ clusters:
     # What Kafka version does your source cluster run?
     #   (Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.)
     #   3.0-plus → 3.0 or newer
-    #   2.4-2.9 → 2.4-2.9
+    #   2.4-2.9 → 2.4–2.9
     #   older → Older than 2.4
     kafka_version:   # not set
 
@@ -65,13 +70,7 @@ clusters:
     #   false → No
     self_managed_connectors:   # not set
 
-    # ── OPTIONAL: defaults pre-selected, change if needed ──
-    # What is your source platform?
-    #   msk → Amazon MSK
-    #   apache-kafka → Apache Kafka
-    #   confluent-platform → Confluent Platform
-    # source_platform:   # optional here — doesn't change this cluster's plan · [msk | apache-kafka | confluent-platform]
-
+    # ── OPTIONAL: a default applies; uncomment a line to change it ──
     # Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?
     #   (For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.)
     #   true → Yes
@@ -82,32 +81,32 @@ clusters:
     #   (If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking.)
     #   true → Yes
     #   false → No  (default)
-    exceeds_standard_limits: false
+    # exceeds_standard_limits: false   # default
 
     # Which cloud should your new Confluent Cloud cluster run on?
     #   (This is independent of your source cloud. Confluent supports cross-cloud migrations.)
     #   aws → AWS  (default)
     #   azure → Azure
     #   gcp → GCP
-    target_cloud: aws
+    # target_cloud: aws   # default (follows your source cloud; uncomment to pin)
 
     # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-    #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+    #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
     #   api-keys → API keys (SASL/PLAIN)
     #   oauth → OAuth
     #   mtls → mTLS
-    target_auth: []
+    # target_auth: []   # default
 
     # How much coordination will it take to cut over all your clients and apps at the same time?
     #   easy → Low (few clients, one team)
     #   moderate → Moderate  (default)
     #   hard → High (many clients and teams)
-    client_coordination: moderate
+    # client_coordination: moderate   # default
 
     # Do any applications use exactly-once transactions and/or Kafka Streams?
     #   eos → Exactly-once or transactions
     #   kstreams → Kafka Streams
-    eos_streams: []
+    # eos_streams: []   # default
 
     # ── ALREADY ANSWERED / FROM YOUR SCAN: edit to override ──
     # How your Kafka clients authenticate today
@@ -115,6 +114,7 @@ clusters:
     #   sasl-plain → SASL/PLAIN
     #   mtls → TLS client certificates (mTLS)
     #   unauth → None / plaintext
+    #   kerberos → Kerberos (GSSAPI)
     # source_auth: [sasl-plain]   # from scan (uncomment to override)
 
     # Do your topics use tiered storage?

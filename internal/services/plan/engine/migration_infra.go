@@ -46,10 +46,13 @@ const (
 //     IAM, or type 4 SASL/SCRAM as a fallback).
 //   - SASL/SCRAM is preferred over AWS IAM for the link (IAM cannot cross a link
 //     directly and needs a jump cluster).
+//   - An AWS IAM source with no SASL/SCRAM listener gets the jump cluster even when it
+//     also uses mTLS, SASL/PLAIN, or no authentication, so the production cluster
+//     isn't changed; the per-method credential notes follow this choice.
 func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 	if p.TargetIsGovCloud == "Yes" {
 		// Government has no Cluster Linking at all — the specialist designs the whole path.
-		return specialistInfra("Confluent Cloud for Government does not offer Cluster Linking, which every migration-infra type relies on, so we design the migration path with a specialist.", false)
+		return specialistInfra("Confluent Cloud for Government doesn't offer fully managed Cluster Linking, which every migration-infra type relies on, so we design the migration path with a specialist.", false)
 	}
 	if tier == TierDedicated {
 		// Plan-layer-unreachable (a Dedicated plan is withheld before infra is mapped);
@@ -63,19 +66,40 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 	// networking is designed with a specialist, so the standard cutover steps stay in
 	// place (and no unusable AWS command is emitted).
 	if p.isOSKorCP() && p.SourceCloud != "" && p.SourceCloud != "AWS" {
-		where := "in " + p.SourceCloud
 		if p.SourceCloud == "On-prem or other" {
-			where = "on-premises or in another environment"
+			// Unlike Azure/GCP (still a cloud VPC/VNet, just not AWS), an on-prem source
+			// has no cloud network at all, so we do not claim Cluster Linking still
+			// applies as-is here — a private target needs a source-initiated link or one
+			// of the other on-prem paths (see the onprem_private_cluster_link
+			// human-assist trigger), not just a specialist-wired version of the standard
+			// destination-initiated link.
+			return specialistInfra("Your source runs on-premises or in another environment, and kcp's migration infrastructure provisions the outbound cluster link from an AWS VPC, so the link's networking is set up with a specialist rather than auto-generated.", true)
 		}
+		where := "in " + p.SourceCloud
 		return specialistInfra("Your source runs "+where+", and kcp's migration infrastructure provisions the outbound cluster link from an AWS VPC, so the link's networking is set up with a specialist rather than auto-generated. Cluster Linking itself still applies — the standard cutover steps below are unchanged.", true)
 	}
 
 	if p.SourcePublicAccess == "Yes" {
+		rationale := "Your source exposes public broker endpoints, so the cluster link reaches it over the public internet using your source's SASL/SCRAM credentials, with no private networking to stand up."
+		if len(sourceAuthMethods(p)) > 0 && !authHas(p, authSCRAM) {
+			// kcp's jump-cluster types (4 and 5) are private-source only, so a public
+			// source without SASL/SCRAM stays on type 1 and adds the listener.
+			rationale += " Your source doesn't expose SASL/SCRAM yet, so add a SASL/SCRAM listener for the link; kcp's jump cluster is for private sources only."
+		}
 		return MigrationInfraChoice{
 			Type:      miPublicSCRAM,
 			Label:     "Public source endpoints with SASL/SCRAM cluster link",
-			Rationale: "Your source exposes public broker endpoints, so the cluster link reaches it over the public internet using your source's SASL/SCRAM credentials, with no private networking to stand up.",
+			Rationale: rationale,
 		}
+	}
+
+	// kcp's private link types (2-5) provision the outbound link or the jump cluster from
+	// an AWS VPC, so a private source going to an Azure or GCP target can't use them,
+	// whatever its auth. Cluster Linking itself still applies, so the standard cutover
+	// steps stay and only the link's networking is designed with a specialist. (An AWS
+	// IAM-only source is handled by its own case below.)
+	if tc := targetCloud(p); tc != "" && tc != "AWS" && len(sourceAuthMethods(p)) > 0 && (authHas(p, authSCRAM) || !authHas(p, authAWSIAM)) {
+		return specialistInfra("Your source is private, and kcp's migration infrastructure provisions the cluster link from an AWS VPC, which can't reach "+cloudDisplay(tc)+", so the link's networking is set up with a specialist rather than auto-generated. Cluster Linking itself still applies — the standard cutover steps below are unchanged.", true)
 	}
 
 	switch {
@@ -87,20 +111,13 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 			Alternative:     "a jump cluster in your " + privateNetNoun(p) + " (SASL/SCRAM), if Confluent Cloud can't reach your brokers over an egress endpoint",
 			AlternativeType: miPrivateJumpSCRAM,
 		}
-	case authHas(p, authUnauth):
-		// Confluent Cloud Cluster Linking has no unauthenticated path (it needs an
-		// authenticated, TLS-based source connection), so an unauthenticated source cannot be
-		// linked over plaintext. Add a SASL/SCRAM listener for the link (type 2), jump cluster
-		// (type 4) as the alternative; the source's clients also need an auth method on CC after
-		// cutover. (Public Confluent Cloud docs never list PLAINTEXT as a source-link protocol.)
-		return MigrationInfraChoice{
-			Type:            miPrivateOutSCRAM,
-			Label:           "Private source with external outbound cluster link (SASL/SCRAM)",
-			Rationale:       "Your source is private and unauthenticated, so add a SASL/SCRAM listener on it for the migration link to use — Confluent Cloud Cluster Linking has no unauthenticated path, so the link needs an authenticated SASL/SCRAM connection. Your clients also need a supported auth method on Confluent Cloud after cutover, which has no unauthenticated equivalent.",
-			Alternative:     "a jump cluster in your " + privateNetNoun(p) + " (SASL/SCRAM), if you would rather not add a SASL/SCRAM listener to your source",
-			AlternativeType: miPrivateJumpSCRAM,
-		}
 	case authHas(p, authAWSIAM):
+		if tc := targetCloud(p); tc != "" && tc != "AWS" {
+			// The jump cluster (type 5) is built in AWS and reaches Confluent Cloud over a
+			// PrivateLink VPC endpoint, which can't cross to another cloud. IAM can't cross a
+			// cluster link either, so the whole link path is designed with a specialist.
+			return specialistInfra("Your source authenticates with AWS IAM, which a cluster link can't carry, and kcp's jump cluster, which bridges IAM, is built in AWS and connects through a PrivateLink VPC endpoint that can't reach "+cloudDisplay(tc)+". We design the migration path with a specialist.", false)
+		}
 		choice := MigrationInfraChoice{
 			Type:        miPrivateJumpIAM,
 			Label:       "Private source with jump cluster (IAM)",
@@ -114,10 +131,23 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 			choice.AlternativeType = miPrivateOutSCRAM
 		}
 		return choice
+	case authHas(p, authUnauth):
+		// kcp plans the cluster link with authentication (an authenticated, TLS-based
+		// source connection), so an unauthenticated source is not linked over plaintext. Add a SASL/SCRAM listener for the link (type 2);
+		// there is no jump-cluster alternative, since the jump cluster (type 4) also signs in to the
+		// source with SCRAM. The source's clients also need an auth method on CC after
+		// cutover. (Public Confluent Cloud docs never list PLAINTEXT as a source-link protocol.)
+		return MigrationInfraChoice{
+			Type:      miPrivateOutSCRAM,
+			Label:     "Private source with external outbound cluster link (SASL/SCRAM)",
+			Rationale: "Your source is private and unauthenticated, so add a SASL/SCRAM listener on it for the migration link to use. We plan the cluster link with authentication, so add a SASL/SCRAM listener and a SCRAM user on your source cluster that only the link uses. Your clients also need a supported auth method on Confluent Cloud after cutover, which has no unauthenticated equivalent.",
+		}
 	case authHas(p, authMTLS):
 		return scramListenerLinkChoice(p, "mTLS", "mTLS certificates")
 	case authHas(p, authSASLPlain):
 		return scramListenerLinkChoice(p, "SASL/PLAIN", "SASL/PLAIN credentials")
+	case authHas(p, authKerberos):
+		return scramListenerLinkChoice(p, "Kerberos", "Kerberos credentials")
 	default:
 		// Genuinely-undetected source auth on a supported tier: Cluster Linking IS
 		// available, only the link's authentication is designed with a specialist, so the
@@ -131,25 +161,26 @@ func MigrationInfraDecision(p Profile, tier Tier) MigrationInfraChoice {
 // links over SASL/SCRAM only — there is no mTLS or SASL/PLAIN link type (create-asset's
 // MigrationType has no such value, and the generated link hardcodes ScramLoginModule) —
 // so an <auth>-only source adds a SASL/SCRAM listener for the link to use while its
-// application clients keep their existing auth. A jump cluster (type 4) is the
-// alternative for anyone who would rather not touch the source. (Confluent Cloud Cluster
+// application clients keep their existing auth. There is no jump-cluster alternative:
+// the jump cluster (type 4) also signs in to the source with SCRAM, so it doesn't avoid
+// the listener. (Confluent Cloud Cluster
 // Linking does support mTLS/PLAIN sources natively, but kcp has no create-asset command
 // that emits such a link, so it is not offered as an auto-mapped type.)
 func scramListenerLinkChoice(p Profile, authName, keepNoun string) MigrationInfraChoice {
-	return MigrationInfraChoice{
-		Type:            miPrivateOutSCRAM,
-		Label:           "Private source with external outbound cluster link (SASL/SCRAM)",
-		Rationale:       "Your source is private and authenticates with " + authName + ", so if it is " + authName + "-only, add a SASL/SCRAM listener for the migration link to use — kcp's migration infrastructure links over SASL/SCRAM, and your application clients keep their " + keepNoun + ". The link then reaches your source privately over an external outbound endpoint.",
-		Alternative:     "a jump cluster in your " + privateNetNoun(p) + " (SASL/SCRAM), if you would rather not add a SASL/SCRAM listener to your source",
-		AlternativeType: miPrivateJumpSCRAM,
+	choice := MigrationInfraChoice{
+		Type:      miPrivateOutSCRAM,
+		Label:     "Private source with external outbound cluster link (SASL/SCRAM)",
+		Rationale: "Your source is private and authenticates with " + authName + ", so if it is " + authName + "-only, add a SASL/SCRAM listener for the migration link to use — kcp's migration infrastructure links over SASL/SCRAM, and your application clients keep their " + keepNoun + ". The link then reaches your source privately over an external outbound endpoint.",
 	}
+	return choice
 }
 
-// privateNetNoun is the customer's private-network noun for the target cloud —
-// VPC (AWS), VNet (Azure), VPC network (GCP) — matching the render layer's
-// privateNetworkNoun. MSK (always AWS) resolves to VPC, so MSK copy is unchanged.
+// privateNetNoun is the customer's private-network noun for the source cloud — VPC
+// (AWS), VNet (Azure), VPC network (GCP): the jump cluster would sit in the source's
+// network, whatever the target cloud. MSK (always AWS) resolves to VPC, so MSK copy is
+// unchanged.
 func privateNetNoun(p Profile) string {
-	switch targetCloud(p) {
+	switch p.SourceCloud {
 	case "Azure":
 		return "VNet"
 	case "GCP":
@@ -167,3 +198,11 @@ func specialistInfra(reason string, clusterLinkable bool) MigrationInfraChoice {
 // (types 4 and 5), which need extra provisioning inputs the direct-link types
 // (1, 2, 3) do not. Used to render the right follow-up for an alternative type.
 func IsJumpClusterType(t int) bool { return t == miPrivateJumpSCRAM || t == miPrivateJumpIAM }
+
+// cloudDisplay is the customer-facing name of a target cloud.
+func cloudDisplay(tc string) string {
+	if tc == "GCP" {
+		return "Google Cloud"
+	}
+	return tc
+}

@@ -157,6 +157,9 @@ const (
 	// SourceAuthSASLPlain is SASL/PLAIN, an OSK/CP-only source auth (MSK's SASL is
 	// SCRAM). It maps to the engine's "API keys (SASL/PLAIN)" source-auth string.
 	SourceAuthSASLPlain = "sasl-plain"
+	// SourceAuthKerberos is Kerberos (GSSAPI), an OSK/CP-only source auth. It is an
+	// ACL-bearing method like SCRAM, mTLS and SASL/PLAIN.
+	SourceAuthKerberos = "kerberos"
 )
 
 // DiscoveredClientAuth* mirrors the literal strings that
