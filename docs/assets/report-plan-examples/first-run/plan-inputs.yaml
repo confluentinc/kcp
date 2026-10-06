@@ -17,7 +17,7 @@ all_clusters:
   use_case_breadth:   # not set
   # Do you need to move your existing data?
   #   true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.
-  #   false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire
+  #   false → No, we can start fresh: Moves producers to the new cluster first, then consumers once they finish the old one
   move_existing_data:   # not set
   # Is private networking a hard requirement?
   #   (Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.)
@@ -86,7 +86,7 @@ all_clusters:
   # consumer_history_requirement: true   # default
   # ── Derived from your source auth per cluster; set one here to force it on ALL clusters ──
   # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-  #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+  #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
   #   api-keys → API keys (SASL/PLAIN)
   #   oauth → OAuth
   #   mtls → mTLS
@@ -103,7 +103,7 @@ all_clusters:
   #   false → No
   # self_managed_connectors:   # from scan · [true | false]
   # Is your inter-broker protocol (IBP) 2.8 or later?
-  #   (This only matters when your Kafka version is 2.4-2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.)
+  #   (This only matters when your Kafka version is 2.4–2.9. An inter-broker protocol below 2.8 blocks Cluster Linking even if your Kafka version qualifies.)
   #   true → Yes, 2.8 or later
   #   false → No, below 2.8
   # inter_broker_protocol:   # from scan · [true | false]
@@ -184,7 +184,7 @@ clusters:
     # move_existing_data:   # override for this cluster · [true | false]
     # private_networking_required:   # override for this cluster · [true | false]
     # connects_today:   # override for this cluster · [same-vpc | peered | privatelink | other]
-    # cc_egress_required:   # override for this cluster · [true | false]
+    cc_egress_required:   # not set · [true | false]
     # schema_registry:   # override for this cluster · [none | glue | cp-enterprise-7.1 | cp-community | other]
     # schema_strategy:   # override for this cluster · [migrate | fresh | schemaless]
     # downtime_tolerance:   # override for this cluster · [window-all | window-sequential | minutes | seconds | zero]

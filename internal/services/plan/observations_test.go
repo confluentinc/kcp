@@ -180,3 +180,30 @@ func TestSourceAuthsDetected_SCRAM(t *testing.T) {
 		t.Errorf("expected [%s], got %v", SourceAuthSCRAM, auths)
 	}
 }
+
+// The no-metrics pointer names a command that exists for the cluster's source,
+// not the nonexistent `kcp scan metrics`.
+func TestNoThroughputMetrics_RunnableCommand(t *testing.T) {
+	find := func(obs []Observation) string {
+		for _, o := range obs {
+			if o.Title == "No throughput metrics scanned" {
+				return o.Detail
+			}
+		}
+		return ""
+	}
+	msk := find(clusterObservations(report.ProcessedCluster{}, engine.Profile{StateFile: "kcp-state.json"}))
+	if !strings.Contains(msk, "`kcp discover --region <your-region>` (without `--skip-metrics`)") || strings.Contains(msk, "scan metrics") {
+		t.Errorf("MSK pointer: %s", msk)
+	}
+	osk := find(clusterObservations(report.ProcessedCluster{}, engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", StateFile: "scans/kcp-state.json"}))
+	for _, want := range []string{"kcp scan clusters --source-type apache-kafka", "--credentials-file apache-kafka-credentials.yaml", "--state-file scans/kcp-state.json", "--metrics prometheus --metrics-range 7d", "--metrics jolokia --metrics-duration 1h"} {
+		if !strings.Contains(osk, want) {
+			t.Errorf("Apache Kafka pointer missing %q: %s", want, osk)
+		}
+	}
+	none := find(clusterObservations(report.ProcessedCluster{}, engine.Profile{Scanless: true}))
+	if !strings.Contains(none, "kcp discover") || !strings.Contains(none, "kcp scan clusters") {
+		t.Errorf("scanless pointer should name both: %s", none)
+	}
+}

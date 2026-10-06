@@ -116,8 +116,9 @@ const (
 	srcNetworkingPrivateLinkAzure    = "https://docs.confluent.io/cloud/current/networking/azure-platt.html"
 	srcNetworkingPrivateLinkGcp      = "https://docs.confluent.io/cloud/current/networking/gcp-platt.html"
 	srcAuthCC                        = "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
+	srcConnectorOffsets              = "https://docs.confluent.io/cloud/current/connectors/offsets.html"
 	srcSwitchoverCL                  = "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
-	srcReplicator                    = "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+	srcReplicator                    = "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/replicator-failover.html"
 	srcSchema                        = "https://docs.confluent.io/cloud/current/sr/schema-linking.html"
 	srcSchemaFresh                   = "https://docs.confluent.io/cloud/current/sr/index.html"
 	srcConnectors                    = "https://docs.confluent.io/cloud/current/connectors/index.html"
@@ -158,17 +159,17 @@ func ComputePlan(p Profile) PlanResult {
 
 	sizingVerdict := buildSizingVerdict(p, sizing, final.Tier)
 
-	auth := authDecision(p, tc)
 	switchover := switchoverDecision(p, sizing, final.Tier)
+	auth := authDecision(p, tc, switchover.GatewayMediated)
 
 	// Source-credential handling: how this application's existing source auth is
 	// used given how it moves data. Carried as structured data only; the renderer
 	// surfaces it once, in the shared migration-infrastructure section, rather than
 	// repeating it in every application's data-migration reason.
-	switchover.SourceCredentialHandling = sourceCredentialHandling(p, &switchover)
+	switchover.SourceCredentialHandling = sourceCredentialHandling(p, &switchover, final.Tier)
 
 	schema := schemaDecision(p)
-	connectors := connectorsDecision(p)
+	connectors := connectorsDecision(p, replicationVia(&switchover))
 	topics := topicReadinessDecision(p)
 	historical := historicalDataDecision(p)
 
@@ -183,6 +184,7 @@ func ComputePlan(p Profile) PlanResult {
 		Tier:             final.Tier,
 		Band:             sizing.Band,
 		NetworkingMethod: networking.Value,
+		GCPPrivateLink:   networking.GCPPrivateLink,
 		DedicatedReasons: final.Causes,
 		Complete:         complete,
 	})
@@ -265,10 +267,15 @@ func buildSizingVerdict(p Profile, sizing SizingResult, tier Tier) SizingVerdict
 		if sizing.ServerlessCapped {
 			sizeAnswered = p.SourceClusterTypeAnswered
 		}
+		sizeDriver := srcOr(sizeAnswered, scanTrigger)
+		if sizing.ServerlessCapped {
+			// The partition ceiling is assumed for MSK Serverless, not scanned or answered.
+			sizeDriver = asm("MSK Serverless partition limit")
+		}
 		if measuredThroughput {
-			sizingVerdict.Reason = basis(srcOr(sizeAnswered, scanTrigger)) + "we size from the most demanding signal, here your " + driverBare + ". "
+			sizingVerdict.Reason = basis(sizeDriver) + "we size from the most demanding signal, here your " + driverBare + ". "
 		} else {
-			sizingVerdict.Reason = basis(srcOr(sizeAnswered, scanTrigger)) + "we size from your " + driverBare + " (the only signal we have); measured ingress/egress can raise this. "
+			sizingVerdict.Reason = basis(sizeDriver) + "we size from your " + driverBare + " (the only signal we have); measured ingress/egress can raise this. "
 		}
 	}
 	if elastic {

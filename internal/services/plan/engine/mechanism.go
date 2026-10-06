@@ -59,9 +59,9 @@ func resolveMechanism(p Profile, tier Tier, needsDataAnswer string) mechanismRes
 	if needsDataAnswer != "" {
 		needsData = needsDataAnswer != "No"
 	}
-	// Cluster Linking floor: below Kafka 2.4, OR 2.4-2.9 with inter-broker
+	// Cluster Linking floor: below Kafka 2.4, OR 2.4–2.9 with inter-broker
 	// protocol < 2.8 (IBP is assumed ≥ 2.8 unless the user says otherwise).
-	ibpBelow := p.KafkaVersion == "2.4-2.9" && p.InterBrokerProtocol == "No"
+	ibpBelow := p.KafkaVersion == "2.4–2.9" && p.InterBrokerProtocol == "No"
 	belowFloor := p.KafkaVersion == "Older than 2.4" || ibpBelow
 
 	if !needsData {
@@ -90,12 +90,29 @@ func resolveMechanism(p Profile, tier Tier, needsDataAnswer string) mechanismRes
 		}
 		return mechanismResult{Mechanism: "replicator", Why: why}
 	}
+	// A private MSK Provisioned source on AWS IAM with no SASL/SCRAM listener is bridged
+	// by a jump cluster, as Serverless is: it needs no change to the production cluster.
+	// kcp's jump-cluster types are private-source only, so a public source keeps
+	// Cluster Linking and adds the SASL/SCRAM listener. Mirrors MigrationInfraDecision.
+	if p.isMSK() && authHas(p, authAWSIAM) && !authHas(p, authSCRAM) && p.SourcePublicAccess != "Yes" {
+		return mechanismResult{Mechanism: "jump-cluster"}
+	}
 	return mechanismResult{Mechanism: "cluster-linking"}
+}
+
+// iamCrossCloudJumpCluster reports whether the data move would use a jump cluster
+// (AWS IAM source with no SASL/SCRAM listener, incl. Serverless) while the target
+// Confluent Cloud cluster is on another cloud. kcp's jump-cluster migration infra
+// is built in AWS and connects through a PrivateLink VPC endpoint, which can't
+// reach Azure or Google Cloud, so a specialist designs that path instead.
+func iamCrossCloudJumpCluster(p Profile, tier Tier, needsDataAnswer string) bool {
+	tc := targetCloud(p)
+	return tc != "" && tc != "AWS" && resolveMechanism(p, tier, needsDataAnswer).Mechanism == "jump-cluster"
 }
 
 // mechanismUsesClusterLink — the one fact infra needs from switchover logic:
 // would this ever pull data over a Cluster Link? Both Cluster Linking proper and
-// the Serverless jump cluster are links underneath; Replicator and start-fresh
+// the jump cluster are links underneath; Replicator and start-fresh
 // are not.
 func mechanismUsesClusterLink(p Profile, tier Tier, needsDataAnswer string) bool {
 	m := resolveMechanism(p, tier, needsDataAnswer)
@@ -108,6 +125,15 @@ func mechanismUsesClusterLink(p Profile, tier Tier, needsDataAnswer string) bool
 // PrivateLink Endpoint (or GCP egress PSC) is added for the link — keeping the
 // networking verdict consistent with the migration-infra type (public source =>
 // type 1, no private networking to the source).
+//
+// An on-prem (or "other") source has no cloud VPC/VNet for either endpoint to
+// reach into — Egress PrivateLink Endpoint and GCP's egress PSC are both
+// documented only for a source inside a cloud network — so no standard egress
+// endpoint is added there either; a specialist designs the private route instead
+// (see the onprem_private_cluster_link human-assist trigger).
 func clusterLinkNeedsPrivateEgress(p Profile, tier Tier, needsDataAnswer string) bool {
+	if p.SourceCloud == "On-prem or other" {
+		return false
+	}
 	return mechanismUsesClusterLink(p, tier, needsDataAnswer) && p.SourcePublicAccess != "Yes"
 }
