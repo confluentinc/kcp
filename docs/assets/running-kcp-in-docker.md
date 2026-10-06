@@ -66,15 +66,22 @@ docker pull your-artifactory.example.com/docker-remote/confluentinc/kcp:0.9.3
 
 ## Verifying provenance (optional)
 
-Each release publishes an SBOM for its binaries (as a release asset), and
-each published image is cosign-signed (keyless, via GitHub Actions OIDC):
+Published images are signed with [cosign](https://docs.sigstore.dev/) (keyless)
+by the kcp release pipeline, which runs in Confluent's Semaphore CI. Before
+trusting an image you can verify it carries a signature from that pipeline:
 
 ```bash
 cosign verify confluentinc/kcp:0.9.3 \
-  --certificate-identity-regexp '^https://github.com/confluentinc/kcp/\.github/workflows/release\.yml@.+$' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-identity <SIGNING_IDENTITY> \
+  --certificate-oidc-issuer <OIDC_ISSUER>
 ```
 
-The identity must match the release workflow that actually signed the image;
-never use `.*`/wildcard identity or issuer patterns, since they accept a
-signature from any signer and verify nothing.
+Pin `<SIGNING_IDENTITY>` and `<OIDC_ISSUER>` to the exact values the first
+signed release produces. The pipeline authenticates through GCP
+workload-identity federation, so the expected values are the issuer
+`https://accounts.google.com` and the identity
+`semaphore-kcp-release@kcp-prod.iam.gserviceaccount.com` — confirm both against
+the first published signature before relying on them.
+
+Never use a `.*`/wildcard identity or issuer pattern: a wildcard accepts a
+signature from any signer and verifies nothing.
