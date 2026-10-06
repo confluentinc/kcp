@@ -29,9 +29,9 @@ func NewReportPlanCmd() *cobra.Command {
 	reportPlanCmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Generate a Migration Plan to migrate to Confluent Cloud",
-		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan`.\n\n" +
+		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan` or `kcp discover`, or from your answers alone with no state file.\n\n" +
 			"For each scanned cluster the plan recommends a target cluster type, sizing, networking, authentication, and data-migration approach, and lists the questions a scan can't answer.\n\n" +
-			"**How it works:** kcp auto-answers everything it can from the scan. What it can't derive is written to `plan-inputs.yaml` (in the current directory) — fleet-wide questions once under `defaults:`, per-cluster facts under each cluster, each answer a short, stable token with the full wording in the comment above it. Edit that file in place and re-run; kcp reads your answers back, folds them into the plan, and rewrites the file with any follow-ups revealed — so it converges over a couple of passes.\n\n" +
+			"**How it works:** kcp auto-answers everything it can from the scan. What it can't derive is written to `plan-inputs.yaml` (in the current directory) — fleet-wide questions once under `all_clusters:`, per-cluster facts under each cluster, each answer a short, stable token with the full wording in the comment above it. Edit that file in place and re-run; kcp reads your answers back, folds them into the plan, and rewrites the file with any follow-ups revealed — so it converges over a couple of passes.\n\n" +
 			"**Output:** `plan.md` and `plan.json` go to `--output-dir` (default `./plan-output`); `plan-inputs.yaml` is read from and written back to `--plan-inputs` (default `./plan-inputs.yaml`) — edit it in place between runs.",
 		Example: `  # First pass: state file in; writes ./plan-inputs.yaml + plan.md/plan.json
   kcp report plan --state-file kcp-state.json
@@ -61,7 +61,8 @@ func NewReportPlanCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	reportPlanCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		// The description is not repeated here: help prints Long above this.
+		fmt.Printf("Usage:\n  %s\n\n", c.UseLine())
 		if usage := optionalFlags.FlagUsages(); usage != "" {
 			fmt.Printf("Flags:\n%s\n", usage)
 		}
@@ -105,29 +106,41 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("load --plan-inputs %s: %w", planInputs, err)
 	}
-	// Misspelled keys, invalid values, or misspelled cluster names would otherwise be
-	// silently ignored, leaving the user with a plan that looks answered but isn't. So
-	// collect every such mistake and fail before writing anything, rather than emit a
-	// plan built on dropped answers. Cluster-name checks need a real scan to compare
-	// against (skip them in questionnaire mode).
-	if !scanless {
-		inputErrs = append(inputErrs, plan.ValidateDeclaredClusters(declared, processed)...)
-	}
+	// Misspelled keys, invalid values, misspelled cluster names, or an option
+	// declared for a source that never offers it (e.g. source_auth: iam on a
+	// Confluent Platform cluster) would otherwise be silently ignored or dropped,
+	// leaving the user with a plan that looks answered but isn't. So collect every
+	// such mistake and fail before writing anything, rather than emit a plan built
+	// on dropped answers. A scanless run plans a single synthetic cluster, so any other
+	// cluster key is rejected there too; the source checks run either way, since a
+	// scanless run can still declare a source_platform to validate against.
+	inputErrs = append(inputErrs, plan.ValidateDeclaredSources(declared, processed, scanless)...)
+	inputErrs = append(inputErrs, plan.ValidateDeclaredClusters(declared, processed, scanless)...)
 	if len(inputErrs) > 0 {
 		return fmt.Errorf("plan-inputs %s has %d problem(s) to fix (no plan was written):\n  - %s",
 			planInputs, len(inputErrs), strings.Join(inputErrs, "\n  - "))
 	}
 
-	// Optional fleet filter — never prompts; unset means the whole scan.
+	// Optional fleet filter — never prompts; unset means the whole scan. The filter
+	// chooses which plans are rendered, not what is persisted: plan-inputs.yaml is
+	// always rewritten from the full scan, so a filtered run never drops the other
+	// clusters' answers.
+	full := processed
+	filtered := false
 	if filterCluster != "" || filterRegion != "" {
-		filtered, matched := plan.FilterState(processed, filterCluster, filterRegion)
+		fs, matched := plan.FilterState(processed, filterCluster, filterRegion)
 		if matched == 0 {
 			return fmt.Errorf("no clusters match --cluster-id %q / --region %q; check the names against your scan", filterCluster, filterRegion)
 		}
-		processed = filtered
+		processed = fs
+		filtered = true
 	}
 
 	ep := plan.BuildEnginePlan(processed, declared, stateFile, nil)
+	inputsEP := ep
+	if filtered {
+		inputsEP = plan.BuildEnginePlan(full, declared, stateFile, nil)
+	}
 	if scanless {
 		ep.Header.Source = "Questionnaire (no scan file)"
 	}
@@ -170,7 +183,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	// follow-ups this run revealed. Written to the same path it was read from
 	// (--plan-inputs) so editing and re-running never loses answers — the write is
 	// atomic (temp + rename) so an interrupted run can't leave a truncated file.
-	if err := atomicWrite(planInputs, []byte(plan.RenderPlanInputsYAML(ep))); err != nil {
+	if err := atomicWrite(planInputs, []byte(plan.RenderPlanInputsYAML(inputsEP))); err != nil {
 		return fmt.Errorf("write plan-inputs.yaml: %w", err)
 	}
 	fmt.Println("wrote", planInputs)
@@ -183,6 +196,11 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 // editing plan-inputs.yaml, so the converge loop is obvious from the terminal.
 func printNextSteps(ep *plan.EnginePlan, planInputsPath string) {
 	s := ep.Summary
+	if s.Clusters == 0 {
+		// Nothing was planned, so "all required questions are answered" would be vacuous.
+		fmt.Println("\n0 migration plan(s): no clusters were found in the state file. Run `kcp discover` (Amazon MSK) or `kcp scan clusters` (Apache Kafka) to add some, then re-run.")
+		return
+	}
 	fmt.Printf("\n%d migration plan(s): %d ready, %d need answers, %d need a specialist. %d required / %d optional question(s) open.\n",
 		s.Clusters, s.Ready, s.NeedsAnswers, s.NeedsSpecialist, s.OpenRequired, s.OpenOptional)
 	if s.OpenRequired > 0 || s.OpenOptional > 0 {

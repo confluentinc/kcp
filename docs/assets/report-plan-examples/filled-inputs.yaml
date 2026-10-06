@@ -91,7 +91,7 @@ all_clusters:
   # consumer_history_requirement: true   # default
   # ── Derived from your source auth per cluster; set one here to force it on ALL clusters ──
   # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-  #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+  #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
   #   api-keys → API keys (SASL/PLAIN)
   #   oauth → OAuth
   #   mtls → mTLS
@@ -181,6 +181,7 @@ clusters:
     use_case_breadth: few-teams   # override for this cluster
     # move_existing_data:   # override for this cluster · [true | false]
     private_networking_required: false   # override for this cluster
+    cc_egress_required: false   # override for this cluster
     schema_registry: glue   # override for this cluster
     # schema_strategy:   # override for this cluster · [migrate | fresh | schemaless]
     # exceeds_standard_limits:   # override for this cluster · [true | false]

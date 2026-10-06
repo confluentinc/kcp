@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -34,7 +35,7 @@ type DeclaredCluster struct {
 	Apps   map[string]IntakeInputs // nil when no `applications:` block is declared
 }
 
-// DeclaredInputs is the parsed plan-inputs.yaml: fleet-wide `defaults:` plus
+// DeclaredInputs is the parsed plan-inputs.yaml: fleet-wide `all_clusters:` plus
 // per-cluster answers under a `clusters:` map (keyed by cluster display key —
 // bare name, or name@region on a name collision). Answers layer
 // app → cluster → defaults, each level optional.
@@ -107,6 +108,22 @@ func LoadDeclaredInputs(path string) (DeclaredInputs, []string, error) {
 func ParseDeclaredInputs(data []byte) (DeclaredInputs, []string, error) {
 	if len(data) == 0 {
 		return DeclaredInputs{}, nil, nil
+	}
+	var top map[string]any
+	if err := yaml.Unmarshal(data, &top); err != nil {
+		return DeclaredInputs{}, nil, err
+	}
+	var unknownTop []string
+	for k := range top {
+		switch k {
+		case "all_clusters", "defaults", "clusters":
+		default:
+			unknownTop = append(unknownTop, fmt.Sprintf("%q", k))
+		}
+	}
+	if len(unknownTop) > 0 {
+		sort.Strings(unknownTop)
+		return DeclaredInputs{}, nil, fmt.Errorf("unknown top-level key(s) %s: valid keys are all_clusters and clusters", strings.Join(unknownTop, ", "))
 	}
 	var doc struct {
 		AllClusters map[string]any            `yaml:"all_clusters"`
@@ -205,7 +222,7 @@ func resolveDeclared(raw map[string]any) (IntakeInputs, []string) {
 	return resolveKeys(raw, keyScopeCluster)
 }
 
-// resolveDeclaredDefaults resolves the fleet `defaults:` block. Scan-fact keys are
+// resolveDeclaredDefaults resolves the fleet `all_clusters:` block. Scan-fact keys are
 // per-cluster and don't belong at the fleet level — they're reported and skipped.
 func resolveDeclaredDefaults(raw map[string]any) (IntakeInputs, []string) {
 	return resolveKeys(raw, keyScopeDefaults)
@@ -250,8 +267,15 @@ func resolveKeys(raw map[string]any, scope keyScope) (IntakeInputs, []string) {
 		if raw[key] == nil {
 			continue
 		}
+		toks := toTokens(raw[key])
+		// A single-choice question takes one value. A list used to be coerced to its first
+		// element, silently dropping the rest, so reject it instead.
+		if !q.Multi && len(toks) > 1 {
+			warnings = append(warnings, fmt.Sprintf("%s: expects a single value, got a list [%s]. Pick one of: %s", key, strings.Join(toks, ", "), strings.Join(q.tokens(), ", ")))
+			continue
+		}
 		var engVals []string
-		for _, tok := range toTokens(raw[key]) {
+		for _, tok := range toks {
 			if tok == "" {
 				continue
 			}
@@ -260,7 +284,9 @@ func resolveKeys(raw map[string]any, scope keyScope) (IntakeInputs, []string) {
 				warnings = append(warnings, fmt.Sprintf("%s: unknown value %q. Valid values: %s", key, tok, strings.Join(q.tokens(), ", ")))
 				continue
 			}
-			engVals = append(engVals, eng)
+			if !slices.Contains(engVals, eng) {
+				engVals = append(engVals, eng)
+			}
 		}
 		if len(engVals) > 0 && q.set != nil {
 			q.set(&in, engVals)
@@ -323,6 +349,19 @@ func (q question) engineFor(token string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// optFor finds the option carrying the given engine value (the reverse of
+// engineFor), so a caller holding a resolved engine value — e.g. a declared
+// answer read back off IntakeInputs — can get back to its option (Token,
+// Applies) for validation or display.
+func (q question) optFor(eng string) (opt, bool) {
+	for _, o := range q.Opts {
+		if o.Engine == eng {
+			return o, true
+		}
+	}
+	return opt{}, false
 }
 
 // tokens lists a question's valid tokens (for error messages).

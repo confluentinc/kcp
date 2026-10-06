@@ -83,6 +83,7 @@ func schemaDecision(p Profile) SchemaResult {
 				"Part of Confluent Platform Enterprise, so it needs a license",
 				"Replicates the `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode",
 				"IMPORT mode needs an empty destination registry, so plan this before you register anything else there",
+				"At cutover, stop Replicator and set the Confluent Cloud Schema Registry back to READWRITE, so producers can register new schemas",
 			},
 		}
 	}
@@ -90,6 +91,23 @@ func schemaDecision(p Profile) SchemaResult {
 		// "Pending" + Held mirror SwitchoverResult so both held verdicts read the
 		// same in plan.json (md already shows both as "Pending" via the contingent map).
 		return SchemaResult{Value: "Pending", Kind: SchemaKindPending, Held: true, Reason: reason}
+	}
+
+	// 0. The scan detected a Confluent registry but its edition is unanswered: the
+	// registry is present, so never claim "no Schema Registry detected".
+	if sr == "" && p.SchemaDetectedByScan {
+		switch strategy {
+		case schemaStrategyFresh:
+			return recreateFresh()
+		case schemaStrategySchemaless:
+			return SchemaResult{
+				Value:        "Schemaless (mismatch)",
+				Kind:         SchemaKindSchemaless,
+				Reason:       basis(sc("Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
+			}
+		}
+		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")
 	}
 
 	// 1. No source registry.
@@ -137,7 +155,7 @@ func schemaDecision(p Profile) SchemaResult {
 				Action: strptr("Migrate Glue schemas"),
 				Tool:   strptr("kcp create-asset migrate-schemas --glue-registry"),
 				Pros:   []string{"Automated re-registration of your Glue schemas", "Works where Schema Linking cannot, since Glue cannot be linked"},
-				Cons:   []string{"Schema IDs are not preserved", "Consumers run bilingual and producers switch over in a phased client cutover, which can take weeks", "Your subject naming strategy must match on Confluent Cloud"},
+				Cons:   []string{"Schema IDs are not preserved", "Your subject naming strategy must match on Confluent Cloud", "At cutover, switch your clients from the AWS Glue Schema Registry serializers to Confluent Schema Registry serializers. Messages already mirrored keep their Glue format, so consumers that read that history still need the Glue deserializer."},
 			}
 		}
 		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")
@@ -152,7 +170,7 @@ func schemaDecision(p Profile) SchemaResult {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
-				Reason:       basis(srcOr(p.SchemaAnswered, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				Reason:       basis(srcOr(!p.SchemaDetectedByScan, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
@@ -166,7 +184,7 @@ func schemaDecision(p Profile) SchemaResult {
 					Action: strptr("Set up Schema Linking"),
 					Tool:   strptr("kcp create-asset migrate-schemas --url"),
 					Pros:   []string{"A live mirror that keeps Confluent Cloud in sync with your source", "Preserves your existing schema IDs", "No client change needed for the schema move"},
-					Cons:   []string{"Your Schema Registry needs outbound reach to Confluent Cloud on port 443", "The target Schema Registry is set to IMPORT mode", "A dedicated context is needed if the target already holds schemas"},
+					Cons:   []string{"Your Schema Registry needs outbound reach to Confluent Cloud on port 443", "The target Schema Registry is set to IMPORT mode", "A dedicated context is needed if the target already holds schemas", "At cutover, stop the schema exporter and set the Confluent Cloud Schema Registry back to READWRITE, so producers can register new schemas"},
 				}
 			}
 			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Platform Enterprise 7.1+"), ans("migrate your schemas")) + "the schema exporter is unavailable here, because your registry cannot reach Confluent Cloud or this is a government cloud. Replicator replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is part of Confluent Platform Enterprise, which you already run, so it needs a license rather than an edition change.")
@@ -183,7 +201,7 @@ func schemaDecision(p Profile) SchemaResult {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
-				Reason:       basis(srcOr(p.SchemaAnswered, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
+				Reason:       basis(srcOr(!p.SchemaDetectedByScan, "Schema Registry detected"), ans("schemaless")) + "you declared schemaless, but a Schema Registry is present on your source.",
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
