@@ -39,20 +39,68 @@ docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
   confluentinc/kcp:latest report plan --state-file kcp-state.json
 ```
 
-## The web UI (`kcp ui`)
+### Make it feel native (optional)
+
+Typing the full `docker run` line every time is tedious. Wrap the plumbing in a
+shell alias and then use `kcp` as if it were installed locally:
 
 ```bash
-docker run --rm -p 5556:5556 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
-  confluentinc/kcp:latest ui --state-file kcp-state.json
+alias kcp='docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" confluentinc/kcp:0.9.3'
+
+# now, for example:
+kcp discover --region us-east-1
+```
+
+Because the alias is single-quoted, `$PWD` and `$(id -u)` are re-evaluated every
+time you run `kcp`, so it always mounts your current directory. Add the line to
+your `~/.bashrc` / `~/.zshrc` to make it permanent.
+
+## Scanning an Apache Kafka (non-MSK) cluster
+
+Apache Kafka sources don't use AWS, so drop the `-e AWS_*` flags and instead hand
+kcp an `apache-kafka-credentials.yaml` you author yourself (schema and examples:
+[Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md)).
+Keep that file in the mounted working directory so the container can read it:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
+  confluentinc/kcp:latest scan clusters \
+    --source-type apache-kafka \
+    --state-file kcp-state.json \
+    --credentials-file apache-kafka-credentials.yaml
+```
+
+Two container-specific gotchas:
+
+- **The container must be able to reach your brokers.** The `bootstrap_servers`
+  in the credentials file must be routable *from inside the container*. If the
+  brokers run on the Docker host, use the host's real hostname/IP (on Docker
+  Desktop, `host.docker.internal`); on Linux you can add `--network host`.
+- **TLS/mTLS files must be mounted, with in-container paths.** If the credentials
+  file points at a truststore or client keystore, copy those into the mounted
+  directory and reference them by their path *inside* the container (e.g.
+  `/work/truststore.jks`) — a host path like `/Users/you/...` won't exist in the
+  container.
+
+## The web UI (`kcp ui`)
+
+`kcp ui` binds to `localhost` by default, which a container can't expose to the
+host. Pass `--host 0.0.0.0` so the server listens on the container's network
+interface, and publish the port on your host's **loopback** so it stays off your
+network:
+
+```bash
+docker run --rm -p 127.0.0.1:5556:5556 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
+  confluentinc/kcp:latest ui --host 0.0.0.0 --state-file kcp-state.json
 # then open http://localhost:5556
 ```
 
-> **Known limitation:** `kcp ui` currently binds to `localhost` inside the
-> container rather than `0.0.0.0`, and there is no `--host`/`--bind` flag to
-> change that. Because of this, the published port above is **not**
-> reachable from the host — `http://localhost:5556` will not load. Until
-> container-wide binding is supported, run `kcp ui` directly on the host
-> (outside a container) to use the web UI.
+> **Security note:** the UI has **no authentication**. `--host 0.0.0.0` makes it
+> reachable from every interface *inside* the container; the
+> `-p 127.0.0.1:5556:5556` mapping is what keeps it reachable only from your own
+> machine. Publishing without that loopback restriction (plain `-p 5556:5556`)
+> would expose the UI to your whole network. kcp prints a warning whenever it
+> binds a non-local host.
 
 ## Mirroring into JFrog Artifactory (locked-down networks)
 
