@@ -108,7 +108,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
 		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete))
 
-	groupCheck, groupWarnings := CheckGroupSplitBrain(groups)
+	groupCheck, groupWarnings := CheckGroupSplitBrain(groups.SourceGroups, groups.TargetStates)
 	report.Preconditions = append(report.Preconditions, groupCheck)
 	report.Warnings = append(report.Warnings, groupWarnings...)
 

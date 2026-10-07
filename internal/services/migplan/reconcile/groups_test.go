@@ -8,10 +8,7 @@ import (
 func TestCheckGroupSplitBrain_RefusesActiveGroups(t *testing.T) {
 	for _, state := range []string{"Stable", "PreparingRebalance", "CompletingRebalance", "Assigning", "Reconciling", "STABLE"} {
 		t.Run(state, func(t *testing.T) {
-			res, _ := CheckGroupSplitBrain(GroupFacts{
-				SourceGroups: []string{"orders-app"},
-				TargetStates: map[string]string{"orders-app": state},
-			})
+			res, _ := CheckGroupSplitBrain([]string{"orders-app"}, map[string]string{"orders-app": state})
 			if res.OK {
 				t.Fatalf("state %q on destination must refuse, got pass", state)
 			}
@@ -24,10 +21,7 @@ func TestCheckGroupSplitBrain_RefusesActiveGroups(t *testing.T) {
 
 func TestCheckGroupSplitBrain_UnknownStateRefuses(t *testing.T) {
 	for _, state := range []string{"", "NotReady"} {
-		res, _ := CheckGroupSplitBrain(GroupFacts{
-			SourceGroups: []string{"g"},
-			TargetStates: map[string]string{"g": state},
-		})
+		res, _ := CheckGroupSplitBrain([]string{"g"}, map[string]string{"g": state})
 		if res.OK {
 			t.Fatalf("state %q must be treated as active and refuse", state)
 		}
@@ -37,10 +31,7 @@ func TestCheckGroupSplitBrain_UnknownStateRefuses(t *testing.T) {
 // A group whose destination state could not be read is refused as active, but
 // the message must not claim it has members: it says the state is unknown.
 func TestCheckGroupSplitBrain_UnknownStateDetailDoesNotClaimMembers(t *testing.T) {
-	res, _ := CheckGroupSplitBrain(GroupFacts{
-		SourceGroups: []string{"g", "orders-app"},
-		TargetStates: map[string]string{"g": "", "orders-app": "Stable"},
-	})
+	res, _ := CheckGroupSplitBrain([]string{"g", "orders-app"}, map[string]string{"g": "", "orders-app": "Stable"})
 	if res.OK {
 		t.Fatal("an unknown state must refuse")
 	}
@@ -55,10 +46,7 @@ func TestCheckGroupSplitBrain_UnknownStateDetailDoesNotClaimMembers(t *testing.T
 }
 
 func TestCheckGroupSplitBrain_EmptyGroupWarnsOnly(t *testing.T) {
-	res, warnings := CheckGroupSplitBrain(GroupFacts{
-		SourceGroups: []string{"billing"},
-		TargetStates: map[string]string{"billing": "Empty"},
-	})
+	res, warnings := CheckGroupSplitBrain([]string{"billing"}, map[string]string{"billing": "Empty"})
 	if !res.OK {
 		t.Fatalf("an Empty destination group must not refuse, got %+v", res)
 	}
@@ -68,20 +56,14 @@ func TestCheckGroupSplitBrain_EmptyGroupWarnsOnly(t *testing.T) {
 }
 
 func TestCheckGroupSplitBrain_IgnoresDeadAndDestinationOnlyGroups(t *testing.T) {
-	res, warnings := CheckGroupSplitBrain(GroupFacts{
-		SourceGroups: []string{"gone"},
-		TargetStates: map[string]string{"gone": "Dead", "dest-only-app": "Stable"},
-	})
+	res, warnings := CheckGroupSplitBrain([]string{"gone"}, map[string]string{"gone": "Dead", "dest-only-app": "Stable"})
 	if !res.OK || len(warnings) != 0 {
 		t.Fatalf("got %+v / %v, want a pass and no warnings", res, warnings)
 	}
 }
 
 func TestCheckGroupSplitBrain_DetailIsSorted(t *testing.T) {
-	res, _ := CheckGroupSplitBrain(GroupFacts{
-		SourceGroups: []string{"zeta", "alpha"},
-		TargetStates: map[string]string{"zeta": "Stable", "alpha": "Stable"},
-	})
+	res, _ := CheckGroupSplitBrain([]string{"zeta", "alpha"}, map[string]string{"zeta": "Stable", "alpha": "Stable"})
 	if strings.Index(res.Detail, "alpha") > strings.Index(res.Detail, "zeta") {
 		t.Errorf("detail = %q, want groups sorted", res.Detail)
 	}

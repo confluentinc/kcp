@@ -51,22 +51,23 @@ func checkVisibility(name, reason string) PreconditionResult {
 }
 
 // GroupSplitBrainCheckName names the precondition CheckGroupSplitBrain returns.
-const GroupSplitBrainCheckName = "no source consumer group is active on the destination"
+const GroupSplitBrainCheckName = "no in-scope consumer group is active on the destination"
 
-// CheckGroupSplitBrain refuses when a group that exists on the source is
-// active on the destination: after the switch, coordination for the route's
-// clients moves to the destination and every source group goes with it, so
-// its members would join a group that already has members. Groups only on the
-// destination are ignored. A source group sitting Empty on the destination
-// (retained only while it has committed offsets) passes with a warning, since
-// the conversion will overwrite those offsets. Dead is ignored. Any other
-// state — including an empty or unrecognised one — counts as active, so an
-// unreadable state can't let a split-brain through.
-func CheckGroupSplitBrain(f GroupFacts) (PreconditionResult, []string) {
+// CheckGroupSplitBrain refuses when one of groups (the conversion's in-scope
+// source groups) is active on the destination: after the switch, coordination
+// for the route's clients moves to the destination, so the group's members
+// would join a group that already has members, and kcp's admin offset commit
+// for it would be refused. Groups only on the destination are ignored. A group
+// sitting Empty on the destination (retained only while it has committed
+// offsets) passes with a warning, since the conversion will overwrite those
+// offsets. Dead is ignored. Any other state — including an empty or
+// unrecognised one — counts as active, so an unreadable state can't let a
+// split-brain through.
+func CheckGroupSplitBrain(groups []string, targetStates map[string]string) (PreconditionResult, []string) {
 	var active, idle []string
 	anyUnknown := false
-	for _, g := range f.SourceGroups {
-		state, onTarget := f.TargetStates[g]
+	for _, g := range groups {
+		state, onTarget := targetStates[g]
 		if !onTarget {
 			continue
 		}

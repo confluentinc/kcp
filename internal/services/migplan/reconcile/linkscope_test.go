@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -225,5 +227,189 @@ func TestCheckLinkTopics_VerdictsAreSortedBySourceName(t *testing.T) {
 
 	if len(unchanged) != 2 || unchanged[0].Topic != "orders" {
 		t.Fatalf("Unchanged = %+v, want orders first", unchanged)
+	}
+}
+
+func scopePrecondition(t *testing.T, s LinkScope, name string) PreconditionResult {
+	t.Helper()
+	for _, p := range s.Preconditions {
+		if p.Name == name {
+			return p
+		}
+	}
+	t.Fatalf("no precondition %q in %+v", name, s.Preconditions)
+	return PreconditionResult{}
+}
+
+func TestCheckLinkScope_GroupOnLinkTopicsIsInScope(t *testing.T) {
+	s := CheckLinkScope(linkInput())
+
+	if s.Refused() {
+		t.Fatalf("got %+v, want no refusal", s)
+	}
+	if !reflect.DeepEqual(s.InScopeGroups, []string{"orders-app"}) {
+		t.Errorf("InScopeGroups = %v, want [orders-app]", s.InScopeGroups)
+	}
+	if pc := scopePrecondition(t, s, GroupScopeCheckName); !pc.OK {
+		t.Errorf("group rule = %+v, want a pass", pc)
+	}
+}
+
+func TestCheckLinkScope_RefusesAGroupWithACommitOutsideTheLink(t *testing.T) {
+	for name, topics := range map[string][]string{
+		"alongside link topics": {"orders", "refunds"},
+		"outside only":          {"refunds"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := linkInput()
+			in.SourceTopics = append(in.SourceTopics, "refunds")
+			in.CommittedTopics["refunds-app"] = topics
+
+			s := CheckLinkScope(in)
+
+			pc := scopePrecondition(t, s, GroupScopeCheckName)
+			if pc.OK {
+				t.Fatal("a group committing on a topic outside the link must refuse")
+			}
+			for _, want := range []string{"refunds-app (refunds)", "add it to the link", "--delete-offsets", "stop or move it"} {
+				if !strings.Contains(pc.Detail, want) {
+					t.Errorf("detail = %q, want it to contain %q", pc.Detail, want)
+				}
+			}
+			if strings.Contains(pc.Detail, "orders-app") {
+				t.Errorf("detail = %q must not name a group whose commits are all on the link", pc.Detail)
+			}
+			if s.InScopeGroups != nil {
+				t.Errorf("InScopeGroups = %v, want none on a refusal", s.InScopeGroups)
+			}
+		})
+	}
+}
+
+func TestCheckLinkScope_GroupWithNoCommitsIsNotTracked(t *testing.T) {
+	in := linkInput()
+	in.CommittedTopics["idle-app"] = nil
+
+	s := CheckLinkScope(in)
+
+	if s.Refused() || !reflect.DeepEqual(s.InScopeGroups, []string{"orders-app"}) {
+		t.Fatalf("got %+v, want no refusal and only orders-app in scope", s)
+	}
+}
+
+func TestCheckLinkScope_TopicRefusalStopsBeforeTheGroupRule(t *testing.T) {
+	in := linkInput()
+	in.Mirrors[0].State, in.Mirrors[0].Status = MirrorActive, "ACTIVE"
+	in.CommittedTopics["refunds-app"] = []string{"refunds"}
+
+	s := CheckLinkScope(in)
+
+	if !s.Refused() || len(s.FailFast) != 1 {
+		t.Fatalf("got %+v, want the topic refusal", s)
+	}
+	for _, pc := range s.Preconditions {
+		if pc.Name == GroupScopeCheckName || pc.Name == GroupSplitBrainCheckName {
+			t.Errorf("precondition %q ran: the group stages run only once every link topic passes", pc.Name)
+		}
+	}
+}
+
+func TestCheckLinkScope_SplitBrainCoversInScopeGroupsOnly(t *testing.T) {
+	in := linkInput()
+	in.TargetStates = map[string]string{"orders-app": "Stable"}
+	if pc := scopePrecondition(t, CheckLinkScope(in), GroupSplitBrainCheckName); pc.OK {
+		t.Error("an in-scope group active on the destination must refuse")
+	}
+
+	in = linkInput()
+	in.CommittedTopics["idle-app"] = nil
+	in.TargetStates = map[string]string{"idle-app": "Stable"}
+	if pc := scopePrecondition(t, CheckLinkScope(in), GroupSplitBrainCheckName); !pc.OK {
+		t.Errorf("split-brain = %+v, want a pass: a group with no commits is not in scope", pc)
+	}
+}
+
+func TestCheckLinkScope_IdleInScopeGroupOnTheDestinationWarns(t *testing.T) {
+	in := linkInput()
+	in.TargetStates = map[string]string{"orders-app": "Empty"}
+
+	s := CheckLinkScope(in)
+
+	if s.Refused() || len(s.Warnings) != 1 || !strings.Contains(s.Warnings[0], "orders-app") {
+		t.Fatalf("got %+v, want no refusal and one warning naming orders-app", s)
+	}
+}
+
+func TestCheckLinkScope_WarnsAboutUntrackedTopicsOffTheLink(t *testing.T) {
+	in := linkInput()
+	in.SourceTopics = append(in.SourceTopics, "_schemas", "clicks")
+
+	s := CheckLinkScope(in)
+
+	if s.Refused() {
+		t.Fatalf("got %+v, want no refusal", s)
+	}
+	if len(s.Warnings) != 1 || !strings.Contains(s.Warnings[0], "_schemas, clicks") || !strings.Contains(s.Warnings[0], "not on the cluster link") {
+		t.Fatalf("warnings = %v, want one naming _schemas and clicks", s.Warnings)
+	}
+}
+
+func TestCheckLinkScope_LinkTopicNobodyCommitsOnIsSilent(t *testing.T) {
+	in := linkInput()
+	in.CommittedTopics = map[string][]string{}
+
+	s := CheckLinkScope(in)
+
+	if s.Refused() || len(s.Warnings) != 0 || len(s.InScopeGroups) != 0 {
+		t.Fatalf("got %+v, want a clean result with nothing in scope", s)
+	}
+}
+
+// The topics in scope are the promoted topics: with none, nothing was migrated
+// and every other rule would pass vacuously, so the conversion refuses — even
+// with no group commits at all.
+func TestCheckLinkScope_RefusesALinkWithNoPromotedTopic(t *testing.T) {
+	for name, mirrors := range map[string][]LinkMirror{
+		"empty link": nil,
+		"nothing promoted": {
+			{SourceTopic: "orders", MirrorTopic: "orders", State: MirrorActive, Status: "ACTIVE"},
+			{SourceTopic: "payments", MirrorTopic: "payments", State: MirrorActive, Status: "ACTIVE"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := linkInput()
+			in.Mirrors = mirrors
+			in.CommittedTopics = map[string][]string{}
+
+			s := CheckLinkScope(in)
+
+			pc := scopePrecondition(t, s, PromotedTopicsCheckName)
+			if pc.OK || !strings.Contains(pc.Detail, "migrate and promote") {
+				t.Fatalf("promoted-topics check = %+v, want a refusal telling the operator to migrate and promote first", pc)
+			}
+			if s.InScopeGroups != nil {
+				t.Errorf("InScopeGroups = %v, want none", s.InScopeGroups)
+			}
+		})
+	}
+}
+
+func TestCheckLinkScope_OnePromotedTopicPassesThePromotedCheck(t *testing.T) {
+	if pc := scopePrecondition(t, CheckLinkScope(linkInput()), PromotedTopicsCheckName); !pc.OK {
+		t.Errorf("promoted-topics check = %+v, want a pass", pc)
+	}
+}
+
+func TestCheckLinkScope_ManyOffendingGroupsAreCapped(t *testing.T) {
+	in := linkInput()
+	in.SourceTopics = append(in.SourceTopics, "refunds")
+	for i := 0; i < 25; i++ {
+		in.CommittedTopics[fmt.Sprintf("app-%02d", i)] = []string{"refunds"}
+	}
+
+	pc := scopePrecondition(t, CheckLinkScope(in), GroupScopeCheckName)
+
+	if pc.OK || !strings.Contains(pc.Detail, "and 5 more") || strings.Contains(pc.Detail, "app-24") {
+		t.Errorf("detail = %q, want 20 groups named and \"and 5 more\"", pc.Detail)
 	}
 }

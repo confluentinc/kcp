@@ -169,3 +169,142 @@ func groupsByTopic(committed map[string][]string) map[string][]string {
 	}
 	return out
 }
+
+// GroupScopeCheckName names the group rule's precondition.
+const GroupScopeCheckName = "every source consumer group commits only on cluster-link topics"
+
+// PromotedTopicsCheckName names the precondition that the link has at least
+// one promoted topic: the topics in scope are the promoted topics.
+const PromotedTopicsCheckName = "the cluster link has promoted topics"
+
+// checkPromotedTopics refuses a link with no promoted (STOPPED) mirror,
+// including an empty link: nothing was migrated over it, and every other
+// link-scoped rule would pass vacuously.
+func checkPromotedTopics(mirrors []LinkMirror) PreconditionResult {
+	for _, m := range mirrors {
+		if m.State == MirrorStopped {
+			return pass(PromotedTopicsCheckName)
+		}
+	}
+	return fail(PromotedTopicsCheckName,
+		"no topic on the cluster link is promoted, so nothing has been migrated over it; a conversion closes a topic-based migration — migrate and promote the route's topics first")
+}
+
+// LinkScope is CheckLinkScope's verdict, in the shape ReconcileConvert folds
+// into its Report.
+type LinkScope struct {
+	Unchanged     []TopicVerdict
+	FailFast      []TopicVerdict
+	Preconditions []PreconditionResult
+	Warnings      []string
+	// InScopeGroups is every source group whose commits are all on link
+	// topics, sorted. Set only when the group rule passed.
+	InScopeGroups []string
+}
+
+// Refused reports whether any link topic or precondition refused.
+func (s LinkScope) Refused() bool {
+	if len(s.FailFast) > 0 {
+		return true
+	}
+	for _, p := range s.Preconditions {
+		if !p.OK {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckLinkScope applies every link-scoped rule of a route conversion, in
+// stages: the link topic checks (with the at-least-one-promoted-topic rule),
+// then the group rule (with the warning about untracked topics off the link),
+// then the split-brain check over the in-scope groups. A refusing stage returns
+// before the next: the group rule trusts a link the topic checks passed, and
+// the split-brain check needs the in-scope groups the group rule produces.
+// Reconcile and verify_fence both call it, so their verdicts can't drift.
+func CheckLinkScope(in LinkScopeInput) LinkScope {
+	var s LinkScope
+	s.Unchanged, s.FailFast = checkLinkTopics(in)
+	s.Preconditions = append(s.Preconditions, checkPromotedTopics(in.Mirrors))
+	if s.Refused() {
+		return s
+	}
+
+	link := make(map[string]struct{}, len(in.Mirrors))
+	for _, m := range in.Mirrors {
+		link[m.SourceTopic] = struct{}{}
+	}
+	groupCheck, inScope := checkGroupScope(link, in.CommittedTopics)
+	s.Preconditions = append(s.Preconditions, groupCheck)
+	s.Warnings = append(s.Warnings, untrackedOffLinkWarning(in.SourceTopics, link, in.CommittedTopics)...)
+	if !groupCheck.OK {
+		return s
+	}
+	s.InScopeGroups = inScope
+
+	splitBrain, warnings := CheckGroupSplitBrain(inScope, in.TargetStates)
+	s.Preconditions = append(s.Preconditions, splitBrain)
+	s.Warnings = append(s.Warnings, warnings...)
+	return s
+}
+
+// checkGroupScope is the group rule: a source group whose commits are all on
+// link topics is in scope; a group with any commit on a topic outside the link
+// refuses, even alongside link topics; a group with no commits is not tracked.
+// It returns the sorted in-scope groups, or nil on a refusal.
+func checkGroupScope(link map[string]struct{}, committed map[string][]string) (PreconditionResult, []string) {
+	var inScope, offending []string
+	for g, topics := range committed {
+		if len(topics) == 0 {
+			continue
+		}
+		var outside []string
+		for _, t := range topics {
+			if _, ok := link[t]; !ok {
+				outside = append(outside, t)
+			}
+		}
+		if len(outside) > 0 {
+			sort.Strings(outside)
+			offending = append(offending, fmt.Sprintf("%s (%s)", g, strings.Join(outside, ", ")))
+			continue
+		}
+		inScope = append(inScope, g)
+	}
+	if len(offending) > 0 {
+		sort.Strings(offending)
+		return fail(GroupScopeCheckName, fmt.Sprintf(
+			"consumer group(s) %s have committed offsets on topics that are not on the cluster link; after the switch those topics are not reachable on the destination, or the group belongs to a client outside this route. For each: migrate the topic (add it to the link and run a topic-based migration batch); or, if the commits are stale, delete the group's offsets on those topics (kafka-consumer-groups --delete-offsets) or delete the group; or, if a live app outside this route owns the group, stop or move it, then delete the group",
+			joinCapped(offending, 20))), nil
+	}
+	sort.Strings(inScope)
+	return pass(GroupScopeCheckName), inScope
+}
+
+// untrackedOffLinkWarning lists source topics that are not on the link and that
+// no group commits on. Nothing tells a forgotten produce-only topic from a
+// system topic (_schemas, the MSK canary, Connect internals), so this is a
+// warning, never a refusal.
+func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, committed map[string][]string) []string {
+	tracked := map[string]struct{}{}
+	for _, topics := range committed {
+		for _, t := range topics {
+			tracked[t] = struct{}{}
+		}
+	}
+	var untracked []string
+	for _, t := range sourceTopics {
+		_, onLink := link[t]
+		_, isTracked := tracked[t]
+		if !onLink && !isTracked {
+			untracked = append(untracked, t)
+		}
+	}
+	if len(untracked) == 0 {
+		return nil
+	}
+	sort.Strings(untracked)
+	return []string{fmt.Sprintf(
+		"topic(s) %s are not on the cluster link and no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them",
+		joinCapped(untracked, 20))}
+}
