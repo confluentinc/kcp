@@ -545,6 +545,67 @@ func canDescribeAnyTopic(f metadataFetcher, topic string) (bool, error) {
 	}
 }
 
+// offsetCommitSender is the slice of *sarama.Broker the offset-commit probe needs.
+type offsetCommitSender interface {
+	CommitOffset(request *sarama.OffsetCommitRequest) (*sarama.OffsetCommitResponse, error)
+}
+
+// commitProbeNames returns a fresh group name and topic name for the offset-commit probe. Neither can be a
+// real group or topic.
+func commitProbeNames() (group, topic string) {
+	suffix := fmt.Sprintf("%x", time.Now().UnixNano())
+	return "__kcp_probe_group_" + suffix, "__kcp_probe_topic_" + suffix
+}
+
+// CanCommitAnyOffsets reports whether the connected principal may commit offsets for an arbitrary consumer
+// group on an arbitrary topic: READ on the group and READ on the topic, which a conversion's offset write needs
+// and the DESCRIBE probes do not prove. It sends one admin OffsetCommit (v7, generation -1, no member, leader
+// epoch -1, the same request CommitGroupOffsets sends) for a group and a topic that do not exist.
+//
+// The broker authorizes READ on the group, then READ on each topic, and only then checks that the topic
+// exists. A request left with no authorized, existing topic never reaches the group coordinator, so nothing is
+// written and no group is created (verified live on cp-server with StandardAuthorizer before this was built).
+// UNKNOWN_TOPIC_OR_PARTITION means allowed; GROUP_AUTHORIZATION_FAILED or TOPIC_AUTHORIZATION_FAILED means
+// denied, as does a coordinator lookup the broker refuses for the group. Any other answer is an error: a probe
+// that could not be asked is neither allowed nor denied.
+func (c *ConsumerGroupClient) CanCommitAnyOffsets() (bool, error) {
+	group, topic := commitProbeNames()
+	return c.canCommitAnyOffsetsNamed(group, topic)
+}
+
+func (c *ConsumerGroupClient) canCommitAnyOffsetsNamed(group, topic string) (bool, error) {
+	coordinator, err := c.client.Coordinator(group)
+	if errors.Is(err, sarama.ErrGroupAuthorizationFailed) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("probing offset-commit access: finding the coordinator of %s: %w", group, err)
+	}
+	return canCommitAnyOffsets(coordinator, group, topic)
+}
+
+// canCommitAnyOffsets sends the probe commit for group on topic partition 0 and reads the one answer.
+func canCommitAnyOffsets(s offsetCommitSender, group, topic string) (bool, error) {
+	resp, err := s.CommitOffset(buildGroupCommit(group, map[string]map[int32]CommittedOffset{topic: {0: {Offset: 0}}}))
+	if err != nil {
+		return false, fmt.Errorf("probing offset-commit access: %w", err)
+	}
+	kerr, answered := resp.Errors[topic][0]
+	if !answered {
+		return false, fmt.Errorf("probing offset-commit access: the broker did not answer for %s partition 0", topic)
+	}
+	switch kerr {
+	case sarama.ErrUnknownTopicOrPartition:
+		return true, nil
+	case sarama.ErrGroupAuthorizationFailed, sarama.ErrTopicAuthorizationFailed:
+		return false, nil
+	case sarama.ErrNoError:
+		return false, fmt.Errorf("probing offset-commit access: the broker accepted a commit on topic %s, which must not exist, so consumer group %s may now exist on the cluster; delete it (kafka-consumer-groups --delete --group %s) and report this", topic, group, group)
+	default:
+		return false, fmt.Errorf("probing offset-commit access: %w", kerr)
+	}
+}
+
 // PartitionCounts returns the partition count of each named topic that exists on the cluster. A topic the
 // broker says does not exist is left out of the map, not an error: a conversion reads a missing count as
 // "no copy on this cluster". Like the topic probe it asks one broker directly with auto-creation off,

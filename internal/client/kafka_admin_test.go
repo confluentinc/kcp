@@ -1175,3 +1175,47 @@ func TestListTopicInternalFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{"orders": false, "__consumer_offsets": true}, got)
 }
+
+func TestBuildKafkaClientConfig_TopicAutoCreationIsOnlyOffWhenAsked(t *testing.T) {
+	def, _, err := buildKafkaClientConfig("", sarama.V2_6_0_0, WithUnauthenticatedPlaintextAuth())
+	require.NoError(t, err)
+	assert.True(t, def.Metadata.AllowAutoTopicCreation, "every existing client keeps sarama's default")
+
+	off, _, err := buildKafkaClientConfig("", sarama.V2_6_0_0, WithUnauthenticatedPlaintextAuth(), WithTopicAutoCreationDisabled())
+	require.NoError(t, err)
+	assert.False(t, off.Metadata.AllowAutoTopicCreation)
+}
+
+// The option must reach the wire: a metadata refresh for a named topic is the request sarama would send while
+// sweeping a topic deleted mid-run, and it must not ask the broker to create it.
+func TestNewKafkaClient_WithTopicAutoCreationDisabledNeverAsksToCreate(t *testing.T) {
+	mb := sarama.NewMockBroker(t, 1)
+	t.Cleanup(mb.Close)
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 3},
+			{ApiKey: 3, MinVersion: 0, MaxVersion: 10},
+		}),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(mb.Addr(), mb.BrokerID()).
+			SetController(mb.BrokerID()).
+			SetLeader("orders", 0, mb.BrokerID()),
+	})
+
+	c, err := NewKafkaClient([]string{mb.Addr()}, "", WithUnauthenticatedPlaintextAuth(), WithTopicAutoCreationDisabled())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	require.NoError(t, c.RefreshMetadata("orders"))
+
+	var named []*sarama.MetadataRequest
+	for _, rr := range mb.History() {
+		if r, ok := rr.Request.(*sarama.MetadataRequest); ok && len(r.Topics) > 0 {
+			named = append(named, r)
+		}
+	}
+	require.NotEmpty(t, named, "the refresh for orders must have reached the broker")
+	for _, r := range named {
+		assert.GreaterOrEqual(t, r.Version, int16(4), "below v4 the request has no auto-create flag")
+		assert.False(t, r.AllowAutoTopicCreation, "the client must never ask the broker to create %v", r.Topics)
+	}
+}

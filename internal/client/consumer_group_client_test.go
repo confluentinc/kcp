@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -707,4 +708,137 @@ func TestCommitGroupOffsets_GivesUpAfterTheAttempts(t *testing.T) {
 
 	require.ErrorIs(t, err, sarama.ErrOffsetsLoadInProgress)
 	assert.Len(t, commitRequests(mb), commitAttempts)
+}
+
+// fakeCommitSender is the coordinator the offset-commit probe talks to.
+type fakeCommitSender struct {
+	resp *sarama.OffsetCommitResponse
+	err  error
+	reqs []*sarama.OffsetCommitRequest
+}
+
+func (f *fakeCommitSender) CommitOffset(r *sarama.OffsetCommitRequest) (*sarama.OffsetCommitResponse, error) {
+	f.reqs = append(f.reqs, r)
+	return f.resp, f.err
+}
+
+func commitAnswer(topic string, kerr sarama.KError) *sarama.OffsetCommitResponse {
+	r := &sarama.OffsetCommitResponse{Version: 7}
+	r.AddError(topic, 0, kerr)
+	return r
+}
+
+func TestCanCommitAnyOffsets_AllowedWhenTheBrokerSaysTheTopicDoesNotExist(t *testing.T) {
+	f := &fakeCommitSender{resp: commitAnswer("__kcp_probe_topic_x", sarama.ErrUnknownTopicOrPartition)}
+
+	got, err := canCommitAnyOffsets(f, "__kcp_probe_group_x", "__kcp_probe_topic_x")
+
+	require.NoError(t, err)
+	assert.True(t, got)
+	require.Len(t, f.reqs, 1)
+	req := f.reqs[0]
+	assert.Equal(t, int16(7), req.Version)
+	assert.Equal(t, "__kcp_probe_group_x", req.ConsumerGroup)
+	assert.Equal(t, int32(sarama.GroupGenerationUndefined), req.ConsumerGroupGeneration, "an admin commit: no generation")
+	assert.Empty(t, req.ConsumerID, "an admin commit: no member")
+	off, _, err := req.Offset("__kcp_probe_topic_x", 0)
+	require.NoError(t, err, "exactly one block, for the probe topic's partition 0")
+	assert.Equal(t, int64(0), off)
+	assert.Equal(t, int32(-1), leaderEpochOf(t, req, "__kcp_probe_topic_x", 0))
+}
+
+func TestCanCommitAnyOffsets_DeniedByEitherAuthorization(t *testing.T) {
+	for name, kerr := range map[string]sarama.KError{
+		"no READ on the group": sarama.ErrGroupAuthorizationFailed,
+		"no READ on the topic": sarama.ErrTopicAuthorizationFailed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := canCommitAnyOffsets(&fakeCommitSender{resp: commitAnswer("t", kerr)}, "g", "t")
+			require.NoError(t, err, "a denial is an answer, not an error")
+			assert.False(t, got)
+		})
+	}
+}
+
+// Review Focus 5: an accepted commit on a topic that cannot exist means a group may have been created.
+func TestCanCommitAnyOffsets_AnAcceptedCommitIsAnError(t *testing.T) {
+	got, err := canCommitAnyOffsets(&fakeCommitSender{resp: commitAnswer("t", sarama.ErrNoError)}, "g", "t")
+
+	require.Error(t, err)
+	assert.False(t, got)
+	assert.Contains(t, err.Error(), "consumer group g may now exist")
+	assert.Contains(t, err.Error(), "kafka-consumer-groups --delete --group g")
+}
+
+func TestCanCommitAnyOffsets_OtherFailuresAreErrorsNotVerdicts(t *testing.T) {
+	for name, f := range map[string]*fakeCommitSender{
+		"request failed":     {err: errors.New("connection reset")},
+		"no answer for it":   {resp: &sarama.OffsetCommitResponse{Version: 7}},
+		"another error code": {resp: commitAnswer("t", sarama.ErrNotCoordinatorForConsumer)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := canCommitAnyOffsets(f, "g", "t")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCommitProbeNames_AreFreshAndCannotBeRealNames(t *testing.T) {
+	g1, t1 := commitProbeNames()
+	time.Sleep(time.Microsecond)
+	g2, t2 := commitProbeNames()
+	assert.True(t, strings.HasPrefix(g1, "__kcp_probe_group_"), g1)
+	assert.True(t, strings.HasPrefix(t1, "__kcp_probe_topic_"), t1)
+	assert.NotEqual(t, g1, g2, "each probe uses a fresh group name")
+	assert.NotEqual(t, t1, t2, "each probe uses a fresh topic name")
+}
+
+func TestCanCommitAnyOffsets_ThroughARealClient(t *testing.T) {
+	const group, topic = "__kcp_probe_group_test", "__kcp_probe_topic_test"
+	found := func(mb *sarama.MockBroker) sarama.MockResponse {
+		return sarama.NewMockFindCoordinatorResponse(t).SetCoordinator(sarama.CoordinatorGroup, group, mb)
+	}
+	for _, tc := range []struct {
+		name     string
+		handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse
+		want     bool
+	}{
+		{"allowed: the topic does not exist", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": found(mb),
+				"OffsetCommitRequest":    sarama.NewMockOffsetCommitResponse(t).SetError(group, topic, 0, sarama.ErrUnknownTopicOrPartition),
+			}
+		}, true},
+		{"denied: no READ on the group", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": found(mb),
+				"OffsetCommitRequest":    sarama.NewMockOffsetCommitResponse(t).SetError(group, topic, 0, sarama.ErrGroupAuthorizationFailed),
+			}
+		}, false},
+		{"denied: no READ on the topic", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": found(mb),
+				"OffsetCommitRequest":    sarama.NewMockOffsetCommitResponse(t).SetError(group, topic, 0, sarama.ErrTopicAuthorizationFailed),
+			}
+		}, false},
+		{"denied at the coordinator lookup", func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+			return map[string]sarama.MockResponse{
+				"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(t).SetError(sarama.CoordinatorGroup, group, sarama.ErrGroupAuthorizationFailed),
+			}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, mb := newClientAndMockBroker(t, 10, tc.handlers)
+
+			got, err := c.canCommitAnyOffsetsNamed(group, topic)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+			if reqs := commitRequests(mb); len(reqs) > 0 {
+				require.Len(t, reqs, 1, "one probe commit, never retried")
+				assert.Equal(t, int16(7), reqs[0].Version, "the request the broker receives is v7")
+				assert.Equal(t, int32(-1), leaderEpochOf(t, reqs[0], topic, 0))
+			}
+		})
+	}
 }

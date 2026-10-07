@@ -16,17 +16,18 @@ import (
 
 // AdminConfig holds the configuration for creating a Kafka admin client
 type AdminConfig struct {
-	authType              types.AuthType
-	username              string
-	password              string
-	saslMechanism         string
-	insecureSkipTLSVerify bool
-	awsAccessKey          string
-	awsAccessSecret       string
-	caCertFile            string
-	clientCertFile        string
-	clientKeyFile         string
-	disableTLS            bool
+	authType                 types.AuthType
+	username                 string
+	password                 string
+	saslMechanism            string
+	insecureSkipTLSVerify    bool
+	awsAccessKey             string
+	awsAccessSecret          string
+	caCertFile               string
+	clientCertFile           string
+	clientKeyFile            string
+	disableTLS               bool
+	disableTopicAutoCreation bool
 }
 
 // AdminOption is a function type for configuring the Kafka admin client
@@ -112,6 +113,16 @@ func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
 func WithInsecureSkipVerify() AdminOption {
 	return func(config *AdminConfig) {
 		config.insecureSkipTLSVerify = true
+	}
+}
+
+// WithTopicAutoCreationDisabled makes every metadata request the client sends ask the broker not to create a
+// missing topic. sarama asks it to by default (Metadata.AllowAutoTopicCreation), so a client that looks up a
+// topic deleted mid-run, on a broker with auto.create.topics.enable, would recreate it empty. Off by default:
+// every existing client keeps sarama's default. A route conversion's high-water-mark sweep sets it.
+func WithTopicAutoCreationDisabled() AdminOption {
+	return func(config *AdminConfig) {
+		config.disableTopicAutoCreation = true
 	}
 }
 
@@ -575,6 +586,9 @@ func buildKafkaClientConfig(region string, version sarama.KafkaVersion, opts ...
 		return nil, config, fmt.Errorf("auth type %v not supported", config.authType)
 	}
 
+	if config.disableTopicAutoCreation {
+		saramaConfig.Metadata.AllowAutoTopicCreation = false
+	}
 	return saramaConfig, config, nil
 }
 
