@@ -664,14 +664,14 @@ func TestExecute_DryRun_FailsAtReconcile(t *testing.T) {
 // first thing either state machine's branch does, so zero builds means no
 // state machine ran.
 type serviceBuilds struct {
-	offsets, gateway, clusterLink int
+	offsets, gateway, clusterLink, convert int
 }
 
-func (b *serviceBuilds) total() int { return b.offsets + b.gateway + b.clusterLink }
+func (b *serviceBuilds) total() int { return b.offsets + b.gateway + b.clusterLink + b.convert }
 
 // countingDeps wraps base so every service build is counted in b.
 func countingDeps(base executorDependencies, b *serviceBuilds) executorDependencies {
-	return executorDependencies{
+	counted := executorDependencies{
 		offsets: func(g *manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
 			b.offsets++
 			return base.offsets(g)
@@ -685,6 +685,13 @@ func countingDeps(base executorDependencies, b *serviceBuilds) executorDependenc
 			return base.clusterLink(g)
 		},
 	}
+	if base.convert != nil {
+		counted.convert = func(g *manifest.GatewayMigration) (convertServices, error) {
+			b.convert++
+			return base.convert(g)
+		}
+	}
+	return counted
 }
 
 // runExecutePlan drives executePlan for f's manifest with res standing in for
@@ -769,18 +776,20 @@ func TestExecutePlan_Refused_RunsNothing(t *testing.T) {
 	assert.Zero(t, builds.total())
 }
 
-// A conversion plan must never reach the static branch (executePlan's default
-// case): until the d2s state machine exists, execute refuses it without
-// building any service.
-func TestExecutePlan_ConversionRefusesUntilSupported(t *testing.T) {
+// A conversion plan runs the d2s state machine through runConvertBranch: it builds the gateway and the
+// conversion's own services, never the offset providers or the cluster-link client the other branches use.
+func TestExecutePlan_ConversionRunsTheConvertBranch(t *testing.T) {
 	var builds serviceBuilds
-	res := &migplan.Result{Route: "migration-route", Mode: "convert", FenceYAML: "rules: {}"}
+	w := newConvertWorld("orders-app")
 
-	_, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+	out, err := runExecutePlan(t, convertFixture(t), convertPlanResult(), countingDeps(convertDeps(&patchRecordingGateway{}, w), &builds))
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--dry-run")
-	assert.Zero(t, builds.total(), "no service may be built for a conversion yet")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1")
+	assert.Equal(t, 1, builds.gateway)
+	assert.Equal(t, 1, builds.convert)
+	assert.Zero(t, builds.offsets, "a conversion builds no offset providers")
+	assert.Zero(t, builds.clusterLink, "a conversion builds no cluster-link client")
 }
 
 // A completed conversion re-runs as nothing to do, reported in conversion terms.

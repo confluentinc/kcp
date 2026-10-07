@@ -226,7 +226,7 @@ func executePlan(
 	case "dynamic":
 		return runDynamicBranch(cmd, g, config, reconcileResult, deps)
 	case "convert":
-		return fmt.Errorf("reconcile planned a route conversion (spec.route.convertTo), but this build of kcp cannot execute one yet; run with --dry-run to see the plan")
+		return runConvertBranch(cmd, g, config, reconcileResult, deps)
 	default:
 		// "static", and any value not yet recognized as dynamic — the static
 		// path is the safe default.
