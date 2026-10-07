@@ -68,3 +68,48 @@ func TestCheckGroupSplitBrain_DetailIsSorted(t *testing.T) {
 		t.Errorf("detail = %q, want groups sorted", res.Detail)
 	}
 }
+
+func TestConvertCredentialChecks_AllFiveInOrder(t *testing.T) {
+	want := []string{
+		SourceGroupVisibilityCheckName,
+		TargetGroupVisibilityCheckName,
+		SourceTopicVisibilityCheckName,
+		TargetTopicVisibilityCheckName,
+		TargetOffsetCommitCheckName,
+	}
+	got := ConvertCredentialChecks(GroupFacts{})
+	if len(got) != len(want) {
+		t.Fatalf("got %d checks %+v, want %d", len(got), got, len(want))
+	}
+	for i, pc := range got {
+		if pc.Name != want[i] || !pc.OK {
+			t.Errorf("check %d = %+v, want %q passing", i, pc, want[i])
+		}
+	}
+}
+
+func TestConvertCredentialChecks_EachReasonRefusesItsOwnCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*GroupFacts)
+	}{
+		{SourceGroupVisibilityCheckName, func(g *GroupFacts) { g.SourceListingIncomplete = "why" }},
+		{TargetGroupVisibilityCheckName, func(g *GroupFacts) { g.TargetListingIncomplete = "why" }},
+		{SourceTopicVisibilityCheckName, func(g *GroupFacts) { g.SourceTopicsIncomplete = "why" }},
+		{TargetTopicVisibilityCheckName, func(g *GroupFacts) { g.TargetTopicsIncomplete = "why" }},
+		{TargetOffsetCommitCheckName, func(g *GroupFacts) { g.TargetCommitDenied = "why" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var g GroupFacts
+			tc.set(&g)
+			for _, pc := range ConvertCredentialChecks(g) {
+				if wantOK := pc.Name != tc.name; pc.OK != wantOK {
+					t.Errorf("%q OK = %v, want %v", pc.Name, pc.OK, wantOK)
+				}
+				if !pc.OK && pc.Detail != "why" {
+					t.Errorf("%q detail = %q, want the reason carried as is", pc.Name, pc.Detail)
+				}
+			}
+		})
+	}
+}

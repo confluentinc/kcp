@@ -18,6 +18,7 @@ type fakeStrictClient struct {
 	canTopics     bool
 	partitions    map[string]int
 	partitionsFor []string
+	canCommit     bool
 }
 
 func (f *fakeStrictClient) CanDescribeAnyGroup() (bool, error) {
@@ -153,5 +154,42 @@ func TestKafkaGroupLister_PartitionCountsUsesTheClient(t *testing.T) {
 	boom := errors.New("metadata failed")
 	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).PartitionCounts(context.Background(), []string{"orders"}); !errors.Is(err, boom) {
 		t.Fatalf("PartitionCounts error = %v, want the client's error", err)
+	}
+}
+
+func (f *fakeStrictClient) CanCommitAnyOffsets() (bool, error) {
+	return f.canCommit, f.err
+}
+
+func TestKafkaGroupLister_CanCommitAnyOffsetsUsesTheClient(t *testing.T) {
+	got, err := NewKafkaGroupLister(&fakeStrictClient{canCommit: true}).CanCommitAnyOffsets(context.Background())
+	if err != nil || !got {
+		t.Fatalf("CanCommitAnyOffsets = %v, %v; want true", got, err)
+	}
+	boom := errors.New("probe failed")
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CanCommitAnyOffsets(context.Background()); !errors.Is(err, boom) {
+		t.Fatalf("CanCommitAnyOffsets error = %v, want the client's error", err)
+	}
+}
+
+func TestCommitGap(t *testing.T) {
+	if got := commitGap(true); got != "" {
+		t.Errorf("allowed: gap = %q, want none", got)
+	}
+	denied := commitGap(false)
+	for _, want := range []string{"destination credential", "READ on all consumer groups and all topics", "kafka-cluster:AlterGroup", "kafka-cluster:ReadData", "not yet verified"} {
+		if !strings.Contains(denied, want) {
+			t.Errorf("denied: gap = %q, want it to contain %q", denied, want)
+		}
+	}
+	if strings.Contains(denied, "DESCRIBE") {
+		t.Errorf("denied: gap = %q must ask for READ, not DESCRIBE", denied)
+	}
+}
+
+func TestGroupFacts_CarriesTheCommitGap(t *testing.T) {
+	f := groupFacts(nil, nil, listingGaps{targetCommit: "tc"})
+	if f.TargetCommitDenied != "tc" {
+		t.Errorf("TargetCommitDenied = %q, want the gap carried", f.TargetCommitDenied)
 	}
 }

@@ -19,8 +19,10 @@ const convertTargetCheckName = "conversion target is static"
 // mirror topic on the link, with no selector. It runs in stages and returns at
 // the first that refuses: the route checks (CheckPreconditions, then the
 // conversion's own: the target binding's bootstrap id, auth for the target
-// domain, no fence kcp didn't write, no live route-level fence); the four
-// visibility probes; then CheckLinkScope — every link topic promoted,
+// domain, no fence kcp didn't write, no live route-level fence); the five
+// credential checks (ConvertCredentialChecks: the four visibility probes and
+// the destination's offset-write probe); then CheckLinkScope — every link
+// topic promoted,
 // unprefixed, on the destination, routed there and partition-matched; every
 // source group committing only on link topics; no in-scope group active on the
 // destination. On success the artifacts are the route's rules with kcp's
@@ -99,15 +101,13 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: convertMode}
 	}
 
-	report.Preconditions = append(report.Preconditions,
-		checkVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
-		checkVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete),
-		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
-		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete))
+	report.Preconditions = append(report.Preconditions, ConvertCredentialChecks(groups)...)
 	// A refusal here returns before the link checks, on purpose: they read the
 	// group and topic listings, and the visibility preconditions say those may
-	// be partial, so their verdict would not be trustworthy. The cost is that
-	// an operator who fixes a credential can then meet a second refusal.
+	// be partial, so their verdict would not be trustworthy. The offset-write
+	// check refuses here too: no later check can make up for a credential that
+	// will fail the write after the fence. The cost is that an operator who
+	// fixes a credential can then meet a second refusal.
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}
 	}

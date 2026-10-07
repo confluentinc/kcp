@@ -2,6 +2,8 @@ package migplan
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -303,3 +305,43 @@ func TestTargetConn_SASLPlainWithCACertIsLeftAlone(t *testing.T) {
 	assert.Equal(t, ca, conn.AuthMethod.SASLPlain.CACert)
 	assert.False(t, conn.AuthMethod.SASLPlain.UseTLS, "a ca_cert destination must not have UseTLS forced on")
 }
+
+func TestBuildReconcileInput_IsTheInternalBuilder(t *testing.T) {
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+
+	got, err := BuildReconcileInput(g)
+	require.NoError(t, err)
+	want, err := buildReconcileInput(g)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestBuildConvertProviders_ABadManifestIsAnErrorAndOpensNothing(t *testing.T) {
+	homeWithFakeKubeconfig(t)
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	g.Spec.Gateway.Namespace = "confluent"
+	g.Spec.Gateway.CrName = "my-gateway"
+
+	_, closer, err := BuildConvertProviders(g)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.target.kafka: required")
+	assert.Nil(t, closer, "nothing is handed back to close on failure")
+}
+
+func TestClosers_ClosesEveryOneInReverseAndJoinsTheErrors(t *testing.T) {
+	var order []string
+	mk := func(name string, err error) io.Closer {
+		return closerFunc(func() error { order = append(order, name); return err })
+	}
+	boom := errors.New("boom")
+	err := closers{mk("a", nil), mk("b", boom), mk("c", nil)}.Close()
+	assert.Equal(t, []string{"c", "b", "a"}, order)
+	assert.ErrorIs(t, err, boom)
+}
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }

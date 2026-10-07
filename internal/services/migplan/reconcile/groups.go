@@ -24,6 +24,11 @@ import (
 // credential that may not describe every topic gets an offset fetch that
 // silently leaves out the topics it can't see (so a group committing outside
 // the link could pass the group rule), and a topic list that omits them.
+//
+// TargetCommitDenied is empty when the destination credential may commit offsets
+// for arbitrary groups and topics, and otherwise says why not: the conversion's
+// offset write needs READ on the groups and the topics, which the DESCRIBE probes
+// do not prove, so a DESCRIBE-only credential would fail after the fence.
 type GroupFacts struct {
 	TargetStates            map[string]string
 	TrackedTopics           map[string][]string
@@ -31,15 +36,18 @@ type GroupFacts struct {
 	TargetListingIncomplete string
 	SourceTopicsIncomplete  string
 	TargetTopicsIncomplete  string
+	TargetCommitDenied      string
 }
 
-// The visibility preconditions ReconcileConvert adds: whether each cluster's
-// credential can see every consumer group and every topic.
+// The credential preconditions ReconcileConvert adds: whether each cluster's
+// credential can see every consumer group and every topic, and whether the
+// destination credential can write consumer-group offsets.
 const (
 	SourceGroupVisibilityCheckName = "source credential can list every consumer group"
 	TargetGroupVisibilityCheckName = "destination credential can list every consumer group"
 	SourceTopicVisibilityCheckName = "source credential can describe every topic"
 	TargetTopicVisibilityCheckName = "destination credential can describe every topic"
+	TargetOffsetCommitCheckName    = "destination credential can write consumer-group offsets"
 )
 
 // checkVisibility refuses with reason when a credential's view may be partial.
@@ -48,6 +56,21 @@ func checkVisibility(name, reason string) PreconditionResult {
 		return fail(name, reason)
 	}
 	return pass(name)
+}
+
+// ConvertCredentialChecks returns a conversion's five credential preconditions,
+// in order: each cluster's group listing and topic view are complete, and the
+// destination credential can write consumer-group offsets. ReconcileConvert and
+// the d2s state machine's verify_fence both report exactly these, so the two
+// cannot drift.
+func ConvertCredentialChecks(groups GroupFacts) []PreconditionResult {
+	return []PreconditionResult{
+		checkVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
+		checkVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete),
+		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
+		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete),
+		checkVisibility(TargetOffsetCommitCheckName, groups.TargetCommitDenied),
+	}
 }
 
 // GroupSplitBrainCheckName names the precondition CheckGroupSplitBrain returns.

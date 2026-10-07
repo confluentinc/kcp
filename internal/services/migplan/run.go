@@ -2,6 +2,7 @@ package migplan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -459,4 +460,83 @@ func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error
 		return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
 	}
 	return NewKafkaGroupLister(cg), cg, nil
+}
+
+// BuildReconcileInput is buildReconcileInput for callers outside this package:
+// the d2s state machine re-runs the route preconditions after the fence against
+// the same input reconcile used.
+func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
+	return buildReconcileInput(g)
+}
+
+// BuildConvertProviders builds a route conversion's providers from the manifest
+// the way Reconcile builds its own: the live gateway CR pull for spec.route.name,
+// the cluster-link status from the destination REST leg, a topic lister and a
+// consumer-group lister on each cluster. The returned io.Closer closes every
+// client it opened; the caller owns it. On an error nothing is left open and
+// the closer is nil.
+func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
+	var opened closers
+	fail := func(err error) (ConvertProviders, io.Closer, error) {
+		_ = opened.Close()
+		return ConvertProviders{}, nil, err
+	}
+
+	gw, err := buildGatewaySource(g, g.Spec.Route.Name)
+	if err != nil {
+		return fail(err)
+	}
+	link, err := buildLinkStatusProvider(g)
+	if err != nil {
+		return fail(err)
+	}
+	src, srcCloser, err := buildSourceTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcCloser)
+	tgt, tgtCloser, err := buildTargetTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtCloser)
+	srcConn, err := sourceConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcGroupsCloser)
+	tgtConn, err := targetConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtGroupsCloser)
+
+	return ConvertProviders{
+		Gateway:      gw,
+		Source:       src,
+		Target:       tgt,
+		Link:         link,
+		SourceGroups: srcGroups,
+		TargetGroups: tgtGroups,
+	}, opened, nil
+}
+
+// closers closes several clients as one: in reverse order of opening, every one
+// of them, with the errors joined.
+type closers []io.Closer
+
+func (c closers) Close() error {
+	var errs []error
+	for i := len(c) - 1; i >= 0; i-- {
+		errs = append(errs, c[i].Close())
+	}
+	return errors.Join(errs...)
 }

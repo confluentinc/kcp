@@ -550,3 +550,37 @@ func TestReconcileConvert_RouteRefusalStopsBeforeVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileConvert_RefusesWhenTheDestinationCannotWriteOffsets(t *testing.T) {
+	groups := trackedGroups()
+	groups.TargetCommitDenied = "the destination credential cannot commit offsets for arbitrary consumer groups and topics"
+
+	p := reconcileConverged(convertGateway(), groups)
+
+	if !p.Report.Refused() || p.Artifacts != nil {
+		t.Fatal("a destination credential that cannot write offsets must refuse before the fence, not fail in sync_offsets after it")
+	}
+	pc := convertPrecondition(t, p.Report, TargetOffsetCommitCheckName)
+	if pc.OK || !strings.Contains(pc.Detail, "cannot commit offsets") {
+		t.Errorf("offset-write precondition = %+v, want a failure carrying the reason", pc)
+	}
+	for _, other := range []string{SourceGroupVisibilityCheckName, TargetGroupVisibilityCheckName, SourceTopicVisibilityCheckName, TargetTopicVisibilityCheckName} {
+		if o := convertPrecondition(t, p.Report, other); !o.OK {
+			t.Errorf("%s = %+v, want it unaffected", other, o)
+		}
+	}
+	if n := len(p.Report.Unchanged) + len(p.Report.FailFast); n != 0 {
+		t.Errorf("the credential stage must stop before the link checks; %d topic(s) were evaluated", n)
+	}
+}
+
+func TestReconcileConvert_OffsetWritePermissionPasses(t *testing.T) {
+	p := reconcileConverged(convertGateway(), trackedGroups())
+
+	if pc := convertPrecondition(t, p.Report, TargetOffsetCommitCheckName); !pc.OK {
+		t.Errorf("%s = %+v, want a pass", TargetOffsetCommitCheckName, pc)
+	}
+	if p.Report.Refused() {
+		t.Fatalf("a converged route with full credentials must plan, got %+v", p.Report)
+	}
+}

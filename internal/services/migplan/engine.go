@@ -38,11 +38,15 @@ func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *Rec
 // (with Artifacts nil), not as an error. The secrets provider is only
 // consulted for a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
-// A route conversion (in.ConvertTo set) also lists consumer groups on both
-// clusters, fetches the topics the source groups have committed on, reads
-// each link topic's partition count on both clusters, and reconciles through
-// reconcile.ReconcileConvert; the secrets provider is not consulted for it.
+// A route conversion (in.ConvertTo set) reads its facts through
+// GatherConvertFacts, lists the source groups and fetches the topics they have
+// committed on, and reconciles through reconcile.ReconcileConvert; the secrets
+// provider is not consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
+	if in.ConvertTo != "" {
+		return e.runConvert(ctx, in)
+	}
+
 	gw, err := e.gateway.Load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("loading gateway config: %w", err)
@@ -70,10 +74,6 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 		return nil, fmt.Errorf("reading target cluster id: %w", err)
 	}
 	ids := reconcile.ClusterIDs{Source: srcID, Target: tgtID, LinkSource: link.SourceClusterID}
-
-	if in.ConvertTo != "" {
-		return e.runConvert(ctx, in, gw, src, tgt, link, ids)
-	}
 
 	var missingSecrets []string
 	var secretCheckSkipped string
@@ -106,40 +106,32 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	return plan, nil
 }
 
-// runConvert gathers the consumer-group data a conversion needs (both clusters'
-// listings, and the topics the source groups have committed on) and reconciles
-// it. A listing or fetch failure is an I/O error, never a refusal: a partial
-// result could hide a split-brain or a group committing outside the link.
-func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput, gw *reconcile.GatewayConfig,
-	src, tgt []string, link *LinkStatus, ids reconcile.ClusterIDs) (*reconcile.Plan, error) {
-	if e.sourceGroups == nil || e.targetGroups == nil {
-		return nil, fmt.Errorf("a route conversion needs consumer-group listers for both clusters")
+// convertProviders is the engine's seams as GatherConvertFacts takes them.
+func (e *ReconciliationEngine) convertProviders() ConvertProviders {
+	return ConvertProviders{
+		Gateway:      e.gateway,
+		Source:       e.source,
+		Target:       e.target,
+		Link:         e.link,
+		SourceGroups: e.sourceGroups,
+		TargetGroups: e.targetGroups,
 	}
-	// Checked before each listing is trusted: a credential that may not describe
-	// arbitrary groups gets a silently filtered list, not an error.
-	srcCan, err := e.sourceGroups.CanDescribeAnyGroup(ctx)
+}
+
+// runConvert reads a conversion's facts (GatherConvertFacts, shared with the
+// d2s state machine's verify_fence), then lists every source group and fetches
+// the topics each has committed on — the one read verify_fence takes from its
+// own first snapshot instead — and reconciles. A listing or fetch failure is an
+// I/O error, never a refusal: a partial result could hide a split-brain or a
+// group committing outside the link.
+func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
+	facts, err := GatherConvertFacts(ctx, e.convertProviders())
 	if err != nil {
-		return nil, fmt.Errorf("checking the source credential's group access: %w", err)
-	}
-	tgtCan, err := e.targetGroups.CanDescribeAnyGroup(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("checking the destination credential's group access: %w", err)
-	}
-	srcTopics, err := e.sourceGroups.CanDescribeAnyTopic(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("checking the source credential's topic access: %w", err)
-	}
-	tgtTopics, err := e.targetGroups.CanDescribeAnyTopic(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("checking the destination credential's topic access: %w", err)
+		return nil, err
 	}
 	srcGroups, err := e.sourceGroups.ListGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups: %w", err)
-	}
-	tgtGroups, err := e.targetGroups.ListGroups(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing destination consumer groups: %w", err)
 	}
 	srcIDs := make([]string, 0, len(srcGroups))
 	for _, g := range srcGroups {
@@ -150,36 +142,8 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}
 
-	// Partition counts are read only when every probe allowed: the core refuses
-	// at visibility before it reads them, and a credential that may not describe
-	// a topic would turn this read into an error instead of that refusal.
-	var parts reconcile.PartitionCounts
-	if srcCan && tgtCan && srcTopics && tgtTopics {
-		srcNames, tgtNames := linkTopicNames(link.LinkMirrors)
-		if parts.Source, err = e.sourceGroups.PartitionCounts(ctx, srcNames); err != nil {
-			return nil, fmt.Errorf("reading link topics' partition counts on the source: %w", err)
-		}
-		if parts.Target, err = e.targetGroups.PartitionCounts(ctx, tgtNames); err != nil {
-			return nil, fmt.Errorf("reading link topics' partition counts on the destination: %w", err)
-		}
-	}
-
-	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.LinkMirrors, parts, link.OffsetSyncEnabled, ids, groupFacts(tgtGroups, tracked, listingGaps{
-		sourceGroups: listingGap("source", srcCan),
-		targetGroups: listingGap("destination", tgtCan),
-		sourceTopics: topicGap("source", srcTopics),
-		targetTopics: topicGap("destination", tgtTopics),
-	}))
-	plan.GatewayYAML = gw.RawYAML
+	plan := reconcile.ReconcileConvert(in, facts.Gateway, facts.SourceTopics, facts.TargetTopics, facts.Link.LinkMirrors,
+		facts.Partitions, facts.Link.OffsetSyncEnabled, facts.IDs, facts.GroupFacts(tracked))
+	plan.GatewayYAML = facts.Gateway.RawYAML
 	return plan, nil
-}
-
-// linkTopicNames splits the link's mirrors into the names to count on each
-// cluster: source names on the source, mirror names on the destination.
-func linkTopicNames(mirrors []reconcile.LinkMirror) (source, target []string) {
-	for _, m := range mirrors {
-		source = append(source, m.SourceTopic)
-		target = append(target, m.MirrorTopic)
-	}
-	return source, target
 }

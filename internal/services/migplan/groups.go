@@ -10,9 +10,10 @@ import (
 
 // GroupLister is the conversion-only view of one cluster: every consumer group
 // with its state, the topics groups have committed offsets on, the
-// visibility probes, and topic partition counts. Only a route conversion uses
+// credential probes, and topic partition counts. Only a route conversion uses
 // it, so an implementation must fail rather than return a partial result. Only
-// the source's CommittedTopics is called.
+// the source's CommittedTopics and the destination's CanCommitAnyOffsets are
+// called.
 type GroupLister interface {
 	ListGroups(ctx context.Context) ([]types.ConsumerGroupListing, error)
 	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
@@ -26,6 +27,10 @@ type GroupLister interface {
 	// topics it can't see, so a group committing outside the link could pass
 	// the group rule.
 	CanDescribeAnyTopic(ctx context.Context) (bool, error)
+	// CanCommitAnyOffsets reports whether the credential may commit offsets for
+	// an arbitrary group on an arbitrary topic (READ on both). Without it the
+	// conversion's offset write fails after the fence.
+	CanCommitAnyOffsets(ctx context.Context) (bool, error)
 	// PartitionCounts returns the partition count of each named topic that
 	// exists; a missing topic is absent from the map. It never creates a topic.
 	PartitionCounts(ctx context.Context, topics []string) (map[string]int, error)
@@ -38,6 +43,7 @@ type strictGroupClient interface {
 	CommittedTopics(groups []string) (map[string][]string, error)
 	CanDescribeAnyGroup() (bool, error)
 	CanDescribeAnyTopic() (bool, error)
+	CanCommitAnyOffsets() (bool, error)
 	PartitionCounts(topics []string) (map[string]int, error)
 }
 
@@ -69,6 +75,10 @@ func (l *KafkaGroupLister) CanDescribeAnyTopic(context.Context) (bool, error) {
 	return l.client.CanDescribeAnyTopic()
 }
 
+func (l *KafkaGroupLister) CanCommitAnyOffsets(context.Context) (bool, error) {
+	return l.client.CanCommitAnyOffsets()
+}
+
 func (l *KafkaGroupLister) PartitionCounts(_ context.Context, topics []string) (map[string]int, error) {
 	return l.client.PartitionCounts(topics)
 }
@@ -95,14 +105,28 @@ func topicGap(side string, canDescribe bool) string {
 	return fmt.Sprintf("the %s credential cannot describe arbitrary topics, so offsets on the topics it cannot see are silently left out and the conversion's group checks cannot see them. Grant it DESCRIBE on all topics (a topic ACL on '*'; with MSK IAM, the DescribeTopic action on every topic resource) and retry", side)
 }
 
+// commitGap is the reason a conversion must refuse when the destination
+// credential may not commit offsets for arbitrary groups and topics, or "" when
+// it may. The DESCRIBE probes don't cover it: committing needs READ on the
+// group and on each topic, so a DESCRIBE-only credential would pass every other
+// check and fail in sync_offsets, after the fence. The MSK IAM actions are
+// named from AWS's documentation and are not verified live yet (plan 4).
+func commitGap(canCommit bool) string {
+	if canCommit {
+		return ""
+	}
+	return "the destination credential cannot commit offsets for arbitrary consumer groups and topics, so writing the consumer groups' offsets after the fence would fail. Grant it READ on all consumer groups and all topics (ACLs on '*'; with MSK IAM, the kafka-cluster:AlterGroup action on every group resource and kafka-cluster:ReadData on every topic resource, named from AWS's documentation and not yet verified live) and retry"
+}
+
 // listingGaps holds the reason, per cluster, that a group listing or a topic view
-// may be partial; an empty string means it is known to be complete.
+// may be partial, and the reason the destination may not accept offset
+// commits; an empty string means there is no gap.
 type listingGaps struct {
-	sourceGroups, targetGroups, sourceTopics, targetTopics string
+	sourceGroups, targetGroups, sourceTopics, targetTopics, targetCommit string
 }
 
 // groupFacts folds the destination listing, the source groups' committed topics
-// and the visibility gaps into the plain data ReconcileConvert reads.
+// and the credential gaps into the plain data ReconcileConvert reads.
 func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string, gaps listingGaps) reconcile.GroupFacts {
 	f := reconcile.GroupFacts{
 		TargetStates:            make(map[string]string, len(target)),
@@ -111,6 +135,7 @@ func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string
 		TargetListingIncomplete: gaps.targetGroups,
 		SourceTopicsIncomplete:  gaps.sourceTopics,
 		TargetTopicsIncomplete:  gaps.targetTopics,
+		TargetCommitDenied:      gaps.targetCommit,
 	}
 	for _, l := range target {
 		f.TargetStates[l.GroupID] = l.State

@@ -294,6 +294,9 @@ type fakeGroupLister struct {
 	accessErr     error
 	topicsDenied  bool // CanDescribeAnyTopic reports false
 	topicsErr     error
+	commitDenied  bool // CanCommitAnyOffsets reports false
+	commitErr     error
+	commitN       int
 }
 
 func (f *fakeGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
@@ -620,5 +623,46 @@ func TestEngineRun_ConversionPartitionCountFailureIsAnError(t *testing.T) {
 				t.Fatalf("Run error = %v, want the partition-count failure as an error, not a refusal", err)
 			}
 		})
+	}
+}
+
+func (f *fakeGroupLister) CanCommitAnyOffsets(context.Context) (bool, error) {
+	f.commitN++
+	if f.commitErr != nil {
+		return false, f.commitErr
+	}
+	return !f.commitDenied, nil
+}
+
+func TestEngineRun_ConversionRefusesWhenTheDestinationCannotWriteOffsets(t *testing.T) {
+	plan, err := convertEngine(&fakeGroupLister{}, &fakeGroupLister{commitDenied: true}).Run(context.Background(), convertIn)
+	if err != nil {
+		t.Fatalf("Run error = %v, want a refusal, not an error", err)
+	}
+	failed := map[string]bool{}
+	for _, pc := range plan.Report.Preconditions {
+		if !pc.OK {
+			failed[pc.Name] = true
+		}
+	}
+	if len(failed) != 1 || !failed[reconcile.TargetOffsetCommitCheckName] {
+		t.Errorf("failed preconditions = %v, want only %q", failed, reconcile.TargetOffsetCommitCheckName)
+	}
+}
+
+func TestEngineRun_ConversionProbesOffsetWritesOnTheDestinationOnly(t *testing.T) {
+	src, tgt := &fakeGroupLister{}, &fakeGroupLister{}
+	if _, err := convertEngine(src, tgt).Run(context.Background(), convertIn); err != nil {
+		t.Fatal(err)
+	}
+	if src.commitN != 0 || tgt.commitN != 1 {
+		t.Errorf("CanCommitAnyOffsets calls source/destination = %d/%d, want 0/1", src.commitN, tgt.commitN)
+	}
+}
+
+func TestEngineRun_ConversionCommitProbeFailureIsAnError(t *testing.T) {
+	boom := errors.New("coordinator not available")
+	if _, err := convertEngine(&fakeGroupLister{}, &fakeGroupLister{commitErr: boom}).Run(context.Background(), convertIn); !errors.Is(err, boom) {
+		t.Fatalf("Run error = %v, want the probe failure as an error, not a refusal", err)
 	}
 }
