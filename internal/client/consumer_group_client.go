@@ -297,31 +297,137 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	return out, nil
 }
 
-// committedTopicsOf fetches every committed offset of one group. A topic counts
-// as tracked only if some partition has a committed offset >= 0 (-1 means a
-// subscription with no commit). Any block-level error fails the whole fetch.
-func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
+// committedOffsetsOf fetches every committed offset of one group: topic -> partition -> offset. A partition
+// counts only if its committed offset is >= 0 (-1 means a subscription with no commit), so a topic with no
+// commit is absent. Any block-level error fails the whole fetch.
+func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]int64, error) {
 	resp, err := f.ListConsumerGroupOffsets(group, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets for consumer group %s: %w", group, err)
 	}
-	var topics []string
+	out := map[string]map[int32]int64{}
 	for topic, parts := range resp.Blocks {
-		tracked := false
 		for part, b := range parts {
 			if b.Err != sarama.ErrNoError {
 				return nil, fmt.Errorf("fetching committed offset for consumer group %s, topic %s partition %d: %w", group, topic, part, b.Err)
 			}
 			if b.Offset >= 0 {
-				tracked = true
+				if out[topic] == nil {
+					out[topic] = map[int32]int64{}
+				}
+				out[topic][part] = b.Offset
 			}
 		}
-		if tracked {
-			topics = append(topics, topic)
-		}
+	}
+	return out, nil
+}
+
+// committedTopicsOf is the topics of committedOffsetsOf, sorted.
+func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
+	offsets, err := committedOffsetsOf(f, group)
+	if err != nil {
+		return nil, err
+	}
+	var topics []string
+	for topic := range offsets {
+		topics = append(topics, topic)
 	}
 	sort.Strings(topics)
 	return topics, nil
+}
+
+// CommittedOffsets returns one group's committed offsets, topic -> partition -> offset, offsets >= 0 only.
+func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int32]int64, error) {
+	return committedOffsetsOf(c.admin, group)
+}
+
+// commitAttempts is how many times CommitGroupOffsets asks before giving up on a coordinator that is moving
+// or still loading. commitRetryBackoff is the wait between attempts; it is a var so tests can shorten it.
+const commitAttempts = 3
+
+var commitRetryBackoff = 200 * time.Millisecond
+
+// buildGroupCommit builds the admin commit for one group: OffsetCommit v7 (a bare request is v0), generation
+// -1 and an empty member id, so no group membership is needed or created. Every block carries leader epoch -1
+// ("unknown"), which makes a consumer that later joins skip truncation detection on its first fetch.
+// AddBlock would send epoch 0 instead, which the broker treats as a real epoch at v6+.
+func buildGroupCommit(group string, offsets map[string]map[int32]int64) *sarama.OffsetCommitRequest {
+	req := &sarama.OffsetCommitRequest{
+		Version:                 7,
+		ConsumerGroup:           group,
+		ConsumerGroupGeneration: sarama.GroupGenerationUndefined,
+	}
+	for topic, parts := range offsets {
+		for part, offset := range parts {
+			req.AddBlockWithLeaderEpoch(topic, part, offset, -1, sarama.ReceiveTime, "")
+		}
+	}
+	return req
+}
+
+// retriableCommit reports whether a commit failed only because the group's coordinator moved or is loading.
+func retriableCommit(err error) bool {
+	return errors.Is(err, sarama.ErrOffsetsLoadInProgress) ||
+		errors.Is(err, sarama.ErrConsumerCoordinatorNotAvailable) ||
+		errors.Is(err, sarama.ErrNotCoordinatorForConsumer)
+}
+
+// firstCommitError returns the error for the lowest (topic, partition) the broker rejected, so the message
+// does not depend on map order. It returns a nil error when every partition was accepted.
+func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) {
+	var topics []string
+	for topic := range resp.Errors {
+		topics = append(topics, topic)
+	}
+	sort.Strings(topics)
+	for _, topic := range topics {
+		var parts []int32
+		for part := range resp.Errors[topic] {
+			parts = append(parts, part)
+		}
+		sort.Slice(parts, func(i, j int) bool { return parts[i] < parts[j] })
+		for _, part := range parts {
+			if kerr := resp.Errors[topic][part]; kerr != sarama.ErrNoError {
+				return topic, part, kerr
+			}
+		}
+	}
+	return "", 0, nil
+}
+
+// CommitGroupOffsets writes one group's offsets to this cluster as a single admin commit (see
+// buildGroupCommit). A coordinator that moved or is still loading is retried; anything else, including a
+// group that has live members (UNKNOWN_MEMBER_ID) or a credential without READ on the group or topic, is an
+// error naming the group, topic and partition, and is not retried.
+func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]int64) error {
+	var lastErr error
+	for attempt := 0; attempt < commitAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(commitRetryBackoff)
+			_ = c.client.RefreshCoordinator(group)
+		}
+		coordinator, err := c.client.Coordinator(group)
+		if err != nil {
+			lastErr = fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)
+			if retriableCommit(err) {
+				continue
+			}
+			return lastErr
+		}
+		resp, err := coordinator.CommitOffset(buildGroupCommit(group, offsets))
+		if err != nil {
+			return fmt.Errorf("committing offsets for consumer group %s: %w", group, err)
+		}
+		if topic, part, kerr := firstCommitError(resp); kerr != nil {
+			lastErr = fmt.Errorf("committing offset for consumer group %s, topic %s partition %d: %w", group, topic, part, kerr)
+			if retriableCommit(kerr) {
+				continue
+			}
+			return lastErr
+		}
+		return nil
+	}
+	return lastErr
 }
 
 // groupDescriber is the slice of sarama.ClusterAdmin the group-describe probe needs.

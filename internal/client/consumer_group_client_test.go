@@ -3,9 +3,11 @@ package client
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/types"
@@ -312,10 +314,10 @@ func TestCanDescribeAnyGroup_OtherFailuresAreErrorsNotRefusals(t *testing.T) {
 	require.ErrorIs(t, err, sarama.ErrNotCoordinatorForConsumer)
 }
 
-// newClientAgainstMockBroker returns a real ConsumerGroupClient (pinned at 3.8, like production) talking to a
+// newClientAndMockBroker returns a real ConsumerGroupClient (pinned at 3.8, like production) talking to a
 // mock broker, so the probe is exercised through sarama's own coordinator lookup and request encoding rather
 // than a fake of it. handlers supplies the group-related responses; ApiVersions and Metadata are filled in.
-func newClientAgainstMockBroker(t *testing.T, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) *ConsumerGroupClient {
+func newClientAndMockBroker(t *testing.T, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) (*ConsumerGroupClient, *sarama.MockBroker) {
 	t.Helper()
 	mb := sarama.NewMockBroker(t, 1)
 	t.Cleanup(mb.Close)
@@ -339,7 +341,14 @@ func newClientAgainstMockBroker(t *testing.T, metadataMax int16, handlers func(m
 	t.Cleanup(func() { _ = c.Close() })
 	admin, err := sarama.NewClusterAdminFromClient(c)
 	require.NoError(t, err)
-	return &ConsumerGroupClient{client: c, admin: admin}
+	return &ConsumerGroupClient{client: c, admin: admin}, mb
+}
+
+// newClientAgainstMockBroker is newClientAndMockBroker for tests that do not inspect the broker.
+func newClientAgainstMockBroker(t *testing.T, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) *ConsumerGroupClient {
+	t.Helper()
+	c, _ := newClientAndMockBroker(t, metadataMax, handlers)
+	return c
 }
 
 func TestCanDescribeAnyGroup_ThroughARealClient(t *testing.T) {
@@ -518,4 +527,157 @@ func TestPartitionCounts_FailuresAreErrors(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestCommittedOffsetsOf_ReturnsOnlyCommittedOffsetsPerPartition(t *testing.T) {
+	f := fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{
+		"app": offsetsResponse(map[string]map[int32]int64{
+			"orders":          {0: 5, 1: -1, 2: 0},
+			"subscribed-only": {0: -1},
+		}),
+		"idle": offsetsResponse(nil),
+	}}
+
+	got, err := committedOffsetsOf(f, "app")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]map[int32]int64{"orders": {0: 5, 2: 0}}, got,
+		"a partition at -1 has no commit; a topic with none is absent; offset 0 is a real commit")
+
+	got, err = committedOffsetsOf(f, "idle")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestCommittedOffsetsOf_ErrorsAreErrors(t *testing.T) {
+	blockErr := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
+	blockErr.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: -1, Err: sarama.ErrTopicAuthorizationFailed})
+
+	_, err := committedOffsetsOf(fakeOffsetFetcher{errs: map[string]error{"g": errors.New("boom")}}, "g")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "g")
+
+	_, err = committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"g": blockErr}}, "g")
+	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
+}
+
+// leaderEpochOf reads the leader epoch sarama will encode for a block. OffsetCommitRequest has no accessor for
+// it and AddBlock silently uses 0, so the unexported field is read by reflection.
+func leaderEpochOf(t *testing.T, req *sarama.OffsetCommitRequest, topic string, partition int32) int32 {
+	t.Helper()
+	blocks := reflect.ValueOf(req).Elem().FieldByName("blocks")
+	require.True(t, blocks.IsValid(), "sarama's OffsetCommitRequest no longer has a blocks field; update this helper")
+	b := blocks.MapIndex(reflect.ValueOf(topic))
+	require.True(t, b.IsValid(), "no block for topic %s", topic)
+	b = b.MapIndex(reflect.ValueOf(partition))
+	require.True(t, b.IsValid(), "no block for %s/%d", topic, partition)
+	f := b.Elem().FieldByName("committedLeaderEpoch")
+	require.True(t, f.IsValid(), "sarama's offsetCommitRequestBlock no longer has a committedLeaderEpoch field; update this helper")
+	return int32(f.Int())
+}
+
+func TestBuildGroupCommit_IsAnAdminCommitWithEpochMinusOne(t *testing.T) {
+	req := buildGroupCommit("g1", map[string]map[int32]int64{
+		"orders":   {0: 10, 1: 0},
+		"payments": {2: 7},
+	})
+
+	assert.Equal(t, int16(7), req.Version, "a bare OffsetCommitRequest is v0 and cannot carry a leader epoch")
+	assert.Equal(t, "g1", req.ConsumerGroup)
+	assert.Equal(t, int32(sarama.GroupGenerationUndefined), req.ConsumerGroupGeneration, "an admin commit has no generation")
+	assert.Empty(t, req.ConsumerID, "an admin commit has no member")
+
+	for topic, parts := range map[string]map[int32]int64{"orders": {0: 10, 1: 0}, "payments": {2: 7}} {
+		for part, want := range parts {
+			got, _, err := req.Offset(topic, part)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			assert.Equal(t, int32(-1), leaderEpochOf(t, req, topic, part),
+				"AddBlock would send epoch 0, which the broker treats as real at v6+; -1 makes a restarting consumer skip truncation detection")
+		}
+	}
+}
+
+// commitHandlers answers FindCoordinator for group g1 with the mock broker and OffsetCommit with commit.
+func commitHandlers(t *testing.T, commit sarama.MockResponse) func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+	return func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{
+			"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(t).SetCoordinator(sarama.CoordinatorGroup, "g1", mb),
+			"OffsetCommitRequest":    commit,
+		}
+	}
+}
+
+func commitRequests(mb *sarama.MockBroker) []*sarama.OffsetCommitRequest {
+	var out []*sarama.OffsetCommitRequest
+	for _, rr := range mb.History() {
+		if r, ok := rr.Request.(*sarama.OffsetCommitRequest); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func TestCommitGroupOffsets_SendsOneAdminCommitForTheWholeGroup(t *testing.T) {
+	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t, sarama.NewMockOffsetCommitResponse(t)))
+
+	err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10, 1: 4}, "payments": {0: 2}})
+
+	require.NoError(t, err)
+	reqs := commitRequests(mb)
+	require.Len(t, reqs, 1, "one OffsetCommit per group, never one per partition")
+	assert.Equal(t, int16(7), reqs[0].Version)
+	assert.Equal(t, "g1", reqs[0].ConsumerGroup)
+	assert.Equal(t, int32(sarama.GroupGenerationUndefined), reqs[0].ConsumerGroupGeneration)
+	off, _, err := reqs[0].Offset("orders", 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), off)
+	assert.Equal(t, int32(-1), leaderEpochOf(t, reqs[0], "payments", 0))
+}
+
+func TestCommitGroupOffsets_APartitionErrorIsAnErrorAndNotRetriedWhenPermanent(t *testing.T) {
+	for name, kerr := range map[string]sarama.KError{
+		// A destination group with live members: the broker refuses an admin commit. Retrying cannot help.
+		"group has members": sarama.ErrUnknownMemberId,
+		// The destination credential holds DESCRIBE (plan 1's probes pass) but not READ.
+		"no READ on the group": sarama.ErrGroupAuthorizationFailed,
+		"no READ on the topic": sarama.ErrTopicAuthorizationFailed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
+				sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, kerr)))
+
+			err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}})
+
+			require.ErrorIs(t, err, kerr)
+			assert.Contains(t, err.Error(), "g1")
+			assert.Contains(t, err.Error(), "orders")
+			assert.Len(t, commitRequests(mb), 1, "a permanent error must not be retried")
+		})
+	}
+}
+
+func TestCommitGroupOffsets_RetriesWhileTheCoordinatorSettles(t *testing.T) {
+	old := commitRetryBackoff
+	commitRetryBackoff = time.Millisecond
+	t.Cleanup(func() { commitRetryBackoff = old })
+
+	loading := sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)
+	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t, sarama.NewMockSequence(loading, sarama.NewMockOffsetCommitResponse(t))))
+
+	require.NoError(t, c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}}))
+	assert.Len(t, commitRequests(mb), 2, "one retry after COORDINATOR_LOAD_IN_PROGRESS")
+}
+
+func TestCommitGroupOffsets_GivesUpAfterTheAttempts(t *testing.T) {
+	old := commitRetryBackoff
+	commitRetryBackoff = time.Millisecond
+	t.Cleanup(func() { commitRetryBackoff = old })
+
+	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
+		sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)))
+
+	err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}})
+
+	require.ErrorIs(t, err, sarama.ErrOffsetsLoadInProgress)
+	assert.Len(t, commitRequests(mb), commitAttempts)
 }
