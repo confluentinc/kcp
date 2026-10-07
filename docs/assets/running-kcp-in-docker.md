@@ -12,21 +12,68 @@ the Linux image through their Linux backend.
 docker pull confluentinc/kcp:latest        # or a pinned tag, e.g. :0.9.3
 ```
 
+## AWS credentials
+
+MSK commands (`discover`, `scan clusters --source-type msk`) call AWS, so the
+container needs AWS credentials. A container can't reach your shell environment,
+your SSO session, or a helper like `granted` — it can only read a **credentials
+file you mount in**. So the rule is simple: give the container a credentials
+*file*.
+
+**If you already have static keys** — plain `aws configure`, or a helper
+configured to write `~/.aws/credentials` — you're set; skip to [Run](#run) and
+mount the file as shown there.
+
+**If you use AWS SSO / `granted` / `assume`**, your credentials live in your
+shell or are minted on demand, so there is no static file to mount yet. Flatten
+your active credentials into a static profile once, on the host:
+
+```bash
+# Resolve your SSO/assume profile's current creds (this runs your helper, e.g. granted):
+eval "$(aws configure export-credentials --profile <your-sso-profile> --format env)"
+
+# Write them as a static profile named "kcp" into ~/.aws/credentials:
+aws configure set aws_access_key_id     "$AWS_ACCESS_KEY_ID"     --profile kcp
+aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile kcp
+aws configure set aws_session_token     "$AWS_SESSION_TOKEN"     --profile kcp
+```
+
+That adds a `[kcp]` block to `~/.aws/credentials`:
+
+```ini
+[kcp]
+aws_access_key_id = ASIA...
+aws_secret_access_key = ...
+aws_session_token = ...
+```
+
+> **These are temporary credentials** — the key id starts with `ASIA` and they
+> expire after a few hours. When a command starts failing with an expired-token
+> error, re-run the three `aws configure set` commands to refresh the `[kcp]`
+> profile. A mounted file is a static snapshot; unlike kcp run natively, it does
+> not auto-refresh.
+
 ## Run
 
 kcp reads and writes its state files (`kcp-state.json`, `msk-credentials.yaml`)
-in the working directory, and reads AWS credentials from the standard AWS SDK
-credential chain. In a container you therefore (1) bind-mount a working
-directory and (2) pass AWS credentials as environment variables.
+in the working directory. In a container you (1) bind-mount a working directory
+and (2) mount the AWS credentials file you prepared above and point the AWS SDK
+at it:
 
 ```bash
 docker run --rm \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION \
+  -v "$HOME/.aws/credentials:/aws/credentials:ro" \
+  -e AWS_SHARED_CREDENTIALS_FILE=/aws/credentials -e AWS_PROFILE=kcp -e AWS_REGION=us-east-1 \
   -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" \
   confluentinc/kcp:latest discover --region us-east-1
 ```
 
+- `-v "$HOME/.aws/credentials:/aws/credentials:ro"` + `AWS_SHARED_CREDENTIALS_FILE`
+  hand the container your AWS keys as a read-only file; `AWS_PROFILE=kcp` selects
+  the profile from [AWS credentials](#aws-credentials). Mounting only the
+  credentials *file* keeps the container away from `~/.aws/config` and any
+  `credential_process`/SSO setup it can't use anyway.
 - `-v "$PWD:/work" -w /work` persists the state file and lets you read the
   generated reports/Terraform on your host afterward.
 - `--user "$(id -u):$(id -g)"` keeps files the container writes owned by you
@@ -45,7 +92,7 @@ Typing the full `docker run` line every time is tedious. Wrap the plumbing in a
 shell alias and then use `kcp` as if it were installed locally:
 
 ```bash
-alias kcp='docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" confluentinc/kcp:0.9.3'
+alias kcp='docker run --rm -v "$HOME/.aws/credentials:/aws/credentials:ro" -e AWS_SHARED_CREDENTIALS_FILE=/aws/credentials -e AWS_PROFILE=kcp -e AWS_REGION=us-east-1 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" confluentinc/kcp:0.9.3'
 
 # now, for example:
 kcp discover --region us-east-1
@@ -57,8 +104,8 @@ your `~/.bashrc` / `~/.zshrc` to make it permanent.
 
 ## Scanning an Apache Kafka (non-MSK) cluster
 
-Apache Kafka sources don't use AWS, so drop the `-e AWS_*` flags and instead hand
-kcp an `apache-kafka-credentials.yaml` you author yourself (schema and examples:
+Apache Kafka sources don't use AWS, so drop the AWS-credentials mount and instead
+hand kcp an `apache-kafka-credentials.yaml` you author yourself (schema and examples:
 [Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md)).
 Keep that file in the mounted working directory so the container can read it:
 
