@@ -227,15 +227,33 @@
             "targetStreamingDomain": {
               "type": "string",
               "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
+            },
+            "convertTo": {
+              "type": "string",
+              "description": "Convert the route's shape instead of migrating topics. \"static\" converts a dynamic route whose every topic has already been migrated to the target into a static route bound to targetStreamingDomain, carrying consumer-group offsets across. Mutually exclusive with topicGroup.",
+              "enum": [
+                "static"
+              ]
             }
           },
-          "description": "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
+          "description": "Names the route on the live Gateway CR to act on and the target streaming domain, plus exactly one of: topicGroup (the topic selection(s) that migrate) or convertTo (convert the route's shape). The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
           "required": [
             "name",
-            "topicGroup",
             "targetStreamingDomain"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "topicGroup"
+              ]
+            },
+            {
+              "required": [
+                "convertTo"
+              ]
+            }
+          ]
         },
         "defaultPolicies": {
           "type": "object",

@@ -1138,3 +1138,40 @@ func TestAdminOptionForAuthMethod(t *testing.T) {
 		assert.True(t, cfg.disableTLS)
 	})
 }
+
+// ListTopicInternalFlags reports every topic of the all-topics metadata
+// response with the broker's own IsInternal flag, unfiltered: callers that need
+// user topics only (migplan) drop the flagged ones themselves.
+func TestListTopicInternalFlags(t *testing.T) {
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_1_0_0
+	cfg.ApiVersionsRequest = false
+
+	seed := sarama.NewMockBroker(t, 1)
+	defer seed.Close()
+
+	md := &sarama.MetadataResponse{
+		Version:      sarama.NewMetadataRequest(cfg.Version, nil).Version,
+		ControllerID: 1,
+	}
+	md.AddBroker(seed.Addr(), 1)
+	md.AddTopic("orders", sarama.ErrNoError)
+	md.AddTopic("__consumer_offsets", sarama.ErrNoError)
+	for _, tm := range md.Topics {
+		if tm.Name == "__consumer_offsets" {
+			tm.IsInternal = true
+		}
+	}
+	seed.SetHandlerByMap(map[string]sarama.MockResponse{
+		"MetadataRequest": sarama.NewMockWrapper(md),
+	})
+
+	admin, err := sarama.NewClusterAdmin([]string{seed.Addr()}, cfg)
+	require.NoError(t, err)
+	defer func() { _ = admin.Close() }()
+
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+	got, err := k.ListTopicInternalFlags()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"orders": false, "__consumer_offsets": true}, got)
+}
