@@ -540,7 +540,7 @@ func TestCommittedOffsetsOf_ReturnsOnlyCommittedOffsetsPerPartition(t *testing.T
 
 	got, err := committedOffsetsOf(f, "app")
 	require.NoError(t, err)
-	assert.Equal(t, map[string]map[int32]int64{"orders": {0: 5, 2: 0}}, got,
+	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {0: at(5), 2: at(0)}}, got,
 		"a partition at -1 has no commit; a topic with none is absent; offset 0 is a real commit")
 
 	got, err = committedOffsetsOf(f, "idle")
@@ -552,12 +552,33 @@ func TestCommittedOffsetsOf_ErrorsAreErrors(t *testing.T) {
 	blockErr := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
 	blockErr.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: -1, Err: sarama.ErrTopicAuthorizationFailed})
 
-	_, err := committedOffsetsOf(fakeOffsetFetcher{errs: map[string]error{"g": errors.New("boom")}}, "g")
+	_, err := committedOffsetsOf(fakeOffsetFetcher{errs: map[string]error{"orders-app": errors.New("boom")}}, "orders-app")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "g")
+	assert.Contains(t, err.Error(), "orders-app")
 
-	_, err = committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"g": blockErr}}, "g")
+	_, err = committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"orders-app": blockErr}}, "orders-app")
 	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
+	assert.Contains(t, err.Error(), "orders-app")
+}
+
+// at is a committed offset with no metadata.
+func at(o int64) CommittedOffset { return CommittedOffset{Offset: o} }
+
+func TestCommittedOffsetsOf_CarriesEachPartitionsMetadata(t *testing.T) {
+	// Kafka Streams stores per-partition stream time in the commit metadata; dropping it changes windowed
+	// aggregations after the switch.
+	resp := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
+	resp.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: 5, Metadata: "stream-time=1700000000000"})
+	resp.AddBlock("orders", 1, &sarama.OffsetFetchResponseBlock{Offset: 7})
+	resp.AddBlock("orders", 2, &sarama.OffsetFetchResponseBlock{Offset: -1, Metadata: "ignored"})
+
+	got, err := committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"app": resp}}, "app")
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {
+		0: {Offset: 5, Metadata: "stream-time=1700000000000"},
+		1: {Offset: 7},
+	}}, got, "metadata is carried as fetched; a partition with no commit is still absent")
 }
 
 // leaderEpochOf reads the leader epoch sarama will encode for a block. OffsetCommitRequest has no accessor for
@@ -576,21 +597,23 @@ func leaderEpochOf(t *testing.T, req *sarama.OffsetCommitRequest, topic string, 
 }
 
 func TestBuildGroupCommit_IsAnAdminCommitWithEpochMinusOne(t *testing.T) {
-	req := buildGroupCommit("g1", map[string]map[int32]int64{
-		"orders":   {0: 10, 1: 0},
-		"payments": {2: 7},
-	})
+	want := map[string]map[int32]CommittedOffset{
+		"orders":   {0: {Offset: 10, Metadata: "stream-time=1"}, 1: at(0)},
+		"payments": {2: {Offset: 7, Metadata: "stream-time=2"}},
+	}
+	req := buildGroupCommit("g1", want)
 
 	assert.Equal(t, int16(7), req.Version, "a bare OffsetCommitRequest is v0 and cannot carry a leader epoch")
 	assert.Equal(t, "g1", req.ConsumerGroup)
 	assert.Equal(t, int32(sarama.GroupGenerationUndefined), req.ConsumerGroupGeneration, "an admin commit has no generation")
 	assert.Empty(t, req.ConsumerID, "an admin commit has no member")
 
-	for topic, parts := range map[string]map[int32]int64{"orders": {0: 10, 1: 0}, "payments": {2: 7}} {
+	for topic, parts := range want {
 		for part, want := range parts {
-			got, _, err := req.Offset(topic, part)
+			got, metadata, err := req.Offset(topic, part)
 			require.NoError(t, err)
-			assert.Equal(t, want, got)
+			assert.Equal(t, want.Offset, got)
+			assert.Equal(t, want.Metadata, metadata, "the source commit's metadata goes to the destination unchanged")
 			assert.Equal(t, int32(-1), leaderEpochOf(t, req, topic, part),
 				"AddBlock would send epoch 0, which the broker treats as real at v6+; -1 makes a restarting consumer skip truncation detection")
 		}
@@ -620,7 +643,10 @@ func commitRequests(mb *sarama.MockBroker) []*sarama.OffsetCommitRequest {
 func TestCommitGroupOffsets_SendsOneAdminCommitForTheWholeGroup(t *testing.T) {
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t, sarama.NewMockOffsetCommitResponse(t)))
 
-	err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10, 1: 4}, "payments": {0: 2}})
+	err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{
+		"orders":   {0: at(10), 1: {Offset: 4, Metadata: "stream-time=1700000000000"}},
+		"payments": {0: at(2)},
+	})
 
 	require.NoError(t, err)
 	reqs := commitRequests(mb)
@@ -628,9 +654,10 @@ func TestCommitGroupOffsets_SendsOneAdminCommitForTheWholeGroup(t *testing.T) {
 	assert.Equal(t, int16(7), reqs[0].Version)
 	assert.Equal(t, "g1", reqs[0].ConsumerGroup)
 	assert.Equal(t, int32(sarama.GroupGenerationUndefined), reqs[0].ConsumerGroupGeneration)
-	off, _, err := reqs[0].Offset("orders", 1)
+	off, metadata, err := reqs[0].Offset("orders", 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), off)
+	assert.Equal(t, "stream-time=1700000000000", metadata, "the metadata is in the OffsetCommit the broker receives")
 	assert.Equal(t, int32(-1), leaderEpochOf(t, reqs[0], "payments", 0))
 }
 
@@ -646,7 +673,7 @@ func TestCommitGroupOffsets_APartitionErrorIsAnErrorAndNotRetriedWhenPermanent(t
 			c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
 				sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, kerr)))
 
-			err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}})
+			err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
 
 			require.ErrorIs(t, err, kerr)
 			assert.Contains(t, err.Error(), "g1")
@@ -664,7 +691,7 @@ func TestCommitGroupOffsets_RetriesWhileTheCoordinatorSettles(t *testing.T) {
 	loading := sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t, sarama.NewMockSequence(loading, sarama.NewMockOffsetCommitResponse(t))))
 
-	require.NoError(t, c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}}))
+	require.NoError(t, c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}}))
 	assert.Len(t, commitRequests(mb), 2, "one retry after COORDINATOR_LOAD_IN_PROGRESS")
 }
 
@@ -676,7 +703,7 @@ func TestCommitGroupOffsets_GivesUpAfterTheAttempts(t *testing.T) {
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
 		sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)))
 
-	err := c.CommitGroupOffsets("g1", map[string]map[int32]int64{"orders": {0: 10}})
+	err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
 
 	require.ErrorIs(t, err, sarama.ErrOffsetsLoadInProgress)
 	assert.Len(t, commitRequests(mb), commitAttempts)

@@ -8,7 +8,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/client"
 )
+
+// The real client is the fetcher and the committer, with no adapter.
+var (
+	_ GroupOffsetFetcher = (*client.ConsumerGroupClient)(nil)
+	_ GroupCommitter     = (*client.ConsumerGroupClient)(nil)
+)
+
+// at is a committed offset with no metadata.
+func at(o int64) CommittedOffset { return CommittedOffset{Offset: o} }
 
 type fakeFetcher struct {
 	offsets map[string]Offsets
@@ -33,8 +44,8 @@ func factoryFor(f *fakeFetcher) (FetcherFactory, *atomic.Int64, *atomic.Int64) {
 
 func TestTakeSnapshot_CollectsEveryGroupAndOmitsGroupsWithNoCommits(t *testing.T) {
 	f := &fakeFetcher{offsets: map[string]Offsets{
-		"a":    {"orders": {0: 5, 1: 6}},
-		"b":    {"orders": {0: 1}, "payments": {0: 9}},
+		"a":    {"orders": {0: at(5), 1: at(6)}},
+		"b":    {"orders": {0: at(1)}, "payments": {0: at(9)}},
 		"idle": {},
 	}}
 	factory, _, _ := factoryFor(f)
@@ -43,15 +54,15 @@ func TestTakeSnapshot_CollectsEveryGroupAndOmitsGroupsWithNoCommits(t *testing.T
 
 	require.NoError(t, err)
 	assert.Equal(t, Snapshot{
-		"a": {"orders": {0: 5, 1: 6}},
-		"b": {"orders": {0: 1}, "payments": {0: 9}},
+		"a": {"orders": {0: at(5), 1: at(6)}},
+		"b": {"orders": {0: at(1)}, "payments": {0: at(9)}},
 	}, snap, "a group with no commits has nothing to sync")
 }
 
 func TestSnapshot_GroupsAndTopicsAreSorted(t *testing.T) {
 	snap := Snapshot{
-		"zeta":  {"orders": {0: 1}},
-		"alpha": {"payments": {0: 1}, "orders": {0: 2}},
+		"zeta":  {"orders": {0: at(1)}},
+		"alpha": {"payments": {0: at(1)}, "orders": {0: at(2)}},
 	}
 	assert.Equal(t, []string{"alpha", "zeta"}, snap.Groups())
 	assert.Equal(t, []string{"orders", "payments"}, snap.Topics(), "the union across groups, each once")
@@ -61,7 +72,7 @@ func TestSnapshot_GroupsAndTopicsAreSorted(t *testing.T) {
 func TestTakeSnapshot_AFailedGroupFailsTheWholeSnapshot(t *testing.T) {
 	boom := errors.New("not authorized")
 	f := &fakeFetcher{
-		offsets: map[string]Offsets{"ok": {"orders": {0: 1}}},
+		offsets: map[string]Offsets{"ok": {"orders": {0: at(1)}}},
 		errs:    map[string]error{"bad": boom},
 	}
 	factory, _, _ := factoryFor(f)
@@ -77,7 +88,7 @@ func TestTakeSnapshot_EachWorkerGetsItsOwnFetcherAndReleasesIt(t *testing.T) {
 	f := &fakeFetcher{offsets: map[string]Offsets{}}
 	var groups []string
 	for _, g := range names(6) {
-		f.offsets[g] = Offsets{"orders": {0: 1}}
+		f.offsets[g] = Offsets{"orders": {0: at(1)}}
 		groups = append(groups, g)
 	}
 	factory, built, released := factoryFor(f)
@@ -98,7 +109,7 @@ func TestTakeSnapshot_NoGroupsBuildsNoFetchers(t *testing.T) {
 }
 
 func TestTakeSnapshot_ANilReleaseIsAllowed(t *testing.T) {
-	f := &fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: 1}}}}
+	f := &fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: at(1)}}}}
 	snap, err := TakeSnapshot(context.Background(), func() (GroupOffsetFetcher, func(), error) { return f, nil, nil }, []string{"a"}, 1)
 	require.NoError(t, err)
 	assert.Len(t, snap, 1)

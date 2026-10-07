@@ -26,7 +26,7 @@ func topicsLister(topics ...string) TopicLister {
 }
 
 func TestDestinationHighWaterMarks_SweepsTheSnapshotsTopics(t *testing.T) {
-	snap := Snapshot{"a": {"orders": {0: 1}}, "b": {"payments": {0: 2}, "orders": {1: 3}}}
+	snap := Snapshot{"a": {"orders": {0: at(1)}}, "b": {"payments": {0: at(2)}, "orders": {1: at(3)}}}
 	sweep := &fakeSweep{hwm: map[string]map[int32]int64{"orders": {0: 9, 1: 9}, "payments": {0: 9}}}
 
 	hwm, err := DestinationHighWaterMarks(context.Background(), topicsLister("orders", "payments", "other"), sweep, snap)
@@ -37,7 +37,7 @@ func TestDestinationHighWaterMarks_SweepsTheSnapshotsTopics(t *testing.T) {
 }
 
 func TestDestinationHighWaterMarks_ATopicMissingOnTheDestinationRefusesBeforeTheSweep(t *testing.T) {
-	snap := Snapshot{"a": {"orders": {0: 1}, "zgone": {0: 1}}, "b": {"agone": {0: 2}}}
+	snap := Snapshot{"a": {"orders": {0: at(1)}, "zgone": {0: at(1)}}, "b": {"agone": {0: at(2)}}}
 	sweep := &fakeSweep{}
 
 	hwm, err := DestinationHighWaterMarks(context.Background(), topicsLister("orders"), sweep, snap)
@@ -53,7 +53,7 @@ func TestDestinationHighWaterMarks_ATopicMissingOnTheDestinationRefusesBeforeThe
 
 func TestDestinationHighWaterMarks_FailuresAreErrorsNotRefusals(t *testing.T) {
 	boom := errors.New("broker down")
-	snap := Snapshot{"a": {"orders": {0: 1}}}
+	snap := Snapshot{"a": {"orders": {0: at(1)}}}
 
 	_, err := DestinationHighWaterMarks(context.Background(),
 		func(context.Context) ([]string, error) { return nil, boom }, &fakeSweep{}, snap)
@@ -74,8 +74,8 @@ func TestDestinationHighWaterMarks_AnEmptySnapshotSweepsNothing(t *testing.T) {
 
 func TestBuildPlan_InRangeOffsetsBecomeOneCommitPerGroup(t *testing.T) {
 	snap := Snapshot{
-		"b": {"orders": {0: 1}, "payments": {0: 2}},
-		"a": {"orders": {0: 5, 1: 6}},
+		"b": {"orders": {0: at(1)}, "payments": {0: at(2)}},
+		"a": {"orders": {0: at(5), 1: at(6)}},
 	}
 	hwm := map[string]map[int32]int64{"orders": {0: 10, 1: 10}, "payments": {0: 2}}
 
@@ -83,22 +83,37 @@ func TestBuildPlan_InRangeOffsetsBecomeOneCommitPerGroup(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []Commit{
-		{Group: "a", Offsets: Offsets{"orders": {0: 5, 1: 6}}},
-		{Group: "b", Offsets: Offsets{"orders": {0: 1}, "payments": {0: 2}}},
+		{Group: "a", Offsets: Offsets{"orders": {0: at(5), 1: at(6)}}},
+		{Group: "b", Offsets: Offsets{"orders": {0: at(1)}, "payments": {0: at(2)}}},
 	}, plan.Commits, "sorted by group; payments' offset equals its high-water mark and is valid")
 	assert.Equal(t, 4, plan.Partitions())
+}
+
+func TestBuildPlan_PlannedCommitsKeepTheirMetadata(t *testing.T) {
+	// Kafka Streams keeps per-partition stream time in the commit metadata; it must reach the destination.
+	snap := Snapshot{"streams-app": {"orders": {
+		0: {Offset: 5, Metadata: "stream-time=1700000000000"},
+		1: {Offset: 10, Metadata: "stream-time=1700000000500"},
+		2: at(0),
+	}}}
+	hwm := map[string]map[int32]int64{"orders": {0: 10, 1: 10, 2: 10}}
+
+	plan, err := BuildPlan(snap, hwm)
+
+	require.NoError(t, err)
+	assert.Equal(t, []Commit{{Group: "streams-app", Offsets: snap["streams-app"]}}, plan.Commits)
 }
 
 func TestBuildPlan_AnOffsetEqualToTheHighWaterMarkIsValidOnePastIsNot(t *testing.T) {
 	hwm := map[string]map[int32]int64{"orders": {0: 5}}
 
 	// A caught-up consumer commits exactly the high-water mark.
-	plan, err := BuildPlan(Snapshot{"g": {"orders": {0: 5}}}, hwm)
+	plan, err := BuildPlan(Snapshot{"g": {"orders": {0: at(5)}}}, hwm)
 	require.NoError(t, err)
 	assert.Len(t, plan.Commits, 1)
 
 	// One past the end would be OFFSET_OUT_OF_RANGE on the consumer's next fetch.
-	plan, err = BuildPlan(Snapshot{"g": {"orders": {0: 6}}}, hwm)
+	plan, err = BuildPlan(Snapshot{"g": {"orders": {0: at(6)}}}, hwm)
 	require.ErrorIs(t, err, ErrOutOfRange)
 	assert.Nil(t, plan)
 	var oor *OutOfRangeError
@@ -109,7 +124,7 @@ func TestBuildPlan_AnOffsetEqualToTheHighWaterMarkIsValidOnePastIsNot(t *testing
 func TestBuildPlan_ACommittedPartitionWithNoDestinationPartitionRefuses(t *testing.T) {
 	// Partition 3 was committed on the source but the destination topic only has 0 and 1; and the
 	// high-water-mark sweep returned nothing at all for "payments". Neither is ever skipped.
-	snap := Snapshot{"g": {"orders": {0: 1, 3: 4}, "payments": {0: 1}}}
+	snap := Snapshot{"g": {"orders": {0: at(1), 3: at(4)}, "payments": {0: at(1)}}}
 	hwm := map[string]map[int32]int64{"orders": {0: 10, 1: 10}}
 
 	plan, err := BuildPlan(snap, hwm)
@@ -127,9 +142,9 @@ func TestBuildPlan_ACommittedPartitionWithNoDestinationPartitionRefuses(t *testi
 
 func TestBuildPlan_EveryViolationIsReportedSortedAndNothingIsPlanned(t *testing.T) {
 	snap := Snapshot{
-		"b":  {"orders": {0: 99}},
-		"a":  {"orders": {1: 50, 0: 60}, "payments": {0: 1}},
-		"ok": {"payments": {0: 1}},
+		"b":  {"orders": {0: at(99)}},
+		"a":  {"orders": {1: at(50), 0: at(60)}, "payments": {0: at(1)}},
+		"ok": {"payments": {0: at(1)}},
 	}
 	hwm := map[string]map[int32]int64{"orders": {0: 10, 1: 10}, "payments": {0: 5}}
 

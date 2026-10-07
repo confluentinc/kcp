@@ -141,7 +141,8 @@ func (e *OutOfRangeError) Is(target error) bool { return target == ErrOutOfRange
 // a caught-up consumer commits exactly the end. A committed partition the destination does not have is also a
 // violation, never silently dropped; there is no skip path. If there is any violation BuildPlan returns an
 // OutOfRangeError and no plan, so a refusal writes nothing at all. Offsets are never clamped: a clamped value
-// would launder the decision through the consumer's own auto.offset.reset, which kcp cannot see.
+// would launder the decision through the consumer's own auto.offset.reset, which kcp cannot see. A planned
+// commit carries each partition's committed offset and metadata unchanged.
 func BuildPlan(snap Snapshot, hwm map[string]map[int32]int64) (*Plan, error) {
 	var (
 		violations []Violation
@@ -161,18 +162,18 @@ func BuildPlan(snap Snapshot, hwm map[string]map[int32]int64) (*Plan, error) {
 			}
 			sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
 			for _, partition := range partitions {
-				offset := snap[group][topic][partition]
+				committed := snap[group][topic][partition]
 				end, ok := hwm[topic][partition]
 				switch {
 				case !ok:
-					violations = append(violations, Violation{Group: group, Topic: topic, Partition: partition, Offset: offset, NoPartition: true})
-				case offset > end:
-					violations = append(violations, Violation{Group: group, Topic: topic, Partition: partition, Offset: offset, HighWaterMark: end})
+					violations = append(violations, Violation{Group: group, Topic: topic, Partition: partition, Offset: committed.Offset, NoPartition: true})
+				case committed.Offset > end:
+					violations = append(violations, Violation{Group: group, Topic: topic, Partition: partition, Offset: committed.Offset, HighWaterMark: end})
 				default:
 					if commit[topic] == nil {
-						commit[topic] = map[int32]int64{}
+						commit[topic] = map[int32]CommittedOffset{}
 					}
-					commit[topic][partition] = offset
+					commit[topic][partition] = committed
 				}
 			}
 		}

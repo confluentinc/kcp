@@ -5,14 +5,20 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/confluentinc/kcp/internal/client"
 )
 
-// Offsets is topic -> partition -> committed offset. It is a type alias so that client.ConsumerGroupClient,
-// whose CommittedOffsets returns the plain map type, satisfies GroupOffsetFetcher without a conversion.
-type Offsets = map[string]map[int32]int64
+// CommittedOffset is one partition's committed offset and the metadata stored with it.
+type CommittedOffset = client.CommittedOffset
 
-// Snapshot is every group's committed offsets: group -> topic -> partition -> offset. A group with no
-// committed offsets is not in it.
+// Offsets is topic -> partition -> committed offset (with its metadata). It is a type alias so that
+// client.ConsumerGroupClient, whose CommittedOffsets returns the plain map type, satisfies GroupOffsetFetcher
+// and GroupCommitter without a conversion.
+type Offsets = map[string]map[int32]CommittedOffset
+
+// Snapshot is every group's committed offsets: group -> topic -> partition -> committed offset. A group with
+// no committed offsets is not in it.
 type Snapshot map[string]Offsets
 
 // Groups returns the groups in the snapshot, sorted.

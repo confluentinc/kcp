@@ -297,15 +297,22 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	return out, nil
 }
 
-// committedOffsetsOf fetches every committed offset of one group: topic -> partition -> offset. A partition
-// counts only if its committed offset is >= 0 (-1 means a subscription with no commit), so a topic with no
-// commit is absent. Any block-level error fails the whole fetch.
-func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]int64, error) {
+// CommittedOffset is one partition's committed position and the metadata string the committing client
+// stored with it (Kafka Streams keeps per-partition stream time there). Both are carried to the destination.
+type CommittedOffset struct {
+	Offset   int64
+	Metadata string
+}
+
+// committedOffsetsOf fetches every committed offset of one group, with its metadata: topic -> partition ->
+// committed offset. A partition counts only if its committed offset is >= 0 (-1 means a subscription with no
+// commit), so a topic with no commit is absent. Any block-level error fails the whole fetch.
+func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
 	resp, err := f.ListConsumerGroupOffsets(group, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets for consumer group %s: %w", group, err)
 	}
-	out := map[string]map[int32]int64{}
+	out := map[string]map[int32]CommittedOffset{}
 	for topic, parts := range resp.Blocks {
 		for part, b := range parts {
 			if b.Err != sarama.ErrNoError {
@@ -313,9 +320,9 @@ func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int3
 			}
 			if b.Offset >= 0 {
 				if out[topic] == nil {
-					out[topic] = map[int32]int64{}
+					out[topic] = map[int32]CommittedOffset{}
 				}
-				out[topic][part] = b.Offset
+				out[topic][part] = CommittedOffset{Offset: b.Offset, Metadata: b.Metadata}
 			}
 		}
 	}
@@ -336,8 +343,9 @@ func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
 	return topics, nil
 }
 
-// CommittedOffsets returns one group's committed offsets, topic -> partition -> offset, offsets >= 0 only.
-func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int32]int64, error) {
+// CommittedOffsets returns one group's committed offsets and their metadata, topic -> partition -> committed
+// offset, offsets >= 0 only.
+func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int32]CommittedOffset, error) {
 	return committedOffsetsOf(c.admin, group)
 }
 
@@ -350,16 +358,17 @@ var commitRetryBackoff = 200 * time.Millisecond
 // buildGroupCommit builds the admin commit for one group: OffsetCommit v7 (a bare request is v0), generation
 // -1 and an empty member id, so no group membership is needed or created. Every block carries leader epoch -1
 // ("unknown"), which makes a consumer that later joins skip truncation detection on its first fetch.
-// AddBlock would send epoch 0 instead, which the broker treats as a real epoch at v6+.
-func buildGroupCommit(group string, offsets map[string]map[int32]int64) *sarama.OffsetCommitRequest {
+// AddBlock would send epoch 0 instead, which the broker treats as a real epoch at v6+. Each block carries the
+// source commit's metadata unchanged.
+func buildGroupCommit(group string, offsets map[string]map[int32]CommittedOffset) *sarama.OffsetCommitRequest {
 	req := &sarama.OffsetCommitRequest{
 		Version:                 7,
 		ConsumerGroup:           group,
 		ConsumerGroupGeneration: sarama.GroupGenerationUndefined,
 	}
 	for topic, parts := range offsets {
-		for part, offset := range parts {
-			req.AddBlockWithLeaderEpoch(topic, part, offset, -1, sarama.ReceiveTime, "")
+		for part, c := range parts {
+			req.AddBlockWithLeaderEpoch(topic, part, c.Offset, -1, sarama.ReceiveTime, c.Metadata)
 		}
 	}
 	return req
@@ -399,7 +408,7 @@ func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) 
 // buildGroupCommit). A coordinator that moved or is still loading is retried; anything else, including a
 // group that has live members (UNKNOWN_MEMBER_ID) or a credential without READ on the group or topic, is an
 // error naming the group, topic and partition, and is not retried.
-func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]int64) error {
+func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]CommittedOffset) error {
 	var lastErr error
 	for attempt := 0; attempt < commitAttempts; attempt++ {
 		if attempt > 0 {

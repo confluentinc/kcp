@@ -46,7 +46,7 @@ func (l *commitLog) factory() CommitterFactory {
 func planOf(groups ...string) *Plan {
 	p := &Plan{}
 	for _, g := range groups {
-		p.Commits = append(p.Commits, Commit{Group: g, Offsets: Offsets{"orders": {0: 1}}})
+		p.Commits = append(p.Commits, Commit{Group: g, Offsets: Offsets{"orders": {0: at(1)}}})
 	}
 	return p
 }
@@ -54,16 +54,16 @@ func planOf(groups ...string) *Plan {
 func TestApply_CommitsEachGroupOnceWithItsOffsets(t *testing.T) {
 	log := newCommitLog()
 	plan := &Plan{Commits: []Commit{
-		{Group: "a", Offsets: Offsets{"orders": {0: 5, 1: 6}}},
-		{Group: "b", Offsets: Offsets{"payments": {0: 2}}},
+		{Group: "a", Offsets: Offsets{"orders": {0: at(5), 1: at(6)}}},
+		{Group: "b", Offsets: Offsets{"payments": {0: at(2)}}},
 	}}
 
 	require.NoError(t, Apply(context.Background(), log.factory(), plan, 2))
 
 	sort.Strings(log.calls)
 	assert.Equal(t, []string{"a", "b"}, log.calls, "one commit per group, never one per partition")
-	assert.Equal(t, Offsets{"orders": {0: 5, 1: 6}}, log.commits["a"])
-	assert.Equal(t, Offsets{"payments": {0: 2}}, log.commits["b"])
+	assert.Equal(t, Offsets{"orders": {0: at(5), 1: at(6)}}, log.commits["a"])
+	assert.Equal(t, Offsets{"payments": {0: at(2)}}, log.commits["b"])
 }
 
 func TestApply_AFailedGroupFailsTheRunNamingItAndKeepingTheCause(t *testing.T) {
@@ -116,7 +116,7 @@ func TestApply_ACancelledContextStopsTheRun(t *testing.T) {
 func TestRefusedPlanWritesNothing(t *testing.T) {
 	// The composition the d2s FSM relies on: BuildPlan refuses, so there is no plan, so Apply writes nothing,
 	// not even for the group whose offsets were fine.
-	snap := Snapshot{"fine": {"orders": {0: 1}}, "bad": {"orders": {0: 99}}}
+	snap := Snapshot{"fine": {"orders": {0: at(1)}}, "bad": {"orders": {0: at(99)}}}
 	plan, err := BuildPlan(snap, map[string]map[int32]int64{"orders": {0: 10}})
 	require.ErrorIs(t, err, ErrOutOfRange)
 

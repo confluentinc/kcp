@@ -32,6 +32,9 @@ type Change struct {
 // group to a lower offset changes what would be copied just as a commit does. A removal counts too — a group
 // deleted or a partition's offset deleted or expired during the window — so that "no changes" means exactly
 // that the source offsets stayed put, and syncing the second snapshot cannot silently drop a group.
+//
+// Only offsets are compared. The metadata synced is the second snapshot's, and a metadata-only difference is
+// not a change: a client re-committing the same offset is already outside what this diff can see.
 func Changes(before, after Snapshot) []Change {
 	var out []Change
 	for g, topics := range after {
@@ -40,9 +43,9 @@ func Changes(before, after Snapshot) []Change {
 				b, ok := before[g][t][p]
 				switch {
 				case !ok:
-					out = append(out, Change{Group: g, Topic: t, Partition: p, After: a, New: true})
-				case a != b:
-					out = append(out, Change{Group: g, Topic: t, Partition: p, Before: b, After: a})
+					out = append(out, Change{Group: g, Topic: t, Partition: p, After: a.Offset, New: true})
+				case a.Offset != b.Offset:
+					out = append(out, Change{Group: g, Topic: t, Partition: p, Before: b.Offset, After: a.Offset})
 				}
 			}
 		}
@@ -51,7 +54,7 @@ func Changes(before, after Snapshot) []Change {
 		for t, parts := range topics {
 			for p, b := range parts {
 				if _, ok := after[g][t][p]; !ok {
-					out = append(out, Change{Group: g, Topic: t, Partition: p, Before: b, Removed: true})
+					out = append(out, Change{Group: g, Topic: t, Partition: p, Before: b.Offset, Removed: true})
 				}
 			}
 		}

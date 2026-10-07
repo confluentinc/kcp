@@ -12,11 +12,11 @@ import (
 )
 
 func TestChanges_ReportsNewDifferentAndRemovedValuesSorted(t *testing.T) {
-	before := Snapshot{"a": {"orders": {0: 5, 1: 6}}, "b": {"orders": {0: 1}}, "gone": {"orders": {0: 4}}}
+	before := Snapshot{"a": {"orders": {0: at(5), 1: at(6)}}, "b": {"orders": {0: at(1)}}, "gone": {"orders": {0: at(4)}}}
 	after := Snapshot{
-		"c": {"orders": {0: 2}},                     // a new group
-		"a": {"orders": {0: 5, 1: 9}},               // partition 1 moved
-		"b": {"orders": {0: 1}, "payments": {0: 3}}, // a new topic
+		"c": {"orders": {0: at(2)}},                         // a new group
+		"a": {"orders": {0: at(5), 1: at(9)}},               // partition 1 moved
+		"b": {"orders": {0: at(1)}, "payments": {0: at(3)}}, // a new topic
 		// "gone" is missing: its offsets were deleted or expired
 	}
 
@@ -30,14 +30,14 @@ func TestChanges_ReportsNewDifferentAndRemovedValuesSorted(t *testing.T) {
 
 func TestChanges_AnyDifferenceCountsNotOnlyGrowth(t *testing.T) {
 	// An admin resetting a group to a lower offset changes what would be copied, exactly as a commit does.
-	got := Changes(Snapshot{"a": {"orders": {0: 10}}}, Snapshot{"a": {"orders": {0: 3}}})
+	got := Changes(Snapshot{"a": {"orders": {0: at(10)}}}, Snapshot{"a": {"orders": {0: at(3)}}})
 	assert.Equal(t, []Change{{Group: "a", Topic: "orders", Partition: 0, Before: 10, After: 3}}, got)
 }
 
 func TestChanges_AGroupMissingFromTheSecondSnapshotIsAChange(t *testing.T) {
 	// DeleteGroups during the fence, or an idle group's offsets expiring: either way the source offsets did
 	// not stay put, and syncing the second snapshot would silently drop the group.
-	got := Changes(Snapshot{"a": {"orders": {0: 10, 1: 11}}, "b": {"orders": {0: 1}}}, Snapshot{"b": {"orders": {0: 1}}})
+	got := Changes(Snapshot{"a": {"orders": {0: at(10), 1: at(11)}}, "b": {"orders": {0: at(1)}}}, Snapshot{"b": {"orders": {0: at(1)}}})
 	assert.Equal(t, []Change{
 		{Group: "a", Topic: "orders", Partition: 0, Before: 10, Removed: true},
 		{Group: "a", Topic: "orders", Partition: 1, Before: 11, Removed: true},
@@ -46,14 +46,24 @@ func TestChanges_AGroupMissingFromTheSecondSnapshotIsAChange(t *testing.T) {
 
 func TestChanges_APartitionMissingFromTheSecondSnapshotIsAChange(t *testing.T) {
 	// OffsetDelete on one partition: the group is still there, one position is not.
-	got := Changes(Snapshot{"a": {"orders": {0: 10, 1: 11}}}, Snapshot{"a": {"orders": {0: 10}}})
+	got := Changes(Snapshot{"a": {"orders": {0: at(10), 1: at(11)}}}, Snapshot{"a": {"orders": {0: at(10)}}})
 	assert.Equal(t, []Change{{Group: "a", Topic: "orders", Partition: 1, Before: 11, Removed: true}}, got)
 }
 
 func TestChanges_IdenticalSnapshotsHaveNone(t *testing.T) {
-	s := Snapshot{"a": {"orders": {0: 5}}}
-	assert.Empty(t, Changes(s, Snapshot{"a": {"orders": {0: 5}}}))
+	s := Snapshot{"a": {"orders": {0: at(5)}}}
+	assert.Empty(t, Changes(s, Snapshot{"a": {"orders": {0: at(5)}}}))
 	assert.Empty(t, Changes(nil, nil))
+}
+
+func TestChanges_AMetadataOnlyDifferenceIsNotAChange(t *testing.T) {
+	// The diff is over positions. The metadata synced is the second snapshot's (see DetectRogueCommits).
+	before := Snapshot{"a": {"orders": {0: {Offset: 5, Metadata: "stream-time=1"}}}}
+	after := Snapshot{"a": {"orders": {0: {Offset: 5, Metadata: "stream-time=2"}}}}
+	assert.Empty(t, Changes(before, after))
+
+	after = Snapshot{"a": {"orders": {0: {Offset: 6, Metadata: "stream-time=1"}}}}
+	assert.Equal(t, []Change{{Group: "a", Topic: "orders", Partition: 0, Before: 5, After: 6}}, Changes(before, after))
 }
 
 // waitRecorder is a WaitFunc that records the windows asked for without sleeping.
@@ -74,25 +84,37 @@ func listerOf(groups ...string) (GroupLister, *int) {
 }
 
 func TestDetectRogueCommits_ReturnsTheSecondSnapshotWhenNothingMoved(t *testing.T) {
-	first := Snapshot{"a": {"orders": {0: 5}}}
-	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: 5}}}})
+	first := Snapshot{"a": {"orders": {0: at(5)}}}
+	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: at(5)}}}})
 	lister, listed := listerOf("a")
 	w := &waitRecorder{}
 
 	got, err := DetectRogueCommits(context.Background(), first, lister, factory, 2, 30*time.Second, w.wait)
 
 	require.NoError(t, err)
-	assert.Equal(t, Snapshot{"a": {"orders": {0: 5}}}, got, "the second snapshot is what sync copies, so it is returned")
+	assert.Equal(t, Snapshot{"a": {"orders": {0: at(5)}}}, got, "the second snapshot is what sync copies, so it is returned")
 	assert.Equal(t, []time.Duration{30 * time.Second}, w.windows, "waits the whole window before looking again")
 	assert.Equal(t, 1, *listed, "the second snapshot lists the groups afresh")
 }
 
+func TestDetectRogueCommits_ReturnsTheSecondSnapshotsMetadata(t *testing.T) {
+	first := Snapshot{"a": {"orders": {0: {Offset: 5, Metadata: "stream-time=1"}}}}
+	second := Offsets{"orders": {0: {Offset: 5, Metadata: "stream-time=2"}}}
+	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": second}})
+	lister, _ := listerOf("a")
+
+	got, err := DetectRogueCommits(context.Background(), first, lister, factory, 1, time.Second, (&waitRecorder{}).wait)
+
+	require.NoError(t, err)
+	assert.Equal(t, Snapshot{"a": second}, got, "sync copies the second snapshot, metadata included")
+}
+
 func TestDetectRogueCommits_AGroupThatStartedCommittingDuringTheWindowIsAChange(t *testing.T) {
 	// Snapshot 1 knew only "a"; "late" appeared during the window. Only a fresh listing can see it.
-	first := Snapshot{"a": {"orders": {0: 5}}}
+	first := Snapshot{"a": {"orders": {0: at(5)}}}
 	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{
-		"a":    {"orders": {0: 5}},
-		"late": {"orders": {0: 1}},
+		"a":    {"orders": {0: at(5)}},
+		"late": {"orders": {0: at(1)}},
 	}})
 	lister, _ := listerOf("a", "late")
 
@@ -105,8 +127,8 @@ func TestDetectRogueCommits_AGroupThatStartedCommittingDuringTheWindowIsAChange(
 }
 
 func TestDetectRogueCommits_AGroupThatDisappearedIsAChange(t *testing.T) {
-	first := Snapshot{"a": {"orders": {0: 5}}, "b": {"orders": {0: 2}}}
-	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: 5}}}})
+	first := Snapshot{"a": {"orders": {0: at(5)}}, "b": {"orders": {0: at(2)}}}
+	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: at(5)}}}})
 	lister, _ := listerOf("a") // b was deleted during the window
 
 	_, err := DetectRogueCommits(context.Background(), first, lister, factory, 1, time.Second, (&waitRecorder{}).wait)
@@ -116,8 +138,8 @@ func TestDetectRogueCommits_AGroupThatDisappearedIsAChange(t *testing.T) {
 }
 
 func TestDetectRogueCommits_AChangeIsRogueCommits(t *testing.T) {
-	first := Snapshot{"a": {"orders": {0: 5}}}
-	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: 7}}}})
+	first := Snapshot{"a": {"orders": {0: at(5)}}}
+	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"a": {"orders": {0: at(7)}}}})
 	lister, _ := listerOf("a")
 
 	got, err := DetectRogueCommits(context.Background(), first, lister, factory, 1, time.Second, (&waitRecorder{}).wait)
@@ -168,7 +190,7 @@ func TestDetectRogueCommits_AFetchFailureIsAnError(t *testing.T) {
 	boom := errors.New("cannot read offsets")
 	factory, _, _ := factoryFor(&fakeFetcher{errs: map[string]error{"a": boom}})
 	lister, _ := listerOf("a")
-	_, err := DetectRogueCommits(context.Background(), Snapshot{"a": {"orders": {0: 1}}}, lister, factory, 1, time.Second, (&waitRecorder{}).wait)
+	_, err := DetectRogueCommits(context.Background(), Snapshot{"a": {"orders": {0: at(1)}}}, lister, factory, 1, time.Second, (&waitRecorder{}).wait)
 	require.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, ErrRogueCommits)
 }
