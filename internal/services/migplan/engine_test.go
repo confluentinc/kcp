@@ -278,17 +278,21 @@ func TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider(t *testi
 }
 
 type fakeGroupLister struct {
-	groups       []types.ConsumerGroupListing
-	err          error
-	calls        int
-	tracked      map[string][]string
-	trackedErr   error
-	trackedFor   []string // the group ids CommittedTopics was asked about
-	trackedN     int
-	denied       bool // CanDescribeAnyGroup reports false
-	accessErr    error
-	topicsDenied bool // CanDescribeAnyTopic reports false
-	topicsErr    error
+	partitions    map[string]int // nil answers 1 for every requested topic
+	partitionsErr error
+	partitionsFor []string
+	partitionsN   int
+	groups        []types.ConsumerGroupListing
+	err           error
+	calls         int
+	tracked       map[string][]string
+	trackedErr    error
+	trackedFor    []string // the group ids CommittedTopics was asked about
+	trackedN      int
+	denied        bool // CanDescribeAnyGroup reports false
+	accessErr     error
+	topicsDenied  bool // CanDescribeAnyTopic reports false
+	topicsErr     error
 }
 
 func (f *fakeGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
@@ -537,4 +541,20 @@ func TestEngineRun_TopicMigrationNeverListsGroups(t *testing.T) {
 	if src.calls != 0 || tgt.calls != 0 {
 		t.Errorf("a topic migration listed groups %d/%d times, want 0", src.calls, tgt.calls)
 	}
+}
+
+func (f *fakeGroupLister) PartitionCounts(_ context.Context, topics []string) (map[string]int, error) {
+	f.partitionsN++
+	f.partitionsFor = topics
+	if f.partitionsErr != nil {
+		return nil, f.partitionsErr
+	}
+	if f.partitions != nil {
+		return f.partitions, nil
+	}
+	out := make(map[string]int, len(topics))
+	for _, t := range topics {
+		out[t] = 1
+	}
+	return out, nil
 }

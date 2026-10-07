@@ -3,6 +3,7 @@ package migplan
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -136,5 +137,28 @@ func TestMapStatus(t *testing.T) {
 				t.Fatalf("mapStatus(%q) = %v, want %v", c.status, got, c.want)
 			}
 		})
+	}
+}
+
+func TestClusterLinkStatusLinkMirrorsKeepBothNamesAndTheRawStatus(t *testing.T) {
+	f := &fakeLinkReader{mirrors: []clusterlink.MirrorTopic{
+		{SourceTopicName: "payments", MirrorTopicName: "payments", MirrorStatus: clusterlink.MirrorStatusStopped},
+		{SourceTopicName: "orders", MirrorTopicName: "pfx.orders", MirrorStatus: "PAUSED"},
+	}}
+
+	ls, err := NewClusterLinkStatus(f, clusterlink.Config{}).LinkStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []reconcile.LinkMirror{
+		{SourceTopic: "orders", MirrorTopic: "pfx.orders", State: reconcile.MirrorBad, Status: "PAUSED"},
+		{SourceTopic: "payments", MirrorTopic: "payments", State: reconcile.MirrorStopped, Status: "STOPPED"},
+	}
+	if !reflect.DeepEqual(ls.LinkMirrors, want) {
+		t.Errorf("LinkMirrors = %+v, want %+v (sorted by source name)", ls.LinkMirrors, want)
+	}
+	if ls.Mirrors["orders"] != reconcile.MirrorBad || ls.Mirrors["payments"] != reconcile.MirrorStopped {
+		t.Errorf("Mirrors = %v: the source-keyed map AAO and TBM read must be unchanged", ls.Mirrors)
 	}
 }

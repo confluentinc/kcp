@@ -11,11 +11,13 @@ import (
 )
 
 type fakeStrictClient struct {
-	groups      []types.ConsumerGroupListing
-	err         error
-	tracked     map[string][]string
-	canDescribe bool
-	canTopics   bool
+	groups        []types.ConsumerGroupListing
+	err           error
+	tracked       map[string][]string
+	canDescribe   bool
+	canTopics     bool
+	partitions    map[string]int
+	partitionsFor []string
 }
 
 func (f *fakeStrictClient) CanDescribeAnyGroup() (bool, error) {
@@ -135,5 +137,25 @@ func TestGroupFacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.TargetStates, map[string]string{"b": "Stable", "c": "Empty"}) {
 		t.Errorf("TargetStates = %v", f.TargetStates)
+	}
+}
+
+func (f *fakeStrictClient) PartitionCounts(topics []string) (map[string]int, error) {
+	f.partitionsFor = topics
+	return f.partitions, f.err
+}
+
+func TestKafkaGroupLister_PartitionCountsUsesTheClient(t *testing.T) {
+	c := &fakeStrictClient{partitions: map[string]int{"orders": 3}}
+	got, err := NewKafkaGroupLister(c).PartitionCounts(context.Background(), []string{"orders"})
+	if err != nil || !reflect.DeepEqual(got, map[string]int{"orders": 3}) {
+		t.Fatalf("PartitionCounts = %v, %v; want orders=3", got, err)
+	}
+	if !reflect.DeepEqual(c.partitionsFor, []string{"orders"}) {
+		t.Errorf("client asked about %v, want [orders]", c.partitionsFor)
+	}
+	boom := errors.New("metadata failed")
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).PartitionCounts(context.Background(), []string{"orders"}); !errors.Is(err, boom) {
+		t.Fatalf("PartitionCounts error = %v, want the client's error", err)
 	}
 }

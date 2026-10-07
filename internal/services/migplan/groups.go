@@ -8,11 +8,11 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// GroupLister lists every consumer group on one cluster with its state, and the
-// topics groups have committed offsets on. Only a route conversion uses it, for
-// the split-brain check and to scope the convergence check, so an
-// implementation must fail rather than return a partial result. Only the
-// source's CommittedTopics is called.
+// GroupLister is the conversion-only view of one cluster: every consumer group
+// with its state, the topics groups have committed offsets on, the
+// visibility probes, and topic partition counts. Only a route conversion uses
+// it, so an implementation must fail rather than return a partial result. Only
+// the source's CommittedTopics is called.
 type GroupLister interface {
 	ListGroups(ctx context.Context) ([]types.ConsumerGroupListing, error)
 	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
@@ -23,8 +23,12 @@ type GroupLister interface {
 	CanDescribeAnyGroup(ctx context.Context) (bool, error)
 	// CanDescribeAnyTopic reports whether the credential may describe an
 	// arbitrary topic. Without it the offset fetch silently leaves out the
-	// topics it can't see, so a tracked topic would never be verified.
+	// topics it can't see, so a group committing outside the link could pass
+	// the group rule.
 	CanDescribeAnyTopic(ctx context.Context) (bool, error)
+	// PartitionCounts returns the partition count of each named topic that
+	// exists; a missing topic is absent from the map. It never creates a topic.
+	PartitionCounts(ctx context.Context, topics []string) (map[string]int, error)
 }
 
 // strictGroupClient is the slice of client.ConsumerGroupClient the lister
@@ -34,6 +38,7 @@ type strictGroupClient interface {
 	CommittedTopics(groups []string) (map[string][]string, error)
 	CanDescribeAnyGroup() (bool, error)
 	CanDescribeAnyTopic() (bool, error)
+	PartitionCounts(topics []string) (map[string]int, error)
 }
 
 var _ GroupLister = (*KafkaGroupLister)(nil)
@@ -64,10 +69,14 @@ func (l *KafkaGroupLister) CanDescribeAnyTopic(context.Context) (bool, error) {
 	return l.client.CanDescribeAnyTopic()
 }
 
+func (l *KafkaGroupLister) PartitionCounts(_ context.Context, topics []string) (map[string]int, error) {
+	return l.client.PartitionCounts(topics)
+}
+
 // listingGap turns a listing credential's group-describe access into the reason a
 // conversion must refuse, or "" when the listing is complete. side is "source" or
-// "destination". A hidden source group is a topic the convergence check never
-// verifies; a hidden destination group is a split-brain the check cannot see.
+// "destination". A hidden source group is a group the group rule never sees;
+// a hidden destination group is a split-brain the check cannot see.
 func listingGap(side string, canDescribe bool) string {
 	if canDescribe {
 		return ""
@@ -78,7 +87,7 @@ func listingGap(side string, canDescribe bool) string {
 // topicGap is listingGap for topics: the reason a conversion must refuse when a
 // credential may not describe arbitrary topics, or "" when it may. A topic the
 // credential can't see is left out of an offset fetch without an error, so a
-// consumer group's commit on it never appears and the topic is never verified.
+// consumer group's commit on it never appears and the group rule can't see it.
 func topicGap(side string, canDescribe bool) string {
 	if canDescribe {
 		return ""
