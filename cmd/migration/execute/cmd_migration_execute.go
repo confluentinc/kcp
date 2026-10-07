@@ -28,6 +28,8 @@ var (
 	consumerOffsetSyncDrainDurationOverride time.Duration
 	hotReloadTimeoutOverride                time.Duration
 	gatewayConfigPortOverride               int
+	detectUnroutedCommitsDurationOverride   time.Duration
+	offsetSyncConcurrencyOverride           int
 	// runReport is the diagnostics knob carried over from #408. It stays a flag
 	// rather than a manifest policy field: the path is a per-run, machine-specific
 	// output location — operational, not versioned desired state — and the
@@ -96,6 +98,8 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
 	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses spec.defaultPolicies.gatewayConfigPort; 0 means the gateway default (9180).")
+	cmd.Flags().DurationVar(&detectUnroutedCommitsDurationOverride, "detect-unrouted-commits-duration", 0, "Override spec.defaultPolicies.detectUnroutedCommitsDuration: window between the two committed-offset snapshots taken after fencing a route conversion, to catch a consumer committing to the source directly. Applies only to a conversion manifest. 0 uses the built-in 30s; minimum 10s when set.")
+	cmd.Flags().IntVar(&offsetSyncConcurrencyOverride, "offset-sync-concurrency", 0, "Override spec.defaultPolicies.offsetSyncConcurrency: number of workers (each with its own broker connection) reading and writing consumer-group offsets during a route conversion. Applies only to a conversion manifest. 0 uses the built-in 8.")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -256,6 +260,8 @@ func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []an
 		"consumer_offset_sync_drain_duration", p.ConsumerOffsetSyncDrainDuration,
 		"hot_reload_timeout", p.HotReloadTimeout,
 		"gateway_config_port", p.GatewayConfigPort,
+		"detect_unrouted_commits_duration", p.DetectUnroutedCommitsDuration,
+		"offset_sync_concurrency", p.OffsetSyncConcurrency,
 	}
 }
 
@@ -284,5 +290,11 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	}
 	if cmd.Flags().Changed("gateway-config-port") {
 		p.GatewayConfigPort = gatewayConfigPortOverride
+	}
+	if cmd.Flags().Changed("detect-unrouted-commits-duration") {
+		p.DetectUnroutedCommitsDuration = detectUnroutedCommitsDurationOverride
+	}
+	if cmd.Flags().Changed("offset-sync-concurrency") {
+		p.OffsetSyncConcurrency = offsetSyncConcurrencyOverride
 	}
 }
