@@ -239,3 +239,21 @@ func TestRenderReportSuccessAndVerbose(t *testing.T) {
 		t.Errorf("--verbose must show the per-topic facts line; got:\n%s", out)
 	}
 }
+
+func TestRenderReport_ConversionFooter(t *testing.T) {
+	r := reconcile.Report{
+		Preconditions:   []reconcile.PreconditionResult{{Name: "route is dynamic", OK: true}},
+		Unchanged:       []reconcile.TopicVerdict{{Topic: "orders", Verdict: reconcile.Unchanged}},
+		ConvertToStatic: true,
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "cc", ArtifactNote: "plan ready"})
+	out := buf.String()
+
+	if !strings.Contains(out, "route to static") {
+		t.Errorf("footer must name the conversion, got:\n%s", out)
+	}
+	if strings.Contains(out, "nothing to do") {
+		t.Errorf("a conversion with work must not render as nothing to do, got:\n%s", out)
+	}
+}

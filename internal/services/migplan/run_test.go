@@ -243,3 +243,63 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 	_, err := buildSecretExistenceChecker(g)
 	require.NoError(t, err, "building the checker from ~/.kube/config must succeed")
 }
+
+func TestBuildReconcileInput_Conversion(t *testing.T) {
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	g.Spec.Target.ClusterID = "lkc-123"
+
+	in, err := buildReconcileInput(g)
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.ReconcileInput{
+		Route: "migration-route", TargetDomain: "cc", TargetClusterID: "lkc-123",
+		ConvertTo: "static", OffsetSyncBaselineEnabled: true,
+	}, in)
+}
+
+func TestBuildReconcileInput_ConversionStillNeedsRouteAndTarget(t *testing.T) {
+	for _, c := range []struct{ route, target string }{{"", "cc"}, {"r", ""}} {
+		g := gm(c.route, c.target, nil)
+		g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+		_, err := buildReconcileInput(g)
+		assert.Error(t, err, "route=%q target=%q", c.route, c.target)
+	}
+}
+
+// targetGM builds a manifest whose destination Kafka leg resolves from a
+// credentials file with the given body.
+func targetGM(t *testing.T, credsBody string) *manifest.GatewayMigration {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "dest-kafka-creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(credsBody), 0600))
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Target.Kafka = &manifest.TargetKafka{
+		BootstrapServers:   []string{"pkc-1.example:9092"},
+		ClusterCredentials: manifest.CredentialsRef{Path: p},
+	}
+	return g
+}
+
+// A Confluent Cloud destination over sasl_plain with neither ca_cert nor an
+// explicit tls signal still dials SASL_SSL: targetConn forces UseTLS.
+func TestTargetConn_SASLPlainWithoutCACertForcesTLS(t *testing.T) {
+	conn, err := targetConn(targetGM(t, "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n"))
+	require.NoError(t, err)
+	require.NotNil(t, conn.AuthMethod.SASLPlain)
+	assert.True(t, conn.AuthMethod.SASLPlain.UseTLS, "a sasl_plain destination with no ca_cert and no tls must dial TLS")
+	assert.Equal(t, []string{"pkc-1.example:9092"}, conn.BootstrapServers)
+}
+
+// A sasl_plain destination with a ca_cert already selects TLS through the CA;
+// targetConn leaves it exactly as configured.
+func TestTargetConn_SASLPlainWithCACertIsLeftAlone(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	conn, err := targetConn(targetGM(t, "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: "+ca+"\n"))
+	require.NoError(t, err)
+	require.NotNil(t, conn.AuthMethod.SASLPlain)
+	assert.Equal(t, ca, conn.AuthMethod.SASLPlain.CACert)
+	assert.False(t, conn.AuthMethod.SASLPlain.UseTLS, "a ca_cert destination must not have UseTLS forced on")
+}

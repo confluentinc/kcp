@@ -185,6 +185,89 @@ func (rt *RulesTree) HasFence(topics []string) bool {
 	return false
 }
 
+// convertFencePattern is the one topic pattern kcp's conversion fence carries:
+// every topic on the route.
+const convertFencePattern = ".*"
+
+// PrependConvertFence adds kcp's whole-route conversion fence —
+// {topicPatterns: ['.*'], blocked: true} — at the head of rules.fencing,
+// keeping every other entry in order. Idempotent like PrependFence: a convert
+// fence already present (an interrupted run's) is dropped before the fresh one
+// is prepended.
+func (rt *RulesTree) PrependConvertFence() {
+	entry := map[string]any{"topicPatterns": []any{convertFencePattern}, "blocked": true}
+	existing, _ := sliceField(rt.root, "fencing")
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = append([]any{entry}, kept...)
+}
+
+// DropConvertFence removes kcp's conversion fence, leaving every other entry.
+// A no-op when it is absent.
+func (rt *RulesTree) DropConvertFence() {
+	existing, ok := sliceField(rt.root, "fencing")
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = kept
+}
+
+// HasConvertFence reports whether the rules carry kcp's conversion fence.
+func (rt *RulesTree) HasConvertFence() bool {
+	existing, _ := sliceField(rt.root, "fencing")
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// ForeignFences returns the rules.fencing entries that are not kcp's
+// conversion fence (empty entries ignored): anything an operator, or a
+// different kcp run, wrote. A conversion drops the whole rules tree at switch,
+// so it refuses rather than silently discarding these.
+func (rt *RulesTree) ForeignFences() []any {
+	existing, _ := sliceField(rt.root, "fencing")
+	var out []any
+	for _, e := range existing {
+		if isKcpConvertFence(e) || isEmptyValue(e) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// isKcpConvertFence reports whether e is exactly the fence PrependConvertFence
+// writes: only topicPatterns and blocked, blocked true, and the single '.*'
+// pattern.
+func isKcpConvertFence(e any) bool {
+	m, ok := e.(map[string]any)
+	if !ok {
+		return false
+	}
+	if !hasOnlyKeys(m, "topicPatterns", "blocked") {
+		return false
+	}
+	if b, _ := m["blocked"].(bool); !b {
+		return false
+	}
+	return sameStringSet(stringList(m, "topicPatterns"), []string{convertFencePattern})
+}
+
 // isKcpFenceFor reports whether e is a fence entry kcp itself would author for
 // exactly this topic set: only the keys kcp writes (topics and blocked),
 // blocked==true, and the same topics as a set. Any other entry is an

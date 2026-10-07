@@ -4,17 +4,16 @@ import (
 	"context"
 	"sort"
 
-	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/client"
 )
 
 var _ TopicLister = (*KafkaTopicLister)(nil)
 
 // topicListerAdmin is the narrow slice of internal/client.KafkaAdmin that the
-// topic lister needs: list topics, and read the cluster's own id. The real
-// client.KafkaAdmin satisfies it directly.
+// topic lister needs: list topic names with the broker's internal flag, and
+// read the cluster's own id. The real client.KafkaAdmin satisfies it directly.
 type topicListerAdmin interface {
-	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicInternalFlags() (map[string]bool, error)
 	GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error)
 }
 
@@ -28,16 +27,21 @@ func NewKafkaTopicLister(admin topicListerAdmin) *KafkaTopicLister {
 	return &KafkaTopicLister{admin: admin}
 }
 
-// ListTopics returns the cluster's topic names, sorted for deterministic
-// downstream artifacts. Internal topics are already excluded by the admin's
-// listing.
+// ListTopics returns the cluster's non-internal topic names, sorted for
+// deterministic downstream artifacts. Brokers return the Kafka-internal topics
+// (__consumer_offsets, __transaction_state) on an all-topics metadata request,
+// so they are dropped here by the broker's own IsInternal flag, never by a name
+// prefix (an operator topic such as _schemas is a user topic).
 func (l *KafkaTopicLister) ListTopics(_ context.Context) ([]string, error) {
-	td, err := l.admin.ListTopicsWithConfigs()
+	flags, err := l.admin.ListTopicInternalFlags()
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(td))
-	for name := range td {
+	names := make([]string, 0, len(flags))
+	for name, internal := range flags {
+		if internal {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)

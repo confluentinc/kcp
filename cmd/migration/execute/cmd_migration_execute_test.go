@@ -166,6 +166,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
 		"hot-reload-timeout", "gateway-config-port", "dry-run",
+		"detect-unrouted-commits-duration", "offset-sync-concurrency",
 	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
@@ -287,6 +288,31 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
 }
 
+// TestExecute_ConversionPolicyOverrides — the two route-conversion policies
+// follow the same rule as every other: only an explicitly set flag overrides,
+// and an explicit 0 counts as set (it means "use the built-in default").
+func TestExecute_ConversionPolicyOverrides(t *testing.T) {
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", "x",
+		"--detect-unrouted-commits-duration", "45s",
+		"--offset-sync-concurrency", "0",
+	}))
+
+	p := manifest.DefaultPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
+	applyPolicyOverrides(cmd, &p)
+
+	assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration, "an explicit flag replaces the default")
+	assert.Equal(t, 0, p.OffsetSyncConcurrency, "an explicit 0 replaces a non-zero default")
+
+	unset := NewMigrationExecuteCmd()
+	require.NoError(t, unset.Flags().Parse([]string{"--migration-yaml", "x"}))
+	q := manifest.DefaultPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
+	applyPolicyOverrides(unset, &q)
+	assert.Equal(t, 20*time.Second, q.DetectUnroutedCommitsDuration, "an unset flag leaves the manifest value alone")
+	assert.Equal(t, 4, q.OffsetSyncConcurrency)
+}
+
 // TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
 // records "executing migration with effective policy" is hand-mirrored from
 // DefaultPolicies and has already drifted (hotReloadTimeout and gatewayConfigPort
@@ -302,6 +328,8 @@ func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
 		ConsumerOffsetSyncDrainDuration: 55 * time.Second,
 		HotReloadTimeout:                66 * time.Second,
 		GatewayConfigPort:               9099,
+		DetectUnroutedCommitsDuration:   77 * time.Second,
+		OffsetSyncConcurrency:           12,
 	}
 	kv := kvMap(t, effectivePolicyLogArgs("mig-1", p))
 
@@ -316,6 +344,8 @@ func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
 	assert.Equal(t, 33*time.Second, kv["rollout_timeout"])
 	assert.Equal(t, 44*time.Second, kv["detect_unrouted_producers_duration"])
 	assert.Equal(t, 55*time.Second, kv["consumer_offset_sync_drain_duration"])
+	assert.Equal(t, 77*time.Second, kv["detect_unrouted_commits_duration"])
+	assert.Equal(t, 12, kv["offset_sync_concurrency"])
 
 	// Every DefaultPolicies field must appear as a policy key (plus migration_id):
 	// the count guards against a new field being added to the struct but not to
@@ -737,4 +767,30 @@ func TestExecutePlan_Refused_RunsNothing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "t1: not found on the source")
 	assert.Zero(t, builds.total())
+}
+
+// A conversion plan must never reach the static branch (executePlan's default
+// case): until the d2s state machine exists, execute refuses it without
+// building any service.
+func TestExecutePlan_ConversionRefusesUntilSupported(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Route: "migration-route", Mode: "convert", FenceYAML: "rules: {}"}
+
+	_, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--dry-run")
+	assert.Zero(t, builds.total(), "no service may be built for a conversion yet")
+}
+
+// A completed conversion re-runs as nothing to do, reported in conversion terms.
+func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Route: "migration-route", Mode: "convert", NothingToDo: true}
+
+	out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+
+	require.NoError(t, err)
+	assert.Zero(t, builds.total())
+	assert.Contains(t, out, "already static on its target domain")
 }
