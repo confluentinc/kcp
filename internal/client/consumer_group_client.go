@@ -429,3 +429,59 @@ func canDescribeAnyTopic(f metadataFetcher, topic string) (bool, error) {
 		return false, fmt.Errorf("probing topic describe access: %w", resp.Topics[0].Err)
 	}
 }
+
+// PartitionCounts returns the partition count of each named topic that exists on the cluster. A topic the
+// broker says does not exist is left out of the map, not an error: a conversion reads a missing count as
+// "no copy on this cluster". Like the topic probe it asks one broker directly with auto-creation off,
+// because the client's own metadata refresh defaults to creating a missing topic.
+func (c *ConsumerGroupClient) PartitionCounts(topics []string) (map[string]int, error) {
+	if len(topics) == 0 {
+		return map[string]int{}, nil
+	}
+	b := c.client.LeastLoadedBroker()
+	if b == nil {
+		return nil, fmt.Errorf("no broker available to read partition counts")
+	}
+	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
+		return nil, fmt.Errorf("connecting to %s to read partition counts: %w", b.Addr(), err)
+	}
+	return partitionCounts(b, topics)
+}
+
+// partitionCounts requests metadata for exactly topics, with auto-creation off. Any per-topic error other
+// than "unknown topic" is an error, as is a topic the broker did not answer for, and a response below
+// Metadata v4 (no auto-create flag, so a broker with auto.create.topics.enable could create the topic).
+func partitionCounts(f metadataFetcher, topics []string) (map[string]int, error) {
+	if len(topics) == 0 {
+		return map[string]int{}, nil
+	}
+	resp, err := f.GetMetadata(&sarama.MetadataRequest{
+		Version:                10,
+		Topics:                 topics,
+		AllowAutoTopicCreation: false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading partition counts: %w", err)
+	}
+	if resp.Version < 4 {
+		return nil, fmt.Errorf("reading partition counts: the broker only speaks Metadata v%d, which cannot be told not to auto-create a missing topic", resp.Version)
+	}
+	counts := make(map[string]int, len(topics))
+	answered := make(map[string]bool, len(resp.Topics))
+	for _, t := range resp.Topics {
+		answered[t.Name] = true
+		switch t.Err {
+		case sarama.ErrNoError:
+			counts[t.Name] = len(t.Partitions)
+		case sarama.ErrUnknownTopicOrPartition:
+		default:
+			return nil, fmt.Errorf("reading the partition count of topic %s: %w", t.Name, t.Err)
+		}
+	}
+	for _, name := range topics {
+		if !answered[name] {
+			return nil, fmt.Errorf("reading partition counts: the broker did not answer for topic %q", name)
+		}
+	}
+	return counts, nil
+}

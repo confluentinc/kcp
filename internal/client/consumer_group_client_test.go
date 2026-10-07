@@ -476,3 +476,46 @@ func TestCanDescribeAnyTopic_ThroughARealClient(t *testing.T) {
 		})
 	}
 }
+
+func topicWithPartitions(name string, n int) *sarama.TopicMetadata {
+	return &sarama.TopicMetadata{Name: name, Err: sarama.ErrNoError, Partitions: make([]*sarama.PartitionMetadata, n)}
+}
+
+func TestPartitionCounts_CountsExistingTopicsAndOmitsMissingOnes(t *testing.T) {
+	f := &fakeTopicMetadata{resp: &sarama.MetadataResponse{Version: 10, Topics: []*sarama.TopicMetadata{
+		topicWithPartitions("orders", 3),
+		{Name: "gone", Err: sarama.ErrUnknownTopicOrPartition},
+	}}}
+
+	got, err := partitionCounts(f, []string{"orders", "gone"})
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"orders": 3}, got, "a topic the broker says doesn't exist has no count, and is not an error")
+	require.Len(t, f.reqs, 1)
+	assert.Equal(t, []string{"orders", "gone"}, f.reqs[0].Topics, "must ask about exactly the named topics, never all topics")
+	assert.False(t, f.reqs[0].AllowAutoTopicCreation, "reading counts must never create a missing topic")
+}
+
+func TestPartitionCounts_NoTopicsSendsNoRequest(t *testing.T) {
+	f := &fakeTopicMetadata{}
+	got, err := partitionCounts(f, nil)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.Empty(t, f.reqs, "an empty topic list in a Metadata request means every topic on some versions; never send one")
+}
+
+func TestPartitionCounts_FailuresAreErrors(t *testing.T) {
+	for name, f := range map[string]*fakeTopicMetadata{
+		"call error":       {err: errors.New("connection reset")},
+		"not authorized":   {resp: &sarama.MetadataResponse{Version: 10, Topics: []*sarama.TopicMetadata{{Name: "orders", Err: sarama.ErrTopicAuthorizationFailed}}}},
+		"no answer for it": {resp: &sarama.MetadataResponse{Version: 10}},
+		// Below v4 the request has no auto-create flag, so a broker with
+		// auto.create.topics.enable could have created the topic.
+		"pre-v4 response": {resp: &sarama.MetadataResponse{Version: 3, Topics: []*sarama.TopicMetadata{topicWithPartitions("orders", 3)}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := partitionCounts(f, []string{"orders"})
+			require.Error(t, err)
+		})
+	}
+}
