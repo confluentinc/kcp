@@ -280,3 +280,50 @@ func TestRollbackReason(t *testing.T) {
 	assert.Equal(t, "Verifying fence failed", rollbackReason(verify, errors.New("timeout")))
 	assert.Equal(t, "Syncing committed offsets failed", rollbackReason(sync, errors.New("boom")))
 }
+func TestD2SOrchestrator_Execute_AVerifyRefusalRollsBackNamingTheCause(t *testing.T) {
+	w := cleanWorld()
+	w.facts.TargetCanCommitOffsets = false
+	rec := &patchRecorder{}
+	run := newTestRun(rec.service(), w.deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.ErrorIs(t, err, ErrVerifyRefused)
+	assert.Contains(t, run.out.String(), "Conversion check failed after the fence — removing fence")
+	assert.Equal(t, StateInitialized, run.state())
+	assert.Len(t, rec.patches, 2, "the fence, then the rollback")
+	assert.Empty(t, w.dst.commits)
+}
+
+func TestD2SOrchestrator_Execute_DirectCommitsRollBackNamingTheCause(t *testing.T) {
+	w := cleanWorld()
+	w.src.rounds = append(w.src.rounds, groupoffsets.Snapshot{"orders-app": {"orders": {0: {Offset: 9}}}})
+	rec := &patchRecorder{}
+	run := newTestRun(rec.service(), w.deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.ErrorIs(t, err, groupoffsets.ErrRogueCommits)
+	assert.Contains(t, run.out.String(), "Direct commits detected — removing fence")
+	assert.Equal(t, StateInitialized, run.state())
+	assert.Len(t, rec.patches, 2)
+}
+
+// A cancelled context cannot perform the unfence IO, so it leaves the fenced world for the next run.
+func TestD2SOrchestrator_Execute_ACancelledVerifyDoesNotRollBack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := cleanWorld()
+	w.gather = func(context.Context) (*migplan.ConvertFacts, error) {
+		cancel()
+		return nil, context.Canceled
+	}
+	rec := &patchRecorder{}
+	run := newTestRun(rec.service(), w.deps())
+
+	require.Error(t, run.execute(ctx, convertResult()))
+
+	assert.Equal(t, StateFenced, run.state())
+	assert.Len(t, rec.patches, 1, "only the fence: no unfence on a dead context")
+	assert.NotContains(t, run.out.String(), "removing fence")
+}
