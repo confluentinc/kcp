@@ -101,9 +101,9 @@ type listingGaps struct {
 	sourceGroups, targetGroups, sourceTopics, targetTopics string
 }
 
-// groupFacts folds the two listings, the source's committed topics and the
-// visibility gaps into the plain data ReconcileConvert reads.
-func groupFacts(source, target []types.ConsumerGroupListing, tracked map[string][]string, gaps listingGaps) reconcile.GroupFacts {
+// groupFacts folds the destination listing, the source groups' committed topics
+// and the visibility gaps into the plain data ReconcileConvert reads.
+func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string, gaps listingGaps) reconcile.GroupFacts {
 	f := reconcile.GroupFacts{
 		TargetStates:            make(map[string]string, len(target)),
 		TrackedTopics:           tracked,
@@ -111,9 +111,6 @@ func groupFacts(source, target []types.ConsumerGroupListing, tracked map[string]
 		TargetListingIncomplete: gaps.targetGroups,
 		SourceTopicsIncomplete:  gaps.sourceTopics,
 		TargetTopicsIncomplete:  gaps.targetTopics,
-	}
-	for _, l := range source {
-		f.SourceGroups = append(f.SourceGroups, l.GroupID)
 	}
 	for _, l := range target {
 		f.TargetStates[l.GroupID] = l.State

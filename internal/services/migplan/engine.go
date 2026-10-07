@@ -39,7 +39,7 @@ func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *Rec
 // consulted for a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
 // A route conversion (in.ConvertTo set) also lists consumer groups on both
-// clusters, fetches the topics the source groups have committed on, and
+// clusters, fetches the topics the source groups have committed on, reads each link topic's partition count on both clusters, and
 // reconciles through reconcile.ReconcileConvert; the secrets provider is not
 // consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
@@ -109,7 +109,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 // runConvert gathers the consumer-group data a conversion needs (both clusters'
 // listings, and the topics the source groups have committed on) and reconciles
 // it. A listing or fetch failure is an I/O error, never a refusal: a partial
-// result could hide a split-brain or leave a tracked topic unverified.
+// result could hide a split-brain or a group committing outside the link.
 func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput, gw *reconcile.GatewayConfig,
 	src, tgt []string, link *LinkStatus, ids reconcile.ClusterIDs) (*reconcile.Plan, error) {
 	if e.sourceGroups == nil || e.targetGroups == nil {
@@ -149,7 +149,22 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}
-	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, groupFacts(srcGroups, tgtGroups, tracked, listingGaps{
+
+	// Partition counts are read only when every probe allowed: the core refuses
+	// at visibility before it reads them, and a credential that may not describe
+	// a topic would turn this read into an error instead of that refusal.
+	var parts reconcile.PartitionCounts
+	if srcCan && tgtCan && srcTopics && tgtTopics {
+		srcNames, tgtNames := linkTopicNames(link.LinkMirrors)
+		if parts.Source, err = e.sourceGroups.PartitionCounts(ctx, srcNames); err != nil {
+			return nil, fmt.Errorf("reading link topics' partition counts on the source: %w", err)
+		}
+		if parts.Target, err = e.targetGroups.PartitionCounts(ctx, tgtNames); err != nil {
+			return nil, fmt.Errorf("reading link topics' partition counts on the destination: %w", err)
+		}
+	}
+
+	plan := reconcile.ReconcileConvert(in, gw, src, tgt, link.LinkMirrors, parts, link.OffsetSyncEnabled, ids, groupFacts(tgtGroups, tracked, listingGaps{
 		sourceGroups: listingGap("source", srcCan),
 		targetGroups: listingGap("destination", tgtCan),
 		sourceTopics: topicGap("source", srcTopics),
@@ -157,4 +172,14 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	}))
 	plan.GatewayYAML = gw.RawYAML
 	return plan, nil
+}
+
+// linkTopicNames splits the link's mirrors into the names to count on each
+// cluster: source names on the source, mirror names on the destination.
+func linkTopicNames(mirrors []reconcile.LinkMirror) (source, target []string) {
+	for _, m := range mirrors {
+		source = append(source, m.SourceTopic)
+		target = append(target, m.MirrorTopic)
+	}
+	return source, target
 }

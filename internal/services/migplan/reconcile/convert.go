@@ -2,7 +2,6 @@ package reconcile
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -16,28 +15,23 @@ const convertToStatic = "static"
 const convertTargetCheckName = "conversion target is static"
 
 // ReconcileConvert reconciles a dynamic-to-static route conversion
-// (spec.route.convertTo: static). It reuses CheckPreconditions for the route
-// checks, adds the conversion's own (the target binding's bootstrap id, auth
-// for the target domain, no fence kcp didn't write, no live route-level fence,
-// no source group active on the destination), and classifies the source
-// topics that a source consumer group has committed offsets on
-// (groups.TrackedTopics) — there is no selector — refusing unless all of them
-// are Unchanged: the topic-based migration must already be finished for every
-// topic whose consumers' positions the conversion carries. A topic no group
-// tracks is not checked: if it is also unmigrated it is listed in a warning,
-// never a refusal. A tracked topic absent from the source is either created
-// natively on the destination (still tracked, because coordination is pinned to
-// source; nothing to migrate, so converged — but the route must already send it
-// to the destination, or it is refused) or on neither cluster (a stale commit,
-// skipped with a warning). On success the artifacts are the route's
-// rules with kcp's convert fence, the route converted to static, and the rules
-// without the fence for a rollback.
+// (spec.route.convertTo: static). The cluster link defines its scope: every
+// mirror topic on the link, with no selector. It runs in stages and returns at
+// the first that refuses: the route checks (CheckPreconditions, then the
+// conversion's own: the target binding's bootstrap id, auth for the target
+// domain, no fence kcp didn't write, no live route-level fence); the four
+// visibility probes; then CheckLinkScope — every link topic promoted,
+// unprefixed, on the destination, routed there and partition-matched; every
+// source group committing only on link topics; no in-scope group active on the
+// destination. On success the artifacts are the route's rules with kcp's
+// convert fence, the route converted to static, and the rules without the
+// fence for a rollback.
 //
 // A route that is already static and bound to the target is a completed
 // conversion: nothing to do — unless it carries a live route-level fence, which
 // is refused. A static route bound anywhere else is refused.
 func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
+	mirrors []LinkMirror, partitions PartitionCounts, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
 
 	report := Report{}
 
@@ -101,113 +95,36 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// fence on the dynamic route would ride into the static route, where the
 	// gateway enforces it.
 	report.Preconditions = append(report.Preconditions, routeLevelFenceCheck(rc))
+	if report.Refused() {
+		return &Plan{Report: report, Mode: convertMode}
+	}
 
 	report.Preconditions = append(report.Preconditions,
 		checkVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
 		checkVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete),
 		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
 		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete))
-
-	groupCheck, groupWarnings := CheckGroupSplitBrain(groups.SourceGroups, groups.TargetStates)
-	report.Preconditions = append(report.Preconditions, groupCheck)
-	report.Warnings = append(report.Warnings, groupWarnings...)
-
-	// A refusal here returns before the convergence check below, on purpose: the
-	// convergence check reads the group listing, and the visibility
-	// preconditions say that listing may be partial, so its verdict would not
-	// be trustworthy. The cost is that an operator who fixes a credential can
-	// then meet a second, convergence refusal.
+	// A refusal here returns before the link checks, on purpose: they read the
+	// group and topic listings, and the visibility preconditions say those may
+	// be partial, so their verdict would not be trustworthy. The cost is that
+	// an operator who fixes a credential can then meet a second refusal.
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}
 	}
 
-	tracked := map[string]struct{}{}
-	for _, topics := range groups.TrackedTopics {
-		for _, t := range topics {
-			tracked[t] = struct{}{}
-		}
-	}
-	srcSet := toSet(sourceTopics)
-	tgtSet := toSet(targetTopics)
-	var untrackedUnmigrated []string
-	for _, topic := range sourceTopics {
-		_, onTarget := tgtSet[topic]
-		domain, _ := OwnerRoute(topic, view.Conditions, view.DefaultDomain)
-		tv := Classify(topic, true, onTarget, mirrors[topic], domain == view.TargetDomain)
-		_, isTracked := tracked[topic]
-		switch {
-		case !isTracked:
-			// Not checked: no group's position on it is carried. Only an
-			// unmigrated one is worth telling the operator about, because the
-			// static route will send its traffic to the destination.
-			if tv.Verdict != Unchanged {
-				untrackedUnmigrated = append(untrackedUnmigrated, topic)
-			}
-		case tv.Verdict == Unchanged:
-			report.Unchanged = append(report.Unchanged, tv)
-		case tv.Verdict == FailFast:
-			report.FailFast = append(report.FailFast, tv)
-		default:
-			// Migratable, SwitchOnly and AwaitStopped are in-flight states a
-			// topic migration accepts; a conversion requires the migration done.
-			tv.Reason = fmt.Sprintf("%s is not migrated yet (%s); finish the topic-based migration before converting the route", topic, tv.Verdict)
-			tv.Verdict = FailFast
-			report.FailFast = append(report.FailFast, tv)
-		}
-	}
-	if len(untrackedUnmigrated) > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf(
-			"topic(s) %s are not migrated and no source consumer group has committed offsets on them, so they are not checked; after the switch their traffic goes to the destination — migrate them first if anything still reads or writes them",
-			joinCapped(untrackedUnmigrated, 20)))
-	}
-
-	// A tracked topic absent from the source is either destination-native (still
-	// tracked, because coordination is pinned to source: nothing to migrate, so
-	// converged; Classify would wrongly fail it as "not found on the source") or
-	// on neither cluster (a stale commit: skipped with a warning).
-	var absent []string
-	for t := range tracked {
-		if _, ok := srcSet[t]; !ok {
-			absent = append(absent, t)
-		}
-	}
-	sort.Strings(absent)
-	var gone []string
-	for _, t := range absent {
-		if _, ok := tgtSet[t]; !ok {
-			gone = append(gone, t)
-			continue
-		}
-		mirror := mirrors[t]
-		tv := TopicVerdict{Topic: t, Verdict: Unchanged, S: "absent", M: mirror.String(), T: "present", R: "->target"}
-		// Its source topic is gone but it can still be a mirror on the link.
-		// Only a promoted mirror (or none) is converged; a live, pending or
-		// failed one is still mid-migration, and Classify (which handles mirror
-		// state) is not run for a topic that is not on the source.
-		if mirror != MirrorNone && mirror != MirrorStopped {
-			tv.Verdict = FailFast
-			tv.Reason = fmt.Sprintf("%s exists only on the destination but its mirror on the cluster link is %s, not promoted; promote or delete the mirror before converting", t, mirror)
-			report.FailFast = append(report.FailFast, tv)
-			continue
-		}
-		// Nothing to migrate, but the route must already send it to the
-		// destination: otherwise its consumers cannot reach it through the
-		// gateway today, so the offsets their groups hold may be stale and
-		// cannot be trusted to carry over.
-		if domain, _ := OwnerRoute(t, view.Conditions, view.DefaultDomain); domain != view.TargetDomain {
-			tv.R = "->source"
-			tv.Verdict = FailFast
-			tv.Reason = fmt.Sprintf("%s exists only on the destination but the route does not send it there, so its consumers cannot reach it through the gateway and the offsets their groups hold may be stale; route it to %q before converting", t, view.TargetDomain)
-			report.FailFast = append(report.FailFast, tv)
-			continue
-		}
-		report.Unchanged = append(report.Unchanged, tv)
-	}
-	if len(gone) > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf(
-			"consumer group(s) hold committed offsets on topic(s) %s, which exist on neither cluster; they are skipped",
-			joinCapped(gone, 20)))
-	}
+	scope := CheckLinkScope(LinkScopeInput{
+		Mirrors:         mirrors,
+		SourceTopics:    sourceTopics,
+		TargetTopics:    targetTopics,
+		Partitions:      partitions,
+		View:            view,
+		CommittedTopics: groups.TrackedTopics,
+		TargetStates:    groups.TargetStates,
+	})
+	report.Unchanged = append(report.Unchanged, scope.Unchanged...)
+	report.FailFast = append(report.FailFast, scope.FailFast...)
+	report.Preconditions = append(report.Preconditions, scope.Preconditions...)
+	report.Warnings = append(report.Warnings, scope.Warnings...)
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -338,7 +339,10 @@ func convertEngine(src, tgt GroupLister) *ReconciliationEngine {
 		&fakeGateway{gw: convertEngineGateway()},
 		&fakeLister{topics: []string{"orders"}},
 		&fakeLister{topics: []string{"orders"}},
-		&fakeLink{ls: &LinkStatus{Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped}}},
+		&fakeLink{ls: &LinkStatus{
+			Mirrors:     map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped},
+			LinkMirrors: []reconcile.LinkMirror{{SourceTopic: "orders", MirrorTopic: "orders", State: reconcile.MirrorStopped, Status: "STOPPED"}},
+		}},
 		&fakeSecretChecker{},
 	).WithGroupListers(src, tgt)
 }
@@ -346,7 +350,10 @@ func convertEngine(src, tgt GroupLister) *ReconciliationEngine {
 var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
 
 func TestEngineRun_ConversionUsesBothGroupListers(t *testing.T) {
-	src := &fakeGroupLister{groups: []types.ConsumerGroupListing{{GroupID: "orders-app"}}}
+	src := &fakeGroupLister{
+		groups:  []types.ConsumerGroupListing{{GroupID: "orders-app"}},
+		tracked: map[string][]string{"orders-app": {"orders"}},
+	}
 	tgt := &fakeGroupLister{groups: []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Stable"}}}
 
 	plan, err := convertEngine(src, tgt).Run(context.Background(), convertIn)
@@ -364,7 +371,7 @@ func TestEngineRun_ConversionUsesBothGroupListers(t *testing.T) {
 	}
 }
 
-func TestEngineRun_ConversionFetchesCommittedTopicsForSourceGroupsOnly(t *testing.T) {
+func TestEngineRun_ConversionFetchesCommittedTopicsFromTheSourceOnly(t *testing.T) {
 	src := &fakeGroupLister{
 		groups:  []types.ConsumerGroupListing{{GroupID: "a"}, {GroupID: "b"}},
 		tracked: map[string][]string{"a": {"orders"}},
@@ -382,7 +389,7 @@ func TestEngineRun_ConversionFetchesCommittedTopicsForSourceGroupsOnly(t *testin
 		t.Errorf("destination CommittedTopics called %d times, want 0", tgt.trackedN)
 	}
 	if len(plan.Report.Unchanged) != 1 || plan.Report.Unchanged[0].Topic != "orders" {
-		t.Errorf("Unchanged = %v, want the tracked topic orders checked", plan.Report.Unchanged)
+		t.Errorf("Unchanged = %v, want the link topic orders checked", plan.Report.Unchanged)
 	}
 }
 
@@ -557,4 +564,61 @@ func (f *fakeGroupLister) PartitionCounts(_ context.Context, topics []string) (m
 		out[t] = 1
 	}
 	return out, nil
+}
+
+func TestEngineRun_ConversionReadsLinkTopicPartitionsOnBothClusters(t *testing.T) {
+	src, tgt := &fakeGroupLister{}, &fakeGroupLister{}
+
+	if _, err := convertEngine(src, tgt).Run(context.Background(), convertIn); err != nil {
+		t.Fatal(err)
+	}
+	if src.partitionsN != 1 || !reflect.DeepEqual(src.partitionsFor, []string{"orders"}) {
+		t.Errorf("source PartitionCounts asked about %v (%d calls), want [orders] once", src.partitionsFor, src.partitionsN)
+	}
+	if tgt.partitionsN != 1 || !reflect.DeepEqual(tgt.partitionsFor, []string{"orders"}) {
+		t.Errorf("destination PartitionCounts asked about %v (%d calls), want [orders] once", tgt.partitionsFor, tgt.partitionsN)
+	}
+}
+
+func TestEngineRun_ConversionRefusesAPartitionMismatch(t *testing.T) {
+	src := &fakeGroupLister{partitions: map[string]int{"orders": 3}}
+	tgt := &fakeGroupLister{partitions: map[string]int{"orders": 6}}
+
+	plan, err := convertEngine(src, tgt).Run(context.Background(), convertIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Report.FailFast) != 1 || !strings.Contains(plan.Report.FailFast[0].Reason, "6 partitions on the destination but 3") {
+		t.Errorf("FailFast = %+v, want orders refused for its partition counts", plan.Report.FailFast)
+	}
+}
+
+func TestEngineRun_ConversionSkipsPartitionCountsWhenAProbeDenied(t *testing.T) {
+	boom := errors.New("TOPIC_AUTHORIZATION_FAILED")
+	src := &fakeGroupLister{topicsDenied: true, partitionsErr: boom}
+
+	plan, err := convertEngine(src, &fakeGroupLister{}).Run(context.Background(), convertIn)
+	if err != nil {
+		t.Fatalf("Run error = %v, want the visibility refusal, not a partition-count error", err)
+	}
+	if src.partitionsN != 0 {
+		t.Errorf("PartitionCounts called %d times after a denied probe, want 0", src.partitionsN)
+	}
+	if !plan.Report.Refused() {
+		t.Fatal("a denied topic probe must refuse")
+	}
+}
+
+func TestEngineRun_ConversionPartitionCountFailureIsAnError(t *testing.T) {
+	boom := errors.New("metadata failed")
+	for name, eng := range map[string]*ReconciliationEngine{
+		"source":      convertEngine(&fakeGroupLister{partitionsErr: boom}, &fakeGroupLister{}),
+		"destination": convertEngine(&fakeGroupLister{}, &fakeGroupLister{partitionsErr: boom}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := eng.Run(context.Background(), convertIn); !errors.Is(err, boom) {
+				t.Fatalf("Run error = %v, want the partition-count failure as an error, not a refusal", err)
+			}
+		})
+	}
 }

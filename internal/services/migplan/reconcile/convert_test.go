@@ -27,34 +27,34 @@ func convertGateway() *GatewayConfig {
 	}}
 }
 
-// routeToTarget adds topic to the condition that sends kcp's migrated topics to
-// the target domain.
-func routeToTarget(gw *GatewayConfig, topic string) {
-	routing := gw.Route.Rules["routing"].(map[string]any)
-	cond := routing["conditions"].([]any)[0].(map[string]any)
-	cond["topics"] = append(cond["topics"].([]any), topic)
-}
-
 func convertInput() ReconcileInput {
 	return ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
 }
 
 var convergedTopics = []string{"orders", "payments"}
 
-// trackedGroups is one source group with committed offsets on both topics.
+// trackedGroups is one source group with committed offsets on both link topics.
 func trackedGroups() GroupFacts {
-	return GroupFacts{
-		SourceGroups:  []string{"orders-app"},
-		TrackedTopics: map[string][]string{"orders-app": {"orders", "payments"}},
+	return GroupFacts{TrackedTopics: map[string][]string{"orders-app": {"orders", "payments"}}}
+}
+
+// linkMirrors is the finished link: both topics promoted, unprefixed.
+func linkMirrors() []LinkMirror {
+	return []LinkMirror{
+		{SourceTopic: "orders", MirrorTopic: "orders", State: MirrorStopped, Status: "STOPPED"},
+		{SourceTopic: "payments", MirrorTopic: "payments", State: MirrorStopped, Status: "STOPPED"},
 	}
 }
 
-func convergedMirrors() map[string]MirrorState {
-	return map[string]MirrorState{"orders": MirrorStopped, "payments": MirrorStopped}
+func convergedPartitions() PartitionCounts {
+	return PartitionCounts{
+		Source: map[string]int{"orders": 3, "payments": 3},
+		Target: map[string]int{"orders": 3, "payments": 3},
+	}
 }
 
 func reconcileConverged(gw *GatewayConfig, groups GroupFacts) *Plan {
-	return ReconcileConvert(convertInput(), gw, convergedTopics, convergedTopics, convergedMirrors(), false, ClusterIDs{}, groups)
+	return ReconcileConvert(convertInput(), gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, groups)
 }
 
 func convertPrecondition(t *testing.T, r Report, name string) PreconditionResult {
@@ -102,47 +102,6 @@ func TestReconcileConvert_HappyPath(t *testing.T) {
 	}
 }
 
-func TestReconcileConvert_RefusesATrackedUnmigratedTopic(t *testing.T) {
-	topics := append([]string{"refunds"}, convergedTopics...)
-	mirrors := convergedMirrors()
-	mirrors["refunds"] = MirrorActive
-	groups := GroupFacts{
-		SourceGroups:  []string{"refunds-app"},
-		TrackedTopics: map[string][]string{"refunds-app": {"refunds"}},
-	}
-
-	p := ReconcileConvert(convertInput(), convertGateway(), topics, topics, mirrors, false, ClusterIDs{}, groups)
-
-	if !p.Report.Refused() || p.Artifacts != nil {
-		t.Fatal("a topic a source group has committed on, still routed to the source, must refuse the conversion")
-	}
-	if len(p.Report.FailFast) != 1 || p.Report.FailFast[0].Topic != "refunds" {
-		t.Fatalf("FailFast = %v, want refunds", p.Report.FailFast)
-	}
-	if !strings.Contains(p.Report.FailFast[0].Reason, "not migrated yet") {
-		t.Errorf("reason = %q, want it to say the topic isn't migrated yet", p.Report.FailFast[0].Reason)
-	}
-}
-
-func TestReconcileConvert_UntrackedUnmigratedTopicWarnsOnly(t *testing.T) {
-	topics := append([]string{"refunds"}, convergedTopics...)
-	mirrors := convergedMirrors()
-	mirrors["refunds"] = MirrorActive
-
-	// No source group has committed offsets on refunds.
-	p := ReconcileConvert(convertInput(), convertGateway(), topics, topics, mirrors, false, ClusterIDs{}, trackedGroups())
-
-	if p.Report.Refused() || p.Artifacts == nil {
-		t.Fatalf("an untracked, unmigrated topic must not refuse, got %+v", p.Report)
-	}
-	if len(p.Report.Warnings) != 1 || !strings.Contains(p.Report.Warnings[0], "refunds") {
-		t.Fatalf("warnings = %v, want one naming refunds", p.Report.Warnings)
-	}
-	if len(p.Report.Unchanged) != 2 || len(p.Report.FailFast) != 0 {
-		t.Errorf("Unchanged = %v, FailFast = %v; want only the two tracked topics checked", p.Report.Unchanged, p.Report.FailFast)
-	}
-}
-
 func TestReconcileConvert_UntrackedConvergedTopicIsSilent(t *testing.T) {
 	// A converged topic nobody commits on (e.g. _schemas) adds no warning.
 	p := reconcileConverged(convertGateway(), GroupFacts{})
@@ -151,138 +110,12 @@ func TestReconcileConvert_UntrackedConvergedTopicIsSilent(t *testing.T) {
 	}
 }
 
-func TestReconcileConvert_TrackedTopicOnNeitherClusterWarnsAndSkips(t *testing.T) {
-	groups := GroupFacts{
-		SourceGroups:  []string{"orders-app"},
-		TrackedTopics: map[string][]string{"orders-app": {"orders", "payments", "ghost"}},
-	}
-	p := reconcileConverged(convertGateway(), groups)
-
-	if p.Report.Refused() {
-		t.Fatalf("a tracked topic that exists nowhere must not refuse, got %+v", p.Report)
-	}
-	if len(p.Report.Warnings) != 1 || !strings.Contains(p.Report.Warnings[0], "ghost") {
-		t.Fatalf("warnings = %v, want one naming ghost", p.Report.Warnings)
-	}
-}
-
-// A topic created natively on the destination is tracked by a source group
-// (coordination is pinned to source, so the group's offsets on it live there).
-// It was never mirrored and is not on the source, but it needs no migration.
-func TestReconcileConvert_TrackedDestinationNativeTopicPasses(t *testing.T) {
-	targets := append([]string{"audit-native"}, convergedTopics...) // on destination only
-	groups := GroupFacts{
-		SourceGroups:  []string{"audit-app"},
-		TrackedTopics: map[string][]string{"audit-app": {"orders", "payments", "audit-native"}},
-	}
-	gw := convertGateway()
-	routeToTarget(gw, "audit-native")
-	p := ReconcileConvert(convertInput(), gw, convergedTopics, targets, convergedMirrors(), false, ClusterIDs{}, groups)
-
-	if p.Report.Refused() || p.Artifacts == nil {
-		t.Fatalf("a tracked destination-native topic must not refuse, got %+v", p.Report)
-	}
-	if len(p.Report.Warnings) != 0 {
-		t.Errorf("warnings = %v, want none: the topic exists, needs no migration, and routes to the destination", p.Report.Warnings)
-	}
-	found := false
-	for _, tv := range p.Report.Unchanged {
-		if tv.Topic == "audit-native" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("Unchanged = %v, want audit-native listed as checked and converged", p.Report.Unchanged)
-	}
-}
-
-// A tracked destination-native topic whose route still points at the source is
-// not reachable by its consumers through the gateway today, so the offsets their
-// groups hold may be stale and cannot be trusted to carry over: refuse until the
-// operator routes it to the destination.
-func TestReconcileConvert_RefusesATrackedDestinationNativeTopicNotRoutedToTarget(t *testing.T) {
-	targets := append([]string{"audit-native", "ledger-native"}, convergedTopics...)
-	groups := GroupFacts{
-		SourceGroups:  []string{"audit-app"},
-		TrackedTopics: map[string][]string{"audit-app": {"orders", "payments", "audit-native", "ledger-native"}},
-	}
-	gw := convertGateway()
-	routeToTarget(gw, "ledger-native") // routed; audit-native falls to the catch-all (msk)
-
-	p := ReconcileConvert(convertInput(), gw, convergedTopics, targets, convergedMirrors(), false, ClusterIDs{}, groups)
-
-	if !p.Report.Refused() || p.Artifacts != nil {
-		t.Fatal("a tracked destination-native topic the route sends to the source must refuse the conversion")
-	}
-	if len(p.Report.FailFast) != 1 || p.Report.FailFast[0].Topic != "audit-native" {
-		t.Fatalf("FailFast = %v, want only audit-native", p.Report.FailFast)
-	}
-	reason := p.Report.FailFast[0].Reason
-	if !strings.Contains(reason, "only on the destination") || !strings.Contains(reason, "route") {
-		t.Errorf("reason = %q, want it to say the topic is destination-only and the route doesn't send it there", reason)
-	}
-	if len(p.Report.Warnings) != 0 {
-		t.Errorf("warnings = %v, want none: this is a refusal, not a warning", p.Report.Warnings)
-	}
-	checked := map[string]bool{}
-	for _, tv := range p.Report.Unchanged {
-		checked[tv.Topic] = true
-	}
-	if checked["audit-native"] || !checked["ledger-native"] {
-		t.Errorf("Unchanged = %v, want the routed ledger-native converged and the unrouted audit-native not", p.Report.Unchanged)
-	}
-}
-
-// A destination-only tracked topic can still be a mirror on the link whose source
-// topic was deleted. Only a promoted (stopped) mirror, or no mirror at all, is
-// converged; a live, pending or failed one is still mid-migration.
-func TestReconcileConvert_DestinationNativeTopicMirrorState(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		mirror  MirrorState
-		refused bool
-	}{
-		{"not a mirror", MirrorNone, false},
-		{"promoted mirror", MirrorStopped, false},
-		{"active mirror", MirrorActive, true},
-		{"pending promotion", MirrorPending, true},
-		{"failed mirror", MirrorBad, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			targets := append([]string{"audit-native"}, convergedTopics...)
-			mirrors := convergedMirrors()
-			mirrors["audit-native"] = tc.mirror
-			groups := GroupFacts{
-				SourceGroups:  []string{"audit-app"},
-				TrackedTopics: map[string][]string{"audit-app": {"orders", "payments", "audit-native"}},
-			}
-			gw := convertGateway()
-			routeToTarget(gw, "audit-native")
-
-			p := ReconcileConvert(convertInput(), gw, convergedTopics, targets, mirrors, false, ClusterIDs{}, groups)
-
-			if p.Report.Refused() != tc.refused {
-				t.Fatalf("refused = %v, want %v (report %+v)", p.Report.Refused(), tc.refused, p.Report)
-			}
-			if tc.refused {
-				if len(p.Report.FailFast) != 1 || p.Report.FailFast[0].Topic != "audit-native" ||
-					!strings.Contains(p.Report.FailFast[0].Reason, "mirror") {
-					t.Errorf("FailFast = %v, want audit-native refused with a reason naming the mirror", p.Report.FailFast)
-				}
-			}
-		})
-	}
-}
-
-// A topic tracked by two groups is one topic: checked once, reported once.
-func TestReconcileConvert_ATopicTrackedByTwoGroupsIsCheckedOnce(t *testing.T) {
-	groups := GroupFacts{
-		SourceGroups: []string{"orders-app", "audit-app"},
-		TrackedTopics: map[string][]string{
-			"orders-app": {"orders", "payments"},
-			"audit-app":  {"orders"},
-		},
-	}
+// A link topic two groups commit on is one topic: checked once, reported once.
+func TestReconcileConvert_ALinkTopicTwoGroupsCommitOnIsReportedOnce(t *testing.T) {
+	groups := GroupFacts{TrackedTopics: map[string][]string{
+		"orders-app": {"orders", "payments"},
+		"audit-app":  {"orders"},
+	}}
 	p := reconcileConverged(convertGateway(), groups)
 
 	if p.Report.Refused() {
@@ -409,12 +242,13 @@ func TestReconcileConvert_CompleteGroupListingsPass(t *testing.T) {
 }
 
 func TestReconcileConvert_RefusesSplitBrain(t *testing.T) {
-	p := reconcileConverged(convertGateway(), GroupFacts{
-		SourceGroups: []string{"orders-app"},
-		TargetStates: map[string]string{"orders-app": "Stable"},
-	})
+	groups := trackedGroups()
+	groups.TargetStates = map[string]string{"orders-app": "Stable"}
+
+	p := reconcileConverged(convertGateway(), groups)
+
 	if !p.Report.Refused() {
-		t.Fatal("a source group active on the destination must refuse")
+		t.Fatal("an in-scope group active on the destination must refuse")
 	}
 	if pc := convertPrecondition(t, p.Report, GroupSplitBrainCheckName); pc.OK {
 		t.Errorf("split-brain precondition = %+v, want a failure", pc)
@@ -422,15 +256,16 @@ func TestReconcileConvert_RefusesSplitBrain(t *testing.T) {
 }
 
 func TestReconcileConvert_IdleDestinationGroupWarns(t *testing.T) {
-	p := reconcileConverged(convertGateway(), GroupFacts{
-		SourceGroups: []string{"billing"},
-		TargetStates: map[string]string{"billing": "Empty"},
-	})
+	groups := trackedGroups()
+	groups.TargetStates = map[string]string{"orders-app": "Empty"}
+
+	p := reconcileConverged(convertGateway(), groups)
+
 	if p.Report.Refused() {
 		t.Fatalf("an Empty destination group must not refuse, got %+v", p.Report)
 	}
-	if len(p.Report.Warnings) != 1 || !strings.Contains(p.Report.Warnings[0], "billing") {
-		t.Errorf("warnings = %v, want one naming billing", p.Report.Warnings)
+	if len(p.Report.Warnings) != 1 || !strings.Contains(p.Report.Warnings[0], "orders-app") {
+		t.Errorf("warnings = %v, want one naming orders-app", p.Report.Warnings)
 	}
 }
 
@@ -531,7 +366,7 @@ func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
 			in := convertInput()
 			in.ConvertTo = to
 
-			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, convergedMirrors(), false, ClusterIDs{}, GroupFacts{})
+			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{})
 
 			if !p.Report.Refused() || p.Artifacts != nil || p.NothingToDo {
 				t.Fatalf("ConvertTo %q must refuse, got %+v", to, p)
@@ -548,7 +383,7 @@ func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
 	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	in := convertInput()
 	in.ConvertTo = "dynamic"
-	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, convergedMirrors(), false, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
+	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
 		t.Fatalf("ConvertTo dynamic on a static route must refuse, got %+v", p)
 	}
 }
@@ -632,5 +467,86 @@ func TestReconcileConvert_AlreadyStaticOnTargetWithAnInertFenceIsNothingToDo(t *
 
 	if p.Report.Refused() || !p.NothingToDo {
 		t.Fatalf("an inert fence on a completed conversion is still nothing to do, got %+v", p)
+	}
+}
+
+func TestReconcileConvert_RefusesALinkTopicThatIsNotPromoted(t *testing.T) {
+	mirrors := linkMirrors()
+	mirrors[0].State, mirrors[0].Status = MirrorActive, "ACTIVE"
+
+	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+
+	if !p.Report.Refused() || p.Artifacts != nil {
+		t.Fatal("an unpromoted link topic must refuse the conversion")
+	}
+	if len(p.Report.FailFast) != 1 || p.Report.FailFast[0].Topic != "orders" {
+		t.Fatalf("FailFast = %v, want orders", p.Report.FailFast)
+	}
+	for _, pc := range p.Report.Preconditions {
+		if pc.Name == GroupScopeCheckName || pc.Name == GroupSplitBrainCheckName {
+			t.Errorf("precondition %q ran, want the group stages skipped after a link topic refusal", pc.Name)
+		}
+	}
+}
+
+func TestReconcileConvert_RefusesAGroupCommittingOutsideTheLink(t *testing.T) {
+	topics := append([]string{"refunds"}, convergedTopics...)
+	groups := trackedGroups()
+	groups.TrackedTopics["refunds-app"] = []string{"refunds"}
+
+	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, groups)
+
+	if !p.Report.Refused() || p.Artifacts != nil {
+		t.Fatal("a group committing outside the link must refuse the conversion")
+	}
+	if pc := convertPrecondition(t, p.Report, GroupScopeCheckName); pc.OK || !strings.Contains(pc.Detail, "refunds-app (refunds)") {
+		t.Errorf("group rule = %+v, want a failure naming refunds-app and refunds", pc)
+	}
+}
+
+func TestReconcileConvert_UntrackedTopicOffTheLinkWarnsOnly(t *testing.T) {
+	topics := append([]string{"_schemas"}, convergedTopics...)
+
+	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+
+	if p.Report.Refused() || p.Artifacts == nil {
+		t.Fatalf("an untracked topic off the link must not refuse, got %+v", p.Report)
+	}
+	if len(p.Report.Warnings) != 1 || !strings.Contains(p.Report.Warnings[0], "_schemas") {
+		t.Fatalf("warnings = %v, want one naming _schemas", p.Report.Warnings)
+	}
+}
+
+func TestReconcileConvert_VisibilityRefusalStopsBeforeTheLinkChecks(t *testing.T) {
+	mirrors := linkMirrors()
+	mirrors[0].State = MirrorActive // would refuse, if the link checks ran
+	groups := trackedGroups()
+	groups.SourceTopicsIncomplete = "the source credential cannot describe arbitrary topics"
+
+	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, groups)
+
+	if !p.Report.Refused() {
+		t.Fatal("a denied visibility probe must refuse")
+	}
+	if len(p.Report.FailFast) != 0 || len(p.Report.Unchanged) != 0 {
+		t.Errorf("FailFast = %v, Unchanged = %v: the link checks read listings the probe says may be partial, so they must not run", p.Report.FailFast, p.Report.Unchanged)
+	}
+}
+
+func TestReconcileConvert_RouteRefusalStopsBeforeVisibility(t *testing.T) {
+	gw := convertGateway()
+	delete(gw.Route.Raw["security"].(map[string]any)["cluster"].(map[string]any), "cc") // no auth for the target domain
+	groups := trackedGroups()
+	groups.SourceListingIncomplete = "would also refuse"
+
+	p := reconcileConverged(gw, groups)
+
+	if !p.Report.Refused() {
+		t.Fatal("a route without target auth must refuse")
+	}
+	for _, pc := range p.Report.Preconditions {
+		if pc.Name == SourceGroupVisibilityCheckName {
+			t.Errorf("visibility precondition ran after a route refusal: %+v", p.Report.Preconditions)
+		}
 	}
 }

@@ -7,24 +7,24 @@ import (
 )
 
 // GroupFacts is the consumer-group data a conversion reads, gathered by the I/O
-// layer: every group id on the source, each destination group's state (as
-// ListGroups reports it), and, per source group, the topics it has committed
-// offsets on. The split-brain check reads the first two; the convergence check
-// is scoped to the third.
+// layer: each destination group's state (as ListGroups reports it), and, per
+// source group from a strict listing of every source group, the topics it has
+// committed offsets on (an empty list for a group with no commits). The group
+// rule reads TrackedTopics; the split-brain check reads TargetStates for the
+// in-scope groups.
 //
 // SourceListingIncomplete and TargetListingIncomplete are empty when that
 // cluster's listing is known to be complete. A non-empty value says why it may
 // not be (the listing credential can only see the groups it can describe
 // individually), and refuses the conversion: a source group the listing hides
-// is a set of topics never verified, and a destination group it hides is a
+// is a group the group rule never sees, and a destination group it hides is a
 // split-brain the check cannot see.
 //
 // SourceTopicsIncomplete and TargetTopicsIncomplete are the same for topics: a
 // credential that may not describe every topic gets an offset fetch that
-// silently leaves out the topics it can't see (so a tracked topic is never
-// verified), and a topic list that omits them.
+// silently leaves out the topics it can't see (so a group committing outside
+// the link could pass the group rule), and a topic list that omits them.
 type GroupFacts struct {
-	SourceGroups            []string
 	TargetStates            map[string]string
 	TrackedTopics           map[string][]string
 	SourceListingIncomplete string
