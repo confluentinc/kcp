@@ -124,6 +124,9 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	report.Unchanged = append(report.Unchanged, scope.Unchanged...)
 	report.FailFast = append(report.FailFast, scope.FailFast...)
 	report.Preconditions = append(report.Preconditions, scope.Preconditions...)
+	if scope.UntrackedTopicsWarning != "" {
+		report.Warnings = append(report.Warnings, scope.UntrackedTopicsWarning)
+	}
 	report.Warnings = append(report.Warnings, scope.Warnings...)
 	if report.Refused() {
 		return &Plan{Report: report, Mode: convertMode}

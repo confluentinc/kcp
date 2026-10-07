@@ -37,6 +37,8 @@ type LinkStatusProvider interface {
 // read it. LinkMirrors is every mirror with both its names, its mapped state
 // and the link's raw status, sorted by source name; only a route conversion
 // reads it, because it must see a prefix and name the exact mirror status.
+// Mirrors and LinkMirrors are two views of the same mirror listing; a provider
+// must build them together.
 // SourceClusterID is the link's own source_cluster_id (empty if the destination
 // does not report one — older CP), used to verify the source cluster's identity.
 type LinkStatus struct {

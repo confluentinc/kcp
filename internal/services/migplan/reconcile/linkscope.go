@@ -33,7 +33,10 @@ type LinkScopeInput struct {
 	// SourceTopics and TargetTopics are every non-internal topic on each cluster.
 	SourceTopics []string
 	TargetTopics []string
-	Partitions   PartitionCounts
+	// Partitions must be filled from a live read of every link topic on both
+	// clusters; a missing count is reported as "could not be read; rerun",
+	// not as an error.
+	Partitions PartitionCounts
 	// View is the dynamic route's routing, for OwnerRoute.
 	View RouteView
 	// CommittedTopics is, per source group, the topics it has committed an
@@ -197,6 +200,10 @@ type LinkScope struct {
 	FailFast      []TopicVerdict
 	Preconditions []PreconditionResult
 	Warnings      []string
+	// UntrackedTopicsWarning lists source topics not on the link that no group
+	// commits on ("" when there are none). It is separate from Warnings because
+	// only reconcile reports it; verify_fence does not repeat it.
+	UntrackedTopicsWarning string
 	// InScopeGroups is every source group whose commits are all on link
 	// topics, sorted. Set only when the group rule passed.
 	InScopeGroups []string
@@ -236,7 +243,7 @@ func CheckLinkScope(in LinkScopeInput) LinkScope {
 	}
 	groupCheck, inScope := checkGroupScope(link, in.CommittedTopics)
 	s.Preconditions = append(s.Preconditions, groupCheck)
-	s.Warnings = append(s.Warnings, untrackedOffLinkWarning(in.SourceTopics, link, in.CommittedTopics)...)
+	s.UntrackedTopicsWarning = untrackedOffLinkWarning(in.SourceTopics, link, in.CommittedTopics)
 	if !groupCheck.OK {
 		return s
 	}
@@ -266,7 +273,7 @@ func checkGroupScope(link map[string]struct{}, committed map[string][]string) (P
 		}
 		if len(outside) > 0 {
 			sort.Strings(outside)
-			offending = append(offending, fmt.Sprintf("%s (%s)", g, strings.Join(outside, ", ")))
+			offending = append(offending, fmt.Sprintf("%s (%s)", g, joinCapped(outside, 10)))
 			continue
 		}
 		inScope = append(inScope, g)
@@ -285,7 +292,7 @@ func checkGroupScope(link map[string]struct{}, committed map[string][]string) (P
 // no group commits on. Nothing tells a forgotten produce-only topic from a
 // system topic (_schemas, the MSK canary, Connect internals), so this is a
 // warning, never a refusal.
-func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, committed map[string][]string) []string {
+func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, committed map[string][]string) string {
 	tracked := map[string]struct{}{}
 	for _, topics := range committed {
 		for _, t := range topics {
@@ -301,10 +308,10 @@ func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, co
 		}
 	}
 	if len(untracked) == 0 {
-		return nil
+		return ""
 	}
 	sort.Strings(untracked)
-	return []string{fmt.Sprintf(
+	return fmt.Sprintf(
 		"topic(s) %s are not on the cluster link and no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them",
-		joinCapped(untracked, 20))}
+		joinCapped(untracked, 20))
 }

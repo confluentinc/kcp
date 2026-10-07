@@ -92,7 +92,7 @@ func topicGap(side string, canDescribe bool) string {
 	if canDescribe {
 		return ""
 	}
-	return fmt.Sprintf("the %s credential cannot describe arbitrary topics, so offsets on the topics it cannot see are silently left out and the conversion would never verify them. Grant it DESCRIBE on all topics (a topic ACL on '*'; with MSK IAM, the DescribeTopic action on every topic resource) and retry", side)
+	return fmt.Sprintf("the %s credential cannot describe arbitrary topics, so offsets on the topics it cannot see are silently left out and the conversion's group checks cannot see them. Grant it DESCRIBE on all topics (a topic ACL on '*'; with MSK IAM, the DescribeTopic action on every topic resource) and retry", side)
 }
 
 // listingGaps holds the reason, per cluster, that a group listing or a topic view

@@ -349,8 +349,27 @@ func TestCheckLinkScope_WarnsAboutUntrackedTopicsOffTheLink(t *testing.T) {
 	if s.Refused() {
 		t.Fatalf("got %+v, want no refusal", s)
 	}
-	if len(s.Warnings) != 1 || !strings.Contains(s.Warnings[0], "_schemas, clicks") || !strings.Contains(s.Warnings[0], "not on the cluster link") {
-		t.Fatalf("warnings = %v, want one naming _schemas and clicks", s.Warnings)
+	if !strings.Contains(s.UntrackedTopicsWarning, "_schemas, clicks") || !strings.Contains(s.UntrackedTopicsWarning, "not on the cluster link") {
+		t.Fatalf("UntrackedTopicsWarning = %q, want one naming _schemas and clicks", s.UntrackedTopicsWarning)
+	}
+	if len(s.Warnings) != 0 {
+		t.Fatalf("Warnings = %v, want the untracked warning kept out of it", s.Warnings)
+	}
+}
+
+func TestCheckLinkScope_CapsTheOutsideTopicsPerGroup(t *testing.T) {
+	in := linkInput()
+	var off []string
+	for i := 0; i < 12; i++ {
+		off = append(off, fmt.Sprintf("off-%02d", i))
+	}
+	in.CommittedTopics["wide-app"] = off
+
+	s := CheckLinkScope(in)
+
+	pc := scopePrecondition(t, s, GroupScopeCheckName)
+	if pc.OK || !strings.Contains(pc.Detail, "and 2 more") {
+		t.Fatalf("group scope = %+v, want a refusal whose detail contains \"and 2 more\"", pc)
 	}
 }
 
@@ -360,7 +379,7 @@ func TestCheckLinkScope_LinkTopicNobodyCommitsOnIsSilent(t *testing.T) {
 
 	s := CheckLinkScope(in)
 
-	if s.Refused() || len(s.Warnings) != 0 || len(s.InScopeGroups) != 0 {
+	if s.Refused() || len(s.Warnings) != 0 || s.UntrackedTopicsWarning != "" || len(s.InScopeGroups) != 0 {
 		t.Fatalf("got %+v, want a clean result with nothing in scope", s)
 	}
 }

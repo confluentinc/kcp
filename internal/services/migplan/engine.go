@@ -39,9 +39,9 @@ func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *Rec
 // consulted for a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
 // A route conversion (in.ConvertTo set) also lists consumer groups on both
-// clusters, fetches the topics the source groups have committed on, reads each link topic's partition count on both clusters, and
-// reconciles through reconcile.ReconcileConvert; the secrets provider is not
-// consulted for it.
+// clusters, fetches the topics the source groups have committed on, reads
+// each link topic's partition count on both clusters, and reconciles through
+// reconcile.ReconcileConvert; the secrets provider is not consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
 	gw, err := e.gateway.Load(ctx)
 	if err != nil {
