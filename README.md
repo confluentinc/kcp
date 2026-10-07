@@ -45,6 +45,19 @@ sudo mv kcp /usr/local/bin/kcp
 kcp version
 ```
 
+### Run with Docker
+
+Prefer a container? kcp is published as a multi-arch image:
+
+```bash
+docker pull confluentinc/kcp:latest
+docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" confluentinc/kcp:latest version
+```
+
+See [Running kcp in Docker](docs/assets/running-kcp-in-docker.md) for AWS
+credentials, state-file mounts, the web UI, and mirroring into an internal
+registry (e.g. JFrog Artifactory).
+
 ### Windows
 
 1. Download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest).

@@ -30,6 +30,7 @@ type ReportService interface {
 }
 
 type UICmdOpts struct {
+	Host      string
 	Port      string
 	StateFile string
 }
@@ -40,6 +41,7 @@ type UI struct {
 	migrationInfraHCLService   hcl.MigrationInfraGenerator
 	migrationScriptsHCLService hcl.MigrationScriptsGenerator
 
+	host        string
 	port        string
 	states      map[string]*types.State // Session-based state storage (key: sessionId)
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
@@ -52,6 +54,7 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 		migrationInfraHCLService:   migrationInfraHCLService,
 		migrationScriptsHCLService: migrationScriptsHCLService,
 
+		host:   opts.Host,
 		port:   opts.Port,
 		states: make(map[string]*types.State),
 	}
@@ -134,8 +137,11 @@ func (ui *UI) Run() error {
 	e.POST("/assets/migration-scripts/schemas", ui.handleMigrateSchemasAssets)
 	e.POST("/assets/migration-scripts/glue-schemas", ui.handleMigrateGlueSchemasAssets)
 
-	serverAddr := fmt.Sprintf("localhost:%s", ui.port)
-	fullURL := fmt.Sprintf("http://%s", serverAddr)
+	serverAddr := bindAddress(ui.host, ui.port)
+	fullURL := browserURL(ui.host, ui.port)
+	if shouldWarnNonLocalBind(ui.host) {
+		slog.Warn(fmt.Sprintf("⚠️ The kcp UI has no authentication and is now reachable from other machines (bound to %s). In Docker, limit exposure with -p 127.0.0.1:%s:%s; otherwise use --host localhost.", serverAddr, ui.port, ui.port))
+	}
 	fmt.Printf("\nkcp ui is available at %s\n", color.New(color.FgGreen).Sprint(fullURL))
 
 	e.Logger.Fatal(e.Start(serverAddr))
