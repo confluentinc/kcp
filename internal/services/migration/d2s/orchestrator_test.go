@@ -327,3 +327,33 @@ func TestD2SOrchestrator_Execute_ACancelledVerifyDoesNotRollBack(t *testing.T) {
 	assert.Len(t, rec.patches, 1, "only the fence: no unfence on a dead context")
 	assert.NotContains(t, run.out.String(), "removing fence")
 }
+
+func TestD2SOrchestrator_Execute_ConvertsEndToEndOnFakes(t *testing.T) {
+	w := cleanWorld()
+	rec := &patchRecorder{}
+	run := newTestRun(rec.service(), w.deps())
+
+	require.NoError(t, run.execute(context.Background(), convertResult()))
+
+	assert.Equal(t, StateSwitched, run.state())
+	assert.Equal(t, map[string]groupoffsets.Offsets(w.src.rounds[0]), w.dst.commits, "snapshot 2 reached the destination")
+	assert.Equal(t, []string{"rules", ""}, rec.fields())
+	out := run.out.String()
+	assert.Contains(t, out, "no direct commits detected")
+	assert.Contains(t, out, "Synced 2 committed offset(s) for 1 consumer group(s)")
+}
+
+func TestD2SOrchestrator_Execute_ASyncRefusalRollsBackFromFenceVerified(t *testing.T) {
+	w := cleanWorld()
+	w.dst.topics = nil
+	rec := &patchRecorder{}
+	run := newTestRun(rec.service(), w.deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.ErrorIs(t, err, groupoffsets.ErrMissingTopics)
+	assert.Contains(t, run.out.String(), "Syncing committed offsets failed — removing fence")
+	assert.Equal(t, StateInitialized, run.state())
+	assert.Len(t, rec.patches, 2, "the fence, then the rollback")
+	assert.Empty(t, w.dst.commits)
+}
