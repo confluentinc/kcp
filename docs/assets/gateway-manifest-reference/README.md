@@ -220,6 +220,8 @@ on every `execute`, never fixed once.
 | `consumerOffsetSyncDrainDuration` | duration | `0`     | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait.                                                                                               |
 | `hotReloadTimeout`                | duration | `0`     | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
 | `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
+| `detectUnroutedCommitsDuration`   | duration | `0`     | `--detect-unrouted-commits-duration`    | Route conversion only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0` uses the built-in `30s` (this check can never be skipped); minimum `10s` when set. Ignored by AAO/TBM. |
+| `offsetSyncConcurrency`           | int      | `0`     | `--offset-sync-concurrency`             | Route conversion only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. Ignored by AAO/TBM. |
 
 ## Credentials
 
@@ -370,6 +372,8 @@ Key rules, beyond required/optional per field above:
 | `spec.defaultPolicies.consumerOffsetSyncDrainDuration`    | duration       | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.hotReloadTimeout`                   | duration       | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.gatewayConfigPort`                  | int            | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.detectUnroutedCommitsDuration`      | duration       | no                                                     | `0`                                          | `0`, or `>= 10s`                                            |
+| `spec.defaultPolicies.offsetSyncConcurrency`              | int            | no                                                     | `0`                                          | `>= 0`                                                      |
 
 ## Editor support
 

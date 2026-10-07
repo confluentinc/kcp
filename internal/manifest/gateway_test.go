@@ -957,3 +957,45 @@ func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
 }
+
+func TestDefaultPolicies_ConversionPolicyDefaults(t *testing.T) {
+	var p DefaultPolicies
+	assert.Equal(t, 30*time.Second, p.EffectiveDetectUnroutedCommitsDuration(), "unset uses the built-in default")
+	assert.Equal(t, 8, p.EffectiveOffsetSyncConcurrency(), "unset uses the built-in default")
+
+	p = DefaultPolicies{DetectUnroutedCommitsDuration: 45 * time.Second, OffsetSyncConcurrency: 3}
+	assert.Equal(t, 45*time.Second, p.EffectiveDetectUnroutedCommitsDuration())
+	assert.Equal(t, 3, p.EffectiveOffsetSyncConcurrency())
+}
+
+func TestDefaultPolicies_ValidateConversionPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		p       DefaultPolicies
+		wantErr string // substring; empty means valid
+	}{
+		{"unset is valid", DefaultPolicies{}, ""},
+		{"commits window at the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 10 * time.Second}, ""},
+		{"commits window below the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 9 * time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
+		{"commits window negative", DefaultPolicies{DetectUnroutedCommitsDuration: -time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
+		{"concurrency positive", DefaultPolicies{OffsetSyncConcurrency: 16}, ""},
+		{"concurrency negative", DefaultPolicies{OffsetSyncConcurrency: -1}, "spec.defaultPolicies.offsetSyncConcurrency"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.p.Validate()
+			if tc.wantErr == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), tc.wantErr)
+		})
+	}
+}
+
+func TestDefaultPolicies_ConversionPoliciesDecodeFromYAML(t *testing.T) {
+	var p DefaultPolicies
+	require.NoError(t, yaml.Unmarshal([]byte("detectUnroutedCommitsDuration: 45s\noffsetSyncConcurrency: 4\n"), &p))
+	assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration)
+	assert.Equal(t, 4, p.OffsetSyncConcurrency)
+}

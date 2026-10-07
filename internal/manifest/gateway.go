@@ -26,6 +26,15 @@ const KindGatewayMigration = "GatewayMigration"
 // clean result would mean "we did not look long enough", not "nothing found".
 const minDetectUnroutedProducersDuration = 10 * time.Second
 
+// DefaultDetectUnroutedCommitsDuration and DefaultOffsetSyncConcurrency are the
+// built-in values a route conversion uses when the matching DefaultPolicies
+// field is 0. Unlike detectUnroutedProducersDuration, 0 never means "skip": the
+// conversion's rogue-commit check is a safety check and cannot be skipped.
+const (
+	DefaultDetectUnroutedCommitsDuration = 30 * time.Second
+	DefaultOffsetSyncConcurrency         = 8
+)
+
 // GatewayMigration is the declarative form of a `kcp migration` run: the
 // topology, the cluster link, the gateway CRs, and the execute-time policy that
 // today are spread across 64 flags on four commands.
@@ -179,6 +188,34 @@ type DefaultPolicies struct {
 	// polled per pod to confirm a config revision was applied. 0 uses the
 	// gateway default (9180).
 	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
+	// DetectUnroutedCommitsDuration is the wait between the two committed-offset
+	// snapshots a route conversion takes after fencing, to catch a consumer that
+	// bypasses the gateway and commits to the source directly. It is its own
+	// field, not a reuse of detectUnroutedProducersDuration, because that field's
+	// 0 means "skip the check" and this check can never be skipped. 0 uses the
+	// built-in 30s; when set the minimum is 10s (two default auto-commit
+	// intervals). Applies only to a conversion manifest.
+	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
+	// OffsetSyncConcurrency is how many workers, each with its own broker
+	// connection, read and write consumer-group offsets during a route
+	// conversion. 0 uses the built-in 8. Applies only to a conversion manifest.
+	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
+}
+
+// EffectiveDetectUnroutedCommitsDuration resolves 0 to the built-in default.
+func (p DefaultPolicies) EffectiveDetectUnroutedCommitsDuration() time.Duration {
+	if p.DetectUnroutedCommitsDuration == 0 {
+		return DefaultDetectUnroutedCommitsDuration
+	}
+	return p.DetectUnroutedCommitsDuration
+}
+
+// EffectiveOffsetSyncConcurrency resolves 0 to the built-in default.
+func (p DefaultPolicies) EffectiveOffsetSyncConcurrency() int {
+	if p.OffsetSyncConcurrency == 0 {
+		return DefaultOffsetSyncConcurrency
+	}
+	return p.OffsetSyncConcurrency
 }
 
 // envelope is the minimum needed to discriminate one kind from another. It is
@@ -431,6 +468,16 @@ func (p DefaultPolicies) Validate() []error {
 	}
 	if p.GatewayConfigPort < 0 {
 		errs = append(errs, fmt.Errorf("spec.defaultPolicies.gatewayConfigPort: must not be negative (0 uses the default port)"))
+	}
+	if p.DetectUnroutedCommitsDuration < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.detectUnroutedCommitsDuration: must not be negative (0 uses the built-in %s)", DefaultDetectUnroutedCommitsDuration))
+	} else if p.DetectUnroutedCommitsDuration > 0 && p.DetectUnroutedCommitsDuration < minDetectUnroutedProducersDuration {
+		errs = append(errs, fmt.Errorf(
+			"spec.defaultPolicies.detectUnroutedCommitsDuration: must be at least %s when set (0 uses the built-in %s) — a shorter window can miss a consumer on default auto-commit settings",
+			minDetectUnroutedProducersDuration, DefaultDetectUnroutedCommitsDuration))
+	}
+	if p.OffsetSyncConcurrency < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", DefaultOffsetSyncConcurrency))
 	}
 	return errs
 }

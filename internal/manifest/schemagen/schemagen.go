@@ -131,7 +131,7 @@ func GenerateGateway() ([]byte, error) {
 	}
 
 	// Durations parse as "10m", not as an integer count.
-	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
+	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout", "detectUnroutedCommitsDuration"} {
 		p := policy.Properties[k]
 		// time.Duration reflects as {"type":"integer"}; Type and Types are
 		// mutually exclusive, so the reflected one must be replaced, not added to.
@@ -182,6 +182,8 @@ func GenerateGateway() ([]byte, error) {
 		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
 		policy.Properties["hotReloadTimeout"]:                "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
 		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180).",
+		policy.Properties["detectUnroutedCommitsDuration"]:   "Route conversion only. Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
+		policy.Properties["offsetSyncConcurrency"]:           "Route conversion only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8.",
 	})
 
 	return marshal(s)
