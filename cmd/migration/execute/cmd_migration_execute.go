@@ -260,8 +260,8 @@ func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []an
 		"consumer_offset_sync_drain_duration", p.ConsumerOffsetSyncDrainDuration,
 		"hot_reload_timeout", p.HotReloadTimeout,
 		"gateway_config_port", p.GatewayConfigPort,
-		"detect_unrouted_commits_duration", p.DetectUnroutedCommitsDuration,
-		"offset_sync_concurrency", p.OffsetSyncConcurrency,
+		"detect_unrouted_commits_duration", p.EffectiveDetectUnroutedCommitsDuration(),
+		"offset_sync_concurrency", p.EffectiveOffsetSyncConcurrency(),
 	}
 }
 

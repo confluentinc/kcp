@@ -3,6 +3,7 @@ package execute
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -255,4 +256,19 @@ func TestBuildConvertServices_RefusesATopicMigrationManifest(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "convertTo")
+}
+
+// TestExecute_ConvertMode_AServicesBuildFailureNamesTheConversionServices — building the conversion's
+// services is more than a connection (the reconcile input, the gather, the fetchers), so its failure is
+// worded as that, not as a cluster connection failure.
+func TestExecute_ConvertMode_AServicesBuildFailureNamesTheConversionServices(t *testing.T) {
+	deps := stubDeps(&patchRecordingGateway{}, nil)
+	deps.convert = func(*manifest.GatewayMigration) (convertServices, error) {
+		return convertServices{}, errors.New("boom")
+	}
+
+	_, err := runConvertBranchFor(t, convertFixture(t), nil, deps)
+
+	require.Error(t, err)
+	assert.Equal(t, "failed to build route-conversion services: boom", err.Error())
 }

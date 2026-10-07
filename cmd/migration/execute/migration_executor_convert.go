@@ -50,7 +50,7 @@ func runConvertBranch(
 	}
 	svc, err := deps.convert(g)
 	if err != nil {
-		return fmt.Errorf("failed to connect to source/destination clusters: %w", err)
+		return fmt.Errorf("failed to build route-conversion services: %w", err)
 	}
 	defer func() { _ = svc.close() }()
 	if svc.deps.Out == nil {

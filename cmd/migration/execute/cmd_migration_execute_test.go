@@ -353,6 +353,16 @@ func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
 	assert.Len(t, kv, reflect.TypeOf(p).NumField()+1)
 }
 
+// TestExecute_PolicyLogArgsLogEffectiveConversionDefaults — the spec has the
+// effective value land in the kcp.log audit line: a manifest that leaves the
+// conversion knobs unset runs with their defaults, so the audit line must show
+// those defaults (30s, 8), not the zero the manifest carried.
+func TestExecute_PolicyLogArgsLogEffectiveConversionDefaults(t *testing.T) {
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", manifest.DefaultPolicies{}))
+	assert.Equal(t, 30*time.Second, kv["detect_unrouted_commits_duration"])
+	assert.Equal(t, 8, kv["offset_sync_concurrency"])
+}
+
 // kvMap turns slog-style key/value args into a map, requiring string keys.
 func kvMap(t *testing.T, args []any) map[string]any {
 	t.Helper()
