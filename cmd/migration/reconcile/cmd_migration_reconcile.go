@@ -28,7 +28,7 @@ func NewMigrationReconcileCmd() *cobra.Command {
 		Short: "Reconcile the migration plan against live source, target, and cluster-link state",
 		Long: `Prototype command that drives the migration reconciliation engine.
 
-It loads the GatewayMigration manifest, pulls the live Gateway CR named in
+It loads the migration manifest, pulls the live Gateway CR named in
 spec.gateway, reads the live source topics, target topics, and cluster-link
 state, then reconciles them against the route + target streaming domain + topic
 selection declared in the manifest's spec.route.topicGroup. It renders a per-topic
@@ -48,7 +48,7 @@ The command writes no files and never mutates the gateway.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest (route, target domain and topic selection come from its spec.route; the gateway CR is pulled live from spec.gateway).")
+	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the migration manifest (route, target domain and topic selection come from its spec.route; the gateway CR is pulled live from spec.gateway).")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 

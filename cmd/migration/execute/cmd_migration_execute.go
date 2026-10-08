@@ -35,7 +35,7 @@ var (
 	runReport string
 )
 
-const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
+const executeLong = `Execute a migration: run the cutover described by a migration manifest.
 
 Every run reads the manifest and the live state of the gateway and the cluster
 link, works out what is left to do, and starts the cutover from its first step.
@@ -46,11 +46,15 @@ offset-sync restore owed), execute changes nothing and says so. Policy defaults
 and credentials are read FRESH from the manifest on every run, so they can be
 varied between runs or overridden with flags.
 
-Each spec.defaultPolicies value can also be overridden for a single run with its flag
-(e.g. --detect-unrouted-producers-duration), without editing the manifest.
+Each spec.defaultPolicies value can be overridden for a single run with its flag, without
+editing the manifest. Every flag can also be set through an upper-case environment variable
+named after it (--lag-threshold is LAG_THRESHOLD), which overrides the manifest in the same way.
 
 If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
-from the live state.`
+from the live state.
+
+The manifest's fields, validation rules and a fully-annotated example are documented in the
+[Migration manifest reference](../../migration-manifest-reference.md).`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to the live
 // dependencies both branches share.
@@ -82,14 +86,14 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; change nothing.")
+	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the migration manifest describing this migration.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; change nothing. Exits non-zero if the plan is refused.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
 	// for this run only; omit the flag to use the manifest's default. Only a flag
 	// the operator explicitly set (checked via Flags().Changed) overrides, so a
 	// zero value — meaningful for all of these — is not confused with "unset".
-	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: total replication lag (sum of all partition lags) tolerated before proceeding.")
+	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: per-topic replication lag (the sum of that topic's partition lags) tolerated before fencing. Every selected topic must be at or below it; 0 means fully caught up.")
 	cmd.Flags().IntVar(&promoteBatchSizeOverride, "promote-batch-size", 0, "Override spec.defaultPolicies.promoteBatchSize: max mirror topics promoted per batch. 0 promotes all at once.")
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Override spec.defaultPolicies.rolloutTimeout: max wait for the operator to report the gateway Ready during fence and switchover (e.g. 10m). 0 means no deadline.")
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
