@@ -158,8 +158,9 @@ type DefaultPolicies struct {
 	// producer check; a detected increase aborts before switchover. 0 SKIPS the
 	// check entirely; when set the minimum is 10s.
 	DetectUnroutedProducersDuration time.Duration `yaml:"detectUnroutedProducersDuration,omitempty" json:"detectUnroutedProducersDuration,omitempty"`
-	// ConsumerOffsetSyncDrainDuration waits after disabling consumer offset
-	// sync. 0 means no wait; it has no effect unless pauseConsumerOffsetSync.
+	// ConsumerOffsetSyncDrainDuration waits after fencing, before disabling
+	// consumer offset sync. 0 means no wait; it has no effect unless
+	// pauseConsumerOffsetSync.
 	ConsumerOffsetSyncDrainDuration time.Duration `yaml:"consumerOffsetSyncDrainDuration,omitempty" json:"consumerOffsetSyncDrainDuration,omitempty"`
 	// HotReloadTimeout bounds the per-pod configId verification used when the
 	// gateway supports hot-reload. 0 uses gateway.DefaultHotReloadTimeout; unlike

@@ -1,6 +1,6 @@
 # KCP CLI
 
-KCP is a CLI tool for planning and executing Apache Kafka® migrations to Confluent Cloud.
+KCP is a CLI tool for planning and executing migrations to Confluent Cloud.
 
 > [!NOTE]
 > KCP supports migrations from two source types:
@@ -92,8 +92,6 @@ The typical migration flow:
 3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
 4. **Execute client switchover** — `kcp migration execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
 
-The [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md) guide walks through the end-to-end migration reference, including how KCP fits with the [Confluent Cloud Gateway](https://docs.confluent.io/cloud/current/cp-component/gateway/overview.html).
-
 ## Key infrastructure decisions
 
 Before starting, decide on:
@@ -128,7 +126,5 @@ The full CLI reference is generated directly from the Cobra command definitions 
 
 ## Related guides
 
-- [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
-- [Gateway Switchover Examples](gateway-switchover/index.md)
 - [Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md) — schema and worked examples for `apache-kafka-credentials.yaml`
 - [Apache Kafka configuration → Metrics collection](apache-kafka-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for Apache Kafka metrics
