@@ -139,6 +139,21 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
+	// A route conversion builds its providers through the same function
+	// verify_fence uses (BuildConvertProviders), so the two read the live world
+	// through identical wiring (decision 22). Only the gateway source stays
+	// injectable here, for testing.
+	if in.ConvertTo != "" {
+		p, closer, err := buildConvertProviders(g, o.gateway)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = closer.Close() }()
+		engine := NewReconciliationEngine(p.Gateway, p.Source, p.Target, p.Link, o.secrets).
+			WithGroupListers(p.SourceGroups, p.TargetGroups)
+		return runAndRender(ctx, engine, in, g, o)
+	}
+
 	gw := o.gateway
 	if gw == nil {
 		gw, err = buildGatewaySource(g, in.Route)
@@ -172,28 +187,11 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		}
 	}
 
-	engine := NewReconciliationEngine(gw, src, tgt, link, secrets)
-	if in.ConvertTo != "" {
-		srcConn, err := sourceConn(g)
-		if err != nil {
-			return nil, err
-		}
-		srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = srcGroupsCloser.Close() }()
-		tgtConn, err := targetConn(g)
-		if err != nil {
-			return nil, err
-		}
-		tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = tgtGroupsCloser.Close() }()
-		engine = engine.WithGroupListers(srcGroups, tgtGroups)
-	}
+	return runAndRender(ctx, NewReconciliationEngine(gw, src, tgt, link, secrets), in, g, o)
+}
+
+// runAndRender runs engine on in, renders the report and returns the Result.
+func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcile.ReconcileInput, g *manifest.GatewayMigration, o reconcileOptions) (*Result, error) {
 	plan, err := engine.Run(ctx, in)
 	if err != nil {
 		return nil, err
@@ -476,15 +474,24 @@ func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 // client it opened; the caller owns it. On an error nothing is left open and
 // the closer is nil.
 func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
+	return buildConvertProviders(g, nil)
+}
+
+// buildConvertProviders is BuildConvertProviders with an optional gateway
+// source: nil builds the live CR pull, anything else is used as is (Reconcile's
+// test seam, WithGatewaySource).
+func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource) (ConvertProviders, io.Closer, error) {
 	var opened closers
 	fail := func(err error) (ConvertProviders, io.Closer, error) {
 		_ = opened.Close()
 		return ConvertProviders{}, nil, err
 	}
 
-	gw, err := buildGatewaySource(g, g.Spec.Route.Name)
-	if err != nil {
-		return fail(err)
+	if gw == nil {
+		var err error
+		if gw, err = buildGatewaySource(g, g.Spec.Route.Name); err != nil {
+			return fail(err)
+		}
 	}
 	link, err := buildLinkStatusProvider(g)
 	if err != nil {

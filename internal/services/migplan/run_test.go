@@ -345,3 +345,22 @@ func TestClosers_ClosesEveryOneInReverseAndJoinsTheErrors(t *testing.T) {
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
+
+// Decision 22: Reconcile's conversion path builds its providers through
+// BuildConvertProviders, so a manifest that cannot build them fails both the
+// same way, before any live read.
+func TestReconcile_AConversionBuildsItsProvidersLikeVerifyFence(t *testing.T) {
+	homeWithFakeKubeconfig(t)
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	g.Spec.Gateway.Namespace = "confluent"
+	g.Spec.Gateway.CrName = "my-gateway"
+
+	_, _, wantErr := BuildConvertProviders(g)
+	require.Error(t, wantErr)
+
+	_, err := Reconcile(context.Background(), g, WithOutput(io.Discard))
+
+	require.Error(t, err)
+	assert.Equal(t, wantErr.Error(), err.Error())
+}
