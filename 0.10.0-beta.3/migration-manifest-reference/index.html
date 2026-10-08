@@ -1,0 +1,3523 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CLI tool for planning and executing Kafka migrations from AWS MSK, Apache Kafka®, and Confluent Platform to Confluent Cloud.">
+      
+      
+      
+        <link rel="canonical" href="https://confluentinc.github.io/kcp/0.10.0-beta.3/migration-manifest-reference/">
+      
+      
+        <link rel="prev" href="../apache-kafka-configuration/connect-metrics-collection/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../images/confluent-logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Migration Manifest Reference - KCP</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#migration-manifest-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="KCP" class="md-header__button md-logo" aria-label="KCP" data-md-component="logo">
+      
+  <img src="../images/confluent-logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            KCP
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Migration Manifest Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="KCP" class="md-nav__button md-logo" aria-label="KCP" data-md-component="logo">
+      
+  <img src="../images/confluent-logo.svg" alt="logo">
+
+    </a>
+    KCP
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../source-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Command Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp discover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/scan/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp scan
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/clusters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan clusters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/client-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan client-inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/schema-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan schema-registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/msk-connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan msk-connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/self-managed-connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan self-managed-connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/report/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp report
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/costs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report costs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/bastion-host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset bastion-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/target-infra/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset target-infra
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migration-infra/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migration-infra
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/migrate-acls/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_6" id="__nav_3_4_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset migrate-acls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-acls/iam/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls iam
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-acls/kafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/migrate-connectors/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_7" id="__nav_3_4_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset migrate-connectors
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/connector-utility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors connector-utility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/msk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors msk
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/self-managed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors self-managed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/migration/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp migration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/migration/execute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration execute
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/migration/lag-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration lag-check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp ui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/docs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp update
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/state/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_11" id="__nav_3_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp state
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/state/upgrade/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state upgrade
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/state/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Kafka®
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Apache Kafka®
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/metrics-collection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/connect-metrics-collection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect metrics collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Manifest Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Manifest Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#execution-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-run-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you run it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specsource" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectarget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.target
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specclusterlink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.clusterLink
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specgateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="spec.route">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#specroutetopicgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route.topicGroup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specdefaultpolicies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.defaultPolicies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Credentials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kafka credentials (spec.source.credentials, spec.target.kafka.clusterCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rest-credentials-specclusterlinklinkcredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST credentials (spec.clusterLink.linkCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-commands-read-this-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the commands read this file
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#field-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example manifest
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editor-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editor support
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#execution-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-run-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you run it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specsource" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectarget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.target
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specclusterlink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.clusterLink
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specgateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="spec.route">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#specroutetopicgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route.topicGroup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specdefaultpolicies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.defaultPolicies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Credentials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kafka credentials (spec.source.credentials, spec.target.kafka.clusterCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rest-credentials-specclusterlinklinkcredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST credentials (spec.clusterLink.linkCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-commands-read-this-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the commands read this file
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#field-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example manifest
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editor-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editor support
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="migration-manifest-reference">Migration manifest reference<a class="headerlink" href="#migration-manifest-reference" title="Permanent link">&para;</a></h1>
+<p><code>kcp migration execute</code> runs a cutover described by a single YAML manifest,
+<code>gateway-migration.yaml</code>: it fences the route in the Confluent Gateway,
+promotes the mirror topics on the cluster link in batches, and switches
+production traffic over to the destination. <code>kcp migration lag-check</code> reads
+the same manifest to show replication lag on the cluster link. This page is the
+field-by-field reference for that manifest, followed by a fully-annotated
+<a href="#example-manifest">example manifest</a>.</p>
+<h2 id="execution-model">Execution model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
+<p>This manifest drives a resumable migration workflow:</p>
+<ul>
+<li><strong><code>execute</code></strong> validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode (see <a href="#specroute"><code>spec.route</code></a>) — and, on a static route, to derive the bootstrap server id from the target domain — and carries the migration forward through fence → promote → switch. Every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.</li>
+<li><strong><code>--dry-run</code></strong> runs only the reconcile step, against the live gateway CR, the source and destination Kafka clusters and the cluster link, and prints the plan: each precondition (the route exists and has the expected mode, the gateway CR is set up the way that mode needs, the cluster link mirrors from the source cluster and <code>spec.target.clusterId</code> matches the destination) and a verdict for every selected topic. Nothing is changed and no migration steps run. It exits non-zero if the plan is refused. Flag overrides are applied and validated first, so a dry run rejects an invalid override exactly as a real run would. Useful for iterating on the manifest and your infrastructure before scheduling a live cutover.</li>
+<li><strong><code>lag-check</code></strong> is an interactive terminal view of replication lag for every mirror topic on the cluster link, independent of <code>execute</code>. It uses only the destination REST leg (<code>spec.clusterLink.linkCredentials</code>), so it works before <code>execute</code> has ever run.</li>
+</ul>
+<p>Every <code>execute</code> reconciles the current manifest live against the cluster. A completed migration re-reconciles to nothing to do — <code>execute</code> then runs no migration steps and reports that — and an interrupted one continues from the live state. To migrate a different topology, edit the manifest and run <code>execute</code> again. <code>metadata.name</code> is only a label (it appears in logs, the run report and the completion message); changing it does not change what is reconciled.</p>
+<p><strong>Resume an interrupted migration with the same topic set (dynamic routes).</strong>
+On a dynamic route, kcp recognises the fence it added by its exact shape: a
+<code>rules.fencing</code> entry with only <code>topics</code> (the migration's exact topic set) and
+<code>blocked: true</code>. Any other entry, including one over the same topics that also
+sets <code>trafficType</code> or <code>topicPatterns</code>, is an operator's, and kcp leaves it in
+place. If a run is interrupted after fencing, resume it with a manifest that
+resolves to the same topics. Resuming with a different set — a topic added or
+removed, or a <code>topicPatterns</code> entry that now also matches a topic created on
+the source since the interrupted run — is a different migration: kcp fences
+the new set, treats the earlier fence as operator-authored, and leaves it on
+the route, so those topics stay blocked after switchover. Finish the
+interrupted migration first, then migrate the changed set. If this has already
+happened, remove the leftover <code>blocked</code> entry from the route's <code>rules.fencing</code>
+by hand.</p>
+<p><strong>A static route must not carry someone else's fence.</strong> A static route has a
+single route-level <code>fence</code>. kcp recognises its own by its exact value,
+<code>{scope: ALL, errorCode: BROKER_NOT_AVAILABLE}</code>, and refuses a route that
+already carries any other fence, because the switchover and a rollback would
+remove it: remove that fence before migrating. <code>scope: NONE</code> counts as no
+fence. An operator's plain <code>scope: ALL</code> fence reads back with the same
+defaulted <code>errorCode</code>, so kcp cannot tell it from its own and would remove it
+too; remove it before migrating.</p>
+<p>Each <code>spec.defaultPolicies</code> field is a default that a matching CLI flag can
+override for a single run, without editing the file.</p>
+<h2 id="before-you-run-it">Before you run it<a class="headerlink" href="#before-you-run-it" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Connections.</strong> Every <code>execute</code> run, including <code>--dry-run</code>, connects to the
+  source Kafka cluster, the destination Kafka cluster, the cluster-link REST
+  API and the Kubernetes API, using the credentials and kubeconfig named in the
+  manifest. To confirm that each gateway pod applied a config change, the
+  Kubernetes identity also needs <code>get</code> on <code>pods/proxy</code>.</li>
+<li><strong>Producers must use the gateway.</strong> The fence blocks traffic that goes
+  through the gateway. Producers writing to the source directly are not
+  blocked, and the check that catches them (<code>detectUnroutedProducersDuration</code>)
+  is <strong>off by default</strong>.</li>
+<li><strong>What is fenced.</strong> A static route is fenced and switched as a whole — the
+  topic selection only decides which mirrors are promoted and lag-checked. A
+  dynamic route fences and switches only the selected topics.</li>
+<li><strong>Promote is the point of no return.</strong> If a step fails after the fence is up
+  but before any topic is promoted, kcp removes the fence and restores offset
+  sync so traffic returns to the source. Once any topic is promoted or
+  promoting, kcp never removes the fence — doing so would split those clients
+  from the target. Fix the cause and re-run <code>execute</code> to roll forward.</li>
+<li><strong>Interrupting kcp leaves the fence up.</strong> kcp has no signal handler, so
+  Ctrl-C does not remove the fence; the gateway stays fenced until you re-run
+  <code>execute</code>.</li>
+<li><strong>No deadline by default.</strong> <code>rolloutTimeout</code> defaults to no deadline, so a
+  rollout that never converges waits indefinitely, with traffic already fenced.</li>
+<li><strong>A refused plan changes nothing.</strong> If reconcile refuses the plan (for
+  example a selected topic is not a mirror topic on the link), the whole run is
+  refused before anything is fenced or changed. <code>--dry-run</code> shows the plan and
+  the reasons.</li>
+</ul>
+<h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kcp.confluent.io/v1alpha1</span><span class="w"> </span><span class="c1"># required, exact literal</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GatewayMigration</span><span class="w"> </span><span class="c1"># required, exact literal</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">metadata</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-migration</span><span class="w"> </span><span class="c1"># required, non-blank — the migration identity</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">spec</span><span class="p">:</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — cluster being migrated from</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — cluster being migrated to</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">clusterLink</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — an ALREADY-EXISTING cluster link</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">gateway</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — namespace, kubeconfig, initial gateway CR name</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">route</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — the route name, topic selection, and target domain</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">defaultPolicies</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># optional — execute-time policy defaults</span>
+</span></code></pre></div>
+<p><code>apiVersion</code> must equal <code>kcp.confluent.io/v1alpha1</code> and <code>kind</code> must equal
+<code>GatewayMigration</code>, exactly. <code>metadata.name</code> is required and non-blank: it is the
+migration's identity, used as its <code>migration_id</code> in logs and output.
+<code>spec.source</code>, <code>spec.target</code>, <code>spec.clusterLink</code>, <code>spec.gateway</code>, and
+<code>spec.route</code> are always required; <code>spec.defaultPolicies</code> is optional.</p>
+<p>Every credentials field is a <strong>path to a credentials file</strong> — the manifest never
+holds secret material inline, and there is no <code>${ENV_VAR}</code> substitution: a
+<code>${VAR}</code>-shaped value is read literally.</p>
+<h2 id="specsource"><code>spec.source</code><a class="headerlink" href="#specsource" title="Permanent link">&para;</a></h2>
+<p>The cluster being migrated from. <code>kcp</code> only ever reads from it.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td><code>msk</code> or <code>apache-kafka</code>. Gates auth: <code>iam</code> is valid only for <code>msk</code>.</td>
+</tr>
+<tr>
+<td><code>bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>Non-empty; each entry <code>host:port</code>.</td>
+</tr>
+<tr>
+<td><code>credentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>Path to a Kafka-family credentials file — see <a href="#credentials">Credentials</a> below.</td>
+</tr>
+</tbody>
+</table>
+<p><code>confluent-platform</code> is not a valid value here — this manifest only ever
+points at a link that already exists, so it never needs to act as a
+source-side link initiator.</p>
+<h2 id="spectarget"><code>spec.target</code><a class="headerlink" href="#spectarget" title="Permanent link">&para;</a></h2>
+<p>The cluster being migrated to.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td><code>confluent-cloud</code> or <code>confluent-platform</code>.</td>
+</tr>
+<tr>
+<td><code>clusterId</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Required for <strong>both</strong> destination types — this kind never discovers it live.</td>
+</tr>
+<tr>
+<td><code>kafka.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>Destination Kafka bootstrap.</td>
+</tr>
+<tr>
+<td><code>kafka.restEndpoint</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Destination Admin REST endpoint (cluster link + topic operations).</td>
+</tr>
+<tr>
+<td><code>kafka.clusterCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>Path to the destination Kafka leg credentials file, dialled directly to read destination-side offsets. Accepts <code>sasl_plain</code>, <code>sasl_scram</code>, <code>mtls</code>, <code>unauthenticated_tls</code>, or <code>unauthenticated_plaintext</code> — see below.</td>
+</tr>
+</tbody>
+</table>
+<p>The destination REST (cluster-link) credential is <strong>not</strong> on <code>spec.target.kafka</code>
+— it lives at <a href="#specclusterlink"><code>spec.clusterLink.linkCredentials</code></a>, separately
+and always required.</p>
+<p><code>kafka.clusterCredentials</code> accepts any Kafka auth method <strong>except</strong> <code>iam</code> — the
+destination is Confluent Cloud or Confluent Platform, never MSK, so <code>iam</code> is
+rejected rather than silently accepted and then failing opaquely at
+connection time. The rejection happens when <code>execute</code> (including <code>--dry-run</code>)
+reads the credentials file — not when the manifest is parsed, and <code>lag-check</code>
+never reads that file. As on the source leg, a <code>ca_cert</code> inside <code>sasl_plain</code>
+names a private CA the client trusts directly, on top of (or instead of) the
+public trust store <code>tls: true</code> selects.</p>
+<p>Unlike the shared table above, a destination <code>sasl_plain</code> with <strong>neither</strong>
+<code>ca_cert</code> nor <code>tls</code> set does not fall back to <code>SASL_PLAINTEXT</code>: it defaults to
+<code>tls: true</code> against the public trust store — the destination is always a managed/production
+cluster, never on-prem plaintext like a source may legitimately be. There is
+no <code>sasl_plain</code> field that opts back into <code>SASL_PLAINTEXT</code> against the
+destination; use <code>unauthenticated_plaintext</code> for a genuinely plaintext
+destination (test/lab only).</p>
+<h2 id="specclusterlink"><code>spec.clusterLink</code><a class="headerlink" href="#specclusterlink" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>Name of a cluster link that <strong>already exists</strong> on the destination. This kind never creates one.</td>
+</tr>
+<tr>
+<td><code>bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>no</td>
+<td>—</td>
+<td>Repeats <code>spec.target.kafka.bootstrapServers</code> for manifest self-documentation. Not validated against it.</td>
+</tr>
+<tr>
+<td><code>linkCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>Path to the destination REST (cluster-link) credentials file — see <a href="#rest-credentials-specclusterlinklinkcredentials">REST credentials</a> below.</td>
+</tr>
+<tr>
+<td><code>pauseConsumerOffsetSync</code></td>
+<td>bool</td>
+<td>no</td>
+<td><code>false</code></td>
+<td>Static routes only; a dynamic route refuses it. Disable the link's <code>consumer.offset.sync.enable</code> right after fencing, and set it back to <code>consumerOffsetSyncBaseline</code> after the switch. If a run stops before that restore, the restore is still owed and re-running <code>execute</code> performs it. It is also restored if a failure before promote rolls the fence back.</td>
+</tr>
+<tr>
+<td><code>consumerOffsetSyncBaseline</code></td>
+<td>string</td>
+<td>when pausing</td>
+<td>—</td>
+<td><code>enabled</code> or <code>disabled</code>: the value <code>consumer.offset.sync.enable</code> is set back to after the switch.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why two destination credentials at all?</strong> <code>spec.target.kafka.clusterCredentials</code>
+authenticates a direct Kafka-protocol connection to the destination
+<code>bootstrapServers</code>; <code>spec.clusterLink.linkCredentials</code> authenticates HTTP calls
+to <code>restEndpoint</code>'s Admin REST API, which is what actually manages the cluster
+link (status, list/promote mirror topics, alter configs). These are two
+different servers speaking two different protocols. On self-managed Confluent
+Platform they are backed by two independent credential stores the operator
+configures separately on the cluster: the Kafka SASL/SCRAM (or mTLS) listener
+has its own store, while the REST API's auth (<code>kafka.rest.authentication.method</code>
+— a Basic realm file, MDS for bearer, or its own mTLS trust store) has another. A
+valid Kafka credential is <strong>not</strong> automatically a valid REST credential, even
+against the same broker process. <code>linkCredentials</code> is therefore <strong>always
+required</strong> and never derived from the Kafka leg — its top-level shape is one of
+<code>api_key</code>/<code>api_secret</code>, <code>basic</code>, <code>bearer</code>, or <code>mtls</code> (see the
+<a href="#rest-credentials-specclusterlinklinkcredentials">REST credentials table</a>).</p>
+<h2 id="specgateway"><code>spec.gateway</code><a class="headerlink" href="#specgateway" title="Permanent link">&para;</a></h2>
+<p>There is no <code>crs.fenced</code> or <code>crs.switchover</code> file: kcp derives both the fenced
+CR and the switched CR from the live initial CR at cutover. On a static route
+that is a route-level fence added to the route named in <code>spec.route</code>, then that
+route's <code>streamingDomain</code> flipped to its declared target; on a dynamic route it
+is a <code>rules.fencing</code> entry for the selected topics, then a routing condition
+sending those topics to the target domain. The old <code>crs.initial</code> nesting
+is flattened to a single <code>cr-name</code>, and the retired <code>crs</code>/<code>routes</code> keys are
+removed from the schema entirely: a stale manifest that still uses them fails
+the strict decode with an unknown-field error.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>namespace</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Kubernetes namespace where the gateway is deployed.</td>
+</tr>
+<tr>
+<td><code>kubeconfig</code></td>
+<td>string</td>
+<td>no</td>
+<td>Path to the kubeconfig to use. The <strong>one</strong> field in this manifest where a leading <code>~/</code> is expanded. Unset: the pod's in-cluster service account when kcp runs in a pod, <code>~/.kube/config</code> otherwise.</td>
+</tr>
+<tr>
+<td><code>cr-name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>The <strong>name</strong> of the initial gateway custom resource — read live from the cluster on each <code>execute</code> run, not a file path.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="specroute"><code>spec.route</code><a class="headerlink" href="#specroute" title="Permanent link">&para;</a></h2>
+<p>Required. Names the route to fence and switch over, the target streaming
+domain it switches to, and the topic selection(s) that migrate.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>A <code>spec.routes[].name</code> in the initial CR to fence and switch over. Must be non-blank (checked when the manifest is read) and exist in the CR (checked at reconcile).</td>
+</tr>
+<tr>
+<td><code>topicGroup</code></td>
+<td>list</td>
+<td>yes</td>
+<td>A list validated to <strong>exactly one</strong> entry today (one route, one migration per file). See below.</td>
+</tr>
+<tr>
+<td><code>targetStreamingDomain</code></td>
+<td>string</td>
+<td>yes</td>
+<td>The streaming domain this route switches to. On a <strong>static</strong> route it must be declared in the initial CR's <code>spec.streamingDomains</code> with exactly one bootstrap server id, and the route must already carry pre-staged <code>security.cluster.&lt;domain&gt;</code> auth for it (a <code>secretStore</code> and an <code>authentication</code> block, with the referenced Secrets present). On a <strong>dynamic</strong> route it must be one of the two domains the route binds.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="specroutetopicgroup"><code>spec.route.topicGroup</code><a class="headerlink" href="#specroutetopicgroup" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>topics</code></td>
+<td><code>[]string</code></td>
+<td>see note</td>
+<td>A flat list of <strong>literal</strong> topic names — <strong>not</strong> globs. A glob is not rejected when the manifest is read; it fails at reconcile as "not found on the source".</td>
+</tr>
+<tr>
+<td><code>topicPatterns</code></td>
+<td><code>[]string</code></td>
+<td>see note</td>
+<td>A list of <strong>anchored full-match</strong> regular expressions (RE2), matched against the topic names on the source cluster. Case-sensitive, and the whole topic name must match; <code>.</code> matches any character, so escape it (<code>\.</code>) to match a literal dot. <code>['.*']</code> selects every source topic.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>At least one of <code>topics</code> / <code>topicPatterns</code> is required.</strong> When both are set,
+the union is migrated: every literal name plus every source topic a pattern
+matches. Every selected topic must be in a state kcp can migrate or resume: a topic
+that is not on the source, not on the cluster link, present on the destination
+without being a mirror, or whose mirror is in a failed or unexpected state
+refuses the run, while a topic an earlier run already promoted or switched is
+resumed or skipped. The refusal is all-or-nothing — nothing is fenced or
+changed. If nothing is left to migrate, <code>execute</code> reports that and does
+nothing. There is no
+omit-<code>topics</code>-means-all default: to migrate every source topic, write an
+explicit match-all pattern, <code>topicPatterns: ['.*']</code>.</p>
+<p><code>topicPatterns</code> are resolved against the live source on every run, so the
+selected set can change between runs without the manifest changing. On a
+dynamic route that matters when resuming an interrupted migration — see
+<a href="#execution-model">Execution model</a>.</p>
+<p>The route's <strong>migration mode</strong> — all-at-once (static) vs topic-based (dynamic)
+— is <strong>not</strong> declared here; kcp reads it from the live CR on every execute
+run. It uses the route's own <code>mode</code> field when the CR sets one; otherwise it
+infers it from the binding: a named singular <code>streamingDomain</code> ⇒ static, a
+non-empty plural <code>streamingDomains</code> ⇒ dynamic. A route with both or neither is
+refused. On a static route the <strong>bootstrap server id</strong> is <strong>derived</strong> from the
+target domain's declaration in the live CR, not written in the manifest.
+<code>kcp migration execute</code> runs the workflow that matches the route's mode: a
+whole-route cutover for a static route, topic by topic for a dynamic route.</p>
+<p>A dynamic route has two further requirements, both checked at reconcile (so
+<code>--dry-run</code> reports them): it must bind exactly two streaming domains (the
+source and the target), with <code>coordination.group</code> pinned to the source domain,
+and the cluster link's consumer offset sync must already be disabled, so
+<code>spec.clusterLink.pauseConsumerOffsetSync</code> is refused on a dynamic route.</p>
+<p><code>lag-check</code> ignores the topic selection entirely and always watches every mirror
+topic.</p>
+<h2 id="specdefaultpolicies"><code>spec.defaultPolicies</code><a class="headerlink" href="#specdefaultpolicies" title="Permanent link">&para;</a></h2>
+<p>Optional. Every field is a default that a matching <code>kcp migration execute</code> flag
+can override for a single run; the section is re-read fresh from the manifest
+on every <code>execute</code>, never fixed once. Duration values need a unit — <code>0s</code>,
+<code>90s</code>, <code>10m</code>; in the manifest a bare number such as <code>0</code> or <code>90</code> is a parse
+error (the command-line flags do accept a plain <code>0</code>). Negative values are
+rejected.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Override flag</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lagThreshold</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--lag-threshold</code></td>
+<td>Replication lag tolerated per topic: each selected topic's lag (the sum of its partition lags) must be at or below this before the run fences. <code>0</code> is the strictest (fully caught up).</td>
+</tr>
+<tr>
+<td><code>promoteBatchSize</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--promote-batch-size</code></td>
+<td>Max mirror topics promoted per batch. <code>0</code> promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted.</td>
+</tr>
+<tr>
+<td><code>rolloutTimeout</code></td>
+<td>duration</td>
+<td><code>0s</code></td>
+<td><code>--rollout-timeout</code></td>
+<td>Max wait for the operator to report the gateway <code>Ready</code> during fence and switchover (e.g. <code>10m</code>). <code>0s</code> means no deadline — waits until convergence or cancellation.</td>
+</tr>
+<tr>
+<td><code>detectUnroutedProducersDuration</code></td>
+<td>duration</td>
+<td><code>0s</code></td>
+<td><code>--detect-unrouted-producers-duration</code></td>
+<td>After fencing, kcp takes two source-offset snapshots this far apart to catch producers still bypassing the gateway; if any partition's offset advanced, the run stops before promote. <code>0s</code> <strong>skips the check entirely</strong> (the default); minimum <code>10s</code> when set — shorter can't span a producer's metadata refresh.</td>
+</tr>
+<tr>
+<td><code>consumerOffsetSyncDrainDuration</code></td>
+<td>duration</td>
+<td><code>0s</code></td>
+<td><code>--consumer-offset-sync-drain-duration</code></td>
+<td>Static routes only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless <code>pauseConsumerOffsetSync</code> is set (which a dynamic route refuses). <code>0s</code> means no wait.</td>
+</tr>
+<tr>
+<td><code>hotReloadTimeout</code></td>
+<td>duration</td>
+<td><code>0s</code></td>
+<td><code>--hot-reload-timeout</code></td>
+<td>Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. <code>90s</code>). Unlike <code>rolloutTimeout</code> this is never unbounded: a hot-reload moves no Kubernetes signal, so <code>0s</code> uses the built-in 90s budget rather than waiting forever.</td>
+</tr>
+<tr>
+<td><code>gatewayConfigPort</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--gateway-config-port</code></td>
+<td>Port serving the gateway's <code>/config</code> endpoint, polled per pod to confirm a config revision was applied. <code>0</code> uses the gateway default (<code>9180</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="credentials">Credentials<a class="headerlink" href="#credentials" title="Permanent link">&para;</a></h2>
+<p>Every <code>credentials</code>-shaped slot (<code>spec.source.credentials</code>,
+<code>spec.target.kafka.clusterCredentials</code>, <code>spec.clusterLink.linkCredentials</code>) is a
+<strong>path to an external credentials file</strong> — inline credential blocks are not
+accepted, so the manifest itself never holds secret material:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">credentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/source-creds.yaml</span>
+</span></code></pre></div>
+<p>The referenced file's top-level content is the credential (a Kafka-family block
+for the Kafka legs, a REST block for <code>linkCredentials</code>). Prefer a credential
+mounted as a Kubernetes Secret file. Each credentials file is secret-bearing —
+<code>kcp</code> warns (not errors) if it is group- or world-readable, so keep it <code>0600</code>.</p>
+<h3 id="kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials">Kafka credentials (<code>spec.source.credentials</code>, <code>spec.target.kafka.clusterCredentials</code>)<a class="headerlink" href="#kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials" title="Permanent link">&para;</a></h3>
+<p>Specify <strong>exactly one</strong> method block — its <strong>presence</strong> selects it (no
+<code>auth_method:</code> wrapper, no <code>use:</code> flag). An optional top-level
+<code>insecure_skip_tls_verify: false</code> sibling applies to test environments only,
+and takes effect only where a TLS handshake happens (not for
+<code>unauthenticated_plaintext</code> or <code>sasl_plain</code> over plaintext). REST credentials
+use a different key, <code>insecure_skip_verify</code>, inside their block.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Required fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>iam</code></td>
+<td><code>region</code></td>
+<td>MSK source only; Confluent Cloud can't present IAM (a link to MSK uses SCRAM instead).</td>
+</tr>
+<tr>
+<td><code>sasl_scram</code></td>
+<td><code>username</code>, <code>password</code>, <code>mechanism</code></td>
+<td><code>mechanism</code> is <code>SHA256</code> or <code>SHA512</code> (<code>SCRAM-SHA-256</code> / <code>SCRAM-SHA-512</code> are accepted too; MSK requires <code>SHA512</code>) and must be set — an omitted mechanism is rejected. Optional <code>ca_cert</code>. Always TLS (SASL_SSL).</td>
+</tr>
+<tr>
+<td><code>sasl_plain</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td>Optional <code>ca_cert</code>, <code>tls</code>. <code>ca_cert</code> present ⇒ SASL_SSL against that CA; <code>tls: true</code> ⇒ SASL_SSL over the system/public trust store; neither ⇒ SASL_PLAINTEXT on the source leg (the destination leg always uses TLS — see <a href="#spectarget"><code>spec.target</code></a>).</td>
+</tr>
+<tr>
+<td><code>mtls</code></td>
+<td><code>client_cert</code>, <code>client_key</code></td>
+<td>Optional <code>ca_cert</code>. Client is authenticated via its certificate.</td>
+</tr>
+<tr>
+<td><code>unauthenticated_tls</code></td>
+<td>—</td>
+<td>Optional <code>ca_cert</code>. One-way TLS; client is not authenticated.</td>
+</tr>
+<tr>
+<td><code>unauthenticated_plaintext</code></td>
+<td>—</td>
+<td>Written <code>unauthenticated_plaintext: {}</code> — a block is selected by its presence, so a bare key with no value is rejected. No auth, no TLS. Test/lab only.</td>
+</tr>
+</tbody>
+</table>
+<p><code>ca_cert</code> (on <code>sasl_scram</code>, <code>sasl_plain</code>, <code>mtls</code>, <code>unauthenticated_tls</code>) is a
+PEM file path used to verify the broker's TLS certificate. Supply it only for a
+<strong>private/internal CA</strong>; public-CA brokers (AWS MSK, Confluent Cloud) validate
+against the system trust store and need no <code>ca_cert</code>. Every <code>ca_cert</code>,
+<code>client_cert</code> and <code>client_key</code> path must exist when the credentials file is
+read.</p>
+<p>Examples — each is the complete contents of a credentials file:</p>
+<p>SASL/SCRAM (e.g. an MSK source):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">sasl_scram</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kcp-migration</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">&lt;password&gt;</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">mechanism</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SHA512</span>
+</span></code></pre></div>
+<p>mTLS, with a private CA:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">mtls</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">client_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/certs/client.crt</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">client_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/certs/client.key</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">ca_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/certs/ca.crt</span>
+</span></code></pre></div>
+<p>IAM (MSK source only):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">iam</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span></code></pre></div>
+<h3 id="rest-credentials-specclusterlinklinkcredentials">REST credentials (<code>spec.clusterLink.linkCredentials</code>)<a class="headerlink" href="#rest-credentials-specclusterlinklinkcredentials" title="Permanent link">&para;</a></h3>
+<p>Specify <strong>exactly one</strong> block (or the <code>api_key</code>/<code>api_secret</code> pair).</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Required fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api_key</code> + <code>api_secret</code></td>
+<td><code>api_key</code>, <code>api_secret</code></td>
+<td>Confluent Cloud; flat top-level pair; public CA.</td>
+</tr>
+<tr>
+<td><code>basic</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td>e.g. Confluent Platform MDS.</td>
+</tr>
+<tr>
+<td><code>bearer</code></td>
+<td><code>token</code></td>
+<td>e.g. MDS/OAuth.</td>
+</tr>
+<tr>
+<td><code>mtls</code></td>
+<td><code>client_cert</code>, <code>client_key</code></td>
+<td>Auth at the TLS layer.</td>
+</tr>
+</tbody>
+</table>
+<p><code>basic</code>, <code>bearer</code>, and <code>mtls</code> each accept an optional <code>ca_cert</code> and
+<code>insecure_skip_verify</code> inside their block to reach a TLS endpoint fronted by a
+private/internal CA (e.g. self-managed CP/MDS). The flat <code>api_key</code> form takes
+the same two keys at the top level instead, and they are rejected alongside
+the block forms. Public-CA endpoints (Confluent Cloud) need neither. <code>basic</code>
+does not check at load time that <code>username</code> and <code>password</code> are non-empty; a
+missing value surfaces as an authentication error at runtime.</p>
+<p>Examples — each is the complete contents of a credentials file:</p>
+<p>Confluent Cloud (<code>api_key</code> + <code>api_secret</code>):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">&lt;api-key&gt;</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">api_secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">&lt;api-secret&gt;</span>
+</span></code></pre></div>
+<p>Self-managed Confluent Platform, with a private CA (<code>basic</code>):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">basic</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kcp-migration</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">&lt;password&gt;</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">ca_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/certs/ca.crt</span>
+</span></code></pre></div>
+<p>One restriction is specific to <strong>this</strong> manifest, narrower than the two
+tables above:</p>
+<ul>
+<li><code>spec.source.credentials.iam</code> is valid only when <code>spec.source.type: msk</code>.
+  <code>spec.target.kafka.clusterCredentials.iam</code> is rejected outright — the
+  destination is Confluent Cloud/Platform, never MSK.</li>
+</ul>
+<h2 id="how-the-commands-read-this-file">How the commands read this file<a class="headerlink" href="#how-the-commands-read-this-file" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Flag</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kcp migration execute</code></td>
+<td><code>--migration-yaml</code></td>
+<td>yes</td>
+<td>Path to this manifest.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--dry-run</code></td>
+<td>no</td>
+<td>Run only the reconcile step and print the plan; change nothing. Exits non-zero if the plan is refused.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--lag-threshold</code>, <code>--promote-batch-size</code>, <code>--rollout-timeout</code>, <code>--detect-unrouted-producers-duration</code>, <code>--consumer-offset-sync-drain-duration</code>, <code>--hot-reload-timeout</code>, <code>--gateway-config-port</code></td>
+<td>no</td>
+<td>Per-run overrides of the matching <code>spec.defaultPolicies</code> field for this run only.</td>
+</tr>
+<tr>
+<td><code>kcp migration lag-check</code></td>
+<td><code>--migration-yaml</code></td>
+<td>yes</td>
+<td>Path to this manifest. Reads only the destination REST leg (<code>spec.clusterLink.linkCredentials</code>), honoured in whichever form it resolves — <code>api_key</code>/<code>basic</code>/<code>bearer</code>/<code>mtls</code>; it never dials the source or destination Kafka legs.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--poll-interval</code></td>
+<td>no (default <code>1</code>)</td>
+<td>Poll interval in seconds. Values outside <code>1</code>-<code>60</code> are clamped to that range.</td>
+</tr>
+</tbody>
+</table>
+<p>Every path in the manifest resolves relative to the <strong>process working
+directory</strong>, not the manifest's own location — the one exception is
+<code>spec.gateway.kubeconfig</code>, where a leading <code>~/</code> is expanded. The same applies
+to the certificate and key paths inside a credentials file.</p>
+<p>Every flag can also be set through an upper-case environment variable of the
+same name with dashes as underscores (<code>--lag-threshold</code> is <code>LAG_THRESHOLD</code>,
+<code>--dry-run</code> is <code>DRY_RUN</code>, <code>--poll-interval</code> is <code>POLL_INTERVAL</code>); an explicit
+flag wins. A policy value set through an environment variable overrides the
+manifest exactly as the flag would, so a stray <code>LAG_THRESHOLD</code> in the shell
+silently changes a run. The overrides are validated with the rest of the
+effective policy, including under <code>--dry-run</code>.</p>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>There is no separate <code>kcp migration validate</code> subcommand. Every read of this
+manifest — by <code>execute</code> or <code>lag-check</code> — parses and structurally
+validates in one step, so both commands get validation automatically and
+neither can skip it by accident.</p>
+<p>Validation collects <strong>every</strong> problem before returning, rather than
+fail-fast, so an operator fixes the file in one pass:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>3 problem(s) found in the migration manifest:
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  - spec.source.bootstrapServers: must not be empty
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  - spec.target.clusterId: required for target type "confluent-cloud"
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  - spec.defaultPolicies.detectUnroutedProducersDuration: must be at least 10s when set (0 skips the check)
+</span></code></pre></div>
+<p>Key rules, beyond required/optional per field above:</p>
+<ul>
+<li><code>apiVersion</code>/<code>kind</code> must be the exact literals; <code>metadata.name</code> non-blank.</li>
+<li><code>spec.source.type</code> and <code>spec.target.type</code> must be one of their listed enum
+  values.</li>
+<li>Every <code>bootstrapServers</code> entry must be <code>host:port</code>.</li>
+<li><code>spec.clusterLink.consumerOffsetSyncBaseline</code> is required when
+  <code>pauseConsumerOffsetSync</code> is set, and if set at all must be <code>enabled</code> or
+  <code>disabled</code>.</li>
+<li><code>spec.clusterLink.name</code> must not be blank (existence itself isn't checked
+  until the first <code>execute</code> run touches the destination); <code>spec.clusterLink.linkCredentials</code> must
+  not be blank.</li>
+<li>Every credentials field (<code>spec.source.credentials</code>,
+  <code>spec.target.kafka.clusterCredentials</code>, <code>spec.clusterLink.linkCredentials</code>)
+  must be a non-blank file path; an inline mapping is rejected at parse.</li>
+<li><code>spec.gateway.namespace</code> and <code>cr-name</code> must not be blank; the retired
+  <code>crs</code>/<code>routes</code> keys must not be set at all (they fail the strict decode).</li>
+<li><code>spec.route.name</code> and <code>spec.route.targetStreamingDomain</code> must not be blank;
+  <code>spec.route.topicGroup</code> must have exactly one entry.</li>
+<li>Each entry must set at least one of <code>topics</code> / <code>topicPatterns</code> (both is
+  allowed). Neither present is rejected. <code>topics</code>/<code>topicPatterns</code>, if present,
+  must be non-empty with no blank entries; each <code>topicPatterns</code> entry must
+  compile as an anchored RE2 regular expression.</li>
+<li>Duration policies are written with a unit (<code>0s</code>, <code>10m</code>); a bare number is a
+  parse error.</li>
+<li>No <code>spec.defaultPolicies</code> field may be negative;
+  <code>detectUnroutedProducersDuration</code>, if greater than zero, must be at least
+  <code>10s</code>.</li>
+</ul>
+<p>Rules that need the contents of a credentials file run when that file is read,
+not when the manifest is parsed: the <code>iam</code>-needs-an-<code>msk</code>-source rule, the
+rejection of <code>iam</code> on the destination, and the credentials file's own
+validation. <code>execute</code> (including <code>--dry-run</code>) reads the source, destination and
+REST credentials files; <code>lag-check</code> reads only the REST one.</p>
+<p><code>kcp migration execute --dry-run</code> performs the same validation <code>execute</code> would (manifest structure, credentials, the effective policy, and the reconcile preconditions against the live gateway CR, clusters and cluster link) and prints a reconcile plan, but takes no actions and runs no migration steps — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.</p>
+<h2 id="field-reference">Field reference<a class="headerlink" href="#field-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Type</th>
+<th>Required</th>
+<th>Default</th>
+<th>Allowed values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>apiVersion</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td><code>kcp.confluent.io/v1alpha1</code></td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td><code>GatewayMigration</code></td>
+</tr>
+<tr>
+<td><code>metadata.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>non-blank</td>
+</tr>
+<tr>
+<td><code>spec.source.type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td>—</td>
+<td><code>msk</code>, <code>apache-kafka</code></td>
+</tr>
+<tr>
+<td><code>spec.source.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>—</td>
+<td><code>host:port</code></td>
+</tr>
+<tr>
+<td><code>spec.source.credentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; Kafka family, <code>iam</code> only if <code>type: msk</code></td>
+</tr>
+<tr>
+<td><code>spec.target.type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td>—</td>
+<td><code>confluent-cloud</code>, <code>confluent-platform</code></td>
+</tr>
+<tr>
+<td><code>spec.target.clusterId</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>required for both target types</td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>—</td>
+<td><code>host:port</code></td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.restEndpoint</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>non-blank (not parsed as a URL)</td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.clusterCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; Kafka family except <code>iam</code></td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must reference an existing link</td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>no</td>
+<td>—</td>
+<td>repeats <code>spec.target.kafka.bootstrapServers</code>; unvalidated</td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.linkCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; <code>api_key</code>/<code>api_secret</code>, <code>basic</code>, <code>bearer</code>, or <code>mtls</code></td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.pauseConsumerOffsetSync</code></td>
+<td>bool</td>
+<td>no</td>
+<td><code>false</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.consumerOffsetSyncBaseline</code></td>
+<td>string</td>
+<td>when <code>pauseConsumerOffsetSync</code> is set</td>
+<td>—</td>
+<td><code>enabled</code>, <code>disabled</code></td>
+</tr>
+<tr>
+<td><code>spec.gateway.namespace</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>spec.gateway.kubeconfig</code></td>
+<td>string</td>
+<td>no</td>
+<td>in-cluster in a pod, else <code>~/.kube/config</code></td>
+<td><code>~/</code> expanded</td>
+</tr>
+<tr>
+<td><code>spec.gateway.cr-name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>K8s object name</td>
+</tr>
+<tr>
+<td><code>spec.route.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must exist in the initial CR</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup</code></td>
+<td>list</td>
+<td>yes</td>
+<td>—</td>
+<td>exactly one entry</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup[].topics</code></td>
+<td><code>[]string</code></td>
+<td>at least one of topics/topicPatterns</td>
+<td>—</td>
+<td>non-empty if present, literal names</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup[].topicPatterns</code></td>
+<td><code>[]string</code></td>
+<td>at least one of topics/topicPatterns</td>
+<td>—</td>
+<td>non-empty if present, anchored RE2 patterns (<code>['.*']</code> = all)</td>
+</tr>
+<tr>
+<td><code>spec.route.targetStreamingDomain</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must be declared in the initial CR's <code>spec.streamingDomains</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.lagThreshold</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.promoteBatchSize</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.rolloutTimeout</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0s</code></td>
+<td><code>&gt;= 0s</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.detectUnroutedProducersDuration</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0s</code></td>
+<td><code>0s</code>, or <code>&gt;= 10s</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.consumerOffsetSyncDrainDuration</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0s</code></td>
+<td><code>&gt;= 0s</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.hotReloadTimeout</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0s</code></td>
+<td><code>&gt;= 0s</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.gatewayConfigPort</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="example-manifest">Example manifest<a class="headerlink" href="#example-manifest" title="Permanent link">&para;</a></h2>
+<p>A fully-annotated, ready-to-copy <code>gateway-migration.yaml</code> — every field, with
+comments. It is also available as a plain file at
+<a href="../gateway-examples/gateway-migration.yaml"><code>gateway-examples/gateway-migration.yaml</code></a>
+(that link downloads the raw file rather than opening it in-browser).</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/gatewaymigration.schema.json</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1">#</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># The declarative form of a `kcp migration` run: the topology, auth and policy</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># for one migration, read fresh on every run.</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1">#</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="c1">#   kcp migration execute --migration-yaml gateway-migration.yaml</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1">#   kcp migration lag-check --migration-yaml gateway-migration.yaml</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1">#</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># Paths in this file resolve relative to the PROCESS working directory, not to</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># the file's own location. The one exception is spec.gateway.kubeconfig, where a</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># leading ~/ is expanded.</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="c1">#</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="c1"># Every credentials field is a PATH to a credentials file — inline secret blocks</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># are not accepted — so this manifest carries no secret material itself. Keep the</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="c1"># referenced credentials files 0600.</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kcp.confluent.io/v1alpha1</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GatewayMigration</span>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="nt">metadata</span><span class="p">:</span>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="w">  </span><span class="c1"># The migration identity, used as its migration_id label in logs and output.</span>
+</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msk-prod-to-cc-batch-1</span>
+</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>
+</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="nt">spec</span><span class="p">:</span>
+</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="w">  </span><span class="c1"># kcp only ever READS from the source.</span>
+</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span>
+</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msk</span><span class="w"> </span><span class="c1"># msk | apache-kafka. Gates auth: iam is msk-only.</span>
+</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="w">    </span><span class="nt">bootstrapServers</span><span class="p">:</span>
+</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096</span>
+</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">b-2.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096</span>
+</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a><span class="w">    </span><span class="c1"># Path to the source Kafka credentials file (auth only). Its top-level shape</span>
+</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="w">    </span><span class="c1"># for MSK, e.g.:</span>
+</span><span id="__span-8-33"><a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a><span class="w">    </span><span class="c1">#   sasl_scram: { username: ..., password: ..., mechanism: SHA512 }</span>
+</span><span id="__span-8-34"><a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a><span class="w">    </span><span class="c1"># (MSK is SHA512-only; iam is also valid for an MSK source.)</span>
+</span><span id="__span-8-35"><a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a><span class="w">    </span><span class="nt">credentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/source-creds.yaml</span>
+</span><span id="__span-8-36"><a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>
+</span><span id="__span-8-37"><a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a><span class="w">  </span><span class="nt">target</span><span class="p">:</span>
+</span><span id="__span-8-38"><a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent-cloud</span><span class="w"> </span><span class="c1"># confluent-cloud | confluent-platform</span>
+</span><span id="__span-8-39"><a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a><span class="w">    </span><span class="nt">clusterId</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lkc-abc123</span><span class="w"> </span><span class="c1"># required for BOTH destination types</span>
+</span><span id="__span-8-40"><a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a><span class="w">    </span><span class="nt">kafka</span><span class="p">:</span>
+</span><span id="__span-8-41"><a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a><span class="w">      </span><span class="nt">bootstrapServers</span><span class="p">:</span>
+</span><span id="__span-8-42"><a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pkc-xxxxx.us-east-1.aws.confluent.cloud:9092</span>
+</span><span id="__span-8-43"><a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a><span class="w">      </span><span class="nt">restEndpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443</span>
+</span><span id="__span-8-44"><a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a><span class="w">      </span><span class="c1"># Path to the destination KAFKA credentials file — the leg dialled directly</span>
+</span><span id="__span-8-45"><a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a><span class="w">      </span><span class="c1"># to bootstrapServers to read destination-side offsets. Its top-level shape</span>
+</span><span id="__span-8-46"><a id="__codelineno-8-46" name="__codelineno-8-46" href="#__codelineno-8-46"></a><span class="w">      </span><span class="c1"># accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or</span>
+</span><span id="__span-8-47"><a id="__codelineno-8-47" name="__codelineno-8-47" href="#__codelineno-8-47"></a><span class="w">      </span><span class="c1"># unauthenticated_plaintext — iam is rejected (the destination is Confluent</span>
+</span><span id="__span-8-48"><a id="__codelineno-8-48" name="__codelineno-8-48" href="#__codelineno-8-48"></a><span class="w">      </span><span class="c1"># Cloud/Platform, never MSK). insecure_skip_tls_verify is a top-level</span>
+</span><span id="__span-8-49"><a id="__codelineno-8-49" name="__codelineno-8-49" href="#__codelineno-8-49"></a><span class="w">      </span><span class="c1"># sibling of the auth block, scoped to THIS file only. Examples:</span>
+</span><span id="__span-8-50"><a id="__codelineno-8-50" name="__codelineno-8-50" href="#__codelineno-8-50"></a><span class="w">      </span><span class="c1">#   sasl_plain: { username: ..., password: ..., tls: true }   # Confluent Cloud</span>
+</span><span id="__span-8-51"><a id="__codelineno-8-51" name="__codelineno-8-51" href="#__codelineno-8-51"></a><span class="w">      </span><span class="c1">#   sasl_scram: { username: ..., password: ..., mechanism: SHA256, ca_cert: ... }</span>
+</span><span id="__span-8-52"><a id="__codelineno-8-52" name="__codelineno-8-52" href="#__codelineno-8-52"></a><span class="w">      </span><span class="c1">#   mtls:       { client_cert: ..., client_key: ..., ca_cert: ... }</span>
+</span><span id="__span-8-53"><a id="__codelineno-8-53" name="__codelineno-8-53" href="#__codelineno-8-53"></a><span class="w">      </span><span class="nt">clusterCredentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/dest-kafka-creds.yaml</span>
+</span><span id="__span-8-54"><a id="__codelineno-8-54" name="__codelineno-8-54" href="#__codelineno-8-54"></a>
+</span><span id="__span-8-55"><a id="__codelineno-8-55" name="__codelineno-8-55" href="#__codelineno-8-55"></a><span class="w">  </span><span class="nt">clusterLink</span><span class="p">:</span>
+</span><span id="__span-8-56"><a id="__codelineno-8-56" name="__codelineno-8-56" href="#__codelineno-8-56"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msk-to-cc</span><span class="w"> </span><span class="c1"># the link must ALREADY EXIST on the destination</span>
+</span><span id="__span-8-57"><a id="__codelineno-8-57" name="__codelineno-8-57" href="#__codelineno-8-57"></a><span class="w">    </span><span class="c1"># Repeats spec.target.kafka.bootstrapServers, for self-documentation.</span>
+</span><span id="__span-8-58"><a id="__codelineno-8-58" name="__codelineno-8-58" href="#__codelineno-8-58"></a><span class="w">    </span><span class="nt">bootstrapServers</span><span class="p">:</span>
+</span><span id="__span-8-59"><a id="__codelineno-8-59" name="__codelineno-8-59" href="#__codelineno-8-59"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pkc-xxxxx.us-east-1.aws.confluent.cloud:9092</span>
+</span><span id="__span-8-60"><a id="__codelineno-8-60" name="__codelineno-8-60" href="#__codelineno-8-60"></a><span class="w">    </span><span class="c1"># Path to the cluster-link REST credentials file — the credential that calls</span>
+</span><span id="__span-8-61"><a id="__codelineno-8-61" name="__codelineno-8-61" href="#__codelineno-8-61"></a><span class="w">    </span><span class="c1"># restEndpoint's Admin REST API, which is what actually manages the cluster</span>
+</span><span id="__span-8-62"><a id="__codelineno-8-62" name="__codelineno-8-62" href="#__codelineno-8-62"></a><span class="w">    </span><span class="c1"># link (status, list/promote mirror topics, alter configs). This is a</span>
+</span><span id="__span-8-63"><a id="__codelineno-8-63" name="__codelineno-8-63" href="#__codelineno-8-63"></a><span class="w">    </span><span class="c1"># DIFFERENT server and, on self-managed Confluent Platform, a DIFFERENT</span>
+</span><span id="__span-8-64"><a id="__codelineno-8-64" name="__codelineno-8-64" href="#__codelineno-8-64"></a><span class="w">    </span><span class="c1"># credential store from the Kafka leg above, so it is ALWAYS REQUIRED and is</span>
+</span><span id="__span-8-65"><a id="__codelineno-8-65" name="__codelineno-8-65" href="#__codelineno-8-65"></a><span class="w">    </span><span class="c1"># never derived. Its top-level shape is one of: api_key/api_secret, basic,</span>
+</span><span id="__span-8-66"><a id="__codelineno-8-66" name="__codelineno-8-66" href="#__codelineno-8-66"></a><span class="w">    </span><span class="c1"># bearer, or mtls. Examples:</span>
+</span><span id="__span-8-67"><a id="__codelineno-8-67" name="__codelineno-8-67" href="#__codelineno-8-67"></a><span class="w">    </span><span class="c1">#   api_key: ...            # + api_secret: ...   (Confluent Cloud)</span>
+</span><span id="__span-8-68"><a id="__codelineno-8-68" name="__codelineno-8-68" href="#__codelineno-8-68"></a><span class="w">    </span><span class="c1">#   basic:  { username: ..., password: ... }      (CP Basic realm)</span>
+</span><span id="__span-8-69"><a id="__codelineno-8-69" name="__codelineno-8-69" href="#__codelineno-8-69"></a><span class="w">    </span><span class="c1">#   bearer: { token: ... }                        (MDS/RBAC)</span>
+</span><span id="__span-8-70"><a id="__codelineno-8-70" name="__codelineno-8-70" href="#__codelineno-8-70"></a><span class="w">    </span><span class="c1">#   mtls:   { client_cert: ..., client_key: ... }</span>
+</span><span id="__span-8-71"><a id="__codelineno-8-71" name="__codelineno-8-71" href="#__codelineno-8-71"></a><span class="w">    </span><span class="nt">linkCredentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/link-creds.yaml</span>
+</span><span id="__span-8-72"><a id="__codelineno-8-72" name="__codelineno-8-72" href="#__codelineno-8-72"></a><span class="w">    </span><span class="c1"># Static routes only; a dynamic route refuses it. Disable the link's</span>
+</span><span id="__span-8-73"><a id="__codelineno-8-73" name="__codelineno-8-73" href="#__codelineno-8-73"></a><span class="w">    </span><span class="c1"># consumer.offset.sync.enable right after the fence, and set it back to</span>
+</span><span id="__span-8-74"><a id="__codelineno-8-74" name="__codelineno-8-74" href="#__codelineno-8-74"></a><span class="w">    </span><span class="c1"># consumerOffsetSyncBaseline after the switch. A run that stops before that</span>
+</span><span id="__span-8-75"><a id="__codelineno-8-75" name="__codelineno-8-75" href="#__codelineno-8-75"></a><span class="w">    </span><span class="c1"># restore leaves it owed, and re-running execute performs it.</span>
+</span><span id="__span-8-76"><a id="__codelineno-8-76" name="__codelineno-8-76" href="#__codelineno-8-76"></a><span class="w">    </span><span class="nt">pauseConsumerOffsetSync</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-8-77"><a id="__codelineno-8-77" name="__codelineno-8-77" href="#__codelineno-8-77"></a><span class="w">    </span><span class="c1"># The state consumer.offset.sync.enable was in BEFORE this migration started</span>
+</span><span id="__span-8-78"><a id="__codelineno-8-78" name="__codelineno-8-78" href="#__codelineno-8-78"></a><span class="w">    </span><span class="c1"># ("enabled" or "disabled"). Required when pauseConsumerOffsetSync is set,</span>
+</span><span id="__span-8-79"><a id="__codelineno-8-79" name="__codelineno-8-79" href="#__codelineno-8-79"></a><span class="w">    </span><span class="c1"># since a resumed run cannot observe the pre-migration value itself. kcp sets</span>
+</span><span id="__span-8-80"><a id="__codelineno-8-80" name="__codelineno-8-80" href="#__codelineno-8-80"></a><span class="w">    </span><span class="c1"># sync back to this value after the switch, or when a failure before promote</span>
+</span><span id="__span-8-81"><a id="__codelineno-8-81" name="__codelineno-8-81" href="#__codelineno-8-81"></a><span class="w">    </span><span class="c1"># rolls the migration back.</span>
+</span><span id="__span-8-82"><a id="__codelineno-8-82" name="__codelineno-8-82" href="#__codelineno-8-82"></a><span class="w">    </span><span class="nt">consumerOffsetSyncBaseline</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">enabled</span>
+</span><span id="__span-8-83"><a id="__codelineno-8-83" name="__codelineno-8-83" href="#__codelineno-8-83"></a>
+</span><span id="__span-8-84"><a id="__codelineno-8-84" name="__codelineno-8-84" href="#__codelineno-8-84"></a><span class="w">  </span><span class="nt">gateway</span><span class="p">:</span>
+</span><span id="__span-8-85"><a id="__codelineno-8-85" name="__codelineno-8-85" href="#__codelineno-8-85"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent</span>
+</span><span id="__span-8-86"><a id="__codelineno-8-86" name="__codelineno-8-86" href="#__codelineno-8-86"></a><span class="w">    </span><span class="c1"># kubeconfig: ~/.kube/config          # optional (unset: in-cluster in a pod, else ~/.kube/config); a leading ~/ IS expanded</span>
+</span><span id="__span-8-87"><a id="__codelineno-8-87" name="__codelineno-8-87" href="#__codelineno-8-87"></a><span class="w">    </span><span class="nt">cr-name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gateway-initial</span><span class="w"> </span><span class="c1"># a Kubernetes object NAME, read live</span>
+</span><span id="__span-8-88"><a id="__codelineno-8-88" name="__codelineno-8-88" href="#__codelineno-8-88"></a>
+</span><span id="__span-8-89"><a id="__codelineno-8-89" name="__codelineno-8-89" href="#__codelineno-8-89"></a><span class="w">  </span><span class="c1"># route names the route to fence/switch, the streaming domain it switches to,</span>
+</span><span id="__span-8-90"><a id="__codelineno-8-90" name="__codelineno-8-90" href="#__codelineno-8-90"></a><span class="w">  </span><span class="c1"># and the topic selection that migrates.</span>
+</span><span id="__span-8-91"><a id="__codelineno-8-91" name="__codelineno-8-91" href="#__codelineno-8-91"></a><span class="w">  </span><span class="c1">#</span>
+</span><span id="__span-8-92"><a id="__codelineno-8-92" name="__codelineno-8-92" href="#__codelineno-8-92"></a><span class="w">  </span><span class="c1"># kcp reads the live initial CR, injects fence: {scope: ALL, errorCode:</span>
+</span><span id="__span-8-93"><a id="__codelineno-8-93" name="__codelineno-8-93" href="#__codelineno-8-93"></a><span class="w">  </span><span class="c1"># BROKER_NOT_AVAILABLE} onto the named route, and applies the patched CR —</span>
+</span><span id="__span-8-94"><a id="__codelineno-8-94" name="__codelineno-8-94" href="#__codelineno-8-94"></a><span class="w">  </span><span class="c1"># there is no separate fenced-CR file to create or keep in sync. The route</span>
+</span><span id="__span-8-95"><a id="__codelineno-8-95" name="__codelineno-8-95" href="#__codelineno-8-95"></a><span class="w">  </span><span class="c1"># must exist in the initial CR; on a static route it must carry no fence</span>
+</span><span id="__span-8-96"><a id="__codelineno-8-96" name="__codelineno-8-96" href="#__codelineno-8-96"></a><span class="w">  </span><span class="c1"># other than kcp's own. At cutover kcp</span>
+</span><span id="__span-8-97"><a id="__codelineno-8-97" name="__codelineno-8-97" href="#__codelineno-8-97"></a><span class="w">  </span><span class="c1"># derives the switched CR the same way, flipping the route's streamingDomain</span>
+</span><span id="__span-8-98"><a id="__codelineno-8-98" name="__codelineno-8-98" href="#__codelineno-8-98"></a><span class="w">  </span><span class="c1"># to the target declared here. This is safe with NO secret or auth change at</span>
+</span><span id="__span-8-99"><a id="__codelineno-8-99" name="__codelineno-8-99" href="#__codelineno-8-99"></a><span class="w">  </span><span class="c1"># cutover only because the route's security.cluster already carries pre-staged</span>
+</span><span id="__span-8-100"><a id="__codelineno-8-100" name="__codelineno-8-100" href="#__codelineno-8-100"></a><span class="w">  </span><span class="c1"># ("redundant") swap auth for the target domain; on a static route kcp checks</span>
+</span><span id="__span-8-101"><a id="__codelineno-8-101" name="__codelineno-8-101" href="#__codelineno-8-101"></a><span class="w">  </span><span class="c1"># that staging on every run, before anything is fenced.</span>
+</span><span id="__span-8-102"><a id="__codelineno-8-102" name="__codelineno-8-102" href="#__codelineno-8-102"></a><span class="w">  </span><span class="c1">#</span>
+</span><span id="__span-8-103"><a id="__codelineno-8-103" name="__codelineno-8-103" href="#__codelineno-8-103"></a><span class="w">  </span><span class="c1"># The route's migration MODE (all-at-once vs topic-based) is read from the</span>
+</span><span id="__span-8-104"><a id="__codelineno-8-104" name="__codelineno-8-104" href="#__codelineno-8-104"></a><span class="w">  </span><span class="c1"># live CR's route binding, not declared here.</span>
+</span><span id="__span-8-105"><a id="__codelineno-8-105" name="__codelineno-8-105" href="#__codelineno-8-105"></a><span class="w">  </span><span class="nt">route</span><span class="p">:</span>
+</span><span id="__span-8-106"><a id="__codelineno-8-106" name="__codelineno-8-106" href="#__codelineno-8-106"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">migration-route</span><span class="w"> </span><span class="c1"># a pre-existing route in the initial CR</span>
+</span><span id="__span-8-107"><a id="__codelineno-8-107" name="__codelineno-8-107" href="#__codelineno-8-107"></a>
+</span><span id="__span-8-108"><a id="__codelineno-8-108" name="__codelineno-8-108" href="#__codelineno-8-108"></a><span class="w">    </span><span class="c1"># topicGroup pairs the topic selection(s) that migrate on this route.</span>
+</span><span id="__span-8-109"><a id="__codelineno-8-109" name="__codelineno-8-109" href="#__codelineno-8-109"></a><span class="w">    </span><span class="c1"># Exactly one entry today — one route, one migration per file.</span>
+</span><span id="__span-8-110"><a id="__codelineno-8-110" name="__codelineno-8-110" href="#__codelineno-8-110"></a><span class="w">    </span><span class="c1">#</span>
+</span><span id="__span-8-111"><a id="__codelineno-8-111" name="__codelineno-8-111" href="#__codelineno-8-111"></a><span class="w">    </span><span class="c1"># topics is a flat list of LITERAL topic names — not globs. topicPatterns is</span>
+</span><span id="__span-8-112"><a id="__codelineno-8-112" name="__codelineno-8-112" href="#__codelineno-8-112"></a><span class="w">    </span><span class="c1"># a list of anchored full-match regular expressions (RE2), matched against</span>
+</span><span id="__span-8-113"><a id="__codelineno-8-113" name="__codelineno-8-113" href="#__codelineno-8-113"></a><span class="w">    </span><span class="c1"># the topic names on the source cluster. At least one of the two is</span>
+</span><span id="__span-8-114"><a id="__codelineno-8-114" name="__codelineno-8-114" href="#__codelineno-8-114"></a><span class="w">    </span><span class="c1"># REQUIRED; both may be set (their union is used). Every selected topic must</span>
+</span><span id="__span-8-115"><a id="__codelineno-8-115" name="__codelineno-8-115" href="#__codelineno-8-115"></a><span class="w">    </span><span class="c1"># be a mirror topic on the cluster link, or the run is refused. To cut over</span>
+</span><span id="__span-8-116"><a id="__codelineno-8-116" name="__codelineno-8-116" href="#__codelineno-8-116"></a><span class="w">    </span><span class="c1"># EVERY source topic, use the match-all pattern: topicPatterns: ['.*'].</span>
+</span><span id="__span-8-117"><a id="__codelineno-8-117" name="__codelineno-8-117" href="#__codelineno-8-117"></a><span class="w">    </span><span class="c1">#</span>
+</span><span id="__span-8-118"><a id="__codelineno-8-118" name="__codelineno-8-118" href="#__codelineno-8-118"></a><span class="w">    </span><span class="c1"># Note the selection has NO effect on `lag-check`, which always watches</span>
+</span><span id="__span-8-119"><a id="__codelineno-8-119" name="__codelineno-8-119" href="#__codelineno-8-119"></a><span class="w">    </span><span class="c1"># every mirror.</span>
+</span><span id="__span-8-120"><a id="__codelineno-8-120" name="__codelineno-8-120" href="#__codelineno-8-120"></a><span class="w">    </span><span class="nt">topicGroup</span><span class="p">:</span>
+</span><span id="__span-8-121"><a id="__codelineno-8-121" name="__codelineno-8-121" href="#__codelineno-8-121"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">topics</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'t1.order'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'t1.inventory'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'t2.order'</span><span class="p p-Indicator">]</span>
+</span><span id="__span-8-122"><a id="__codelineno-8-122" name="__codelineno-8-122" href="#__codelineno-8-122"></a><span class="w">        </span><span class="c1"># topicPatterns: ['orders\..*']</span>
+</span><span id="__span-8-123"><a id="__codelineno-8-123" name="__codelineno-8-123" href="#__codelineno-8-123"></a>
+</span><span id="__span-8-124"><a id="__codelineno-8-124" name="__codelineno-8-124" href="#__codelineno-8-124"></a><span class="w">    </span><span class="c1"># The target streaming domain — declared in the initial CR's</span>
+</span><span id="__span-8-125"><a id="__codelineno-8-125" name="__codelineno-8-125" href="#__codelineno-8-125"></a><span class="w">    </span><span class="c1"># spec.streamingDomains. The bootstrap server id kcp binds the route to is</span>
+</span><span id="__span-8-126"><a id="__codelineno-8-126" name="__codelineno-8-126" href="#__codelineno-8-126"></a><span class="w">    </span><span class="c1"># DERIVED from that declaration in the live CR on every run, not written here.</span>
+</span><span id="__span-8-127"><a id="__codelineno-8-127" name="__codelineno-8-127" href="#__codelineno-8-127"></a><span class="w">    </span><span class="nt">targetStreamingDomain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent-cloud</span>
+</span><span id="__span-8-128"><a id="__codelineno-8-128" name="__codelineno-8-128" href="#__codelineno-8-128"></a>
+</span><span id="__span-8-129"><a id="__codelineno-8-129" name="__codelineno-8-129" href="#__codelineno-8-129"></a><span class="w">  </span><span class="c1"># OPTIONAL, and read FRESH on every execute, so a change takes effect on the</span>
+</span><span id="__span-8-130"><a id="__codelineno-8-130" name="__codelineno-8-130" href="#__codelineno-8-130"></a><span class="w">  </span><span class="c1"># next run. Each value is a DEFAULT:</span>
+</span><span id="__span-8-131"><a id="__codelineno-8-131" name="__codelineno-8-131" href="#__codelineno-8-131"></a><span class="w">  </span><span class="c1"># `kcp migration execute` can override any of them for a single run with the</span>
+</span><span id="__span-8-132"><a id="__codelineno-8-132" name="__codelineno-8-132" href="#__codelineno-8-132"></a><span class="w">  </span><span class="c1"># matching flag (e.g. --detect-unrouted-producers-duration 60s), no edit needed.</span>
+</span><span id="__span-8-133"><a id="__codelineno-8-133" name="__codelineno-8-133" href="#__codelineno-8-133"></a><span class="w">  </span><span class="nt">defaultPolicies</span><span class="p">:</span>
+</span><span id="__span-8-134"><a id="__codelineno-8-134" name="__codelineno-8-134" href="#__codelineno-8-134"></a><span class="w">    </span><span class="nt">lagThreshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+</span><span id="__span-8-135"><a id="__codelineno-8-135" name="__codelineno-8-135" href="#__codelineno-8-135"></a><span class="w">    </span><span class="nt">promoteBatchSize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span><span class="w"> </span><span class="c1"># 0 = promote all at once</span>
+</span><span id="__span-8-136"><a id="__codelineno-8-136" name="__codelineno-8-136" href="#__codelineno-8-136"></a><span class="w">    </span><span class="nt">rolloutTimeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10m</span><span class="w"> </span><span class="c1"># 0 = no deadline</span>
+</span><span id="__span-8-137"><a id="__codelineno-8-137" name="__codelineno-8-137" href="#__codelineno-8-137"></a><span class="w">    </span><span class="nt">detectUnroutedProducersDuration</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30s</span><span class="w"> </span><span class="c1"># 0 = CHECK SKIPPED; min 10s when set</span>
+</span><span id="__span-8-138"><a id="__codelineno-8-138" name="__codelineno-8-138" href="#__codelineno-8-138"></a><span class="w">    </span><span class="nt">consumerOffsetSyncDrainDuration</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15s</span><span class="w"> </span><span class="c1"># 0 = no wait; needs pauseConsumerOffsetSync</span>
+</span><span id="__span-8-139"><a id="__codelineno-8-139" name="__codelineno-8-139" href="#__codelineno-8-139"></a><span class="w">    </span><span class="nt">hotReloadTimeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90s</span><span class="w"> </span><span class="c1"># 0 = built-in 90s budget; never unbounded</span>
+</span><span id="__span-8-140"><a id="__codelineno-8-140" name="__codelineno-8-140" href="#__codelineno-8-140"></a><span class="w">    </span><span class="nt">gatewayConfigPort</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w"> </span><span class="c1"># 0 = the gateway default (9180)</span>
+</span></code></pre></div>
+<h2 id="editor-support">Editor support<a class="headerlink" href="#editor-support" title="Permanent link">&para;</a></h2>
+<p><code>gateway-examples/gateway-migration.yaml</code> carries a <code># yaml-language-server:
+$schema=…</code> modeline that fetches the manifest's JSON schema from the <code>main</code>
+branch of the kcp repository on GitHub
+(<code>internal/manifest/gatewaymigration.schema.json</code>), so VS Code with the
+<a href="https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml">Red Hat YAML extension</a>
+gives autocomplete and inline validation when it can reach GitHub. The schema
+covers structure and types but does not enforce every rule — for example the
+<code>10s</code> minimum and the <code>host:port</code> format are not checked by it — so <code>kcp
+migration execute --dry-run</code> is the authoritative check.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache®, Apache Kafka®, Kafka®, and the Kafka logo are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries. No endorsement by the Apache Software Foundation is implied by the use of these marks.
+
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

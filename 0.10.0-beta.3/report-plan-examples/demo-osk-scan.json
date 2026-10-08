@@ -1,0 +1,359 @@
+{
+  "msk_sources": {
+    "regions": []
+  },
+  "osk_sources": {
+    "clusters": [
+      {
+        "id": "osk-playground",
+        "bootstrap_servers": [
+          "b0.osk-kafka.confluent.svc.cluster.local:9092",
+          "b1.osk-kafka.confluent.svc.cluster.local:9092",
+          "b2.osk-kafka.confluent.svc.cluster.local:9092"
+        ],
+        "kafka_admin_client_information": {
+          "cluster_id": "NzQ5ZGRhNGMtOTY4Yi00MA",
+          "discovered_brokers": [
+            "b0.osk-kafka.confluent.svc.cluster.local:9092",
+            "b1.osk-kafka.confluent.svc.cluster.local:9092",
+            "b2.osk-kafka.confluent.svc.cluster.local:9092"
+          ],
+          "sasl_mechanism": "PLAIN",
+          "topics": {
+            "summary": {
+              "topics": 67,
+              "internal_topics": 1,
+              "total_partitions": 743,
+              "total_internal_partitions": 50,
+              "compact_topics": 47,
+              "compact_internal_topics": 1,
+              "compact_partitions": 581,
+              "compact_internal_partitions": 50,
+              "remote_storage_topics": 0
+            },
+            "details": [
+              {
+                "name": "_confluent-controlcenter-7-9-1-0-TriggerEventsStore-changelog",
+                "partitions": 12,
+                "replication_factor": 3,
+                "configurations": {
+                  "cleanup.policy": "compact",
+                  "compression.gzip.level": "-1",
+                  "compression.lz4.level": "9",
+                  "compression.type": "producer",
+                  "compression.zstd.level": "3",
+                  "confluent.cluster.link.allow.legacy.message.format": "false",
+                  "confluent.compacted.topic.prefer.tier.fetch.ms": "-1",
+                  "confluent.key.schema.validation": "false",
+                  "confluent.key.subject.name.strategy": "io.confluent.kafka.serializers.subject.TopicNameStrategy",
+                  "confluent.log.cleaner.timestamp.validation.enable": "true",
+                  "confluent.max.segment.ms": "9223372036854775807",
+                  "confluent.min.segment.ms": "1",
+                  "confluent.placement.constraints": "",
+                  "confluent.prefer.tier.fetch.ms": "-1",
+                  "confluent.segment.speculative.prefetch.enable": "false",
+                  "confluent.stray.log.delete.delay.ms": "604800000",
+                  "confluent.stray.log.max.deletions.per.run": "72",
+                  "confluent.system.time.roll.enable": "false",
+                  "confluent.tier.cleaner.compact.min.efficiency": "0.5",
+                  "confluent.tier.cleaner.compact.segment.min.bytes": "20971520",
+                  "confluent.tier.cleaner.dual.compaction": "false",
+                  "confluent.tier.cleaner.enable": "false",
+                  "confluent.tier.cleaner.min.cleanable.ratio": "0.75",
+                  "confluent.tier.enable": "false",
+                  "confluent.tier.local.hotset.bytes": "-1",
+                  "confluent.tier.local.hotset.ms": "86400000",
+                  "confluent.tier.segment.hotset.roll.min.bytes": "104857600",
+                  "confluent.value.schema.validation": "false",
+                  "confluent.value.subject.name.strategy": "io.confluent.kafka.serializers.subject.TopicNameStrategy",
+                  "delete.retention.ms": "691200000",
+                  "file.delete.delay.ms": "60000",
+                  "flush.messages": "9223372036854775807",
+                  "flush.ms": "9223372036854775807",
+                  "follower.replication.throttled.replicas": "",
+                  "index.interval.bytes": "4096",
+                  "leader.replication.throttled.replicas": "",
+                  "local.retention.bytes": "-2",
+                  "local.retention.ms": "-2",
+                  "max.compaction.lag.ms": "9223372036854775807",
+                  "max.message.bytes": "1048588",
+                  "message.downconversion.enable": "true",
+                  "message.format.version": "3.0-IV1",
+                  "message.timestamp.after.max.ms": "9223372036854775807",
+                  "message.timestamp.before.max.ms": "9223372036854775807",
+                  "message.timestamp.difference.max.ms": "9223372036854775807",
+                  "message.timestamp.type": "CreateTime",
+                  "min.cleanable.dirty.ratio": "0.5",
+                  "min.compaction.lag.ms": "0",
+                  "min.insync.replicas": "2",
+                  "preallocate": "false",
+                  "remote.log.copy.disable": "false",
+                  "remote.log.delete.on.disable": "false",
+                  "remote.storage.enable": "false",
+                  "retention.bytes": "-1",
+                  "retention.ms": "691200000",
+                  "segment.bytes": "134217728",
+                  "segment.index.bytes": "10485760",
+                  "segment.jitter.ms": "0",
+                  "segment.ms": "604800000",
+                  "unclean.leader.election.enable": "false"
+                }
+              },
+              {
+                "name": "_confluent-controlcenter-7-9-1-0-group-aggregate-store-THREE_HOURS-repartition",
+                "partitions": 12,
+                "replication_factor": 3,
+                "configurations": {
+                  "cleanup.policy": "compact",
+                  "compression.gzip.level": "-1",
+                  "compression.lz4.level": "9",
+                  "compression.type": "producer",
+                  "compression.zstd.level": "3",
+                  "confluent.cluster.link.allow.legacy.message.format": "false",
+                  "confluent.compacted.topic.prefer.tier.fetch.ms": "-1",
+                  "confluent.key.schema.validation": "false",
+                  "confluent.key.subject.name.strategy": "io.confluent.kafka.serializers.subject.TopicNameStrategy",
+                  "confluent.log.cleaner.timestamp.validation.enable": "true",
+                  "confluent.max.segment.ms": "9223372036854775807",
+                  "confluent.min.segment.ms": "1",
+                  "confluent.placement.constraints": "",
+                  "confluent.prefer.tier.fetch.ms": "-1",
+                  "confluent.segment.speculative.prefetch.enable": "false",
+                  "confluent.stray.log.delete.delay.ms": "604800000",
+                  "confluent.stray.log.max.deletions.per.run": "72",
+                  "confluent.system.time.roll.enable": "false",
+                  "confluent.tier.cleaner.compact.min.efficiency": "0.5",
+                  "confluent.tier.cleaner.compact.segment.min.bytes": "20971520",
+                  "confluent.tier.cleaner.dual.compaction": "false",
+                  "confluent.tier.cleaner.enable": "false",
+                  "confluent.tier.cleaner.min.cleanable.ratio": "0.75",
+                  "confluent.tier.enable": "false",
+                  "confluent.tier.local.hotset.bytes": "-1",
+                  "confluent.tier.local.hotset.ms": "86400000",
+                  "confluent.tier.segment.hotset.roll.min.bytes": "104857600",
+                  "confluent.value.schema.validation": "false",
+                  "confluent.value.subject.name.strategy": "io.confluent.kafka.serializers.subject.TopicNameStrategy",
+                  "delete.retention.ms": "60566400000",
+                  "file.delete.delay.ms": "60000",
+                  "flush.messages": "9223372036854775807",
+                  "flush.ms": "9223372036854775807",
+                  "follower.replication.throttled.replicas": "",
+                  "index.interval.bytes": "4096",
+                  "leader.replication.throttled.replicas": "",
+                  "local.retention.bytes": "-2",
+                  "local.retention.ms": "-2",
+                  "max.compaction.lag.ms": "9223372036854775807",
+                  "max.message.bytes": "1048588",
+                  "message.downconversion.enable": "true",
+                  "message.format.version": "3.0-IV1",
+                  "message.timestamp.after.max.ms": "9223372036854775807",
+                  "message.timestamp.before.max.ms": "9223372036854775807",
+                  "message.timestamp.difference.max.ms": "9223372036854775807",
+                  "message.timestamp.type": "CreateTime",
+                  "min.cleanable.dirty.ratio": "0.5",
+                  "min.compaction.lag.ms": "0",
+                  "min.insync.replicas": "2",
+                  "preallocate": "false",
+                  "remote.log.copy.disable": "false",
+                  "remote.log.delete.on.disable": "false",
+                  "remote.storage.enable": "false",
+                  "retention.bytes": "-1",
+                  "retention.ms": "60566400000",
+                  "segment.bytes": "67108864",
+                  "segment.index.bytes": "10485760",
+                  "segment.jitter.ms": "0",
+                  "segment.ms": "604800000",
+                  "unclean.leader.election.enable": "false"
+                }
+              }
+            ]
+          },
+          "acls": [
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "perf-throughput",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Describe",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "datagen-users",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Write",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "datagen-users",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Describe",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Cluster",
+              "ResourceName": "kafka-cluster",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "IdempotentWrite",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "acl-test-allowed",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Write",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "acl-test-allowed",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Describe",
+              "PermissionType": "Allow"
+            },
+            {
+              "ResourceType": "Topic",
+              "ResourceName": "perf-throughput",
+              "ResourcePatternType": "Literal",
+              "Principal": "User:CN=producer-client,O=Confluent",
+              "Host": "*",
+              "Operation": "Write",
+              "PermissionType": "Allow"
+            }
+          ],
+          "self_managed_connectors": null
+        },
+        "metrics": {
+          "region": "",
+          "cluster_arn": "",
+          "metadata": {
+            "cluster_type": "",
+            "number_of_broker_nodes": 0,
+            "kafka_version": "",
+            "broker_az_distribution": "",
+            "enhanced_monitoring": "",
+            "start_date": "2026-05-30T14:03:56.349078+01:00",
+            "end_date": "2026-06-29T14:03:56.349078+01:00",
+            "period": 3600,
+            "follower_fetching": false,
+            "instance_type": "",
+            "tiered_storage": false,
+            "broker_type": ""
+          },
+          "results": [],
+          "aggregates": {
+            "BytesInPerSec": {
+              "avg": 41943040,
+              "max": 47185920,
+              "min": 20971520,
+              "p95": null,
+              "p99": null
+            },
+            "BytesOutPerSec": {
+              "avg": 125829120,
+              "max": 141557760,
+              "min": 62914560,
+              "p95": null,
+              "p99": null
+            },
+            "MessagesInPerSec": {
+              "avg": 42000,
+              "max": 48000,
+              "min": 21000,
+              "p95": null,
+              "p99": null
+            },
+            "ClientConnectionCount": {
+              "avg": 85,
+              "max": 98,
+              "min": 52,
+              "p95": null,
+              "p99": null
+            },
+            "PartitionCount": {
+              "avg": 2321,
+              "max": 2377,
+              "min": 1585,
+              "p95": null,
+              "p99": null
+            },
+            "GlobalPartitionCount": {
+              "avg": 793,
+              "max": 793,
+              "min": 793,
+              "p95": null,
+              "p99": null
+            },
+            "TotalLocalStorageUsage": {
+              "avg": 35,
+              "max": 50,
+              "min": 20,
+              "p95": null,
+              "p99": null
+            }
+          },
+          "query_info": []
+        },
+        "discovered_clients": null,
+        "metadata": {
+          "environment": "osk-playground",
+          "last_scanned": "2026-06-29T14:03:56.348464+01:00"
+        }
+      }
+    ]
+  },
+  "schema_registries": {
+    "confluent_schema_registry": [
+      {
+        "type": "confluent",
+        "url": "http://schema-registry.demo.example:8081",
+        "default_compatibility": "BACKWARD",
+        "contexts": [
+          "."
+        ],
+        "subjects": [
+          {
+            "name": "orders-value",
+            "schema_type": "AVRO",
+            "versions": [
+              {
+                "schema": "{\"type\":\"record\",\"name\":\"Purchase\",\"namespace\":\"io.confluent.developer.avro\",\"doc\":\"Represents a customer purchase transaction\",\"fields\":[{\"name\":\"purchaseId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Unique identifier for the purchase\"},{\"name\":\"userId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Customer user ID\"},{\"name\":\"timestamp\",\"type\":{\"type\":\"long\",\"logicalType\":\"timestamp-millis\"},\"doc\":\"Time of purchase in milliseconds since epoch\"},{\"name\":\"item\",\"type\":{\"type\":\"record\",\"name\":\"Item\",\"doc\":\"Details about the purchased item\",\"fields\":[{\"name\":\"itemId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Unique item identifier\"},{\"name\":\"name\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Item name\"},{\"name\":\"category\",\"type\":{\"type\":\"enum\",\"name\":\"Category\",\"symbols\":[\"ELECTRONICS\",\"BOOKS\",\"CLOTHING\",\"HOME\",\"GIFTS\",\"OTHER\"]},\"doc\":\"Item category\"},{\"name\":\"quantity\",\"type\":\"int\",\"doc\":\"Number of items purchased\"},{\"name\":\"unitPrice\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":10,\"scale\":2},\"doc\":\"Price per unit\"}]}},{\"name\":\"payment\",\"type\":{\"type\":\"record\",\"name\":\"Payment\",\"doc\":\"Payment information\",\"fields\":[{\"name\":\"method\",\"type\":{\"type\":\"enum\",\"name\":\"PaymentMethod\",\"symbols\":[\"CREDIT_CARD\",\"DEBIT_CARD\",\"PAYPAL\",\"BANK_TRANSFER\",\"CRYPTO\"]},\"doc\":\"Payment method used\"},{\"name\":\"cardLastFour\",\"type\":[\"null\",{\"type\":\"string\",\"avro.java.string\":\"String\"}],\"doc\":\"Last 4 digits of card if applicable\",\"default\":null},{\"name\":\"totalAmount\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":10,\"scale\":2},\"doc\":\"Total amount charged\"},{\"name\":\"currency\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Currency code\",\"default\":\"USD\"}]}},{\"name\":\"shipping\",\"type\":{\"type\":\"record\",\"name\":\"ShippingAddress\",\"doc\":\"Shipping address details\",\"fields\":[{\"name\":\"street\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"city\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"state\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"zipCode\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"country\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"default\":\"USA\"}]}},{\"name\":\"metadata\",\"type\":{\"type\":\"map\",\"values\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"avro.java.string\":\"String\"},\"doc\":\"Additional metadata as key-value pairs\",\"default\":{}},{\"name\":\"tags\",\"type\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},\"doc\":\"Tags associated with the purchase\",\"default\":[]},{\"name\":\"isGift\",\"type\":\"boolean\",\"doc\":\"Whether this is a gift purchase\",\"default\":false},{\"name\":\"notes\",\"type\":[\"null\",{\"type\":\"string\",\"avro.java.string\":\"String\"}],\"doc\":\"Optional notes for the order\",\"default\":null}]}",
+                "schemaType": "AVRO",
+                "id": 1,
+                "guid": "e0368a56-5a01-b04c-2a55-2c3be993975e",
+                "subject": "orders-value",
+                "version": 1
+              }
+            ],
+            "latest_schema": {
+              "schema": "{\"type\":\"record\",\"name\":\"Purchase\",\"namespace\":\"io.confluent.developer.avro\",\"doc\":\"Represents a customer purchase transaction\",\"fields\":[{\"name\":\"purchaseId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Unique identifier for the purchase\"},{\"name\":\"userId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Customer user ID\"},{\"name\":\"timestamp\",\"type\":{\"type\":\"long\",\"logicalType\":\"timestamp-millis\"},\"doc\":\"Time of purchase in milliseconds since epoch\"},{\"name\":\"item\",\"type\":{\"type\":\"record\",\"name\":\"Item\",\"doc\":\"Details about the purchased item\",\"fields\":[{\"name\":\"itemId\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Unique item identifier\"},{\"name\":\"name\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Item name\"},{\"name\":\"category\",\"type\":{\"type\":\"enum\",\"name\":\"Category\",\"symbols\":[\"ELECTRONICS\",\"BOOKS\",\"CLOTHING\",\"HOME\",\"GIFTS\",\"OTHER\"]},\"doc\":\"Item category\"},{\"name\":\"quantity\",\"type\":\"int\",\"doc\":\"Number of items purchased\"},{\"name\":\"unitPrice\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":10,\"scale\":2},\"doc\":\"Price per unit\"}]}},{\"name\":\"payment\",\"type\":{\"type\":\"record\",\"name\":\"Payment\",\"doc\":\"Payment information\",\"fields\":[{\"name\":\"method\",\"type\":{\"type\":\"enum\",\"name\":\"PaymentMethod\",\"symbols\":[\"CREDIT_CARD\",\"DEBIT_CARD\",\"PAYPAL\",\"BANK_TRANSFER\",\"CRYPTO\"]},\"doc\":\"Payment method used\"},{\"name\":\"cardLastFour\",\"type\":[\"null\",{\"type\":\"string\",\"avro.java.string\":\"String\"}],\"doc\":\"Last 4 digits of card if applicable\",\"default\":null},{\"name\":\"totalAmount\",\"type\":{\"type\":\"bytes\",\"logicalType\":\"decimal\",\"precision\":10,\"scale\":2},\"doc\":\"Total amount charged\"},{\"name\":\"currency\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"doc\":\"Currency code\",\"default\":\"USD\"}]}},{\"name\":\"shipping\",\"type\":{\"type\":\"record\",\"name\":\"ShippingAddress\",\"doc\":\"Shipping address details\",\"fields\":[{\"name\":\"street\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"city\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"state\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"zipCode\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},{\"name\":\"country\",\"type\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"default\":\"USA\"}]}},{\"name\":\"metadata\",\"type\":{\"type\":\"map\",\"values\":{\"type\":\"string\",\"avro.java.string\":\"String\"},\"avro.java.string\":\"String\"},\"doc\":\"Additional metadata as key-value pairs\",\"default\":{}},{\"name\":\"tags\",\"type\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"avro.java.string\":\"String\"}},\"doc\":\"Tags associated with the purchase\",\"default\":[]},{\"name\":\"isGift\",\"type\":\"boolean\",\"doc\":\"Whether this is a gift purchase\",\"default\":false},{\"name\":\"notes\",\"type\":[\"null\",{\"type\":\"string\",\"avro.java.string\":\"String\"}],\"doc\":\"Optional notes for the order\",\"default\":null}]}",
+              "schemaType": "AVRO",
+              "id": 1,
+              "guid": "e0368a56-5a01-b04c-2a55-2c3be993975e",
+              "subject": "orders-value",
+              "version": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "kcp_build_info": {
+    "version": "v0.8.5",
+    "commit": "0c390418fe9fbaa1614b6d73724be957fe7ecd11",
+    "date": "2026-06-26T08:40:23Z"
+  },
+  "timestamp": "2026-06-26T10:46:34.354495+01:00"
+}
