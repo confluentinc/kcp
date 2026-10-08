@@ -121,8 +121,17 @@ func GenerateGateway() ([]byte, error) {
 		{Required: []string{"topicPatterns"}},
 	}
 
+	// A route carries exactly one of a topic selection or a conversion; topicGroup
+	// is omitempty so reflection no longer marks it required.
+	route.Properties["convertTo"].Enum = []any{manifest.RouteConvertToStatic}
+	route.Required = []string{"name", "targetStreamingDomain"}
+	route.OneOf = []*jsonschema.Schema{
+		{Required: []string{"topicGroup"}},
+		{Required: []string{"convertTo"}},
+	}
+
 	// Durations parse as "10m", not as an integer count.
-	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
+	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout", "detectUnroutedCommitsDuration"} {
 		p := policy.Properties[k]
 		// time.Duration reflects as {"type":"integer"}; Type and Types are
 		// mutually exclusive, so the reflected one must be replaced, not added to.
@@ -158,12 +167,13 @@ func GenerateGateway() ([]byte, error) {
 
 		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster on every run — this is an object name, not a file path.",
 
-		route:                              "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
+		route:                              "Names the route on the live Gateway CR to act on and the target streaming domain, plus exactly one of: topicGroup (the topic selection(s) that migrate) or convertTo (convert the route's shape). The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
 		route.Properties["name"]:           "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own.",
 		topicGroup:                         "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
 		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names — not globs. Combined with topicPatterns: the union of the two is migrated. At least one of topics or topicPatterns is required. Each selected topic must exist on the source and be a mirror topic on the cluster link, or the run is refused.",
 		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Combined with topics: the union of the two is migrated. Use ['.*'] to select every source topic. At least one of topics or topicPatterns is required. Each selected topic must be a mirror topic on the cluster link, or the run is refused.",
 		route.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run.",
+		route.Properties["convertTo"]:             "Convert the route's shape instead of migrating topics. \"static\" converts a dynamic route whose every topic has already been migrated to the target into a static route bound to targetStreamingDomain, carrying consumer-group offsets across. Mutually exclusive with topicGroup.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
@@ -172,6 +182,8 @@ func GenerateGateway() ([]byte, error) {
 		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
 		policy.Properties["hotReloadTimeout"]:                "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
 		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180).",
+		policy.Properties["detectUnroutedCommitsDuration"]:   "Route conversion only. Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
+		policy.Properties["offsetSyncConcurrency"]:           "Route conversion only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8.",
 	})
 
 	return marshal(s)

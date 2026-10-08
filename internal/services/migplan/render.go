@@ -62,6 +62,11 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	// A failed gate stops the run before any topic is evaluated.
 	topicsEvaluated := len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged)+len(r.FailFast) > 0
 	if failedGates > 0 && !topicsEvaluated {
+		// No topic lines to attach warnings to, but a refusal's warnings can
+		// matter most (e.g. a route kcp left fenced): print them all.
+		for _, wn := range r.Warnings {
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+		}
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, red.Sprintf("Refused at route checks — %d failed. No topics evaluated, no artifacts.", failedGates))
 		return
@@ -134,12 +139,15 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	if r.RestoreOffsetSync {
 		parts = append(parts, "offset-sync restore")
 	}
+	if r.ConvertToStatic {
+		parts = append(parts, "route to static")
+	}
 
 	var outcome string
 	switch {
 	case r.Refused():
 		outcome = red.Sprint("(refused — no artifacts)")
-	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync:
+	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync && !r.ConvertToStatic:
 		outcome = faint.Sprint("(nothing to do)")
 	default:
 		note := v.ArtifactNote

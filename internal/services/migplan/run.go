@@ -2,6 +2,7 @@ package migplan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -73,11 +74,13 @@ type Result struct {
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
 
-	// Mode is the route mode this plan was reconciled under ("dynamic" or
-	// "static"), mirroring reconcile.Plan.Mode — so a caller knows how to
-	// interpret the artifacts (see reconcile.Plan.Mode): whole rules: blocks
-	// for dynamic; a {fence: …} block and whole {route: …} documents for
-	// static. Each applies to the named route, never as the whole CR.
+	// Mode is the strategy this plan was reconciled under ("dynamic",
+	// "static" or "convert"), mirroring reconcile.Plan.Mode — so a caller
+	// knows how to interpret the artifacts (see reconcile.Plan.Mode): whole
+	// rules: blocks for dynamic; a {fence: …} block and whole {route: …}
+	// documents for static; whole rules: blocks for the fence and rollback and
+	// a whole {route: …} (the route converted to static) for the switchover
+	// under convert. Each applies to the named route, never as the whole CR.
 	Mode string
 }
 
@@ -136,6 +139,21 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
+	// A route conversion builds its providers through the same function
+	// verify_fence uses (BuildConvertProviders), so the two read the live world
+	// through identical wiring (decision 22). Only the gateway source stays
+	// injectable here, for testing.
+	if in.ConvertTo != "" {
+		p, closer, err := buildConvertProviders(g, o.gateway)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = closer.Close() }()
+		engine := NewReconciliationEngine(p.Gateway, p.Source, p.Target, p.Link, o.secrets).
+			WithGroupListers(p.SourceGroups, p.TargetGroups)
+		return runAndRender(ctx, engine, in, g, o)
+	}
+
 	gw := o.gateway
 	if gw == nil {
 		gw, err = buildGatewaySource(g, in.Route)
@@ -169,7 +187,12 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		}
 	}
 
-	plan, err := NewReconciliationEngine(gw, src, tgt, link, secrets).Run(ctx, in)
+	return runAndRender(ctx, NewReconciliationEngine(gw, src, tgt, link, secrets), in, g, o)
+}
+
+// runAndRender runs engine on in, renders the report and returns the Result.
+func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcile.ReconcileInput, g *manifest.GatewayMigration, o reconcileOptions) (*Result, error) {
+	plan, err := engine.Run(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -255,10 +278,27 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 }
 
 // buildReconcileInput maps the manifest's spec.route onto the engine-owned
-// ReconcileInput. The reconcile engine handles one route per run, so exactly
-// one topicGroup entry is required.
+// ReconcileInput: a conversion (convertTo set) carries no topic selection;
+// otherwise exactly one topicGroup entry is required.
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
 	r := g.Spec.Route
+	if r.ConvertTo != "" {
+		if r.Name == "" {
+			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.name: required")
+		}
+		if r.TargetStreamingDomain == "" {
+			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.targetStreamingDomain: required")
+		}
+		return reconcile.ReconcileInput{
+			Route:           r.Name,
+			TargetDomain:    r.TargetStreamingDomain,
+			TargetClusterID: g.Spec.Target.ClusterID,
+			ConvertTo:       r.ConvertTo,
+
+			PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
+			OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
+		}, nil
+	}
 	tgs := r.TopicGroup
 	if len(tgs) != 1 {
 		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup: exactly one entry is required, got %d", len(tgs))
@@ -319,29 +359,25 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 	return NewClusterLinkStatus(svc, cfg), nil
 }
 
-// buildSourceTopicLister builds the source-cluster topic lister from the manifest
-// source credentials, following the same auth resolution as `kcp migration
-// execute`. The returned io.Closer is the underlying Kafka admin; the caller owns
-// closing it.
-func buildSourceTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+// sourceConn resolves the source Kafka leg from the manifest, following the
+// same auth resolution as `kcp migration execute`.
+func sourceConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	creds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.source.credentials", errs)
 	}
-	conn := types.MigrateConn(g.Spec.Source.BootstrapServers, creds)
-	return buildTopicLister(conn)
+	return types.MigrateConn(g.Spec.Source.BootstrapServers, creds), nil
 }
 
-// buildTargetTopicLister builds the destination-cluster topic lister from the
-// destination KAFKA leg (not the REST leg — they may differ). The returned
-// io.Closer is the underlying Kafka admin; the caller owns closing it.
-func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+// targetConn resolves the destination KAFKA leg (not the REST leg — they may
+// differ).
+func targetConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	if g.Spec.Target.Kafka == nil {
-		return nil, nil, fmt.Errorf("spec.target.kafka: required")
+		return types.KafkaSourceConn{}, fmt.Errorf("spec.target.kafka: required")
 	}
 	creds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
 
@@ -352,17 +388,15 @@ func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Close
 	if sp := conn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
 		sp.UseTLS = true
 	}
-	return buildTopicLister(conn)
+	return conn, nil
 }
 
-// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
-// Auth is dispatched through the shared client.AdminOptionForAuthMethod mapper;
-// the encryption-in-transit arg is inert (the auth option determines TLS). The
-// returned io.Closer is the admin itself; the caller owns closing it.
-func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error) {
+// adminAuth resolves conn's auth into the shared admin option, and the IAM
+// region when the auth is IAM.
+func adminAuth(conn types.KafkaSourceConn) (string, client.AdminOption, error) {
 	authType, err := conn.GetSelectedAuthType()
 	if err != nil {
-		return nil, nil, fmt.Errorf("determining auth type: %w", err)
+		return "", nil, fmt.Errorf("determining auth type: %w", err)
 	}
 	region := ""
 	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
@@ -370,11 +404,146 @@ func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error
 	}
 	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolving auth option: %w", err)
+		return "", nil, fmt.Errorf("resolving auth option: %w", err)
+	}
+	return region, authOpt, nil
+}
+
+// buildSourceTopicLister builds the source-cluster topic lister. The returned
+// io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildSourceTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := sourceConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTargetTopicLister builds the destination-cluster topic lister. The
+// returned io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := targetConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
+// The encryption-in-transit arg is inert (the auth option determines TLS). The
+// returned io.Closer is the admin itself; the caller owns closing it.
+func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
 	}
 	admin, err := client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, defaultKafkaVersion, authOpt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to cluster: %w", err)
 	}
 	return NewKafkaTopicLister(admin), admin, nil
+}
+
+// buildGroupLister opens a consumer-group client for conn (pinned at Kafka
+// 3.8.0 for ListGroups v5 — see client.NewConsumerGroupClient) and wraps its
+// strict listing as a GroupLister. The returned io.Closer is the client; the
+// caller owns closing it.
+func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	cg, err := client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
+	}
+	return NewKafkaGroupLister(cg), cg, nil
+}
+
+// BuildReconcileInput is buildReconcileInput for callers outside this package:
+// the d2s state machine re-runs the route preconditions after the fence against
+// the same input reconcile used.
+func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
+	return buildReconcileInput(g)
+}
+
+// BuildConvertProviders builds a route conversion's providers from the manifest
+// the way Reconcile builds its own: the live gateway CR pull for spec.route.name,
+// the cluster-link status from the destination REST leg, a topic lister and a
+// consumer-group lister on each cluster. The returned io.Closer closes every
+// client it opened; the caller owns it. On an error nothing is left open and
+// the closer is nil.
+func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
+	return buildConvertProviders(g, nil)
+}
+
+// buildConvertProviders is BuildConvertProviders with an optional gateway
+// source: nil builds the live CR pull, anything else is used as is (Reconcile's
+// test seam, WithGatewaySource).
+func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource) (ConvertProviders, io.Closer, error) {
+	var opened closers
+	fail := func(err error) (ConvertProviders, io.Closer, error) {
+		_ = opened.Close()
+		return ConvertProviders{}, nil, err
+	}
+
+	if gw == nil {
+		var err error
+		if gw, err = buildGatewaySource(g, g.Spec.Route.Name); err != nil {
+			return fail(err)
+		}
+	}
+	link, err := buildLinkStatusProvider(g)
+	if err != nil {
+		return fail(err)
+	}
+	src, srcCloser, err := buildSourceTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcCloser)
+	tgt, tgtCloser, err := buildTargetTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtCloser)
+	srcConn, err := sourceConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcGroupsCloser)
+	tgtConn, err := targetConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtGroupsCloser)
+
+	return ConvertProviders{
+		Gateway:      gw,
+		Source:       src,
+		Target:       tgt,
+		Link:         link,
+		SourceGroups: srcGroups,
+		TargetGroups: tgtGroups,
+	}, opened, nil
+}
+
+// closers closes several clients as one: in reverse order of opening, every one
+// of them, with the errors joined.
+type closers []io.Closer
+
+func (c closers) Close() error {
+	var errs []error
+	for i := len(c) - 1; i >= 0; i-- {
+		errs = append(errs, c[i].Close())
+	}
+	return errors.Join(errs...)
 }

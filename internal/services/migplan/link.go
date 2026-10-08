@@ -3,6 +3,7 @@ package migplan
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -41,9 +42,18 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*LinkStatus, error)
 		return nil, err
 	}
 	m := make(map[string]reconcile.MirrorState, len(mirrors))
+	linkMirrors := make([]reconcile.LinkMirror, 0, len(mirrors))
 	for _, mt := range mirrors {
-		m[mt.SourceTopicName] = mapStatus(mt.MirrorStatus)
+		state := mapStatus(mt.MirrorStatus)
+		m[mt.SourceTopicName] = state
+		linkMirrors = append(linkMirrors, reconcile.LinkMirror{
+			SourceTopic: mt.SourceTopicName,
+			MirrorTopic: mt.MirrorTopicName,
+			State:       state,
+			Status:      mt.MirrorStatus,
+		})
 	}
+	sort.Slice(linkMirrors, func(i, j int) bool { return linkMirrors[i].SourceTopic < linkMirrors[j].SourceTopic })
 
 	configs, err := c.svc.ListConfigs(ctx, c.cfg)
 	if err != nil {
@@ -60,6 +70,7 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*LinkStatus, error)
 	return &LinkStatus{
 		OffsetSyncEnabled: enabled,
 		Mirrors:           m,
+		LinkMirrors:       linkMirrors,
 		SourceClusterID:   link.SourceClusterID,
 	}, nil
 }
