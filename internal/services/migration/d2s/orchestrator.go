@@ -144,7 +144,12 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 //   - any other failure while kcp's fence is up rolls back: abort_fence when this run's fence has landed, or a
 //     direct unfence when an earlier run's fence was up at the start (FencedAtStart) and this run failed before
 //     its own fence step;
-//   - a cancelled context leaves the fenced world for the next run, since the unfence IO cannot run.
+//   - for those rollbacks, a cancelled context leaves the fenced world for the next run, since the unfence IO
+//     cannot run. The unconfirmed-fence removal above does not check the context (as TBM's does not): on a
+//     cancelled context its patch fails fast and is reported alongside the fence's own failure.
+//
+// A failed compensation is folded into the returned error, which main logs; it is only slog.Debug'd here so
+// the operator does not see it twice.
 func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
@@ -182,14 +187,14 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	if !thisRunsFence {
 		// This run never reached fenced, so there is no abort_fence edge: only the gateway needs putting right.
 		if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			slog.Debug("failed to unfence gateway during rollback", "error", err)
 			return fmt.Errorf("%w; additionally, removing the fence failed: %w; the route may still block every topic, so inspect the gateway before re-running", stepFailure, err)
 		}
 		o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
 		return stepFailure
 	}
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
-		slog.Error("❌ failed to roll back to initialized", "error", err)
+		slog.Debug("failed to roll back to initialized", "error", err)
 		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the route may still block every topic, so inspect the gateway before re-running", stepFailure, err)
 	}
 	return stepFailure
@@ -220,7 +225,7 @@ func (o *D2SOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 		o.reporter.warn("Fence could not be confirmed on every gateway pod — removing it")
 	}
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to remove an unconfirmed fence", "error", err)
+		slog.Debug("failed to remove an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
@@ -284,7 +289,7 @@ func (o *D2SOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 func (o *D2SOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	o.actions.handoff = nil
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		slog.Debug("failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
