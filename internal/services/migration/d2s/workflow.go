@@ -238,9 +238,16 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.Migra
 	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
 }
 
+// ErrSwitchUnconfirmed marks a switch whose patch reached the Gateway CR but could not be confirmed (the
+// operator rejected or never accepted it, the stored configId could not be read back, or the pods never
+// reported it). The CR already holds the static route, so a re-run's reconcile reports "nothing to do" while
+// the pods may still run the fenced dynamic route: the operator must fix the Gateway, not re-run.
+var ErrSwitchUnconfirmed = errors.New("the static route reached the Gateway CR but could not be confirmed")
+
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular
 // streamingDomain bound to the target, no rules tree, so no fence), confirmed on every gateway pod. It is the
-// only point of no return; a failure keeps the fence (see handleStepFailure).
+// only point of no return; a failure keeps the fence (see handleStepFailure). Once the patch has reached the
+// cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migration.ErrFenceUnconfirmed.
 func (a *D2SActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
 	if err := a.ensureGatewayCapability(ctx, config); err != nil {
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
@@ -251,14 +258,17 @@ func (a *D2SActions) Switch(ctx context.Context, config *migration.MigrationConf
 	}
 	applied, err := a.patchGatewayRoute(ctx, config, switchRP, "switchover")
 	if err != nil {
+		if errors.Is(err, gateway.ErrApplyUnverified) {
+			return fmt.Errorf("%w: failed to apply switchover gateway CR: %w", ErrSwitchUnconfirmed, err)
+		}
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	a.reporter.Success("Static route applied")
 	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, err)
 	}
 	if err := a.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, err)
 	}
 	a.reporter.Success("Gateway switchover complete — the route is static on its target domain")
 	return nil

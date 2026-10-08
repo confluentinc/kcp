@@ -145,6 +145,9 @@ func TestD2SOrchestrator_Execute_SwitchFailureKeepsTheFence(t *testing.T) {
 		assert.Len(t, rec.patches, 2, "the fence and the failed switch: no rollback patch")
 		assert.Contains(t, run.out.String(), "keeping the fence")
 		assert.NotContains(t, run.out.String(), "removing fence")
+		assert.NotErrorIs(t, err, ErrSwitchUnconfirmed, "the patch never reached the CR")
+		assert.Contains(t, run.out.String(), "the route is still fenced; resolve the failure, then re-run to finish the switch")
+		assert.NotContains(t, run.out.String(), "nothing to do")
 	})
 	t.Run("the failure hook fails the switch", func(t *testing.T) {
 		t.Setenv(killpoint.FailEnvVar, EventSwitch)
@@ -157,6 +160,46 @@ func TestD2SOrchestrator_Execute_SwitchFailureKeepsTheFence(t *testing.T) {
 		assert.Len(t, rec.patches, 1, "the fence only")
 		assert.Contains(t, run.out.String(), "keeping the fence")
 	})
+}
+
+// A switch patch that reached the CR but was not confirmed leaves the CR static: a re-run would report "nothing
+// to do" while the pods may still run the fenced dynamic route, so the operator is sent to the Gateway instead.
+func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSendsTheOperatorToTheGateway(t *testing.T) {
+	cases := map[string]func(rec *patchRecorder) *mockGatewayService{
+		"acceptance fails after the patch": func(rec *patchRecorder) *mockGatewayService {
+			gw := rec.service()
+			accepts := 0
+			gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+				accepts++
+				if accepts == 2 {
+					return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
+				}
+				return nil
+			}
+			return gw
+		},
+		"the applied configId cannot be confirmed": func(rec *patchRecorder) *mockGatewayService {
+			rec.failAt = map[int]error{2: fmt.Errorf("%w: read back failed", gateway.ErrApplyUnverified)}
+			return rec.service()
+		},
+	}
+	for name, gwFor := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := &patchRecorder{}
+			run := newTestRun(gwFor(rec), cleanWorld().deps())
+
+			err := run.execute(context.Background(), convertResult())
+
+			require.ErrorIs(t, err, ErrSwitchUnconfirmed)
+			assert.Equal(t, StateOffsetsSynced, run.state())
+			assert.Len(t, rec.patches, 2, "the fence and the switch: kcp never restores the route here")
+			out := run.out.String()
+			assert.Contains(t, out, "the Gateway CR already holds the static route")
+			assert.Contains(t, out, `a re-run will report "nothing to do"`)
+			assert.Contains(t, out, "check the Gateway's status")
+			assert.NotContains(t, out, "re-run to finish the switch")
+		})
+	}
 }
 
 // fencedAtStartRun fails this run's fence step, with the route fenced by an earlier run or not.
