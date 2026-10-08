@@ -78,7 +78,7 @@ func NewTargetInfraCmd() *cobra.Command {
   # Reuse an existing environment + cluster, only wire up private link
   kcp create-asset target-infra \
       --aws-region us-east-1 --vpc-id vpc-xxxxxxxx \
-      --env-id env-abc123 --cluster-id lkc-xyz789 --cluster-type dedicated \
+      --env-id env-abc123 --cluster-id lkc-xyz789 \
       --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16`,
 		Annotations: map[string]string{
 			iampolicy.AnnotationKey: iamAnnotation(),
@@ -144,6 +144,9 @@ func NewTargetInfraCmd() *cobra.Command {
 
 	targetInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Long)
+		if c.Example != "" {
+			fmt.Printf("Examples:\n%s\n\n", c.Example)
+		}
 
 		flagOrder := []*pflag.FlagSet{stateFileFlags, manualConfigFlags, envFlags, clusterFlags, privateLinkFlags, outputFlags}
 		groupNames := []string{"State File (Optional)", "Manual Configuration (when not using state file)", "Target Environment", "Target Cluster", "Private Link", "Output"}

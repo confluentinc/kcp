@@ -43,13 +43,35 @@ func TestClusterType_Band3ForcesDedicated(t *testing.T) {
 }
 
 func TestClusterType_MTLSGate(t *testing.T) {
-	// mTLS source + non-AWS target -> Dedicated.
-	nonAWS := ctOf(baseProfile(func(p *Profile) {
+	// mTLS source + GCP target -> Dedicated (mTLS is not supported on GCP Enterprise).
+	gcp := ctOf(baseProfile(func(p *Profile) {
+		p.TargetCloud = "GCP"
+		p.SourceAuthTypes = []string{authMTLS}
+	}))
+	if !gcp.Dedicated {
+		t.Errorf("mTLS + GCP: dedicated=%v, want true", gcp.Dedicated)
+	}
+	fired := false
+	for _, c := range gcp.Causes {
+		if c.ID == "mtls_on_gcp_target" {
+			fired = true
+		}
+	}
+	if !fired {
+		t.Errorf("mTLS + GCP: mtls_on_gcp_target cause missing")
+	}
+	// mTLS source + Azure target stays on Enterprise, with no mTLS trigger.
+	azure := ctOf(baseProfile(func(p *Profile) {
 		p.TargetCloud = "Azure"
 		p.SourceAuthTypes = []string{authMTLS}
 	}))
-	if !nonAWS.Dedicated {
-		t.Errorf("mTLS + Azure: dedicated=%v, want true", nonAWS.Dedicated)
+	if azure.Dedicated {
+		t.Errorf("mTLS + Azure: dedicated=%v, want false", azure.Dedicated)
+	}
+	for _, c := range azure.Causes {
+		if c.ID == "mtls_on_gcp_target" {
+			t.Errorf("mTLS + Azure: unexpected mtls_on_gcp_target cause")
+		}
 	}
 	// mTLS source + AWS target does NOT force Dedicated.
 	aws := ctOf(baseProfile(func(p *Profile) {

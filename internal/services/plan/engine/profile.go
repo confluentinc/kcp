@@ -27,6 +27,13 @@ type Profile struct {
 	// scanless user can pick Apache Kafka / Confluent Platform (a scan run knows the
 	// source already). Same scanless signal the *Answered flags below are built from.
 	Scanless bool
+	// SourcePlatformDeclared is true when the source platform was answered rather than
+	// assumed. A scanless run that answered Amazon MSK gets the MSK metrics command
+	// instead of the both-sources one.
+	SourcePlatformDeclared bool
+	// StateFile is the --state-file path the plan was built from ("" with no scan). It
+	// is only used to print runnable commands (for example the metrics scan).
+	StateFile string
 
 	// Sizing — raw numbers (preferred; kcp fills these from scanned metrics and
 	// topic counts) OR banded labels (a declared/plan-inputs answer).
@@ -76,8 +83,8 @@ type Profile struct {
 	AnyAppNeedsDataMigration string // "No" | "Yes" | ""
 
 	// Source Kafka version facts — the Cluster Linking floor.
-	KafkaVersion        string // "Older than 2.4" | "2.4-2.9" | "3.0 or newer" | ""
-	InterBrokerProtocol string // "No" means IBP < 2.8 (blocks CL on 2.4-2.9)
+	KafkaVersion        string // "Older than 2.4" | "2.4–2.9" | "3.0 or newer" | ""
+	InterBrokerProtocol string // "No" means IBP < 2.8 (blocks CL on 2.4–2.9)
 
 	// Switchover — cutover style and its escalation inputs.
 	DowntimeTolerance        string   // a styleMap key; required with no default (holds the switchover verdict)
@@ -133,6 +140,8 @@ type Profile struct {
 	PartitionsAnswered        bool
 	SchemaAnswered            bool
 	KafkaVersionAnswered      bool
+	IBPAnswered               bool
+	SchemaDetectedByScan      bool // registry presence/kind came from the scan
 	SourceClusterTypeAnswered bool
 }
 

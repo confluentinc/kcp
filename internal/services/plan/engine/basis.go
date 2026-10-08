@@ -4,12 +4,15 @@ import "strings"
 
 // driver names one input behind a verdict, tagged with where it came from.
 type driver struct {
-	source  string // "scan" | "answer"
+	source  string // "scan" | "answer" | "assumption"
 	trigger string // short phrase, e.g. "partition count", "target authentication"
 }
 
 func sc(trigger string) driver  { return driver{"scan", trigger} }
 func ans(trigger string) driver { return driver{"answer", trigger} }
+
+// asm tags a driver as an assumption kcp makes (not a scan finding or an answer).
+func asm(trigger string) driver { return driver{"assumption", trigger} }
 
 // srcOr tags a driver as an answer when the fact was supplied by the customer
 // (an override, or a value the scan never captured), otherwise as a scan finding.
@@ -29,13 +32,15 @@ func srcOr(answered bool, trigger string) driver {
 // lower-case ("… we recommend …"). Returns "" when no drivers are given, so a
 // verdict with nothing concrete behind it reads as it did before.
 func basis(ds ...driver) string {
-	var scans, answers []string
+	var scans, answers, assumed []string
 	for _, d := range ds {
 		switch d.source {
 		case "scan":
 			scans = appendUnique(scans, d.trigger)
 		case "answer":
 			answers = appendUnique(answers, d.trigger)
+		case "assumption":
+			assumed = appendUnique(assumed, d.trigger)
 		}
 	}
 	var parts []string
@@ -44,6 +49,9 @@ func basis(ds ...driver) string {
 	}
 	if len(answers) > 0 {
 		parts = append(parts, "your answer ("+strings.Join(answers, ", ")+")")
+	}
+	if len(assumed) > 0 {
+		parts = append(parts, "our assumption ("+strings.Join(assumed, ", ")+")")
 	}
 	if len(parts) == 0 {
 		return ""
@@ -60,7 +68,8 @@ func lowerFirst(s string) string {
 	r := []rune(s)
 	// Leave all-caps acronyms (e.g. "PNI …") alone: only fold a leading capital
 	// that's followed by a lower-case letter (an ordinary sentence opener).
-	if len(r) > 1 && r[1] >= 'a' && r[1] <= 'z' {
+	// The article "A " is an ordinary sentence opener too: its second rune is a space.
+	if len(r) > 1 && ((r[1] >= 'a' && r[1] <= 'z') || (r[0] == 'A' && r[1] == ' ')) {
 		r[0] = []rune(strings.ToLower(string(r[0])))[0]
 	}
 	return string(r)

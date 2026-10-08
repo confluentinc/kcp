@@ -164,6 +164,11 @@ const (
 	// authSASLPlain is an Apache Kafka / Confluent Platform source auth (MSK's SASL
 	// is SCRAM); it shares the "API keys (SASL/PLAIN)" string with target API-key auth.
 	authSASLPlain = "API keys (SASL/PLAIN)"
+	// authKerberos is an Apache Kafka / Confluent Platform source auth (Kerberos
+	// doesn't exist on MSK). Confluent Cloud Cluster Linking cannot use it (the
+	// destination-initiated link only supports PLAIN/SCRAM/OAUTHBEARER), so it
+	// needs its own handling everywhere source auth is read.
+	authKerberos = "Kerberos (GSSAPI)"
 )
 
 // tierSLA — the uptime SLAs each tier offers, ascending. Basic and Standard are
