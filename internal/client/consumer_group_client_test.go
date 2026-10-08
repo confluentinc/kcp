@@ -760,7 +760,9 @@ func TestCanCommitAnyOffsets_DeniedByEitherAuthorization(t *testing.T) {
 	}
 }
 
-// Review Focus 5: an accepted commit on a topic that cannot exist means a group may have been created.
+// The probe commits on a topic that cannot exist, so an authorized broker answers UNKNOWN_TOPIC_OR_PARTITION.
+// A broker that accepts it instead may have created the probe's consumer group, so the probe neither claims
+// the credential can commit nor stays silent: it errors, naming the group and how to delete it.
 func TestCanCommitAnyOffsets_AnAcceptedCommitIsAnError(t *testing.T) {
 	got, err := canCommitAnyOffsets(&fakeCommitSender{resp: commitAnswer("t", sarama.ErrNoError)}, "g", "t")
 
