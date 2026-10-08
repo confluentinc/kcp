@@ -3,6 +3,7 @@ package d2s
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -217,4 +218,34 @@ func TestVerifyFence_AZeroWindowIsAnError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "detection window")
 	assert.Zero(t, w.gathers, "nothing is read when the check could not run")
+}
+
+// The fence step confirmed kcp's fence, but the facts are re-read after it: a fence removed or reverted in
+// between (by an operator, or another writer) means the commits verify_fence watches are no longer fenced.
+func TestVerifyFence_RefusesWhenTheRouteNoLongerCarriesKcpsFence(t *testing.T) {
+	w := cleanWorld()
+	w.facts.Gateway.Route.Rules["fencing"] = []any{}
+
+	a, err := verify(t, w)
+
+	require.ErrorIs(t, err, ErrVerifyRefused)
+	assert.Contains(t, err.Error(), convertFenceCheckName+": the route no longer carries kcp's conversion fence — it was removed or reverted after the fence step")
+	assert.Contains(t, w.rendered.String(), "✗ "+convertFenceCheckName)
+	assert.Zero(t, w.src.lists, "refused before any snapshot")
+	assert.Nil(t, a.handoff)
+}
+
+// An idle destination group with offsets passes, but the operator is told sync will overwrite its offsets.
+func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
+	color.NoColor = true
+	w := cleanWorld()
+	w.facts.TargetGroupListing = []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Empty"}}
+	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	out := &strings.Builder{}
+	a.reporter = &reporter{out: out, err: io.Discard}
+
+	require.NoError(t, a.VerifyFence(context.Background(), testConfig(), testPolicy()))
+
+	assert.Contains(t, out.String(), "consumer group(s) orders-app exist on the destination with committed offsets but no members")
+	assert.Equal(t, 1, strings.Count(out.String(), "orders-app exist on the destination"), "printed once")
 }

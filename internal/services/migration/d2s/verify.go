@@ -57,6 +57,10 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	if !ok {
 		return a.refuse(config, report)
 	}
+	report.Preconditions = append(report.Preconditions, convertFenceCheck(facts.Gateway))
+	if report.Refused() {
+		return a.refuse(config, report)
+	}
 	report.Preconditions = append(report.Preconditions, reconcile.ConvertCredentialChecks(facts.GroupFacts(nil))...)
 	if report.Refused() {
 		return a.refuse(config, report)
@@ -116,10 +120,29 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		return a.refuse(config, report)
 	}
 
-	// 8. Hand-off. Never nil after a pass, even with no in-scope group: sync_offsets then writes nothing.
+	// 8. Hand-off. Never nil after a pass, even with no in-scope group: sync_offsets then writes nothing. A pass
+	// renders no report, so the link scope's warnings (idle destination groups whose offsets sync will
+	// overwrite) are printed here.
 	a.handoff = restrictTo(second, inScope)
+	for _, wn := range scope.Warnings {
+		a.reporter.warn("%s", wn)
+	}
 	a.reporter.Success("Fence verified — %d consumer group(s) to sync", len(a.handoff))
 	return nil
+}
+
+// convertFenceCheckName names verify_fence's check that kcp's conversion fence is still on the route.
+const convertFenceCheckName = "route carries kcp's conversion fence"
+
+// convertFenceCheck refuses a route whose rules no longer carry kcp's convert fence: verify_fence watches
+// for direct commits on the assumption that the fence is up, so a fence removed or reverted after the fence
+// step voids every check that follows. gw has passed CheckPreconditions, so its route is set.
+func convertFenceCheck(gw *reconcile.GatewayConfig) reconcile.PreconditionResult {
+	rules, err := reconcile.ParseRules(gw.Route.Rules)
+	if err == nil && rules.HasConvertFence() {
+		return reconcile.PreconditionResult{Name: convertFenceCheckName, OK: true}
+	}
+	return reconcile.PreconditionResult{Name: convertFenceCheckName, Detail: "the route no longer carries kcp's conversion fence — it was removed or reverted after the fence step"}
 }
 
 // refuse renders report as --dry-run would and returns ErrVerifyRefused carrying every failed check.
