@@ -78,6 +78,28 @@ func TestRenderReportGateFailure(t *testing.T) {
 	}
 }
 
+// TestRenderReportGateFailureKeepsWarnings: a refusal at the route checks
+// still prints the report's warnings — e.g. that a route kcp left fenced is
+// blocking every topic — rather than dropping them with the topic section.
+func TestRenderReportGateFailureKeepsWarnings(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{
+			{Name: "destination credential can commit offsets", OK: false, Detail: "denied"},
+		},
+		Warnings: []string{`route "migration-route" still carries kcp's conversion fence`},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "gcp"})
+	out := buf.String()
+	if !strings.Contains(out, `⚠ route "migration-route" still carries kcp's conversion fence`) {
+		t.Errorf("a refusal must still print its warnings; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Refused at route checks — 1 failed") {
+		t.Errorf("missing gate-refusal footer; got:\n%s", out)
+	}
+}
+
 // TestRenderReportSkippedPrecondition proves a Skipped precondition (a live
 // check that could not be run, e.g. a permission denial) renders as a
 // yellow ⚠ — never the green ✓ a real pass gets, since that would claim a

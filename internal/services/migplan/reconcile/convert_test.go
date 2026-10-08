@@ -584,3 +584,92 @@ func TestReconcileConvert_OffsetWritePermissionPasses(t *testing.T) {
 		t.Fatalf("a converged route with full credentials must plan, got %+v", p.Report)
 	}
 }
+
+// fencedConvertGateway is convertGateway after a previous run's fence step:
+// kcp's wildcard convert fence heads rules.fencing.
+func fencedConvertGateway() *GatewayConfig {
+	gw := convertGateway()
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topicPatterns": []any{".*"}, "blocked": true}}
+	return gw
+}
+
+const leftFencedWarning = "still carries kcp's conversion fence"
+
+func leftFencedWarnings(r Report) []string {
+	var out []string
+	for _, w := range r.Warnings {
+		if strings.Contains(w, leftFencedWarning) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// TestReconcileConvert_ARefusalOnARouteKcpLeftFencedSaysSo — a previous run
+// fenced the route and died (or failed to unfence); a rerun that refuses
+// returns no artifacts, so nothing would remove the fence. The operator must
+// be told the route is blocking every topic, on every refusal stage after the
+// route is known to be dynamic.
+func TestReconcileConvert_ARefusalOnARouteKcpLeftFencedSaysSo(t *testing.T) {
+	cases := map[string]func() *Plan{
+		"route checks (CheckPreconditions)": func() *Plan {
+			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), true, ClusterIDs{}, trackedGroups())
+		},
+		"route checks (conversion's own)": func() *Plan {
+			gw := fencedConvertGateway()
+			delete(gw.Route.Raw["security"].(map[string]any)["cluster"].(map[string]any), "cc")
+			return reconcileConverged(gw, trackedGroups())
+		},
+		"credential stage": func() *Plan {
+			groups := trackedGroups()
+			groups.TargetCommitDenied = "the destination credential cannot commit offsets"
+			return reconcileConverged(fencedConvertGateway(), groups)
+		},
+		"link scope": func() *Plan {
+			mirrors := linkMirrors()
+			mirrors[0].State, mirrors[0].Status = MirrorActive, "ACTIVE"
+			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+		},
+	}
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := run()
+			if !p.Report.Refused() || p.Artifacts != nil {
+				t.Fatalf("want a refusal, got %+v", p.Report)
+			}
+			got := leftFencedWarnings(p.Report)
+			if len(got) != 1 {
+				t.Fatalf("warnings = %v, want one saying the route is still fenced", p.Report.Warnings)
+			}
+			want := `route "migration-route" still carries kcp's conversion fence (rules.fencing topicPatterns ['.*']), so it is blocking every topic on the route; fix the refusal above and re-run (kcp keeps or lifts the fence as the run proceeds), or remove kcp's entry from the route's rules.fencing by hand to restore traffic now`
+			if got[0] != want {
+				t.Errorf("warning = %q, want %q", got[0], want)
+			}
+		})
+	}
+}
+
+func TestReconcileConvert_ARefusalOnAnUnfencedRouteHasNoFenceWarning(t *testing.T) {
+	groups := trackedGroups()
+	groups.TargetCommitDenied = "the destination credential cannot commit offsets"
+
+	p := reconcileConverged(convertGateway(), groups)
+
+	if !p.Report.Refused() {
+		t.Fatal("want a refusal")
+	}
+	if got := leftFencedWarnings(p.Report); len(got) != 0 {
+		t.Errorf("warnings = %v, want none about a fence the route does not carry", got)
+	}
+}
+
+func TestReconcileConvert_APassOnARouteKcpFencedHasNoFenceWarning(t *testing.T) {
+	p := reconcileConverged(fencedConvertGateway(), trackedGroups())
+
+	if p.Report.Refused() || p.Artifacts == nil || !p.Artifacts.FencedAtStart {
+		t.Fatalf("want a plan resuming from the fence, got %+v", p.Report)
+	}
+	if got := leftFencedWarnings(p.Report); len(got) != 0 {
+		t.Errorf("warnings = %v, want none: the run proceeds and keeps or lifts the fence itself", got)
+	}
+}

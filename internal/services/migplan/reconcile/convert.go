@@ -62,10 +62,25 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: convertMode}
 	}
 
+	// From here the route is dynamic (or CheckPreconditions refuses it). A
+	// refusal returns no artifacts, so this run will not touch the route: if a
+	// previous run left kcp's convert fence on it, that fence keeps blocking
+	// every topic, and the operator must be told so.
+	refused := func() *Plan {
+		if gw != nil && gw.Route != nil && gw.Route.Mode == "dynamic" {
+			if rules, _ := ParseRules(gw.Route.Rules); rules.HasConvertFence() {
+				report.Warnings = append(report.Warnings, fmt.Sprintf(
+					"route %q still carries kcp's conversion fence (rules.fencing topicPatterns ['.*']), so it is blocking every topic on the route; fix the refusal above and re-run (kcp keeps or lifts the fence as the run proceeds), or remove kcp's entry from the route's rules.fencing by hand to restore traffic now",
+					gw.Route.Name))
+			}
+		}
+		return &Plan{Report: report, Mode: convertMode}
+	}
+
 	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
 	report.Preconditions = pcs
 	if !ok {
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	rc := gw.Route
 
@@ -98,7 +113,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// gateway enforces it.
 	report.Preconditions = append(report.Preconditions, routeLevelFenceCheck(rc))
 	if report.Refused() {
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 
 	report.Preconditions = append(report.Preconditions, ConvertCredentialChecks(groups)...)
@@ -109,7 +124,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// will fail the write after the fence. The cost is that an operator who
 	// fixes a credential can then meet a second refusal.
 	if report.Refused() {
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 
 	scope := CheckLinkScope(LinkScopeInput{
@@ -129,36 +144,36 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	}
 	report.Warnings = append(report.Warnings, scope.Warnings...)
 	if report.Refused() {
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 
 	fence, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules clone", err.Error()))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	fence.PrependConvertFence()
 	rollback, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("rollback rules clone", err.Error()))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	rollback.DropConvertFence()
 
 	fenceBytes, err := fence.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules serialize", err.Error()))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	rollbackBytes, err := rollback.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("rollback rules serialize", err.Error()))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	switchBytes, err := BuildConvertedStaticRoute(rc.Raw, in.TargetDomain, bootstrapID)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("converted route builds", err.Error()))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 	// Only the fence artifact is size-checked: the rollback is the same rules
 	// minus kcp's fence, so never larger, and the switchover is a route, not a
@@ -166,7 +181,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	if len(fenceBytes) > MaxRulesBytes {
 		report.Preconditions = append(report.Preconditions, fail("rules block within size limit",
 			fmt.Sprintf("rules block is %d bytes (> %d)", len(fenceBytes), MaxRulesBytes)))
-		return &Plan{Report: report, Mode: convertMode}
+		return refused()
 	}
 
 	report.ConvertToStatic = true
