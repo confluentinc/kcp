@@ -66,9 +66,11 @@ override for a single run, without editing the file.
 - **Producers must use the gateway.** The fence blocks traffic that goes
   through the gateway. Producers writing to the source directly are not
   blocked, and the check that catches them (`detectUnroutedProducersDuration`)
-  is **off by default**. For a conversion, see
-  [What is checked](#what-is-checked): it watches for consumers committing to
-  the source directly, and that check can't be turned off.
+  is **off by default**. A route conversion does not use
+  `detectUnroutedProducersDuration` at all; it has its own
+  `detectUnroutedCommitsDuration` instead (see
+  [What it does](#what-it-does)): it watches for consumers committing to the
+  source directly, and that check can't be turned off.
 - **What is fenced.** A static route is fenced and switched as a whole — the
   topic selection only decides which mirrors are promoted and lag-checked. A
   dynamic route fences and switches only the selected topics.
@@ -352,11 +354,13 @@ on every gateway pod, as in a migration.
   Producers retry (give them a `delivery.timeout.ms` longer than that);
   consumers fetch nothing and can't commit.
 - **A rejoin, and possibly a re-read.** After the switch, consumers' group
-  coordinator is on the destination. Each consumer's first commit there fails
-  (the destination doesn't know its member), so it rejoins its group and
-  resumes from the copied offset. It may read again what it fetched between
-  the switch and the rejoin (up to one poll, `max.poll.records`), and what it
-  consumed just before the fence but couldn't commit. This is expected
+  coordinator is on the destination. Each consumer's first commit or heartbeat
+  there fails (the destination doesn't know its member), so it
+  rejoins its group and resumes from the copied offset. It may read again what
+  it fetched between the switch and that first failed commit or heartbeat — up
+  to one poll (`max.poll.records`) for a consumer that commits after every
+  batch, and up to the backlog the fence built for one that auto-commits — and
+  what it consumed just before the fence but couldn't commit. This is expected
   at-least-once behaviour; nothing is skipped.
 - **KIP-848 consumers** (`group.protocol=consumer`) can't use a dynamic route
   at all; they work once the route is static.
@@ -408,7 +412,7 @@ rejected.
 | `lagThreshold`                    | int      | `0`     | `--lag-threshold`                       | Replication lag tolerated per topic: each selected topic's lag (the sum of its partition lags) must be at or below this before the run fences. `0` is the strictest (fully caught up).                                                                                        |
 | `promoteBatchSize`                | int      | `0`     | `--promote-batch-size`                  | Max mirror topics promoted per batch. `0` promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted.                                                                                                                           |
 | `rolloutTimeout`                  | duration | `0s`    | `--rollout-timeout`                     | Max wait for the operator to report the gateway `Ready` during fence and switchover (e.g. `10m`). `0s` means no deadline — waits until convergence or cancellation.                                                                                                            |
-| `detectUnroutedProducersDuration` | duration | `0s`    | `--detect-unrouted-producers-duration`  | After fencing, kcp takes two source-offset snapshots this far apart to catch producers still bypassing the gateway; if any partition's offset advanced, the run stops before promote. `0s` **skips the check entirely** (the default); minimum `10s` when set — shorter can't span a producer's metadata refresh.                           |
+| `detectUnroutedProducersDuration` | duration | `0s`    | `--detect-unrouted-producers-duration`  | After fencing, kcp takes two source-offset snapshots this far apart to catch producers still bypassing the gateway; if any partition's offset advanced, the run stops before promote. `0s` **skips the check entirely** (the default); minimum `10s` when set — shorter can't span a producer's metadata refresh. Ignored by a route conversion, which uses `detectUnroutedCommitsDuration` instead. |
 | `consumerOffsetSyncDrainDuration` | duration | `0s`    | `--consumer-offset-sync-drain-duration` | Static routes only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set (which a dynamic route refuses). `0s` means no wait.                                           |
 | `hotReloadTimeout`                | duration | `0s`    | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0s` uses the built-in 90s budget rather than waiting forever. |
 | `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
