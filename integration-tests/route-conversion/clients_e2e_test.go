@@ -111,10 +111,14 @@ func (e *env) startConsumer(t *testing.T, dir, bootstrap, props, group, topic, m
 
 // gatewayClientProps writes the client config for a client that talks to the
 // gateway (TLS to the gateway's self-signed certificate; the gateway swaps in
-// the destination credential) and returns its path.
+// the destination credential) and returns its path. It is the consumers'
+// config (the producer writes its own). max.poll.interval.ms and
+// session.timeout.ms bound a rebalance that waits for a lost first JoinGroup:
+// by default the coordinator waits out the 300s rebalance timeout.
 func (e *env) gatewayClientProps(t *testing.T, dir string) string {
 	t.Helper()
-	props := fmt.Sprintf("security.protocol=SSL\nssl.truststore.location=%s\nssl.truststore.password=%s\n",
+	props := fmt.Sprintf("security.protocol=SSL\nssl.truststore.location=%s\nssl.truststore.password=%s\n"+
+		"max.poll.interval.ms=60000\nsession.timeout.ms=30000\n",
 		gatewayTruststore, gatewayTruststorePassword)
 	path := filepath.Join(dir, "gateway-client.properties")
 	require.NoError(t, os.WriteFile(path, []byte(props), 0o600))

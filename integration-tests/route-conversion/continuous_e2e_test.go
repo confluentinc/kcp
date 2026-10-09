@@ -195,3 +195,27 @@ func TestContinuousClients_ResumeAfterOffsetsSynced(t *testing.T) {
 	e.checkClientRun(t, run, win)
 	t.Logf("\n✅ RESULT: clients missed nothing across an interrupted-then-resumed conversion; every re-read was bounded.")
 }
+
+// waitAssigned waits for a member's first assignment. On a timeout it logs the
+// group's state and members on the source before failing, so a stalled join can
+// be diagnosed from the report.
+func (e *env) waitAssigned(t *testing.T, s groupSpec, c *clientProc) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		if raw, err := os.ReadFile(c.logPath); err == nil && strings.Contains(string(raw), `"name":"partitions_assigned"`) {
+			return
+		}
+		if time.Now().After(deadline) {
+			ds, err := e.groupClient(t, sourceCluster).DescribeGroups([]string{s.group})
+			if err != nil {
+				t.Logf("group %s on the source could not be described: %v", s.group, err)
+			}
+			for _, d := range ds {
+				t.Logf("group %s on the source: state %s, %d member(s): %+v", s.group, d.State, len(d.Members), d.Members)
+			}
+			t.Fatalf("%s never logged partitions_assigned within 3m (see %s)", c.name, c.errPath)
+		}
+		time.Sleep(time.Second)
+	}
+}
