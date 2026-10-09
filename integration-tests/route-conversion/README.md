@@ -95,7 +95,7 @@ make test-route-conversion-run RUN=TestConversion_Baseline   # one test, or omit
 make test-route-conversion-teardown
 ```
 
-The whole suite takes 35-45 minutes after setup. The environment uses about
+The whole suite takes about 20-25 minutes after setup. The environment uses about
 5 GiB of Docker memory at rest (its profile is capped at 12 GiB) and can be up
 alongside both idempotent-fsm environments if Docker has the memory. CI runs
 it as the Semaphore block `integration: route-conversion e2e`.

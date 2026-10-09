@@ -33,7 +33,7 @@ RUNNER="${KCP_RC_RUNNER_POD}"
 
 # Optional test selector: `run.sh 'TestFoo'` -> -test.run TestFoo, or export
 # GOTEST_FLAGS for anything else. -test.v is always on; -test.timeout is raised
-# because the whole suite takes 35-45 minutes.
+# because the whole suite takes about 20-25 minutes.
 RUN_SELECTOR=""
 [ -n "${1:-}" ] && RUN_SELECTOR="-test.run ${1}"
 GOTEST_FLAGS="${GOTEST_FLAGS:-}"
