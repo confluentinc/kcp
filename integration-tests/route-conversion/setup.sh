@@ -215,11 +215,11 @@ echo "Deploying the ${RUNNER} pod (gateway Service ${GATEWAY_IP})..."
 sed -e "s/__GATEWAY_IP__/${GATEWAY_IP}/g" "${TEMPLATES_DIR}/rc-runner.yaml" > "${RENDERED_DIR}/rc-runner.yaml"
 kubectl --context "${PROFILE}" apply -f "${RENDERED_DIR}/rc-runner.yaml"
 wait_for_pods "app=${RUNNER}"
-for tool in tar curl kafka-console-producer kafka-get-offsets kafka-topics kafka-verifiable-producer kafka-verifiable-consumer; do
+for tool in python3 curl kafka-console-producer kafka-get-offsets kafka-topics kafka-verifiable-producer kafka-verifiable-consumer; do
   k exec "${RUNNER}" -- sh -c "command -v ${tool}" >/dev/null 2>&1 || {
     echo "FATAL: ${tool} is not on the PATH of the ${RUNNER} image (cp-server:${CP_SERVER_TAG})" >&2; exit 1; }
 done
-echo "  ✓ ${RUNNER} has tar, curl and the Kafka client tools"
+echo "  ✓ ${RUNNER} has python3, curl and the Kafka client tools"
 
 # --- Records on every link topic, before promotion ---
 # Keyed records spread over every partition (murmur2 of k0..k299 is fixed, so the

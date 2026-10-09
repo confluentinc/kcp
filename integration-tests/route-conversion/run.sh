@@ -45,6 +45,12 @@ mkdir -p "${RUN_DIR}"
 
 k() { kubectl --context "${PROFILE}" -n "${NAMESPACE}" "$@"; }
 
+# put_file SRC DEST — copy a local file into the runner pod without tar (the
+# cp-server image has none, so `kubectl cp` cannot be used).
+put_file() {
+  k exec -i "${RUNNER}" -- sh -c "cat > '$2'" < "$1"
+}
+
 main() {
   # main runs inside the tee pipeline below, where the caller's errexit is off;
   # turn it back on so a failed step still stops the run.
@@ -78,15 +84,15 @@ main() {
   k wait --for=condition=Ready pod/"${RUNNER}" --timeout=120s
 
   echo "Copying binaries and rendered files into the runner..."
-  k cp "${TEST_BIN}" "${RUNNER}:/workspace/route-conversion-e2e.test"
+  put_file "${TEST_BIN}" /workspace/route-conversion-e2e.test
   k exec "${RUNNER}" -- chmod +x /workspace/route-conversion-e2e.test
-  k cp "${KCP_BIN}" "${RUNNER}:/workspace/kcp"
+  put_file "${KCP_BIN}" /workspace/kcp
   k exec "${RUNNER}" -- chmod +x /workspace/kcp
 
   k exec "${RUNNER}" -- mkdir -p /workspace/rendered
   for f in "${RENDERED_DIR}"/*; do
     [ -f "${f}" ] || continue
-    k cp "${f}" "${RUNNER}:/workspace/rendered/$(basename "${f}")"
+    put_file "${f}" "/workspace/rendered/$(basename "${f}")"
   done
   k exec "${RUNNER}" -- sh -c 'chmod 600 /workspace/rendered/*'
 
@@ -129,7 +135,9 @@ set -e
 # then give each folder its test's slice of run.log (from its `=== RUN` line to
 # its `--- PASS/FAIL/SKIP` line).
 if k exec "${RUNNER}" -- test -d "${POD_RUN_DIR}" 2>/dev/null; then
-  k cp "${RUNNER}:${POD_RUN_DIR}/." "${RUN_DIR}/" >/dev/null ||
+  # No tar in the image: stream a tar built by the pod's python3 and unpack it here.
+  k exec "${RUNNER}" -- python3 -c "import sys,tarfile; t=tarfile.open(fileobj=sys.stdout.buffer, mode='w|'); t.add('${POD_RUN_DIR}', arcname='.'); t.close()" |
+    tar -x -C "${RUN_DIR}" ||
     echo "WARN: could not copy the per-test reports out of ${RUNNER}" >&2
 fi
 for dir in "${RUN_DIR}"/*/; do
