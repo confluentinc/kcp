@@ -208,11 +208,20 @@ func (e *env) deleteAllGroups(t *testing.T, c cluster) {
 func (e *env) waitGroupState(t *testing.T, c cluster, group, state string, members int, timeout time.Duration) {
 	t.Helper()
 	gc := e.groupClient(t, c)
-	require.Eventuallyf(t, func() bool {
+	var lastErr error
+	deadline := time.Now().Add(timeout)
+	for {
 		ds, err := gc.DescribeGroups([]string{group})
-		if err != nil || len(ds) != 1 {
-			return false
+		switch {
+		case err != nil:
+			lastErr = err
+			t.Logf("poll (group %s): transient describe error, retrying: %v", group, err)
+		case len(ds) == 1 && strings.EqualFold(ds[0].State, state) && len(ds[0].Members) >= members:
+			return
 		}
-		return strings.EqualFold(ds[0].State, state) && len(ds[0].Members) >= members
-	}, timeout, time.Second, "group %s on the %s must reach %s with %d member(s)", group, c, state, members)
+		if time.Now().After(deadline) {
+			t.Fatalf("group %s on the %s must reach %s with %d member(s) within %s; last read error: %v", group, c, state, members, timeout, lastErr)
+		}
+		time.Sleep(time.Second)
+	}
 }
