@@ -48,13 +48,17 @@ deleted on both clusters.
 | `refusal_e2e_test.go` | an unpromoted link topic, a group committing outside the link, a group live on the destination, a direct commit during the window, a refusal with kcp's fence already up |
 | `continuous_e2e_test.go` | `TestContinuousClients_Conversion` and `TestContinuousClients_ResumeAfterOffsetsSynced`: producers and consumers through the gateway across the conversion |
 
-The continuous-client tests assert **no missed record** (every acknowledged
-value read at least once by each group) and **bounded re-reads**: a value read
-twice must be either one first read within [onset-10s, onset+15s] of the
-fence onset (its commit was blocked; at most one batch per manual-commit
-member, or one auto-commit interval's worth) or one first read no earlier than
-5s before the switch completed and re-read within 60s after it (at most
-`max.poll.records` per member). The checker (`checker.go`) is a Go port of the
+The continuous-client tests assert **traffic after the switch** (each
+group's producer has a record acknowledged after the route went static, and
+no send error at all), **no missed record** (every acknowledged value read at
+least once by each group) and **bounded re-reads**: a value read twice must be
+either one first read within [onset-10s, onset+15s] of the fence onset (its
+commit was blocked; at most one batch per manual-commit member, or one
+auto-commit interval's worth) or one first read no earlier than 5s before the
+switch completed and re-read within 60s after it (at most `max.poll.records`
+per manual-commit member; for an auto-commit member, which keeps polling until
+its next auto-commit or heartbeat fails, at most
+rate x ((switch - fence onset) + 5s) + `max.poll.records`). The checker (`checker.go`) is a Go port of the
 manual runs' `analyze.py`; it and the route inspection (`route.go`) are
 untagged and unit-tested by `make test-go`.
 

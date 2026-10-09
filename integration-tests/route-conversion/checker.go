@@ -41,7 +41,8 @@ type Bounds struct {
 	// earlier than SwitchBefore before the watcher's switch time, and its
 	// second read no later than SwitchAfter after it.
 	SwitchBefore, SwitchAfter time.Duration
-	// MaxPollRecords caps the switch re-reads per member (one poll).
+	// MaxPollRecords caps a manual-commit member's switch re-reads (one poll);
+	// an auto-commit member's cap is autoCommitSwitchLimit.
 	MaxPollRecords int
 	// AutoCommitInterval and ProduceRatePerSec cap an auto-commit member's
 	// fence-onset re-reads: what it can consume between two commits.
@@ -50,6 +51,10 @@ type Bounds struct {
 	// BatchSlack widens the window a manual-commit member's batch is looked
 	// for in: the tool logs a batch's records_consumed line after its records.
 	BatchSlack time.Duration
+	// MinAckedAfterSwitch is how many records a group's producer must have
+	// acknowledged after the switch: without them, producing through the
+	// converted route was not shown to work.
+	MinAckedAfterSwitch int
 }
 
 // DefaultBounds are the spec's first estimates (2.5); tune them here, and
@@ -64,6 +69,8 @@ func DefaultBounds() Bounds {
 		AutoCommitInterval: 5 * time.Second,
 		ProduceRatePerSec:  20,
 		BatchSlack:         time.Second,
+
+		MinAckedAfterSwitch: 1,
 	}
 }
 
@@ -82,10 +89,17 @@ type ProducedRecord struct {
 	TimestampMs int64
 }
 
+// SendError is one producer_send_error event.
+type SendError struct {
+	Value              string
+	TimestampMs        int64
+	Exception, Message string
+}
+
 // ProducerLog is one kafka-verifiable-producer's output.
 type ProducerLog struct {
 	Acked      map[string]ProducedRecord
-	SendErrors map[string]struct{}
+	SendErrors map[string]SendError
 	// Skipped counts non-empty lines that were not JSON events (log4j noise,
 	// or a line cut short when the tool was stopped).
 	Skipped int
@@ -133,6 +147,8 @@ type event struct {
 	Offset    int64   `json:"offset"`
 	Count     int     `json:"count"`
 	Success   *bool   `json:"success"`
+	Exception string  `json:"exception"`
+	Message   string  `json:"message"`
 }
 
 // scanEvents calls fn for every JSON event line in r. Lines that are not JSON
@@ -158,7 +174,7 @@ func scanEvents(r io.Reader, fn func(event)) (int, error) {
 
 // ParseProducerLog reads one kafka-verifiable-producer's JSON lines.
 func ParseProducerLog(r io.Reader) (ProducerLog, error) {
-	pl := ProducerLog{Acked: map[string]ProducedRecord{}, SendErrors: map[string]struct{}{}}
+	pl := ProducerLog{Acked: map[string]ProducedRecord{}, SendErrors: map[string]SendError{}}
 	skipped, err := scanEvents(r, func(e event) {
 		if e.Value == nil {
 			return
@@ -167,7 +183,7 @@ func ParseProducerLog(r io.Reader) (ProducerLog, error) {
 		case "producer_send_success":
 			pl.Acked[*e.Value] = ProducedRecord{Value: *e.Value, Partition: e.Partition, Offset: e.Offset, TimestampMs: e.Timestamp}
 		case "producer_send_error":
-			pl.SendErrors[*e.Value] = struct{}{}
+			pl.SendErrors[*e.Value] = SendError{Value: *e.Value, TimestampMs: e.Timestamp, Exception: e.Exception, Message: e.Message}
 		}
 	})
 	pl.Skipped = skipped
@@ -224,25 +240,29 @@ type Duplicate struct {
 
 // GroupResult is the checker's verdict for one group.
 type GroupResult struct {
-	Group, Topic  string
-	Acked         int
-	SendErrors    int
-	Reads         int
-	Distinct      int
-	NotAcked      int
-	Missed        []ProducedRecord
-	Duplicates    []Duplicate
-	ByClass       map[DupClass]int
-	Assignments   map[string]int
-	Revocations   map[string]int
-	FailedCommits int
-	Skipped       int
-	Windows       Windows
-	Failures      []string
+	Group, Topic string
+	Acked        int
+	// AckedAfterSwitch counts acked records with an ack after the switch.
+	AckedAfterSwitch int
+	SendErrors       int
+	// FirstSendError is the earliest send error, when there is one.
+	FirstSendError *SendError
+	Reads          int
+	Distinct       int
+	NotAcked       int
+	Missed         []ProducedRecord
+	Duplicates     []Duplicate
+	ByClass        map[DupClass]int
+	Assignments    map[string]int
+	Revocations    map[string]int
+	FailedCommits  int
+	Skipped        int
+	Windows        Windows
+	Failures       []string
 }
 
-// OK reports whether the group passed: nothing missed, every re-read
-// explained and within its bound.
+// OK reports whether the group passed: records acked after the switch, no send
+// error, nothing missed, every re-read explained and within its bound.
 func (r GroupResult) OK() bool { return len(r.Failures) == 0 }
 
 // Check matches the producers' acknowledged records against the group's reads.
@@ -258,14 +278,27 @@ func Check(in CheckInput) GroupResult {
 				acked[v] = rec
 			}
 		}
-		for v := range p.SendErrors {
-			if strings.HasPrefix(v, prefix) {
-				res.SendErrors++
+		for v, se := range p.SendErrors {
+			if !strings.HasPrefix(v, prefix) {
+				continue
+			}
+			res.SendErrors++
+			if f := res.FirstSendError; f == nil || se.TimestampMs < f.TimestampMs ||
+				(se.TimestampMs == f.TimestampMs && se.Value < f.Value) {
+				se := se
+				res.FirstSendError = &se
 			}
 		}
 		res.Skipped += p.Skipped
 	}
 	res.Acked = len(acked)
+	if in.Windows.SwitchDoneMs > 0 {
+		for _, rec := range acked {
+			if rec.TimestampMs > in.Windows.SwitchDoneMs {
+				res.AckedAfterSwitch++
+			}
+		}
+	}
 
 	reads := map[string][]Read{}
 	batches := map[string][]Batch{}
@@ -344,6 +377,18 @@ func Check(in CheckInput) GroupResult {
 	if res.Acked == 0 {
 		fail("no acknowledged record with prefix %q: the producer never ran, so the check would pass vacuously", prefix)
 	}
+	if in.Windows.SwitchDoneMs > 0 && res.AckedAfterSwitch < b.MinAckedAfterSwitch {
+		if res.AckedAfterSwitch == 0 {
+			fail("no record acknowledged after the switch: producing through the converted route was not shown to work")
+		} else {
+			fail("only %d record(s) acknowledged after the switch, fewer than %d: producing through the converted route was not shown to work",
+				res.AckedAfterSwitch, b.MinAckedAfterSwitch)
+		}
+	}
+	if f := res.FirstSendError; f != nil {
+		fail("%d producer send error(s); with the producer's retries any send error is a real failure (first: %s at %d: %s: %s)",
+			res.SendErrors, f.Value, f.TimestampMs, f.Exception, f.Message)
+	}
 	if n := len(res.Missed); n > 0 {
 		m := res.Missed[0]
 		fail("%d acknowledged record(s) never read by group %s (first: %s p%d@%d, acked at %d)", n, in.Group, m.Value, m.Partition, m.Offset, m.TimestampMs)
@@ -363,11 +408,34 @@ func Check(in CheckInput) GroupResult {
 		}
 	}
 	for _, m := range sortedKeys(switchByMember) {
-		if n := switchByMember[m]; n > b.MaxPollRecords {
-			fail("member %s re-read %d record(s) after the switch, more than one poll (%d)", m, n, b.MaxPollRecords)
+		n := switchByMember[m]
+		if !in.AutoCommit {
+			if n > b.MaxPollRecords {
+				fail("member %s re-read %d record(s) after the switch, more than one poll (%d)", m, n, b.MaxPollRecords)
+			}
+			continue
+		}
+		if limit := autoCommitSwitchLimit(b, in.Windows); n > limit {
+			fail("member %s re-read %d record(s) after the switch, more than %d (the fence's backlog plus one auto-commit interval at %d/s, plus one poll)",
+				m, n, limit, b.ProduceRatePerSec)
 		}
 	}
 	return res
+}
+
+// autoCommitSwitchLimit is how many switch re-reads an auto-commit member may
+// have. A manual-commit member commits after every batch, so its first commit
+// after the switch fails at once and it re-reads at most one poll. An
+// auto-commit member keeps polling until its next auto-commit or heartbeat
+// fails, so it can re-read the backlog the fence built (it consumed past its
+// blocked commits) plus what it fetches in one more auto-commit interval, plus
+// the poll in flight: rate x ((switch - fence onset) + interval) + one poll.
+func autoCommitSwitchLimit(b Bounds, w Windows) int {
+	fenced := time.Duration(w.SwitchDoneMs-w.FenceOnsetMs) * time.Millisecond
+	if fenced < 0 {
+		fenced = 0
+	}
+	return int(math.Ceil((fenced+b.AutoCommitInterval).Seconds()*float64(b.ProduceRatePerSec))) + b.MaxPollRecords
 }
 
 // fenceOnsetLimit is how many fence-onset re-reads a member may have: what it
@@ -409,7 +477,7 @@ func (r GroupResult) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "== group %s on %s\n", r.Group, r.Topic)
 	fmt.Fprintf(&b, "   windows: fence onset %d, switch %d (Unix ms)\n", r.Windows.FenceOnsetMs, r.Windows.SwitchDoneMs)
-	fmt.Fprintf(&b, "   produced: %d acked, %d send errors (never acked)\n", r.Acked, r.SendErrors)
+	fmt.Fprintf(&b, "   produced: %d acked (%d after the switch), %d send errors (never acked)\n", r.Acked, r.AckedAfterSwitch, r.SendErrors)
 	fmt.Fprintf(&b, "   consumed: %d reads of %d distinct records; assignments %v, revocations %v, failed commits %d\n",
 		r.Reads, r.Distinct, r.Assignments, r.Revocations, r.FailedCommits)
 	fmt.Fprintf(&b, "   MISSED (acked, never read): %d\n", len(r.Missed))
@@ -430,7 +498,7 @@ func (r GroupResult) String() string {
 	fmt.Fprintf(&b, "   read but not acked (written despite a send error, or a retry duplicate): %d\n", r.NotAcked)
 	fmt.Fprintf(&b, "   skipped non-JSON lines: %d\n", r.Skipped)
 	if r.OK() {
-		b.WriteString("   RESULT: PASS — every acked record read at least once; every re-read bounded\n")
+		b.WriteString("   RESULT: PASS — records acked after the switch, no send error; every acked record read at least once; every re-read bounded\n")
 	} else {
 		b.WriteString("   RESULT: FAIL\n")
 		for _, f := range r.Failures {
