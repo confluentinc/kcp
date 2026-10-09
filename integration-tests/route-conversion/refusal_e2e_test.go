@@ -78,7 +78,7 @@ func TestRefusal_GroupActiveOnTheDestination(t *testing.T) {
 	seeds := e.seedGroups(t, e.defaultSeeds("active")...)
 	group := seeds[1].group
 	dir := e.workDir(t)
-	c := e.startConsumer(t, dir, e.destBootstrap, e.destClientProps(t, dir), group, e.topic(3), "dest", false)
+	c := e.startConsumer(t, dir, e.destBootstrap, e.destClientProps(t), group, e.topic(3), "dest", false)
 	defer c.stop(t)
 	e.waitGroupState(t, destCluster, group, "Stable", 1, 2*time.Minute)
 	routeBefore := e.liveRoute(t, ctx)

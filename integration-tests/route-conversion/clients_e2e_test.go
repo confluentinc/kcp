@@ -77,10 +77,10 @@ func (p *clientProc) waitForLine(t *testing.T, substr string, timeout time.Durat
 
 // destClientProps writes the client config for a client that talks to the
 // destination directly (SASL_SSL PLAIN, the destination's own truststore) and
-// returns its path. The credential comes from the pod env and the file stays
-// in the test's folder inside the pod; run.sh copies it out with the reports,
-// which are local and git-ignored.
-func (e *env) destClientProps(t *testing.T, dir string) string {
+// returns its path. The credential comes from the pod env, and the file is
+// written to a temporary directory, never the test's report folder: run.sh
+// copies the reports out and CI uploads them as an artifact.
+func (e *env) destClientProps(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(destTruststorePassword)
 	require.NoError(t, err, "read the destination truststore password")
@@ -92,7 +92,7 @@ func (e *env) destClientProps(t *testing.T, dir string) string {
 		"sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=\"%s\" password=\"%s\";\n"+
 		"ssl.truststore.location=%s\nssl.truststore.password=%s\nssl.endpoint.identification.algorithm=\n",
 		e.saslUser, e.saslPassword, destTruststore, pw)
-	path := filepath.Join(dir, "dest-client.properties")
+	path := filepath.Join(t.TempDir(), "dest-client.properties")
 	require.NoError(t, os.WriteFile(path, []byte(props), 0o600))
 	return path
 }
