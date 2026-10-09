@@ -41,11 +41,14 @@ func (e *env) liveRoute(t *testing.T, ctx context.Context) map[string]any {
 
 // replaceRoute writes route as the whole of the suite's route with a fresh
 // configId, then waits for the operator to accept it and for every gateway pod
-// to report that configId (a hot reload on every pod).
+// to report that configId, whether CFK hot-reloads the pods or rolls them (a
+// roll is detected from the Deployment generation and gets the longer budget).
 func (e *env) replaceRoute(t *testing.T, ctx context.Context, route map[string]any) {
 	t.Helper()
 	id, err := gateway.NewConfigID()
 	require.NoError(t, err)
+	baseline, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
+	require.NoError(t, err, "read the gateway deployment generation")
 	stored, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Value: route}, id)
 	require.NoError(t, err, "patch route %q", e.route)
 	require.Equal(t, id, stored, "the gateway CR must store the configId sent")
@@ -53,6 +56,7 @@ func (e *env) replaceRoute(t *testing.T, ctx context.Context, route map[string]a
 		"the operator must accept the patched route")
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
 		ConfigID: id, PollInterval: time.Second, HotReloadTimeout: 2 * time.Minute,
+		BaselineDeploymentGeneration: baseline, RollTimeout: 10 * time.Minute,
 	}), "every gateway pod must hot-reload configId %s", id)
 }
 
