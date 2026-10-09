@@ -811,5 +811,6 @@ func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Zero(t, builds.total())
-	assert.Contains(t, out, "already static on its target domain")
+	assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1 — nothing to do: the route is already static on its target domain")
+	assert.NotContains(t, out, "Migration completed")
 }

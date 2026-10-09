@@ -349,11 +349,31 @@ func TestCheckLinkScope_WarnsAboutUntrackedTopicsOffTheLink(t *testing.T) {
 	if s.Refused() {
 		t.Fatalf("got %+v, want no refusal", s)
 	}
-	if !strings.Contains(s.UntrackedTopicsWarning, "_schemas, clicks") || !strings.Contains(s.UntrackedTopicsWarning, "not on the cluster link") {
-		t.Fatalf("UntrackedTopicsWarning = %q, want one naming _schemas and clicks", s.UntrackedTopicsWarning)
+	if !strings.HasPrefix(s.UntrackedTopicsWarning, "topic(s) clicks are not on the cluster link") {
+		t.Fatalf("UntrackedTopicsWarning = %q, want it to lead with the ordinary topic clicks", s.UntrackedTopicsWarning)
+	}
+	if !strings.HasSuffix(s.UntrackedTopicsWarning, "Also not on the link, and probably internal (name starts with '_'): _schemas") {
+		t.Fatalf("UntrackedTopicsWarning = %q, want _schemas listed separately as probably internal", s.UntrackedTopicsWarning)
 	}
 	if len(s.Warnings) != 0 {
 		t.Fatalf("Warnings = %v, want the untracked warning kept out of it", s.Warnings)
+	}
+}
+
+// Decision S6 holds: a topic named like an internal one is still listed, never dropped, even
+// when it is the only untracked topic.
+func TestCheckLinkScope_UntrackedInternalTopicsAloneStillWarn(t *testing.T) {
+	in := linkInput()
+	in.SourceTopics = append(in.SourceTopics, "_confluent-metrics", "_confluent-command")
+
+	s := CheckLinkScope(in)
+
+	want := "topic(s) _confluent-command, _confluent-metrics are not on the cluster link and are probably internal (name starts with '_'); no source consumer group has committed offsets on them"
+	if !strings.HasPrefix(s.UntrackedTopicsWarning, want) {
+		t.Fatalf("UntrackedTopicsWarning = %q, want prefix %q", s.UntrackedTopicsWarning, want)
+	}
+	if !strings.Contains(s.UntrackedTopicsWarning, "migrate them first if anything on this route still reads or writes them") {
+		t.Fatalf("UntrackedTopicsWarning = %q, want the migrate-first guidance kept", s.UntrackedTopicsWarning)
 	}
 }
 

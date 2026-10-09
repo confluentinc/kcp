@@ -291,7 +291,9 @@ func checkGroupScope(link map[string]struct{}, committed map[string][]string) (P
 // untrackedOffLinkWarning lists source topics that are not on the link and that
 // no group commits on. Nothing tells a forgotten produce-only topic from a
 // system topic (_schemas, the MSK canary, Connect internals), so this is a
-// warning, never a refusal.
+// warning, never a refusal, and every such topic stays in it. Names starting
+// with '_' (the usual internal-topic convention) go in a separate clause so the
+// ordinary topics stand out.
 func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, committed map[string][]string) string {
 	tracked := map[string]struct{}{}
 	for _, topics := range committed {
@@ -299,19 +301,32 @@ func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, co
 			tracked[t] = struct{}{}
 		}
 	}
-	var untracked []string
+	var ordinary, internal []string
 	for _, t := range sourceTopics {
 		_, onLink := link[t]
 		_, isTracked := tracked[t]
-		if !onLink && !isTracked {
-			untracked = append(untracked, t)
+		if onLink || isTracked {
+			continue
+		}
+		if strings.HasPrefix(t, "_") {
+			internal = append(internal, t)
+		} else {
+			ordinary = append(ordinary, t)
 		}
 	}
-	if len(untracked) == 0 {
+	sort.Strings(ordinary)
+	sort.Strings(internal)
+	const consequence = "no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them"
+	switch {
+	case len(ordinary) == 0 && len(internal) == 0:
 		return ""
+	case len(ordinary) == 0:
+		return fmt.Sprintf("topic(s) %s are not on the cluster link and are probably internal (name starts with '_'); %s",
+			joinCapped(internal, 20), consequence)
+	case len(internal) == 0:
+		return fmt.Sprintf("topic(s) %s are not on the cluster link and %s", joinCapped(ordinary, 20), consequence)
+	default:
+		return fmt.Sprintf("topic(s) %s are not on the cluster link and %s. Also not on the link, and probably internal (name starts with '_'): %s",
+			joinCapped(ordinary, 20), consequence, joinCapped(internal, 20))
 	}
-	sort.Strings(untracked)
-	return fmt.Sprintf(
-		"topic(s) %s are not on the cluster link and no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them",
-		joinCapped(untracked, 20))
 }

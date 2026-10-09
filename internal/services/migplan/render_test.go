@@ -279,3 +279,70 @@ func TestRenderReport_ConversionFooter(t *testing.T) {
 		t.Errorf("a conversion with work must not render as nothing to do, got:\n%s", out)
 	}
 }
+
+// A conversion's report speaks of the cluster link's topics, not requested ones, and never
+// counts topics "to migrate".
+func TestRenderReport_ConversionWording(t *testing.T) {
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{{Name: "route is dynamic", OK: true}},
+		Unchanged: []reconcile.TopicVerdict{
+			{Topic: "orders", Verdict: reconcile.Unchanged},
+			{Topic: "payments", Verdict: reconcile.Unchanged},
+		},
+		ConvertToStatic: true,
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", ArtifactNote: "plan ready", Conversion: true})
+	out := buf.String()
+
+	for _, want := range []string{
+		`Conversion plan · route "tbm-route" → static on destination-domain`,
+		"Link topics · 2",
+		"= orders    promoted",
+		"Plan: route to static, 2 link topics  (plan ready)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"requested", "unchanged", "to migrate", "Migration plan"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("a conversion report must not say %q; got:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestRenderReport_ConversionBlockedTopicRefuses(t *testing.T) {
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{{Name: "route is dynamic", OK: true}},
+		FailFast:      []reconcile.TopicVerdict{{Topic: "clicks", Verdict: reconcile.FailFast, Reason: "mirror is ACTIVE, not promoted"}},
+		Unchanged:     []reconcile.TopicVerdict{{Topic: "orders", Verdict: reconcile.Unchanged}},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Conversion: true})
+	out := buf.String()
+
+	for _, want := range []string{"Link topics · 2", "✗ clicks", "blocked", "Plan: 2 link topics, 1 blocked  (refused — no artifacts)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// An already-static route has no link topics to list: the report says so instead of
+// "Topics · 0 requested".
+func TestRenderReport_ConversionAlreadyStatic(t *testing.T) {
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{{Name: "route is already static on the target domain", OK: true}},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Conversion: true})
+	out := buf.String()
+
+	if !strings.Contains(out, "Plan: route already static on its target  (nothing to do)") {
+		t.Errorf("missing the already-static footer; got:\n%s", out)
+	}
+	if strings.Contains(out, "Link topics") || strings.Contains(out, "requested") {
+		t.Errorf("an already-static route lists no topics; got:\n%s", out)
+	}
+}

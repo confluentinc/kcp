@@ -209,6 +209,7 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 		Route:        g.Spec.Route.Name,
 		TargetDomain: g.Spec.Route.TargetStreamingDomain,
 		ArtifactNote: "plan ready",
+		Conversion:   g.Spec.Route.ConvertTo != "",
 	})
 	return res, nil
 }

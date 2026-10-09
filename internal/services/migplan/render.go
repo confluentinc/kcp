@@ -18,6 +18,10 @@ type RenderView struct {
 	TargetDomain string
 	Verbose      bool
 	ArtifactNote string // shown in the success footer, e.g. "artifacts → ./out"
+	// Conversion renders a route conversion (spec.route.convertTo): its topics are the cluster
+	// link's, each promoted one reads "promoted", and the footer counts link topics instead of
+	// topics to migrate.
+	Conversion bool
 }
 
 // RenderReport writes the topic-centric plan to w: a header, the route checks
@@ -37,7 +41,11 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	bold := color.New(color.Bold)
 
 	if v.Route != "" {
-		_, _ = fmt.Fprintln(w, bold.Sprintf("Migration plan · route %q → %s", v.Route, v.TargetDomain))
+		if v.Conversion {
+			_, _ = fmt.Fprintln(w, bold.Sprintf("Conversion plan · route %q → static on %s", v.Route, v.TargetDomain))
+		} else {
+			_, _ = fmt.Fprintln(w, bold.Sprintf("Migration plan · route %q → %s", v.Route, v.TargetDomain))
+		}
 		_, _ = fmt.Fprintln(w)
 	}
 
@@ -74,8 +82,19 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 
 	// Topics — blocked first (what Omar must fix), then ready, then unchanged.
 	total := len(r.FailFast) + len(r.Migratable) + len(r.SwitchOnly) + len(r.AwaitStopped) + len(r.Unchanged)
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintf(w, "Topics · %d requested\n", total)
+	switch {
+	case !v.Conversion:
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "Topics · %d requested\n", total)
+	case total > 0:
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "Link topics · %d\n", total)
+	}
+	// A conversion's settled topics are promoted mirrors already routed to the target.
+	unchangedWord := "unchanged"
+	if v.Conversion {
+		unchangedWord = "promoted"
+	}
 
 	width := 0
 	for _, group := range [][]reconcile.TopicVerdict{r.FailFast, r.Migratable, r.SwitchOnly, r.AwaitStopped, r.Unchanged} {
@@ -115,7 +134,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		renderTopic("~", yellow, "awaiting promotion", tv, false)
 	}
 	for _, tv := range r.Unchanged {
-		renderTopic("=", faint, "unchanged", tv, false)
+		renderTopic("=", faint, unchangedWord, tv, false)
 	}
 
 	// Any warning that doesn't reference a listed topic (rare) → trailing note.
@@ -125,22 +144,27 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 
 	// Footer — Terraform-style counts, blocked shown only when there are any.
 	nMig, nBlk, nUnch := len(r.Migratable), len(r.FailFast), len(r.Unchanged)
-	parts := []string{fmt.Sprintf("%d to migrate", nMig)}
-	if nBlk > 0 {
-		parts = append(parts, fmt.Sprintf("%d blocked", nBlk))
-	}
-	if n := len(r.SwitchOnly); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d to switch", n))
-	}
-	if n := len(r.AwaitStopped); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
-	}
-	parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
-	if r.RestoreOffsetSync {
-		parts = append(parts, "offset-sync restore")
-	}
-	if r.ConvertToStatic {
-		parts = append(parts, "route to static")
+	var parts []string
+	if v.Conversion {
+		parts = conversionFooterParts(r, total)
+	} else {
+		parts = append(parts, fmt.Sprintf("%d to migrate", nMig))
+		if nBlk > 0 {
+			parts = append(parts, fmt.Sprintf("%d blocked", nBlk))
+		}
+		if n := len(r.SwitchOnly); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d to switch", n))
+		}
+		if n := len(r.AwaitStopped); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
+		}
+		parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
+		if r.RestoreOffsetSync {
+			parts = append(parts, "offset-sync restore")
+		}
+		if r.ConvertToStatic {
+			parts = append(parts, "route to static")
+		}
 	}
 
 	var outcome string
@@ -158,6 +182,32 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "Plan: %s  %s\n", strings.Join(parts, ", "), outcome)
+}
+
+// conversionFooterParts counts a conversion in its own terms: whether the route switches to
+// static, how many link topics were checked, and how many of them block it. An already-static
+// route (nothing checked, nothing to switch) says so.
+func conversionFooterParts(r reconcile.Report, linkTopics int) []string {
+	var parts []string
+	if r.ConvertToStatic {
+		parts = append(parts, "route to static")
+	}
+	switch {
+	case linkTopics == 1:
+		parts = append(parts, "1 link topic")
+	case linkTopics > 1:
+		parts = append(parts, fmt.Sprintf("%d link topics", linkTopics))
+	}
+	if n := len(r.FailFast); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d blocked", n))
+	}
+	if len(parts) == 0 {
+		if r.Refused() {
+			return []string{"0 link topics"}
+		}
+		return []string{"route already static on its target"}
+	}
+	return parts
 }
 
 // warningsForTopic returns the warnings whose text references topic by its

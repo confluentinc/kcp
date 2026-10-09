@@ -214,7 +214,7 @@ func executePlan(
 	if reconcileResult.NothingToDo {
 		if reconcileResult.Mode == "convert" {
 			slog.Info("✅ nothing to do: the route is already static on its target domain", "migration_id", config.MigrationId)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s — nothing to do: the route is already static on its target domain\n", config.MigrationId)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Route conversion completed: %s — nothing to do: the route is already static on its target domain\n", config.MigrationId)
 			return nil
 		}
 		slog.Info("✅ nothing to do: no topic in the migration still needs migrating", "migration_id", config.MigrationId)
