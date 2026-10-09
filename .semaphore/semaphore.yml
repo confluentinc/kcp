@@ -565,3 +565,73 @@ blocks:
         on_pass:
           commands:
             - cache store minikube-cache ~/.minikube/cache/
+
+  - name: 'integration: route-conversion e2e'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      agent:
+        machine:
+          # As the idempotent-fsm block: two CP Kafka clusters + gateway JVMs +
+          # operator, plus the client JVMs in the runner pod; setup.sh sizes
+          # minikube at 12 GiB / 4 CPU.
+          type: s1-prod-ubuntu24-04-amd64-2
+      env_vars:
+        # GCP workload-identity federation and the same licence + ECR
+        # credentials as the idempotent-fsm block, read from GCP Secret Manager
+        # by setup.sh (../lib/cp-e2e-env.sh) and never materialised in the pipeline.
+        - name: PROJECT_ID
+          value: "kcp-prod"
+        - name: PROJECT_NUMBER
+          value: "118281707876"
+        - name: POOL_ID
+          value: "kcp-idp-pool"
+        - name: PROVIDER_ID
+          value: "kcp-idp-provider"
+        - name: SERVICE_ACCOUNT_EMAIL
+          value: "semaphore-kcp@kcp-prod.iam.gserviceaccount.com"
+        - name: GATEWAY_LICENSE_GCP_SECRET
+          value: "kcp-gateway-license"
+        - name: ECR_AWS_KEY_GCP_SECRET
+          value: "kcp-semaphore-ecr-gateway-image-key"
+        - name: ECR_AWS_SECRET_GCP_SECRET
+          value: "kcp-semaphore-ecr-gateway-image-secret"
+        - name: CFK_CHART_OCI
+          value: "oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes"
+        - name: CFK_CHART_VERSION
+          value: "0.1838.0"
+      prologue:
+        commands:
+          # Minikube + a K8s-1.30 kubectl are not pre-installed (same as the other e2e blocks).
+          - curl -LO https://storage.googleapis.com/minikube/releases/v1.35.0/minikube-linux-amd64
+          - sudo install minikube-linux-amd64 /usr/local/bin/minikube
+          - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          - sudo install kubectl /usr/local/bin/kubectl
+          - command -v helm >/dev/null 2>&1 || (curl -fsSL https://raw.githubusercontent.com/helm/helm/v3.16.4/scripts/get-helm-3 | DESIRED_VERSION=v3.16.4 bash)
+          - command -v aws >/dev/null 2>&1 || (curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install --update)
+          - command -v gcloud >/dev/null 2>&1 || curl https://sdk.cloud.google.com | bash -s -- --disable-prompts
+          - export PATH="${HOME}/google-cloud-sdk/bin:${PATH}"
+          - export POOL_URI="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+          - echo "${SEMAPHORE_OIDC_TOKEN}" > /tmp/oidc_token
+          - gcloud iam workload-identity-pools create-cred-config "${POOL_URI}" --service-account="${SERVICE_ACCOUNT_EMAIL}" --output-file="${HOME}/semaphore/creds.json" --credential-source-file=/tmp/oidc_token --credential-source-type="text"
+          - export GOOGLE_APPLICATION_CREDENTIALS="${HOME}/semaphore/creds.json"
+          - gcloud auth login --cred-file="${HOME}/semaphore/creds.json" --project="${PROJECT_ID}"
+          - cache restore minikube-cache
+      jobs:
+        - name: 'route-conversion e2e'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-route-conversion-setup
+            - make test-route-conversion-run
+      epilogue:
+        always:
+          commands:
+            # The per-test evidence (manifests, route and mirror states, offsets,
+            # kcp's full output, client logs, checker verdicts), for a failed run.
+            - '[ -d integration-tests/route-conversion/.reports ] && artifact push job integration-tests/route-conversion/.reports --destination "route-conversion-reports" || true'
+            - make test-route-conversion-teardown
+        on_pass:
+          commands:
+            - cache store minikube-cache ~/.minikube/cache/
