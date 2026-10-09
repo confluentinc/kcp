@@ -59,7 +59,7 @@ func (e *env) startClientRun(t *testing.T, dir string) *clientRun {
 	}
 	for _, s := range run.specs {
 		for _, c := range run.consumers[s.group] {
-			c.waitForLine(t, `"name":"partitions_assigned"`, 2*time.Minute)
+			e.waitAssigned(t, s, c)
 		}
 		e.waitGroupState(t, sourceCluster, s.group, "Stable", len(s.members), 2*time.Minute)
 	}
