@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +96,18 @@ func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
 	require.Equal(t, "CC_KEY", rest.APIKey)
+}
+
+// TestGatewayRouteConversionExampleIsValid keeps the documented route
+// conversion example in step with the parser and validator: it must validate
+// clean and declare a conversion, not a topic selection.
+func TestGatewayRouteConversionExampleIsValid(t *testing.T) {
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-route-conversion.yaml")
+	require.NoError(t, err)
+	g, err := ParseGatewayMigration(data)
+	require.NoError(t, err)
+	require.Empty(t, g.Validate(), "the documented route conversion example must validate clean")
+	require.Equal(t, RouteConvertToStatic, g.Spec.Route.ConvertTo)
+	require.Nil(t, g.Spec.Route.TopicGroup, "a conversion selects no topics")
+	require.Equal(t, 30*time.Second, g.Spec.DefaultPolicies.EffectiveDetectUnroutedCommitsDuration())
 }

@@ -1,0 +1,125 @@
+# Dynamic-mode gateway for the route-conversion suite, in the shape a finished
+# topic-based migration leaves it: every link topic routed to the destination,
+# group coordination pinned to the source, no fence. setup.sh renders it into
+# .state/rendered/ (placeholder substitution) and applies it; each test's reset
+# helper patches the route back to this shape.
+#
+# Unlike idempotent-fsm's gateway-dynamic.yaml, clients really talk to this
+# gateway, so the destination leg is the real SASL_SSL listener with swap auth
+# (the client is anonymous; the gateway presents testuser/testpassword from the
+# file-store), exactly as gateway-static.yaml stages it. The route's
+# security.cluster.destination-domain block is also what a conversion needs: the
+# static route it produces keeps it.
+#
+# mode: dynamic requires the host (SNI) broker identification strategy, which
+# requires client TLS: client-tls is the self-signed keystore setup.sh creates,
+# and the runner pod trusts it through the rc-gw-truststore secret.
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: __GATEWAY_NAME__
+  namespace: confluent
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e-route-conversion
+spec:
+  replicas: __REPLICAS__
+  image:
+    application: __GATEWAY_IMAGE__
+    init: __INIT_IMAGE__
+    pullPolicy: IfNotPresent
+  # Not a value kcp would generate (kcp-<hex>), so an assertion that kcp changed
+  # it cannot pass by coincidence.
+  configId: rc-initial
+  hotReload:
+    enabled: true
+  podTemplate:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: INFO
+      # Enterprise licence: without it the hot-reload config watcher never starts
+      # and every configId bump is silently dropped. setup.sh fails fast on the
+      # trial-mode log line.
+      - name: GATEWAY_LICENSES
+        valueFrom:
+          secretKeyRef:
+            name: gateway-license
+            key: license.txt
+  # Backs the route's security.cluster.destination-domain swap auth.
+  secretStores:
+    - name: file-store
+      provider:
+        type: File
+        configSecretRef: file-store-config
+        clientCredentialsRef: file-store-noauth-credentials
+  streamingDomains:
+    - name: source-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SOURCE
+            endpoint: PLAINTEXT://__SOURCE_BOOTSTRAP__
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+    - name: destination-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: DESTINATION
+            endpoint: SASL_SSL://__DEST_BOOTSTRAP__
+            tls:
+              secretRef: destination-kafka-tls
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+  routes:
+    - name: __ROUTE_NAME__
+      endpoint: bootstrap.gw.local:9595
+      brokerIdentificationStrategy:
+        type: host
+        pattern: "broker$(nodeId).gw.local"
+      mode: dynamic
+      streamingDomains:
+        - name: source-domain
+          bootstrapServerId: SOURCE
+        - name: destination-domain
+          bootstrapServerId: DESTINATION
+      rules:
+        routing:
+          coordination:
+            group: source-domain
+          # First match wins: the migrated (link) topics go to the destination,
+          # everything else to the source. Conditions only, no routing.default:
+          # see idempotent-fsm's gateway-dynamic.yaml for why.
+          conditions:
+            - streamingDomain: destination-domain
+              topics: [__LINK_TOPICS__]
+            - streamingDomain: source-domain
+              topicPatterns: [".*"]
+        fencing: []
+      security:
+        client:
+          authentication:
+            type: none
+          tls:
+            secretRef: client-tls
+        cluster:
+          source-domain:
+            auth: passthrough
+          destination-domain:
+            auth: swap
+            secretStore: file-store
+            authentication:
+              type: plain
+              jaasConfigPassThrough:
+                secretRef: plain-jaas

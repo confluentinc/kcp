@@ -287,7 +287,13 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	// server id is derived from the live CR and mode from the CR, so neither is
 	// a required manifest field.
 	route := props(t, spec["route"].(map[string]any))
-	require.ElementsMatch(t, []any{"name", "topicGroup", "targetStreamingDomain"}, requiredOf(spec["route"].(map[string]any)))
+	require.ElementsMatch(t, []any{"name", "targetStreamingDomain"}, requiredOf(spec["route"].(map[string]any)))
+	oneOf, ok := spec["route"].(map[string]any)["oneOf"].([]any)
+	require.True(t, ok, "spec.route must carry a oneOf: exactly one of topicGroup or convertTo")
+	require.Len(t, oneOf, 2)
+	convertTo := route["convertTo"].(map[string]any)
+	require.Equal(t, []any{"static"}, convertTo["enum"])
+	require.NotEmpty(t, convertTo["description"])
 	// At least one of topics/topicPatterns, hand-patched as an anyOf since
 	// the constraint isn't expressible on the struct.
 	item := route["topicGroup"].(map[string]any)["items"].(map[string]any)

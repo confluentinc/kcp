@@ -257,3 +257,17 @@ func TestListGatewayPodEndpoints(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+func TestProbeGatewayConfig_PortZeroDefaultsToTheDocumentedPort(t *testing.T) {
+	// ConfigWaitOptions.Port documents "0 selects DefaultGatewayConfigPort"; a
+	// probe sent to port "0" is unreachable on every poll.
+	var captured ktesting.ProxyGetActionImpl
+	pods := proxyPods("confluent", fakeProxyResponse{body: []byte(`{"configId":"x"}`)}, &captured)
+
+	got, err := probeGatewayConfig(context.Background(), pods, "gw-1", 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "9180", captured.GetPort())
+	assert.Equal(t, "gw-1:9180", got.Addr)
+	assert.Equal(t, ProbeApplied, got.Outcome)
+}

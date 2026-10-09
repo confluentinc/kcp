@@ -16,17 +16,18 @@ import (
 
 // AdminConfig holds the configuration for creating a Kafka admin client
 type AdminConfig struct {
-	authType              types.AuthType
-	username              string
-	password              string
-	saslMechanism         string
-	insecureSkipTLSVerify bool
-	awsAccessKey          string
-	awsAccessSecret       string
-	caCertFile            string
-	clientCertFile        string
-	clientKeyFile         string
-	disableTLS            bool
+	authType                 types.AuthType
+	username                 string
+	password                 string
+	saslMechanism            string
+	insecureSkipTLSVerify    bool
+	awsAccessKey             string
+	awsAccessSecret          string
+	caCertFile               string
+	clientCertFile           string
+	clientKeyFile            string
+	disableTLS               bool
+	disableTopicAutoCreation bool
 }
 
 // AdminOption is a function type for configuring the Kafka admin client
@@ -112,6 +113,16 @@ func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
 func WithInsecureSkipVerify() AdminOption {
 	return func(config *AdminConfig) {
 		config.insecureSkipTLSVerify = true
+	}
+}
+
+// WithTopicAutoCreationDisabled makes every metadata request the client sends ask the broker not to create a
+// missing topic. sarama asks it to by default (Metadata.AllowAutoTopicCreation), so a client that looks up a
+// topic deleted mid-run, on a broker with auto.create.topics.enable, would recreate it empty. Off by default:
+// every existing client keeps sarama's default. A route conversion's high-water-mark sweep sets it.
+func WithTopicAutoCreationDisabled() AdminOption {
+	return func(config *AdminConfig) {
+		config.disableTopicAutoCreation = true
 	}
 }
 
@@ -297,6 +308,7 @@ type ClusterKafkaMetadata struct {
 type KafkaAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
 	ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicInternalFlags() (map[string]bool, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
@@ -343,6 +355,29 @@ func (k *KafkaAdminClient) ListTopicsWithNonDefaultConfigs() (map[string]sarama.
 	return k.listTopicsWithConfigs(func(entry *sarama.ConfigEntry) bool {
 		return entry.Source == sarama.SourceTopic
 	})
+}
+
+// ListTopicInternalFlags returns every topic of an all-topics metadata request,
+// keyed by name, with the broker's own IsInternal flag. Brokers include the
+// Kafka-internal topics (__consumer_offsets, __transaction_state) in that
+// response; unlike ListTopicsWithConfigs (which reports them like any other
+// topic, and whose output scan depends on), this exposes the flag so a caller
+// that wants user topics only can drop them by the broker's word rather than by
+// a name prefix. It sends no DescribeConfigs request.
+func (k *KafkaAdminClient) ListTopicInternalFlags() (map[string]bool, error) {
+	controller, err := k.admin.Controller()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get controller: %w", err)
+	}
+	metadataResp, err := controller.GetMetadata(sarama.NewMetadataRequest(k.saramaConfig.Version, nil))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata: %w", err)
+	}
+	flags := make(map[string]bool, len(metadataResp.Topics))
+	for _, topic := range metadataResp.Topics {
+		flags[topic.Name] = topic.IsInternal
+	}
+	return flags, nil
 }
 
 // listTopicsWithConfigs is the shared controller + metadata + DescribeConfigs flow
@@ -551,6 +586,9 @@ func buildKafkaClientConfig(region string, version sarama.KafkaVersion, opts ...
 		return nil, config, fmt.Errorf("auth type %v not supported", config.authType)
 	}
 
+	if config.disableTopicAutoCreation {
+		saramaConfig.Metadata.AllowAutoTopicCreation = false
+	}
 	return saramaConfig, config, nil
 }
 
