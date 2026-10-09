@@ -235,3 +235,27 @@ func TestCheck_MissingWindowsFail(t *testing.T) {
 	require.False(t, r.OK())
 	require.Contains(t, strings.Join(r.Failures, "\n"), "never saw the route static")
 }
+
+func TestCheck_SwitchReReadOfARecordFirstReadLongBeforeTheSwitchFails(t *testing.T) {
+	// 7.0 is first read 20s before the switch (outside the fence-onset window
+	// too) and again just after it: the switch does not explain that.
+	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+		"a": lines(consumed(switchAt-20_000, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
+			consumed(170100, "7.3", 0, 757), consumed(switchAt+3000, "7.0", 0, 754)),
+	})
+	require.False(t, r.OK())
+	require.Equal(t, 1, r.ByClass[DupUnexplained])
+	require.Zero(t, r.ByClass[DupSwitch])
+}
+
+func TestCheck_FenceOnsetReReadSevenSecondsAfterOnsetPasses(t *testing.T) {
+	// The CR shows the fence before the pods apply it: 7.1 is read 7s after
+	// onset, its commit blocked, one record in the batch, and re-read after the switch.
+	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+		"a": lines(consumed(90100, "7.0", 0, 754), consumed(99100, "7.2", 0, 756),
+			consumed(fenceAt+7000, "7.1", 0, 755), batch(fenceAt+7001, 1),
+			consumed(163000, "7.1", 0, 755), consumed(170100, "7.3", 0, 757)),
+	})
+	require.True(t, r.OK(), r.String())
+	require.Equal(t, 1, r.ByClass[DupFenceOnset])
+}

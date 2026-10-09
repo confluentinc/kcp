@@ -37,9 +37,10 @@ type Bounds struct {
 	// FenceBefore and FenceAfter bound a fence-onset re-read's first read
 	// around the watcher's fence onset.
 	FenceBefore, FenceAfter time.Duration
-	// SwitchAfter bounds a switch re-read's second read after the watcher's
-	// switch time.
-	SwitchAfter time.Duration
+	// SwitchBefore and SwitchAfter bound a switch re-read: its first read is no
+	// earlier than SwitchBefore before the watcher's switch time, and its
+	// second read no later than SwitchAfter after it.
+	SwitchBefore, SwitchAfter time.Duration
 	// MaxPollRecords caps the switch re-reads per member (one poll).
 	MaxPollRecords int
 	// AutoCommitInterval and ProduceRatePerSec cap an auto-commit member's
@@ -56,7 +57,8 @@ type Bounds struct {
 func DefaultBounds() Bounds {
 	return Bounds{
 		FenceBefore:        10 * time.Second,
-		FenceAfter:         5 * time.Second,
+		FenceAfter:         15 * time.Second, // the CR shows the fence before the pods apply it
+		SwitchBefore:       5 * time.Second,
 		SwitchAfter:        60 * time.Second,
 		MaxPollRecords:     500,
 		AutoCommitInterval: 5 * time.Second,
@@ -303,7 +305,7 @@ func Check(in CheckInput) GroupResult {
 	b := in.Bounds
 	fenceLo := in.Windows.FenceOnsetMs - b.FenceBefore.Milliseconds()
 	fenceHi := in.Windows.FenceOnsetMs + b.FenceAfter.Milliseconds()
-	switchLo := in.Windows.SwitchDoneMs
+	switchLo := in.Windows.SwitchDoneMs - b.SwitchBefore.Milliseconds()
 	switchHi := in.Windows.SwitchDoneMs + b.SwitchAfter.Milliseconds()
 	fenceByMember, switchByMember := map[string]int{}, map[string]int{}
 	for v, rs := range reads {
@@ -318,7 +320,7 @@ func Check(in CheckInput) GroupResult {
 		case in.Windows.FenceOnsetMs > 0 && rs[0].TimestampMs >= fenceLo && rs[0].TimestampMs <= fenceHi:
 			d.Class = DupFenceOnset
 			fenceByMember[rs[0].Member]++
-		case in.Windows.SwitchDoneMs > 0 && rs[1].TimestampMs >= switchLo && rs[1].TimestampMs <= switchHi:
+		case in.Windows.SwitchDoneMs > 0 && rs[0].TimestampMs >= switchLo && rs[1].TimestampMs <= switchHi:
 			d.Class = DupSwitch
 			switchByMember[rs[1].Member]++
 		}
