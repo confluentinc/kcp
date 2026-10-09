@@ -14,13 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// requireRefusedUnchanged asserts a run was refused and changed nothing: a
-// non-zero exit naming every want, the route exactly as before, and no seed
-// offsets on the destination.
+// requireRefusedUnchanged asserts reconcile refused the run and it changed
+// nothing: a non-zero exit with reconcile's refusal naming every want, no fence
+// applied (so the refusal cannot have come from verify_fence after a fence went
+// up and came down), the route exactly as before, and no seed offsets on the
+// destination.
 func (e *env) requireRefusedUnchanged(t *testing.T, ctx context.Context, out string, err error, routeBefore map[string]any, seeds []seed, want ...string) {
 	t.Helper()
 	require.Error(t, err, "a refused conversion must exit non-zero")
 	require.Contains(t, out, "reconcile plan refused")
+	require.NotContains(t, out, fenceAppliedLine, "a reconcile refusal must not apply the fence")
 	for _, w := range want {
 		require.Contains(t, out, w)
 	}
@@ -82,12 +85,10 @@ func TestRefusal_GroupActiveOnTheDestination(t *testing.T) {
 	mani, _ := e.writeManifest(t, "refuse-active", minDetect)
 
 	out, err := e.execute(t, "kcp-run-1-refused.log", mani, nil, nil)
-	require.Error(t, err)
-	require.Contains(t, out, group+" (Stable) exist on the source and already have members on the destination")
-	require.True(t, jsonEqual(routeBefore, e.liveRoute(t, ctx)), "a refusal must leave the route exactly as it was")
 	// The live destination member commits its own offsets for seeds[1], so only
 	// seeds[0] is checked for the absence of kcp's sync.
-	e.requireNoDestOffsets(t, seeds[:1], "a refused run")
+	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds[:1],
+		group+" (Stable) exist on the source and already have members on the destination")
 	t.Logf("\n✅ RESULT: an in-scope group live on the destination refused the conversion and nothing changed.")
 }
 
@@ -160,7 +161,8 @@ func TestRefusal_WithKcpFenceAlreadyUp(t *testing.T) {
 
 	out, err := e.execute(t, "kcp-run-1-refused.log", mani, nil, nil)
 	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds,
-		fmt.Sprintf("route %q still carries kcp's conversion fence", e.route), "blocking every topic")
+		fmt.Sprintf("route %q still carries kcp's conversion fence", e.route), "blocking every topic",
+		orphan[0].group+" ("+e.orphanTopic+")", "have committed offsets on topics that are not on the cluster link")
 	e.requireFenced(t, ctx, "a refusal must keep kcp's fence")
 
 	admin := e.admin(t, sourceCluster)
