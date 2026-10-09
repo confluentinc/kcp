@@ -31,16 +31,18 @@ func NewMigrationLagCheckCmd() *cobra.Command {
 		Use:   "lag-check",
 		Short: "Show mirror topic lag for the cluster link",
 		Long: `Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal.
-Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
+Press q (or ctrl+c) to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys or j/k to scroll.
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
-comes from the GatewayMigration manifest, so this command works before
+comes from the migration manifest, so this command works before
 'kcp migration execute' has ever run. The credentials are the cluster-link REST leg
 (spec.clusterLink.linkCredentials), honoured in whatever form the manifest resolves —
 api_key, basic, bearer, or mtls. lag-check never dials the source or destination Kafka
 legs directly.
 
-It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
+It always shows every mirror topic on the link; spec.route.topicGroup does not narrow the view.
+
+Before the view opens, kcp reads the cluster link (15s timeout); if that fails, the command exits with an error.`,
 		Example:       `  kcp migration lag-check --migration-yaml gateway-migration.yaml`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
@@ -50,8 +52,8 @@ It always shows every mirror topic on the link; spec.topics does not narrow the 
 		RunE:         runMigrationLag,
 	}
 
-	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().IntVar(&pollInterval, "poll-interval", 1, "Poll interval in seconds (1-60)")
+	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the migration manifest describing this migration.")
+	cmd.Flags().IntVar(&pollInterval, "poll-interval", 1, "Poll interval in seconds. Values outside 1-60 are clamped to that range.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 
