@@ -20,12 +20,32 @@ func (e *env) linkConfig() clusterlink.Config {
 		APIKey: e.saslUser, APISecret: e.saslPassword}
 }
 
-// mirrors reads every mirror topic on the link.
+// One-shot mirror reads (mirrors, and mirrorStates, linkTopics, promoteAll and
+// snapshot through it) retry a failed read this many times, this far apart, so
+// a transient link REST 500 does not fail the test.
+const (
+	mirrorReadAttempts = 5
+	mirrorReadBackoff  = 2 * time.Second
+)
+
+// mirrors reads every mirror topic on the link, retrying a failed read a few
+// times (the link REST API answers a transient 500 now and then) and failing
+// with the last error only after that.
 func (e *env) mirrors(t *testing.T, ctx context.Context) []clusterlink.MirrorTopic {
 	t.Helper()
-	ms, err := e.linkSvc.ListMirrorTopics(ctx, e.linkConfig())
-	require.NoError(t, err, "list the link's mirror topics")
-	return ms
+	var err error
+	for attempt := 1; attempt <= mirrorReadAttempts; attempt++ {
+		var ms []clusterlink.MirrorTopic
+		if ms, err = e.linkSvc.ListMirrorTopics(ctx, e.linkConfig()); err == nil {
+			return ms
+		}
+		if attempt < mirrorReadAttempts {
+			t.Logf("list the link's mirror topics (attempt %d/%d) failed, retrying in %s: %v", attempt, mirrorReadAttempts, mirrorReadBackoff, err)
+			time.Sleep(mirrorReadBackoff)
+		}
+	}
+	require.NoErrorf(t, err, "list the link's mirror topics (%d attempts)", mirrorReadAttempts)
+	return nil
 }
 
 // tryMirrorStates is mirrorStates without the assertion, for use inside polls:
