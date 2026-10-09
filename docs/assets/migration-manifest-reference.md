@@ -320,10 +320,18 @@ and the cluster link:
 1. **Fence.** kcp adds its conversion fence, `{topicPatterns: ['.*'],
    blocked: true}`, at the head of the route's `rules.fencing`, blocking every
    topic on the route.
-2. **Verify.** On data read after the fence, kcp re-runs every check above,
-   then takes two snapshots of every source group's committed offsets,
-   `detectUnroutedCommitsDuration` apart (`30s` by default; it can't be
-   skipped). A change means a client is committing to the source directly,
+2. **Verify.** On data read after the fence, kcp re-runs the route checks
+   that decide whether the route can be converted (dynamic, two domains,
+   `coordination.group` on the source, `targetStreamingDomain` one of them,
+   consumer offset sync disabled), confirms its own conversion fence is still
+   on the route, and re-runs the credential, cluster-link scope and
+   consumer-group checks. It does not repeat the checks on the route's
+   contents (the target binding's `bootstrapServerId`, the
+   `security.cluster.<targetStreamingDomain>` auth, no fence kcp didn't write,
+   no route-level fence) or the warnings about topics outside the link; those
+   run before the fence. It then takes two snapshots of every source group's
+   committed offsets, `detectUnroutedCommitsDuration` apart (`30s` by default;
+   it can't be skipped). A change means a client is committing to the source directly,
    bypassing the gateway, and the run fails.
 3. **Sync offsets.** kcp writes the in-scope groups' committed offsets, with
    their metadata, to the destination. It refuses the whole sync if an offset
