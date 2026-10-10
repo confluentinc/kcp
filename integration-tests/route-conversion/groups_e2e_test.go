@@ -109,9 +109,42 @@ func (e *env) defaultSeeds(prefix string) []seed {
 // sourceOffsets reads one group's committed offsets on the source.
 func (e *env) sourceOffsets(t *testing.T, group string) offsets {
 	t.Helper()
-	got, err := e.groupClient(t, sourceCluster).CommittedOffsets(group)
+	gc := e.groupClient(t, sourceCluster)
+	var got offsets
+	err := retryWhileCoordinatorLoads(func() error {
+		var err error
+		got, err = gc.CommittedOffsets(group)
+		return err
+	})
 	require.NoErrorf(t, err, "read %s's offsets on the source", group)
 	return got
+}
+
+// coordinatorLoadWait bounds how long an offset read waits for a group
+// coordinator that is moving or still loading __consumer_offsets. A freshly
+// built cluster creates that topic on its first group request and answers
+// COORDINATOR_LOAD_IN_PROGRESS until it has loaded.
+const coordinatorLoadWait = 60 * time.Second
+
+// coordinatorLoading reports whether err only says the group coordinator is
+// not ready yet.
+func coordinatorLoading(err error) bool {
+	return errors.Is(err, sarama.ErrOffsetsLoadInProgress) ||
+		errors.Is(err, sarama.ErrNotCoordinatorForConsumer) ||
+		errors.Is(err, sarama.ErrConsumerCoordinatorNotAvailable)
+}
+
+// retryWhileCoordinatorLoads runs read until it succeeds, fails with any other
+// error, or coordinatorLoadWait passes; it returns the last error.
+func retryWhileCoordinatorLoads(read func() error) error {
+	deadline := time.Now().Add(coordinatorLoadWait)
+	for {
+		err := read()
+		if err == nil || !coordinatorLoading(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // destOffset is one destination commit as an OffsetFetch v7 returns it.
@@ -125,7 +158,22 @@ type destOffset struct {
 // their metadata and leader epoch (kcp's client drops the epoch).
 func (e *env) destOffsets(t *testing.T, group string) map[string]map[int32]destOffset {
 	t.Helper()
-	resp, err := e.admin(t, destCluster).ListConsumerGroupOffsets(group, nil)
+	admin := e.admin(t, destCluster)
+	var resp *sarama.OffsetFetchResponse
+	err := retryWhileCoordinatorLoads(func() error {
+		var err error
+		if resp, err = admin.ListConsumerGroupOffsets(group, nil); err != nil {
+			return err
+		}
+		for _, parts := range resp.Blocks {
+			for _, b := range parts {
+				if coordinatorLoading(b.Err) {
+					return b.Err
+				}
+			}
+		}
+		return nil
+	})
 	require.NoErrorf(t, err, "read %s's offsets on the destination", group)
 	out := map[string]map[int32]destOffset{}
 	for topic, parts := range resp.Blocks {
