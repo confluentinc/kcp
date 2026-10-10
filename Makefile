@@ -80,7 +80,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -161,6 +161,19 @@ test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already
 
 test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, or static)
 	@bash integration-tests/idempotent-fsm/teardown.sh
+
+test-route-conversion: test-route-conversion-setup ## Run the d2s route-conversion live E2E (own cluster; needs a CP Enterprise licence + AWS creds)
+	@trap 'echo ""; echo "Tearing down route-conversion E2E infrastructure..."; bash integration-tests/route-conversion/teardown.sh' EXIT; \
+	bash integration-tests/route-conversion/run.sh
+
+test-route-conversion-setup: ## Set up the route-conversion cluster (Minikube profile kcp-e2e-route-conversion)
+	@bash integration-tests/route-conversion/setup.sh
+
+test-route-conversion-run: ## Run the route-conversion E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
+	@bash integration-tests/route-conversion/run.sh "$(RUN)"
+
+test-route-conversion-teardown: ## Tear down the route-conversion E2E cluster
+	@bash integration-tests/route-conversion/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
