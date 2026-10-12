@@ -133,6 +133,15 @@ func (r *RunReportRecorder) StageEnded(finalState string) {
 	r.flush()
 }
 
+// SetTopics replaces the recorded topic count and flushes.
+func (r *RunReportRecorder) SetTopics(n int) {
+	if r == nil {
+		return
+	}
+	r.report.Topics = n
+	r.flush()
+}
+
 // StageFailed closes the open stage as failed and flushes. The run's own
 // outcome is not set here: a failed stage may still be followed by a
 // compensating rollback, and Finish owns the verdict.
