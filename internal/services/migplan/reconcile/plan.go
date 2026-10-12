@@ -93,6 +93,11 @@ type Report struct {
 	// flight) or the link's live offset sync still differs from the baseline.
 	// Never true for a refused run or a dynamic route.
 	RestoreOffsetSync bool
+
+	// ConvertToStatic is true when a conversion (ReconcileConvert) has work:
+	// fence, sync offsets, and switch the route to static. Never true for a
+	// refused or nothing-to-do conversion, or a topic migration.
+	ConvertToStatic bool
 }
 
 // Refused reports whether the run must emit no artifacts: any failed
@@ -152,12 +157,14 @@ type Plan struct {
 	// it. It exists for a later drift diff, not for the plan itself.
 	GatewayYAML string
 
-	// Mode is the route mode this plan was reconciled under ("dynamic" or
-	// "static"), so a caller knows how to interpret the artifacts. Dynamic:
-	// every one is a whole rules: block, set on the named route's rules.
-	// Static: FenceRules is a {fence: …} block set on the named route;
-	// SwitchoverRules and RollbackFenceRules are a whole {route: …} that
+	// Mode is the strategy this plan was reconciled under ("dynamic",
+	// "static" or "convert"), so a caller knows how to interpret the
+	// artifacts. Dynamic: every one is a whole rules: block, set on the named
+	// route's rules. Static: FenceRules is a {fence: …} block set on the named
+	// route; SwitchoverRules and RollbackFenceRules are a whole {route: …} that
 	// replaces the named route (both remove the fence, which a field patch
-	// cannot). Never "apply this as the whole CR."
+	// cannot). Convert: FenceRules and RollbackFenceRules are whole rules:
+	// blocks; SwitchoverRules is a whole {route: …} — the route converted to
+	// static. Never "apply this as the whole CR."
 	Mode string
 }
