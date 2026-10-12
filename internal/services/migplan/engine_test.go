@@ -612,6 +612,33 @@ func TestEngineRun_ConversionSkipsPartitionCountsWhenAProbeDenied(t *testing.T) 
 	}
 }
 
+func TestEngineRun_ConversionSkipsSourceGroupReadsWhenAProbeDenied(t *testing.T) {
+	boom := errors.New("GROUP_AUTHORIZATION_FAILED")
+	for name, deny := range map[string]func(src, tgt *fakeGroupLister){
+		"source groups":      func(src, _ *fakeGroupLister) { src.denied = true },
+		"destination groups": func(_, tgt *fakeGroupLister) { tgt.denied = true },
+		"source topics":      func(src, _ *fakeGroupLister) { src.topicsDenied = true },
+		"destination topics": func(_, tgt *fakeGroupLister) { tgt.topicsDenied = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := &fakeGroupLister{err: boom, trackedErr: boom}
+			tgt := &fakeGroupLister{}
+			deny(src, tgt)
+
+			plan, err := convertEngine(src, tgt).Run(context.Background(), convertIn)
+			if err != nil {
+				t.Fatalf("Run error = %v, want the visibility refusal, not a source group read error", err)
+			}
+			if src.calls != 0 || src.trackedN != 0 {
+				t.Errorf("source ListGroups called %d times, CommittedTopics %d times after a denied probe, want 0 and 0", src.calls, src.trackedN)
+			}
+			if !plan.Report.Refused() {
+				t.Fatal("a denied probe must refuse")
+			}
+		})
+	}
+}
+
 func TestEngineRun_ConversionPartitionCountFailureIsAnError(t *testing.T) {
 	boom := errors.New("metadata failed")
 	for name, eng := range map[string]*ReconciliationEngine{

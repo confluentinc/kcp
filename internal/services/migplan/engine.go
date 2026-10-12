@@ -123,12 +123,31 @@ func (e *ReconciliationEngine) convertProviders() ConvertProviders {
 // the topics each has committed on — the one read verify_fence takes from its
 // own first snapshot instead — and reconciles. A listing or fetch failure is an
 // I/O error, never a refusal: a partial result could hide a split-brain or a
-// group committing outside the link.
+// group committing outside the link. Both reads are skipped when a DESCRIBE
+// probe denied, as GatherConvertFacts skips the partition counts: the core
+// refuses on the probe before it reads them, and a filtered credential could
+// turn them into an error instead of that refusal.
 func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
 	facts, err := GatherConvertFacts(ctx, e.convertProviders())
 	if err != nil {
 		return nil, err
 	}
+	var tracked map[string][]string
+	if facts.describeAllowed() {
+		if tracked, err = e.sourceCommittedTopics(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	plan := reconcile.ReconcileConvert(in, facts.Gateway, facts.SourceTopics, facts.TargetTopics, facts.Link.LinkMirrors,
+		facts.Partitions, facts.Link.OffsetSyncEnabled, facts.IDs, facts.GroupFacts(tracked))
+	plan.GatewayYAML = facts.Gateway.RawYAML
+	return plan, nil
+}
+
+// sourceCommittedTopics lists every source group and fetches the topics each
+// has committed on.
+func (e *ReconciliationEngine) sourceCommittedTopics(ctx context.Context) (map[string][]string, error) {
 	srcGroups, err := e.sourceGroups.ListGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups: %w", err)
@@ -141,9 +160,5 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}
-
-	plan := reconcile.ReconcileConvert(in, facts.Gateway, facts.SourceTopics, facts.TargetTopics, facts.Link.LinkMirrors,
-		facts.Partitions, facts.Link.OffsetSyncEnabled, facts.IDs, facts.GroupFacts(tracked))
-	plan.GatewayYAML = facts.Gateway.RawYAML
-	return plan, nil
+	return tracked, nil
 }
