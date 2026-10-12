@@ -258,7 +258,7 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 #   topic    : e2e-test-topic-<scenario>
 #   link     : e2e-link-<scenario>
 #   gateway  : migration-gateway-<scenario>
-SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "pause-sync-rogue" "pause-sync-drift" "pause-sync-drain" "batch" "rogue-producer" "rogue-producer-false-positive")
+SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-starts-disabled" "pause-sync-rogue" "pause-sync-drift" "pause-sync-drain" "batch" "rogue-producer" "rogue-producer-false-positive")
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 rm -rf "${RENDERED_DIR}"
@@ -556,7 +556,7 @@ rm -f "${SCRIPT_DIR}/.kcp-linux" "${SCRIPT_DIR}/.producer-linux" "${SCRIPT_DIR}/
 
 # --- Block CFK reconciliation on the cluster links ---
 # From here on the links are pure REST-managed fixtures: the tests (and kcp's
-# own pause/restore bookends) flip consumer.offset.* configs out-of-band via
+# own pause and restore steps) flip consumer.offset.* configs out-of-band via
 # the REST proxy, while each ClusterLink CR keeps declaring
 # consumer.offset.sync.enable: "true". Left to its own devices CFK re-asserts
 # the declared configs on reconcile, racing the tests — the drift scenario saw

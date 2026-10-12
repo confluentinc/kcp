@@ -20,6 +20,9 @@ exclude_docs: |
   plans/
   # in-development direct-API migration feature — hidden until the `kcp migrate` command is user-facing
   migration-assets/
+  # hidden from the published beta docs; files stay in the repo
+  getting-started-with-zero-cut-migrations.md
+  gateway-switchover/
 
 # Fail the strict build on broken internal links and anchors, so problems that
 # would render as dead links when served are caught in CI rather than by readers.
@@ -38,7 +41,6 @@ theme:
     text: Inter
     code: Roboto Mono
   features:
-    - navigation.tabs
     - navigation.sections
     - navigation.indexes
     - navigation.top

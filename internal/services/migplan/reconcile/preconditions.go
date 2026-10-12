@@ -15,6 +15,14 @@ type ReconcileInput struct {
 	// TargetClusterID is the operator's declared destination cluster
 	// (spec.target.clusterId), checked against the cluster we actually read.
 	TargetClusterID string
+	// PauseConsumerOffsetSync is the manifest's opt-in
+	// (spec.clusterLink.pauseConsumerOffsetSync) to pause the link's consumer
+	// offset sync during a static cutover.
+	PauseConsumerOffsetSync bool
+	// OffsetSyncBaselineEnabled is the manifest's declared baseline for the
+	// link's consumer offset sync (spec.clusterLink.consumerOffsetSyncBaseline):
+	// true for "enabled", false for "disabled".
+	OffsetSyncBaselineEnabled bool
 }
 
 // ClusterIDs carries the live cluster identities gathered by the I/O layer, used
@@ -124,6 +132,15 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, pass("consumer offset sync disabled on link"))
 	} else {
 		res = append(res, fail("consumer offset sync disabled on link", "consumer offset sync is enabled on the cluster link; disable it for a dynamic-route migration"))
+	}
+
+	// A dynamic route runs with the link's consumer offset sync off, so there is
+	// nothing to pause: a manifest asking for the pause is a contradiction.
+	if !in.PauseConsumerOffsetSync {
+		res = append(res, pass("offset-sync pause not requested"))
+	} else {
+		res = append(res, fail("offset-sync pause not requested",
+			"spec.clusterLink.pauseConsumerOffsetSync is set, but a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest"))
 	}
 
 	// Cluster identity: the clusters we read must be the migration's real source

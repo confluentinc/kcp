@@ -16,7 +16,7 @@ type jsonPatchOp struct {
 // resolves RouteName to its spec.routes index and builds the absolute patch.
 type RoutePatch struct {
 	RouteName string
-	Field     string // "rules" | "fence" | "streamingDomain"; "" ⇒ replace the whole route
+	Field     string // the route key to set, e.g. "rules" or "fence"; "" ⇒ replace the whole route
 	Value     any
 }
 

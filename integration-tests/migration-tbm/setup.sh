@@ -61,7 +61,7 @@ TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
 SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-55}"   # tbm-topic-001..055 on source
 MIRRORED_COUNT="${MIRRORED_COUNT:-48}"           # 001..048 mirrored on the link
 SUCCESS_HI="${SUCCESS_HI:-44}"                    # 001..044 selectable by success batches
-RESERVED_TOPIC="${RESERVED_TOPIC:-45}"           # 045 mirrored, reserved for promoted-not-switched halt
+RESERVED_TOPIC="${RESERVED_TOPIC:-45}"           # 045 mirrored, reserved for the promoted-not-switched resume test
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —
 # the input for the "exists on target but is not a mirror" halt, which verdict.go
 # classifies only when a topic is onSource && MirrorNone && onTarget.

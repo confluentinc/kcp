@@ -226,12 +226,13 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 	assert.Equal(t, 0, g.Spec.DefaultPolicies.LagThreshold)
 }
 
-// TestRenderGatewayMigration_PauseConsumerOffsetSync covers the 6 init sites that
-// appended --pause-consumer-offset-sync. It is drift-compared at execute, so an
-// omitted-vs-false slip would surface as a spec-change refusal mid-suite.
+// TestRenderGatewayMigration_PauseConsumerOffsetSync: a manifest rendered with
+// the offset-sync pause carries pauseConsumerOffsetSync and its declared
+// baseline, and validates.
 func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	opts := baselineOpts()
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 
 	rendered, err := renderGatewayMigration(opts)
 	require.NoError(t, err)
@@ -239,6 +240,7 @@ func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
 	assert.True(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
+	assert.Equal(t, "enabled", g.Spec.ClusterLink.ConsumerOffsetSyncBaseline)
 }
 
 // TestRenderCredentialFiles_ValuesCannotInjectYAML is the abuse case for the

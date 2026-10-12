@@ -48,7 +48,6 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 	// None of these may panic.
 	r.StageStarted(EventFence, StateLagsOk, StateFenced)
 	r.StageEnded(StateFenced)
-	r.StageSkipped(EventInitialize)
 	r.SetTopics(5)
 	r.StageFailed(errors.New("boom"))
 	r.Finish(StateFenced, nil)
@@ -59,16 +58,16 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 // outcome. This tests the wiring, not just the writer — the recorder is only
 // useful if the orchestrator actually calls it at the right points.
 func TestRunReport_FullWorkflow(t *testing.T) {
-	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch, config := newHappyPathOrchestrator(t, nil)
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 42, config.CurrentState)
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 42, orch.fsm.Current())
 	require.NotNil(t, recorder)
 	orch.SetRunReportRecorder(recorder)
 
 	err := orch.Execute(context.Background(), 42, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.NoError(t, err)
-	recorder.Finish(config.CurrentState, nil)
+	recorder.Finish(orch.fsm.Current(), nil)
 
 	// Surface the artifact itself: this document is a consumer-facing contract,
 	// so `go test -v -run TestRunReport_FullWorkflow` should show what it emits.
@@ -81,10 +80,9 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.Equal(t, config.MigrationId, report.MigrationId)
 	assert.Equal(t, len(config.Topics), report.Topics)
 	assert.Equal(t, int64(42), report.LagThreshold)
-	assert.Equal(t, StateSwitched, report.FinalState)
+	assert.Equal(t, StateOffsetSyncRestored, report.FinalState)
 	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 	assert.Empty(t, report.Error)
-	assert.Empty(t, report.SkippedStages, "a run from uninitialized skips nothing")
 
 	// Every forward transition in the canonical workflow should be recorded, in order.
 	expected := make([]string, 0, len(canonicalWorkflow))
@@ -109,7 +107,6 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
 }
 
-// TestRunReport_SetTopicsRewritesReport — SetTopics flushes the new count immediately.
 func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 	recorder := NewRunReportRecorder(reportPath, "migration-1", 0, 0, StateUninitialized)
@@ -120,46 +117,20 @@ func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	assert.Equal(t, 7, readRunReport(t, reportPath).Topics)
 }
 
-// TestRunReport_FreshRegistrationRecordsReconciledTopics — the recorder starts
-// at zero topics; the report must end with the count initialize reconciled.
-func TestRunReport_FreshRegistrationRecordsReconciledTopics(t *testing.T) {
+func TestRunReport_RecordsReconciledTopics(t *testing.T) {
 	topics := []string{"topic-a", "topic-b", "topic-c"}
-	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, topics)
-	config.Topics = nil // as buildFreshMigrationConfig leaves it
+	orch, config := newHappyPathOrchestrator(t, topics)
+	config.Topics = nil // not yet reconciled when the command layer builds the recorder
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.CurrentState())
 	orch.SetRunReportRecorder(recorder)
 
 	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(topics)))
-	recorder.Finish(config.CurrentState, nil)
+	recorder.Finish(orch.CurrentState(), nil)
 
 	report := readRunReport(t, reportPath)
 	assert.Equal(t, len(topics), report.Topics)
-	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
-}
-
-// TestRunReport_ResumeRecordsSkippedStages verifies that a resumed run
-// distinguishes stages it ran from stages it passed over. Skipped stages are
-// named in SkippedStages rather than appearing in Stages with zero timings, so a
-// consumer never has to test for a zero timestamp.
-func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
-	orch, config, _ := newHappyPathOrchestrator(t, StateLagsOk, nil)
-	reportPath := filepath.Join(t.TempDir(), "run-report.json")
-
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
-	orch.SetRunReportRecorder(recorder)
-
-	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil))
-	recorder.Finish(config.CurrentState, nil)
-
-	report := readRunReport(t, reportPath)
-
-	// Resuming at lags_ok means initialize and wait_for_lags were already done.
-	assert.Equal(t, []string{EventInitialize, EventWaitForLags}, report.SkippedStages)
-	assert.NotContains(t, stageEvents(report), EventInitialize)
-	assert.NotContains(t, stageEvents(report), EventWaitForLags)
-	assert.Equal(t, EventFence, report.Stages[0].Event, "the first stage run should be the fence")
 	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 }
 
@@ -172,15 +143,15 @@ func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
-	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.fsm.Current())
 	orch.SetRunReportRecorder(recorder)
 
 	execErr := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.Error(t, execErr)
-	recorder.Finish(config.CurrentState, execErr)
+	recorder.Finish(orch.fsm.Current(), execErr)
 
 	report := readRunReport(t, reportPath)
 
@@ -261,8 +232,8 @@ func TestRunReport_FinishClosesAnOpenStage(t *testing.T) {
 	assert.Equal(t, RunOutcomeFailed, report.Outcome)
 }
 
-// TestRunReport_WrittenAt0600 keeps the report at the same permissions as the
-// migration state file it sits beside.
+// TestRunReport_WrittenAt0600 pins the report file's owner-only (0600)
+// permissions.
 func TestRunReport_WrittenAt0600(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not enforced on Windows")
@@ -281,14 +252,14 @@ func TestRunReport_WrittenAt0600(t *testing.T) {
 // meant to be collected and archived, so it must not carry credentials, and it
 // records only a topic count rather than the topic names themselves.
 func TestRunReport_NoCredentialsOrTopicNames(t *testing.T) {
-	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, []string{"secret-topic-name"})
+	orch, config := newHappyPathOrchestrator(t, []string{"secret-topic-name"})
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 
-	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.fsm.Current())
 	orch.SetRunReportRecorder(recorder)
 
 	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult([]string{"secret-topic-name"})))
-	recorder.Finish(config.CurrentState, nil)
+	recorder.Finish(orch.fsm.Current(), nil)
 
 	raw, err := os.ReadFile(reportPath)
 	require.NoError(t, err)

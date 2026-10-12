@@ -22,7 +22,7 @@ import (
 // exercised without reaching Kubernetes, and asserts the Result faithfully
 // encodes the operator's declared intent:
 //
-//   - Result.Topics is the resolved selector (the promote list);
+//   - Result.PromoteTopics is the resolved selector (the promote list);
 //   - both YAML artifacts are wrapped under a top-level rules: key;
 //   - the fence fences exactly the selected batch;
 //   - the switchover routes exactly that batch to the manifest's target (cc);
@@ -58,8 +58,8 @@ func TestReconcileResultReflectsManifest(t *testing.T) {
 	}
 
 	want := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
-	if !reflect.DeepEqual(res.Topics, want) {
-		t.Errorf("Result.Topics = %v, want %v", res.Topics, want)
+	if !reflect.DeepEqual(res.PromoteTopics, want) {
+		t.Errorf("Result.PromoteTopics = %v, want %v", res.PromoteTopics, want)
 	}
 
 	// both artifacts wrapped under a top-level rules: key
