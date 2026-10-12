@@ -306,8 +306,20 @@ type CommittedOffset struct {
 
 // committedOffsetsOf fetches every committed offset of one group, with its metadata: topic -> partition ->
 // committed offset. A partition counts only if its committed offset is >= 0 (-1 means a subscription with no
-// commit), so a topic with no commit is absent. Any block-level error fails the whole fetch.
+// commit), so a topic with no commit is absent. Any block-level error fails the whole fetch; a coordinator that
+// is not ready, for the whole fetch or any partition, is retried (see retryWhileCoordinatorNotReady).
 func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
+	var out map[string]map[int32]CommittedOffset
+	err := retryWhileCoordinatorNotReady(nil, func() error {
+		var err error
+		out, err = fetchCommittedOffsets(f, group)
+		return err
+	})
+	return out, err
+}
+
+// fetchCommittedOffsets is one attempt of committedOffsetsOf.
+func fetchCommittedOffsets(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
 	resp, err := f.ListConsumerGroupOffsets(group, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets for consumer group %s: %w", group, err)
@@ -349,11 +361,31 @@ func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int
 	return committedOffsetsOf(c.admin, group)
 }
 
-// commitAttempts is how many times CommitGroupOffsets asks before giving up on a coordinator that is moving
-// or still loading. commitRetryBackoff is the wait between attempts; it is a var so tests can shorten it.
-const commitAttempts = 3
+// coordinatorBackoffs is the wait before each retry of a group read or commit whose coordinator is not ready:
+// about ten seconds in all, which rides out a coordinator moving or (re)loading __consumer_offsets, as a freshly
+// built cluster does on its first group request. It is a var so tests can shorten it.
+var coordinatorBackoffs = []time.Duration{
+	250 * time.Millisecond, 500 * time.Millisecond, time.Second,
+	2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second,
+}
 
-var commitRetryBackoff = 200 * time.Millisecond
+// retryWhileCoordinatorNotReady runs op, and again after each of coordinatorBackoffs while it fails only
+// because the group's coordinator is not ready (coordinatorNotReady); it returns op's last error. beforeRetry,
+// if set, runs before each retry.
+func retryWhileCoordinatorNotReady(beforeRetry func(), op func() error) error {
+	err := op()
+	for _, wait := range coordinatorBackoffs {
+		if err == nil || !coordinatorNotReady(err) {
+			return err
+		}
+		time.Sleep(wait)
+		if beforeRetry != nil {
+			beforeRetry()
+		}
+		err = op()
+	}
+	return err
+}
 
 // buildGroupCommit builds the admin commit for one group: OffsetCommit v7 (a bare request is v0), generation
 // -1 and an empty member id, so no group membership is needed or created. Every block carries leader epoch -1
@@ -374,8 +406,9 @@ func buildGroupCommit(group string, offsets map[string]map[int32]CommittedOffset
 	return req
 }
 
-// retriableCommit reports whether a commit failed only because the group's coordinator moved or is loading.
-func retriableCommit(err error) bool {
+// coordinatorNotReady reports whether a group request failed only because the group's coordinator moved, is
+// not available yet, or is still loading.
+func coordinatorNotReady(err error) bool {
 	return errors.Is(err, sarama.ErrOffsetsLoadInProgress) ||
 		errors.Is(err, sarama.ErrConsumerCoordinatorNotAvailable) ||
 		errors.Is(err, sarama.ErrNotCoordinatorForConsumer)
@@ -409,34 +442,20 @@ func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) 
 // group that has live members (UNKNOWN_MEMBER_ID) or a credential without READ on the group or topic, is an
 // error naming the group, topic and partition, and is not retried.
 func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]CommittedOffset) error {
-	var lastErr error
-	for attempt := 0; attempt < commitAttempts; attempt++ {
-		if attempt > 0 {
-			time.Sleep(commitRetryBackoff)
-			_ = c.client.RefreshCoordinator(group)
-		}
+	return retryWhileCoordinatorNotReady(func() { _ = c.client.RefreshCoordinator(group) }, func() error {
 		coordinator, err := c.client.Coordinator(group)
 		if err != nil {
-			lastErr = fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)
-			if retriableCommit(err) {
-				continue
-			}
-			return lastErr
+			return fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)
 		}
 		resp, err := coordinator.CommitOffset(buildGroupCommit(group, offsets))
 		if err != nil {
 			return fmt.Errorf("committing offsets for consumer group %s: %w", group, err)
 		}
 		if topic, part, kerr := firstCommitError(resp); kerr != nil {
-			lastErr = fmt.Errorf("committing offset for consumer group %s, topic %s partition %d: %w", group, topic, part, kerr)
-			if retriableCommit(kerr) {
-				continue
-			}
-			return lastErr
+			return fmt.Errorf("committing offset for consumer group %s, topic %s partition %d: %w", group, topic, part, kerr)
 		}
 		return nil
-	}
-	return lastErr
+	})
 }
 
 // groupDescriber is the slice of sarama.ClusterAdmin the group-describe probe needs.
