@@ -92,10 +92,11 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config   *migration.MigrationConfig
-	fsm      *fsm.FSM
-	actions  *TBMActions
-	reporter *reporter
+	config    *migration.MigrationConfig
+	fsm       *fsm.FSM
+	actions   *TBMActions
+	reporter  *reporter
+	runReport *migration.RunReportRecorder // per-stage timings; nil when not requested
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
@@ -150,6 +151,16 @@ func NewTBMOrchestrator(
 	return orchestrator
 }
 
+// SetRunReportRecorder attaches a run-report recorder; nil (the default) disables it.
+func (o *TBMOrchestrator) SetRunReportRecorder(r *migration.RunReportRecorder) {
+	o.runReport = r
+}
+
+// CurrentState returns the FSM's current state.
+func (o *TBMOrchestrator) CurrentState() string {
+	return o.fsm.Current()
+}
+
 // Execute runs the full TBM workflow, always from StateUninitialized (see
 // NewTBMOrchestrator). res is the reconcile plan the caller already computed
 // live for this manifest, on every invocation; onInitialize consumes it.
@@ -168,11 +179,13 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
+	// Stages are timed around fsm.Event, not in FSM callbacks (see the AAO loop).
 	for _, step := range canonicalWorkflow {
 		if header, ok := stepHeaders[step.Event]; ok {
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
+		o.runReport.StageStarted(step.Event, step.FromState, step.ToState)
 		// Test-only failure hook: fails this step in place of its action when
 		// killpoint.FailEnvVar names it. nil in production.
 		err := killpoint.FailAt(step.Event)
@@ -180,8 +193,14 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			err = o.fsm.Event(ctx, step.Event, params)
 		}
 		if err != nil {
+			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err)
 		}
+		if step.Event == EventInitialize {
+			// The recorder is built before initialize reconciles the topics.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
+		o.runReport.StageEnded(o.fsm.Current())
 		o.reporter.stepDone()
 
 		// Test-only interruption seam: cancel the run after the configured

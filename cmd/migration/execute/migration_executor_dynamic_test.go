@@ -2,11 +2,15 @@ package execute
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,6 +125,17 @@ func runDynamicBranchWithConfig(
 	deps executorDependencies,
 ) (string, error) {
 	t.Helper()
+	return runDynamicBranchWithReport(t, f, config, editGateway, "", deps)
+}
+
+// Adds a run-report path to the runDynamicBranchWithConfig seam.
+func runDynamicBranchWithReport(
+	t *testing.T, f fixture, config *migration.MigrationConfig,
+	editGateway func(*manifest.GatewayMigration),
+	runReportPath string,
+	deps executorDependencies,
+) (string, error) {
+	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	if editGateway != nil {
 		editGateway(g)
@@ -132,7 +147,7 @@ func runDynamicBranchWithConfig(
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 
-	err := runDynamicBranch(cmd, g, config, res, deps)
+	err := runDynamicBranch(cmd, g, config, res, deps, runReportPath)
 	return out.String(), err
 }
 
@@ -148,6 +163,34 @@ func TestExecute_DynamicMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	out, err := runDynamicBranchWithConfig(t, f, config, nil, stubDeps(nil, nil))
 	require.NoError(t, err)
 	assert.Contains(t, out, "Migration completed")
+}
+
+// The recorder is wired into the TBM orchestrator, so the report names every stage of the run.
+func TestExecute_DynamicMode_WritesRunReport(t *testing.T) {
+	f := newFixture(t, nil)
+	config := dynamicConfig(t, f, nil)
+	path := filepath.Join(t.TempDir(), "run-report.json")
+
+	_, err := runDynamicBranchWithReport(t, f, config, nil, path, stubDeps(nil, nil))
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err, "the run report must be written on a dynamic-mode run")
+	var report migration.RunReport
+	require.NoError(t, json.Unmarshal(raw, &report))
+
+	assert.Equal(t, config.MigrationId, report.MigrationId)
+	assert.Equal(t, len(config.Topics), report.Topics)
+	assert.Equal(t, tbm.StateSwitched, report.FinalState)
+	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
+	var events []string
+	for _, s := range report.Stages {
+		events = append(events, s.Event)
+	}
+	assert.Equal(t, []string{
+		tbm.EventInitialize, tbm.EventWaitForLags, tbm.EventFence,
+		tbm.EventVerifyFence, tbm.EventPromote, tbm.EventSwitch,
+	}, events)
 }
 
 // --- --promote-batch-size reaches tbm.TBMActions.SetPromoteBatchSize ---

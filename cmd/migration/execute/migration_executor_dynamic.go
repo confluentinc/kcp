@@ -25,6 +25,7 @@ func runDynamicBranch(
 	config *migration.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
+	runReportPath string,
 ) error {
 	ctx := context.Background()
 	policy := g.Spec.DefaultPolicies
@@ -43,9 +44,17 @@ func runDynamicBranch(
 	applyEffectivePolicy(config, policy)
 
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)
-	if err := orchestrator.Execute(ctx, reconcileResult, int64(policy.LagThreshold),
-		policy.DetectUnroutedProducersDuration, svc.restAuth); err != nil {
-		return fmt.Errorf("failed to execute migration: %w", err)
+
+	// Finish is deferred so a failed run is recorded too.
+	runReport := migration.NewRunReportRecorder(runReportPath, config.MigrationId,
+		len(config.Topics), int64(policy.LagThreshold), orchestrator.CurrentState())
+	orchestrator.SetRunReportRecorder(runReport)
+	var execErr error
+	defer func() { runReport.Finish(orchestrator.CurrentState(), execErr) }()
+
+	if execErr = orchestrator.Execute(ctx, reconcileResult, int64(policy.LagThreshold),
+		policy.DetectUnroutedProducersDuration, svc.restAuth); execErr != nil {
+		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s\n", config.MigrationId)

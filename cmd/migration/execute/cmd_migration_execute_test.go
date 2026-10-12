@@ -150,9 +150,7 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 
 // TestExecute_VisibleFlagSurface — the visible flags are the manifest path,
 // --dry-run and the per-policy overrides that vary a spec.defaultPolicies value
-// for a single run. --run-report is registered but hidden (a diagnostics
-// path whose only consumer is the performance rig), so it is asserted
-// separately rather than padding the advertised surface.
+// for a single run.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -167,24 +165,20 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
 		"hot-reload-timeout", "gateway-config-port", "dry-run",
 	}, visible)
-
-	runReport := cmd.Flags().Lookup("run-report")
-	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
-	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
 // TestExecute_HasNoTopologyOrAuthFlags — topology and auth come from the
-// manifest, so execute has no flags for them, and no --migration-state-file.
-// The per-policy override flags (--lag-threshold, --rollout-timeout, etc.)
-// are NOT here: they are the live surface, asserted by
-// TestExecute_VisibleFlagSurface.
+// manifest, so execute has no flags for them, no --migration-state-file, and
+// no --run-report (now the KCP_RUN_REPORT env var). The per-policy override
+// flags (--lag-threshold, --rollout-timeout, etc.) are NOT here: they are the
+// live surface, asserted by TestExecute_VisibleFlagSurface.
 func TestExecute_HasNoTopologyOrAuthFlags(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{
 		"--cluster-api-key", "--cluster-api-secret", "--aws-region",
 		"--sasl-scram-mechanism", "--use-sasl-iam",
 		"--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
-		"--migration-state-file",
+		"--migration-state-file", "--run-report",
 	} {
 		t.Run(flag, func(t *testing.T) {
 			_, err := runExecute(t, "--migration-yaml", f.manifestPath, flag, "1")
