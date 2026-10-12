@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/groupoffsets"
+	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/d2s"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -24,7 +28,7 @@ type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.Service, err
 // the static branch's offset-sync pause/restore) uses.
 type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Service, error)
 
-// executorDependencies builds both branches' downstream services from the
+// executorDependencies builds every branch's downstream services from the
 // manifest. newMigrationExecuteCmd injects it so this package's tests (whose
 // manifests point at unreachable placeholder endpoints) can pass stubs;
 // production uses liveExecutorDependencies.
@@ -32,6 +36,9 @@ type executorDependencies struct {
 	offsets     offsetProvidersFunc
 	gateway     gatewayServiceFunc
 	clusterLink clusterLinkServiceFunc
+	// convert builds a route conversion's services besides the gateway. Only
+	// runConvertBranch calls it.
+	convert convertServicesFunc
 }
 
 // liveExecutorDependencies dials the real source and destination Kafka
@@ -40,6 +47,7 @@ var liveExecutorDependencies = executorDependencies{
 	offsets:     buildOffsetProviders,
 	gateway:     buildGatewayService,
 	clusterLink: buildClusterLinkService,
+	convert:     buildConvertServices,
 }
 
 // executorServices is everything a branch drives its FSM with, built the same
@@ -145,12 +153,12 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 	return offset.NewOffsetService(srcClient), offset.NewOffsetService(destClient), closeFn, nil
 }
 
-// newKafkaClientForConn resolves conn's auth option and dials it as a
-// sarama.Client, for offset.NewOffsetService.
-func newKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
+// authForConn resolves conn's auth into the shared admin option, and the IAM
+// region when the auth is IAM.
+func authForConn(conn types.KafkaSourceConn) (string, client.AdminOption, error) {
 	authType, err := conn.GetSelectedAuthType()
 	if err != nil {
-		return nil, fmt.Errorf("determining auth type: %w", err)
+		return "", nil, fmt.Errorf("determining auth type: %w", err)
 	}
 	region := ""
 	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
@@ -158,9 +166,31 @@ func newKafkaClientForConn(conn types.KafkaSourceConn) (sarama.Client, error) {
 	}
 	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
 	if err != nil {
-		return nil, fmt.Errorf("resolving auth option: %w", err)
+		return "", nil, fmt.Errorf("resolving auth option: %w", err)
 	}
-	return client.NewKafkaClient(conn.BootstrapServers, region, authOpt)
+	return region, authOpt, nil
+}
+
+// newKafkaClientForConn resolves conn's auth option and dials it as a
+// sarama.Client, for offset.NewOffsetService. extra options follow the auth
+// option (a conversion's high-water-mark sweep passes
+// client.WithTopicAutoCreationDisabled).
+func newKafkaClientForConn(conn types.KafkaSourceConn, extra ...client.AdminOption) (sarama.Client, error) {
+	region, authOpt, err := authForConn(conn)
+	if err != nil {
+		return nil, err
+	}
+	return client.NewKafkaClient(conn.BootstrapServers, region, append([]client.AdminOption{authOpt}, extra...)...)
+}
+
+// newConsumerGroupClientForConn dials conn as a consumer-group client (pinned
+// at Kafka 3.8.0), for a conversion's per-worker offset fetches and commits.
+func newConsumerGroupClientForConn(conn types.KafkaSourceConn) (*client.ConsumerGroupClient, error) {
+	region, authOpt, err := authForConn(conn)
+	if err != nil {
+		return nil, err
+	}
+	return client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
 }
 
 // buildGatewayService opens a real gateway.Service against the manifest's
@@ -185,4 +215,83 @@ func buildClusterLinkService(g *manifest.GatewayMigration) (clusterlink.Service,
 		return nil, err
 	}
 	return clusterlink.NewConfluentCloudService(httpClient), nil
+}
+
+// buildConvertServices builds a route conversion's services from the manifest
+// (spec "Command-layer wiring"): the post-fence facts through
+// migplan.GatherConvertFacts over providers built the way migplan.Reconcile
+// builds its own; the strict source and destination group listings and the
+// destination topic listing from those same providers; one consumer-group
+// client per worker on each cluster for the snapshots and the commits; and the
+// high-water-mark sweep over a destination client that never auto-creates a
+// topic.
+func buildConvertServices(g *manifest.GatewayMigration) (convertServices, error) {
+	if g.Spec.Route.ConvertTo == "" {
+		return convertServices{}, fmt.Errorf("spec.route.convertTo is not set: this manifest is not a route conversion")
+	}
+	in, err := migplan.BuildReconcileInput(g)
+	if err != nil {
+		return convertServices{}, err
+	}
+	srcConn, err := sourceConn(g)
+	if err != nil {
+		return convertServices{}, err
+	}
+	dstConn, err := destinationConn(g)
+	if err != nil {
+		return convertServices{}, err
+	}
+	providers, providersCloser, err := migplan.BuildConvertProviders(g)
+	if err != nil {
+		return convertServices{}, err
+	}
+	sweepClient, err := newKafkaClientForConn(dstConn, client.WithTopicAutoCreationDisabled())
+	if err != nil {
+		_ = providersCloser.Close()
+		return convertServices{}, fmt.Errorf("connecting to the destination cluster for the high-water-mark sweep: %w", err)
+	}
+
+	return convertServices{
+		deps: d2s.Dependencies{
+			Input: in,
+			Gather: func(ctx context.Context) (*migplan.ConvertFacts, error) {
+				return migplan.GatherConvertFacts(ctx, providers)
+			},
+			SourceGroups:      groupIDs(providers.SourceGroups),
+			DestinationGroups: providers.TargetGroups.ListGroups,
+			Fetchers: func() (groupoffsets.GroupOffsetFetcher, func(), error) {
+				c, err := newConsumerGroupClientForConn(srcConn)
+				if err != nil {
+					return nil, nil, fmt.Errorf("connecting to the source cluster: %w", err)
+				}
+				return c, func() { _ = c.Close() }, nil
+			},
+			Wait:              groupoffsets.Sleep,
+			DestinationTopics: providers.Target.ListTopics,
+			HighWaterMarks:    offset.NewOffsetService(sweepClient),
+			Committers: func() (groupoffsets.GroupCommitter, func(), error) {
+				c, err := newConsumerGroupClientForConn(dstConn)
+				if err != nil {
+					return nil, nil, fmt.Errorf("connecting to the destination cluster: %w", err)
+				}
+				return c, func() { _ = c.Close() }, nil
+			},
+		},
+		close: func() error { return errors.Join(sweepClient.Close(), providersCloser.Close()) },
+	}, nil
+}
+
+// groupIDs lists l's groups by id only: the snapshots' group lister.
+func groupIDs(l migplan.GroupLister) groupoffsets.GroupLister {
+	return func(ctx context.Context) ([]string, error) {
+		listings, err := l.ListGroups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(listings))
+		for _, g := range listings {
+			ids = append(ids, g.GroupID)
+		}
+		return ids, nil
+	}
 }

@@ -103,6 +103,9 @@ func probeGatewayConfig(ctx context.Context, pods typedcorev1.PodInterface, podN
 		return ProbeResult{}, err
 	}
 
+	if port == 0 {
+		port = DefaultGatewayConfigPort
+	}
 	addr := fmt.Sprintf("%s:%d", podName, port)
 	result := ProbeResult{Addr: addr}
 
