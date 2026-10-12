@@ -143,6 +143,36 @@ func TestMergeListings_StrictGroupWithoutDataHasUnknownState(t *testing.T) {
 	assert.Equal(t, []types.ConsumerGroupListing{{GroupID: "g"}}, got)
 }
 
+// A broker older than Kafka 3.8 advertises ListGroups only up to v4. sarama
+// clamps the v5 request to the advertised range before sending, so the strict
+// listing still answers, over v4, with no UNSUPPORTED_VERSION from either the
+// call or the response.
+func TestListGroupsAllBrokers_PreKafka38BrokerIsListedOverV4(t *testing.T) {
+	c, mb := newClientAndMockBroker(t, 9, func(*sarama.MockBroker) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{
+			"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+				{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
+				{ApiKey: 3, MinVersion: 0, MaxVersion: 9},  // Metadata
+				{ApiKey: 16, MinVersion: 0, MaxVersion: 4}, // ListGroups: no v5 before Kafka 3.8
+			}),
+			"ListGroupsRequest": sarama.NewMockListGroupsResponse(t).AddGroup("g1", "consumer"),
+		}
+	})
+
+	got, err := c.ListGroupsAllBrokers()
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "g1", got[0].GroupID)
+
+	var versions []int16
+	for _, rr := range mb.History() {
+		if req, ok := rr.Request.(*sarama.ListGroupsRequest); ok {
+			versions = append(versions, req.Version)
+		}
+	}
+	assert.Equal(t, []int16{4}, versions, "the request must go out once, clamped to v4")
+}
+
 // fakeOffsetFetcher answers ListConsumerGroupOffsets from canned responses and
 // insists on an all-topics fetch (nil topicPartitions).
 type fakeOffsetFetcher struct {

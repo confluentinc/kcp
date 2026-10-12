@@ -230,7 +230,7 @@
             },
             "convertTo": {
               "type": "string",
-              "description": "Convert the route's shape instead of migrating topics. \"static\" converts a dynamic route whose every topic has already been migrated to the target into a static route bound to targetStreamingDomain, carrying consumer-group offsets across. Mutually exclusive with topicGroup.",
+              "description": "Convert the route's shape instead of migrating topics. \"static\" converts a dynamic route into a static route bound to targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Source topics not on the link only warn. Mutually exclusive with topicGroup.",
               "enum": [
                 "static"
               ]
