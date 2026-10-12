@@ -107,7 +107,6 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
 }
 
-// TestRunReport_SetTopicsRewritesReport — SetTopics flushes the new count immediately.
 func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "run-report.json")
 	recorder := NewRunReportRecorder(reportPath, "migration-1", 0, 0, StateUninitialized)
@@ -118,9 +117,6 @@ func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
 	assert.Equal(t, 7, readRunReport(t, reportPath).Topics)
 }
 
-// TestRunReport_RecordsReconciledTopics — the recorder is built before
-// initialize reconciles the topics, so it starts at zero; the report must end
-// with the count initialize reconciled.
 func TestRunReport_RecordsReconciledTopics(t *testing.T) {
 	topics := []string{"topic-a", "topic-b", "topic-c"}
 	orch, config := newHappyPathOrchestrator(t, topics)

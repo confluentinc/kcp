@@ -133,8 +133,7 @@ func (r *RunReportRecorder) StageEnded(finalState string) {
 	r.flush()
 }
 
-// SetTopics updates the topic count and flushes. The recorder is built before
-// initialize reconciles the run's topics, so the count is set once it has.
+// SetTopics replaces the recorded topic count and flushes.
 func (r *RunReportRecorder) SetTopics(n int) {
 	if r == nil {
 		return
