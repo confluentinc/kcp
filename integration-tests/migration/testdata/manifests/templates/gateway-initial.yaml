@@ -19,8 +19,7 @@ spec:
     envVars:
       - name: GATEWAY_ROOT_LOG_LEVEL
         value: DEBUG
-  # Backs the pre-staged security.cluster.destination-kafka-cluster block below
-  # (formerly only declared in the now-retired switchover CR).
+  # Backs the pre-staged security.cluster.destination-kafka-cluster block below.
   secretStores:
     - name: file-store
       provider:

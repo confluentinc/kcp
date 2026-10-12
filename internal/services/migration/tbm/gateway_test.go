@@ -147,15 +147,15 @@ spec:
 
 func testTBMConfig() *migration.MigrationConfig {
 	return &migration.MigrationConfig{
-		MigrationId:    "tbm-1",
-		CurrentState:   StateLagsOk,
-		K8sNamespace:   "confluent",
-		InitialCrName:  "gateway-initial",
-		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
-		GatewayYAML:    testGatewayYAML,
-		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
-		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+		MigrationId:       "tbm-1",
+		K8sNamespace:      "confluent",
+		InitialCrName:     "gateway-initial",
+		Route:             "migration-route",
+		Topics:            []string{"t1.order"},
+		GatewayYAML:       testGatewayYAML,
+		FenceYAML:         "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
+		SwitchoverYAML:    "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 }
 
@@ -167,12 +167,21 @@ func testTBMConfig() *migration.MigrationConfig {
 func realisticReconcileResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
+		PromoteTopics:  []string{"t1.order"},
+		MigrateTopics:  []string{"t1.order"},
 		GatewayYAML:    testGatewayYAML,
 		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
 		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
 	}
 }
+
+// testRollbackFenceYAML is the rollback target reconcile returns for
+// testGatewayYAML's route: its rules with kcp's fence taken out, which leaves
+// the routing block alone.
+const testRollbackFenceYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n"
 
 func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	var gotRP gateway.RoutePatch
@@ -564,7 +573,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
 }
 
-func TestTBMActions_UnfenceGateway_PatchesRouteToCapturedSnapshotVerbatim(t *testing.T) {
+func TestTBMActions_UnfenceGateway_SetsRulesToTheReconciledRollbackTarget(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
@@ -578,12 +587,11 @@ func TestTBMActions_UnfenceGateway_PatchesRouteToCapturedSnapshotVerbatim(t *tes
 
 	err := actions.unfenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, config.Route, gotRP.RouteName, "PatchGatewayRoute must have been called")
-	assert.Equal(t, "", gotRP.Field, "unfence must whole-route replace, not set a single field")
 
-	expectedRoute, err := gateway.RouteObject([]byte(testGatewayYAML), config.Route)
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
 	require.NoError(t, err)
-	assert.Equal(t, expectedRoute, gotRP.Value, "unfence must restore config.Route to exactly its captured state in config.GatewayYAML, with nothing grafted onto it and no re-cleaning (migplan already cleans it once, centrally)")
+	assert.Equal(t, gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: want}, gotRP,
+		"unfence must set the route's rules to reconcile's rollback target, unchanged — never the start-of-run CR")
 }
 
 func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {
@@ -658,4 +666,54 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
+}
+
+// TestTBMActions_Fence_UnconfirmedFenceIsMarked: once the fence patch has
+// reached the cluster, every later failure leaves the fenced rules there, so
+// Fence marks it migration.ErrFenceUnconfirmed for the orchestrator to remove.
+// A patch that never reached the cluster is not marked.
+func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
+	patchOK := func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil }
+	cases := []struct {
+		name   string
+		gw     *mockGatewayService
+		marked bool
+	}{
+		{"an apply failure is not an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("k8s API unavailable")
+			},
+		}, false},
+		{"an apply that landed but could not be read back is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("%w: stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified)
+			},
+		}, true},
+		{"an acceptance failure is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: patchOK,
+			waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
+			},
+		}, true},
+		{"a verification failure is an unconfirmed fence", &mockGatewayService{
+			patchGatewayRouteFn: patchOK,
+			waitForGatewayReadyFn: func(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
+				return fmt.Errorf("gateway pods did not converge")
+			},
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tc.gw, &mockClusterLinkService{})
+
+			err := actions.Fence(context.Background(), testTBMConfig())
+
+			require.Error(t, err)
+			if tc.marked {
+				assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
+			} else {
+				assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
+			}
+		})
+	}
 }

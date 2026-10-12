@@ -1,4 +1,4 @@
-# Hermetic gateway CR fixture for the route-SHAPE halt sub-tests (U6).
+# Hermetic gateway CR fixture for the route-SHAPE halt sub-tests.
 #
 # NOT a template and NOT applied to the cluster: setup.sh copies it verbatim into
 # .rendered/, and the engine reads it via migplan.NewGatewayFile(path, routeName)

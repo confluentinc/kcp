@@ -10,7 +10,7 @@ here scoped to that manifest, not the unrelated one below.
 different manifest, `gateway-migration.yaml` (`kind: GatewayMigration`), which
 shares this one's `apiVersion` and parser but nothing else. Its docs live
 **outside** this folder, published normally: see
-[gateway manifest reference](../gateway-manifest-reference.md) and
+[migration manifest reference](../migration-manifest-reference.md) and
 [`gateway-examples/gateway-migration.yaml`](../gateway-examples/gateway-migration.yaml).
 A file written for one `kind` is rejected with a clear error if pointed at the
 other command.

@@ -49,7 +49,6 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp create-asset target-infra`                         | N/A                     | N/A                                    | N/A                         |
 | `kcp migration lag-check`                               | Yes                     | No                                     | Yes                         |
 | `kcp migration execute`                                 | Yes                     | No                                     | Yes                         |
-| `kcp migration list`                                    | Yes                     | No                                     | Yes                         |
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |
 
 </div>

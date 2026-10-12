@@ -1,6 +1,6 @@
 # KCP CLI
 
-KCP is a CLI tool for planning and executing Apache Kafka® migrations to Confluent Cloud.
+KCP is a CLI tool for planning and executing migrations to Confluent Cloud.
 
 > [!NOTE]
 > KCP supports migrations from two source types:
@@ -90,9 +90,7 @@ The typical migration flow:
 1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`.
 2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
 3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
-4. **Execute client switchover** — `kcp migration execute` (validates, registers, and runs the cutover in one command; `--dry-run` validates only).
-
-The [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md) guide walks through the end-to-end migration reference, including how KCP fits with the [Confluent Cloud Gateway](https://docs.confluent.io/cloud/current/cp-component/gateway/overview.html).
+4. **Execute client switchover** — `kcp migration execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
 
 ## Key infrastructure decisions
 
@@ -122,13 +120,11 @@ The full CLI reference is generated directly from the Cobra command definitions 
 - [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
 - [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
 - [`kcp create-asset`](command-reference/create-asset/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/migration/index.md) — initialize, list, monitor and execute migrations
+- [`kcp migration`](command-reference/migration/index.md) — execute migrations and monitor replication lag
 - [`kcp ui`](command-reference/ui.md) — launch the local web UI
 - [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
 
 ## Related guides
 
-- [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
-- [Gateway Switchover Examples](gateway-switchover/index.md)
 - [Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md) — schema and worked examples for `apache-kafka-credentials.yaml`
 - [Apache Kafka configuration → Metrics collection](apache-kafka-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for Apache Kafka metrics

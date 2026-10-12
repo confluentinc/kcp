@@ -556,7 +556,7 @@ func reasonsContain(res *migplan.Result, sub string) bool {
 	return false
 }
 
-// TestHarnessAppliesSwitchoverWithoutRoll is the seam's own thin test (U5): it
+// TestHarnessAppliesSwitchoverWithoutRoll is the seam's own thin test: it
 // drives one already-mirrored headroom topic through ApplyFence then
 // ApplySwitchover and asserts each apply converges its configId on every pod with
 // no pod roll, and that the two applies mint distinct configIds. It runs before

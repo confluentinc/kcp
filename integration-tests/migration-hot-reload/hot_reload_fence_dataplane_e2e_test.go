@@ -233,34 +233,31 @@ func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gatewa
 // (Field: "fence") — a single-field edit rather than a full-CR apply.
 func fenceRoutePatch(t *testing.T) gateway.RoutePatch {
 	t.Helper()
-	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_FENCED_CR"), fenceRouteName)
-	require.NoError(t, err)
+	route := routeObject(t, mustReadFile(t, "KCP_HR_FENCED_CR"), fenceRouteName)
 	fenceValue, ok := route["fence"]
 	require.True(t, ok, "the rendered fenced CR's route must declare a fence block")
 	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "fence", Value: fenceValue}
 }
 
 // switchoverRoutePatch derives the switchover transition's RoutePatch from the
-// rendered switchover CR's route, mirroring AAO's deriveSwitchRoutePatch
-// (Field: "streamingDomain"). Both streaming domains are declared in every
-// transition, so flipping the route's streamingDomain is an in-place route edit
-// CFK hot-reloads rather than a roll.
+// rendered switchover CR's route: a single-field edit of the route's
+// streamingDomain. Both streaming domains are declared in every transition, so
+// flipping the route's streamingDomain is an in-place route edit CFK
+// hot-reloads rather than a roll.
 func switchoverRoutePatch(t *testing.T) gateway.RoutePatch {
 	t.Helper()
-	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_SWITCHOVER_CR"), fenceRouteName)
-	require.NoError(t, err)
+	route := routeObject(t, mustReadFile(t, "KCP_HR_SWITCHOVER_CR"), fenceRouteName)
 	streamingDomain, ok := route["streamingDomain"]
 	require.True(t, ok, "the rendered switchover CR's route must declare a streamingDomain")
 	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "streamingDomain", Value: streamingDomain}
 }
 
 // unfenceRoutePatch derives the rollback transition's RoutePatch: a whole-route
-// replace restoring the route to its captured initial state, mirroring
-// unfenceGateway's deriveUnfenceRoutePatch (Field: "").
+// replace (Field: "") restoring the route to its initial state, as kcp's
+// rollback does.
 func unfenceRoutePatch(t *testing.T) gateway.RoutePatch {
 	t.Helper()
-	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_INITIAL_CR"), fenceRouteName)
-	require.NoError(t, err)
+	route := routeObject(t, mustReadFile(t, "KCP_HR_INITIAL_CR"), fenceRouteName)
 	return gateway.RoutePatch{RouteName: fenceRouteName, Value: route}
 }
 

@@ -54,7 +54,7 @@ func TestClusterLinkStatusMapping(t *testing.T) {
 	want := map[string]reconcile.MirrorState{
 		"a": reconcile.MirrorActive,
 		"b": reconcile.MirrorStopped,
-		"c": reconcile.MirrorBad,
+		"c": reconcile.MirrorPending,
 	}
 	for k, v := range want {
 		if ls.Mirrors[k] != v {
@@ -107,5 +107,34 @@ func TestClusterLinkStatusError(t *testing.T) {
 	// a link-describe error propagates too
 	if _, err := NewClusterLinkStatus(&fakeLinkReader{linkErr: errors.New("describe boom")}, clusterlink.Config{}).LinkStatus(context.Background()); err == nil {
 		t.Fatal("expected the link-describe error to propagate")
+	}
+}
+
+func TestMapStatus(t *testing.T) {
+	cases := []struct {
+		status string
+		want   reconcile.MirrorState
+	}{
+		{"ACTIVE", reconcile.MirrorActive},
+		{"STOPPED", reconcile.MirrorStopped},
+		{"PENDING_STOPPED", reconcile.MirrorPending},
+		{"FAILED", reconcile.MirrorBad},
+		{"LINK_FAILED", reconcile.MirrorBad},
+		{"SOURCE_UNAVAILABLE", reconcile.MirrorBad},
+		{"PAUSED", reconcile.MirrorBad},
+		{"LINK_PAUSED", reconcile.MirrorBad},
+		{"PENDING_MIRROR", reconcile.MirrorBad},
+		{"PENDING_SYNCHRONIZE", reconcile.MirrorBad},
+		{"PENDING_SETUP_FOR_RESTORE", reconcile.MirrorBad},
+		{"PENDING_RESTORE", reconcile.MirrorBad},
+		{"", reconcile.MirrorBad},
+		{"SOMETHING_NEW", reconcile.MirrorBad},
+	}
+	for _, c := range cases {
+		t.Run(c.status, func(t *testing.T) {
+			if got := mapStatus(c.status); got != c.want {
+				t.Fatalf("mapStatus(%q) = %v, want %v", c.status, got, c.want)
+			}
+		})
 	}
 }

@@ -2,10 +2,12 @@ package reconcile
 
 import "fmt"
 
-// Classify applies the per-topic verdict truth table.
+// Classify applies the per-topic verdict truth table (5-way resume-action taxonomy).
 //
-//	MIGRATABLE  <=> onSource && mirror==Active && !routesToTarget
-//	UNCHANGED   <=> mirror==Stopped && routesToTarget && onTarget
+//	MIGRATABLE    <=> onSource && Active  && !routesToTarget           (promote then switch)
+//	UNCHANGED     <=> Stopped  && routesToTarget && onTarget           (done)
+//	SWITCH-ONLY   <=> onSource && Stopped && onTarget && !routesToTarget (resume: switch)
+//	AWAIT-STOPPED <=> onSource && Pending && onTarget && !routesToTarget (resume: await, then switch)
 //	else FAIL-FAST, with a reason explaining the specific inconsistency.
 func Classify(topic string, onSource, onTarget bool, mirror MirrorState, routesToTarget bool) TopicVerdict {
 	tv := TopicVerdict{
@@ -20,10 +22,16 @@ func Classify(topic string, onSource, onTarget bool, mirror MirrorState, routesT
 		tv.Verdict = Migratable
 	case mirror == MirrorStopped && routesToTarget && onTarget:
 		tv.Verdict = Unchanged
+	case onSource && mirror == MirrorStopped && onTarget && !routesToTarget:
+		tv.Verdict = SwitchOnly
+	case onSource && mirror == MirrorPending && onTarget && !routesToTarget:
+		tv.Verdict = AwaitStopped
 	case routesToTarget && mirror == MirrorActive:
 		tv.Verdict, tv.Reason = FailFast, fmt.Sprintf("%s routes to target but its mirror is not yet promoted", topic)
 	case mirror == MirrorStopped && !routesToTarget:
 		tv.Verdict, tv.Reason = FailFast, fmt.Sprintf("%s is promoted but not switched over", topic)
+	case mirror == MirrorPending:
+		tv.Verdict, tv.Reason = FailFast, fmt.Sprintf("%s mirror promotion is still in progress in an unexpected state", topic)
 	case mirror == MirrorBad:
 		tv.Verdict, tv.Reason = FailFast, fmt.Sprintf("%s mirror is in a failed/transitional state", topic)
 	case onSource && mirror == MirrorNone && onTarget:
