@@ -29,8 +29,8 @@ type convertServicesFunc func(g *manifest.GatewayMigration) (convertServices, er
 //
 // Every policy is read from g.Spec.DefaultPolicies, the effective policy after applyPolicyOverrides. A
 // conversion reads detectUnroutedCommitsDuration and offsetSyncConcurrency (resolved to their defaults), and
-// the rollout and hot-reload timeouts and the gateway config port like every branch; lagThreshold,
-// promoteBatchSize and --run-report are AAO/TBM-only.
+// the rollout and hot-reload timeouts and the gateway config port like every branch; lagThreshold and
+// promoteBatchSize are AAO/TBM-only.
 func runConvertBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
