@@ -37,17 +37,50 @@ spans it would have received are lost (the file, if configured, still has them).
 A run that is killed (Ctrl-C, SIGKILL) loses the spans that were still open — the step it was in and the root span.
 Spans already ended are in the file, because the file is written as each span ends.
 
-## Viewing traces locally
+## Viewing traces: the kcp tracing dashboard
 
-`make otel-up` starts `grafana/otel-lgtm` — an OTel Collector, Tempo (trace storage) and Grafana in one container.
+`make otel-up` starts `grafana/otel-lgtm` (an OTel Collector, Tempo for traces, Prometheus and Grafana in one
+container) with the **kcp tracing** dashboard already loaded. No login, no Explore, no queries to write.
 
 ```bash
-make otel-up
+make otel-up                       # prints the dashboard URL; Grafana is ready in ~30s
 KCP_TRACING_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
   kcp migration execute --migration-yaml migration.yaml
 ```
 
-Open http://localhost:3000 → Explore → Tempo → Search, Service Name `kcp`. `make otel-down` stops it.
+Open **http://localhost:3000/d/kcp-tracing**.
+
+| Section | What it shows |
+|---|---|
+| **Runs** | *Traced commands*: every traced kcp command (any command, not only migrations), newest first, with its run label and duration. *Migration runs*: each migration with its strategy, migration name and topic count. **Click a command or a strategy** to load that run into the section below. |
+| **Selected run** | The whole run's duration and how much of it was deliberate waiting (`wait.*`); the top-level phases (reconcile, service setup, the state machine); the full parent/child **timeline**; time per migration step in workflow order; each deliberate wait. |
+| **Across all runs** | Mean time per step and per inner operation (gateway, offset, cluster-link, reconcile reads, waits), and how often each ran, over every run since the backend started. |
+
+The across-runs panels come from the span metrics Tempo derives in Prometheus, which carry span names but not the `run`
+label. To compare labelled runs, read the duration and step bars of each run in turn.
+
+Everything lives in the container: `make otel-down` stops it and discards the data.
+
+### Running a batch of labelled runs
+
+Label each run with `OTEL_RESOURCE_ATTRIBUTES` and run several; each appears as its own row under *Runs*. The smoke
+suite does this for you: one pass runs five labelled migrations that vary topic count, detection window and promote
+batch size (see `integration-tests/tracing/README.md`):
+
+```bash
+make otel-up
+make test-tracing-setup      # once
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 make test-tracing-run
+```
+
+For your own migrations, set `OTEL_RESOURCE_ATTRIBUTES=run=<label>` on each `kcp` command.
+
+### Changing the dashboard
+
+The dashboard is `internal/tracing/grafana/kcp-tracing.json`, loaded through `internal/tracing/grafana/dashboards.yaml`.
+Edit it in Grafana, then *Export → Save to file* over the JSON in the repo (or edit the JSON directly) and
+`make otel-down && make otel-up` to reload. Data sources are referenced by the UIDs `otel-lgtm` ships with: `tempo`
+and `prometheus`.
 
 ## The trace file
 
@@ -167,5 +200,6 @@ Every `wait.*` span carries `kcp.wait.configured_ms`.
 
 ## The smoke suite
 
-`integration-tests/tracing/` runs one clean TBM migration against a live gateway, cluster link and Kafka in minikube and
-checks the trace end to end. See its README.
+`integration-tests/tracing/` runs labelled static, dynamic and dynamic-to-static migrations (`GATEWAY_MODE=static`,
+`dynamic` or `convert`) against a live gateway, cluster link and Kafka in minikube and checks each trace end to end.
+See its README.

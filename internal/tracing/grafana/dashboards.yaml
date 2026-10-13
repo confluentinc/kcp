@@ -1,0 +1,11 @@
+# Grafana dashboard provisioning for the local trace viewer: `make otel-up`
+# mounts this directory into the grafana/otel-lgtm container and this file into
+# its provisioning folder, so the kcp dashboards are loaded at startup.
+apiVersion: 1
+
+providers:
+  - name: kcp
+    type: file
+    options:
+      path: /otel-lgtm/kcp-dashboards
+      foldersFromFilesStructure: false
