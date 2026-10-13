@@ -130,6 +130,7 @@ type listingGaps struct {
 func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string, gaps listingGaps) reconcile.GroupFacts {
 	f := reconcile.GroupFacts{
 		TargetStates:            make(map[string]string, len(target)),
+		TargetTypes:             make(map[string]string, len(target)),
 		TrackedTopics:           tracked,
 		SourceListingIncomplete: gaps.sourceGroups,
 		TargetListingIncomplete: gaps.targetGroups,
@@ -139,6 +140,7 @@ func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string
 	}
 	for _, l := range target {
 		f.TargetStates[l.GroupID] = l.State
+		f.TargetTypes[l.GroupID] = l.Type
 	}
 	return f
 }

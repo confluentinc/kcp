@@ -255,6 +255,21 @@ func TestReconcileConvert_RefusesSplitBrain(t *testing.T) {
 	}
 }
 
+func TestReconcileConvert_RefusesAShareGroupNameClash(t *testing.T) {
+	groups := trackedGroups()
+	groups.TargetStates = map[string]string{"orders-app": "Empty"}
+	groups.TargetTypes = map[string]string{"orders-app": "share"}
+
+	p := reconcileConverged(convertGateway(), groups)
+
+	if !p.Report.Refused() {
+		t.Fatal("an in-scope group held as a share group on the destination must refuse")
+	}
+	if pc := convertPrecondition(t, p.Report, GroupShareClashCheckName); pc.OK {
+		t.Errorf("share-clash precondition = %+v, want a failure", pc)
+	}
+}
+
 func TestReconcileConvert_IdleDestinationGroupWarns(t *testing.T) {
 	groups := trackedGroups()
 	groups.TargetStates = map[string]string{"orders-app": "Empty"}

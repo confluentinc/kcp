@@ -120,7 +120,7 @@ func TestListingGap(t *testing.T) {
 func TestGroupFacts(t *testing.T) {
 	tracked := map[string][]string{"a": {"orders"}}
 	f := groupFacts(
-		[]types.ConsumerGroupListing{{GroupID: "b", State: "Stable"}, {GroupID: "c", State: "Empty"}},
+		[]types.ConsumerGroupListing{{GroupID: "b", Type: "classic", State: "Stable"}, {GroupID: "c", Type: "share", State: "Empty"}},
 		tracked,
 		listingGaps{sourceGroups: "sg", targetGroups: "tg", sourceTopics: "st", targetTopics: "tt"},
 	)
@@ -134,6 +134,9 @@ func TestGroupFacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.TargetStates, map[string]string{"b": "Stable", "c": "Empty"}) {
 		t.Errorf("TargetStates = %v", f.TargetStates)
+	}
+	if !reflect.DeepEqual(f.TargetTypes, map[string]string{"b": "classic", "c": "share"}) {
+		t.Errorf("TargetTypes = %v", f.TargetTypes)
 	}
 }
 

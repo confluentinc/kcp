@@ -135,6 +135,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		View:            view,
 		CommittedTopics: groups.TrackedTopics,
 		TargetStates:    groups.TargetStates,
+		TargetTypes:     groups.TargetTypes,
 	})
 	report.Unchanged = append(report.Unchanged, scope.Unchanged...)
 	report.FailFast = append(report.FailFast, scope.FailFast...)

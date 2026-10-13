@@ -69,6 +69,46 @@ func TestCheckGroupSplitBrain_DetailIsSorted(t *testing.T) {
 	}
 }
 
+// A share group on the destination rejects kcp's admin offset commit (GROUP_ID_NOT_FOUND), whatever its
+// state, so an in-scope group whose name the destination holds as a share group refuses up front.
+func TestCheckGroupShareClash_RefusesAShareGroupInAnyState(t *testing.T) {
+	for _, typ := range []string{"share", "Share"} {
+		res := CheckGroupShareClash([]string{"orders-app"}, map[string]string{"orders-app": typ})
+		if res.OK {
+			t.Fatalf("type %q on the destination must refuse, got a pass", typ)
+		}
+		for _, want := range []string{"orders-app", "share group", "delete"} {
+			if !strings.Contains(res.Detail, want) {
+				t.Errorf("detail = %q, want it to contain %q", res.Detail, want)
+			}
+		}
+	}
+}
+
+// Classic, consumer and streams groups accept the admin commit (verified live), and an unknown type (a
+// ListGroups v4 broker, which predates share groups) is not a share group.
+func TestCheckGroupShareClash_PassesOtherTypes(t *testing.T) {
+	for _, typ := range []string{"classic", "consumer", "streams", ""} {
+		if res := CheckGroupShareClash([]string{"g"}, map[string]string{"g": typ}); !res.OK {
+			t.Errorf("type %q must pass, got %+v", typ, res)
+		}
+	}
+}
+
+func TestCheckGroupShareClash_IgnoresDestinationOnlyShareGroups(t *testing.T) {
+	res := CheckGroupShareClash([]string{"orders-app"}, map[string]string{"dest-only": "share"})
+	if !res.OK {
+		t.Fatalf("a share group only on the destination is unrelated to the route, got %+v", res)
+	}
+}
+
+func TestCheckGroupShareClash_DetailIsSorted(t *testing.T) {
+	res := CheckGroupShareClash([]string{"zeta", "alpha"}, map[string]string{"zeta": "share", "alpha": "share"})
+	if strings.Index(res.Detail, "alpha") > strings.Index(res.Detail, "zeta") {
+		t.Errorf("detail = %q, want groups sorted", res.Detail)
+	}
+}
+
 func TestConvertCredentialChecks_AllFiveInOrder(t *testing.T) {
 	want := []string{
 		SourceGroupVisibilityCheckName,

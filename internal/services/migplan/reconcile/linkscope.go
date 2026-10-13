@@ -44,6 +44,9 @@ type LinkScopeInput struct {
 	CommittedTopics map[string][]string
 	// TargetStates is each destination group's state, as ListGroups reports it.
 	TargetStates map[string]string
+	// TargetTypes is each destination group's type (classic, consumer, share,
+	// streams; "" from a ListGroups v4 broker), as ListGroups reports it.
+	TargetTypes map[string]string
 }
 
 // checkLinkTopics checks every link topic: promoted, unprefixed name, on the
@@ -225,9 +228,10 @@ func (s LinkScope) Refused() bool {
 // CheckLinkScope applies every link-scoped rule of a route conversion, in
 // stages: the link topic checks (with the at-least-one-promoted-topic rule),
 // then the group rule (with the warning about untracked topics off the link),
-// then the split-brain check over the in-scope groups. A refusing stage returns
-// before the next: the group rule trusts a link the topic checks passed, and
-// the split-brain check needs the in-scope groups the group rule produces.
+// then the split-brain and share-clash checks over the in-scope groups. A
+// refusing stage returns before the next: the group rule trusts a link the
+// topic checks passed, and the last two need the in-scope groups the group rule
+// produces.
 // Reconcile and verify_fence both call it, so their verdicts can't drift.
 func CheckLinkScope(in LinkScopeInput) LinkScope {
 	var s LinkScope
@@ -250,7 +254,7 @@ func CheckLinkScope(in LinkScopeInput) LinkScope {
 	s.InScopeGroups = inScope
 
 	splitBrain, warnings := CheckGroupSplitBrain(inScope, in.TargetStates)
-	s.Preconditions = append(s.Preconditions, splitBrain)
+	s.Preconditions = append(s.Preconditions, splitBrain, CheckGroupShareClash(inScope, in.TargetTypes))
 	s.Warnings = append(s.Warnings, warnings...)
 	return s
 }

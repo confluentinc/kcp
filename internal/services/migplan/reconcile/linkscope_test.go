@@ -329,6 +329,26 @@ func TestCheckLinkScope_SplitBrainCoversInScopeGroupsOnly(t *testing.T) {
 	}
 }
 
+func TestCheckLinkScope_ShareGroupClashCoversInScopeGroupsOnly(t *testing.T) {
+	in := linkInput()
+	in.TargetStates = map[string]string{"orders-app": "Empty"}
+	in.TargetTypes = map[string]string{"orders-app": "share"}
+	s := CheckLinkScope(in)
+	if pc := scopePrecondition(t, s, GroupShareClashCheckName); pc.OK {
+		t.Error("an in-scope group held as a share group on the destination must refuse")
+	}
+	if !s.Refused() {
+		t.Errorf("got %+v, want a refusal", s)
+	}
+
+	in = linkInput()
+	in.CommittedTopics["idle-app"] = nil
+	in.TargetTypes = map[string]string{"idle-app": "share"}
+	if pc := scopePrecondition(t, CheckLinkScope(in), GroupShareClashCheckName); !pc.OK {
+		t.Errorf("share clash = %+v, want a pass: a group with no commits is not in scope", pc)
+	}
+}
+
 func TestCheckLinkScope_IdleInScopeGroupOnTheDestinationWarns(t *testing.T) {
 	in := linkInput()
 	in.TargetStates = map[string]string{"orders-app": "Empty"}

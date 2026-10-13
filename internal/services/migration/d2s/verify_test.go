@@ -239,6 +239,21 @@ func TestVerifyFence_RefusesWhenTheRouteNoLongerCarriesKcpsFence(t *testing.T) {
 	assert.Nil(t, a.handoff)
 }
 
+// verify_fence re-reads the destination listing's group types with the rest of the facts: a share group named
+// like an in-scope group refuses before the window, so nothing waits and nothing is written.
+func TestVerifyFence_RefusesAShareGroupNameClash(t *testing.T) {
+	w := cleanWorld()
+	w.facts.TargetGroupListing = []types.ConsumerGroupListing{{GroupID: "orders-app", Type: "share", State: "Empty"}}
+
+	a, err := verify(t, w)
+
+	require.ErrorIs(t, err, ErrVerifyRefused)
+	assert.Contains(t, err.Error(), reconcile.GroupShareClashCheckName+": ")
+	assert.Contains(t, w.rendered.String(), "✗ "+reconcile.GroupShareClashCheckName)
+	assert.Empty(t, w.waits, "refused before the detection window")
+	assert.Nil(t, a.handoff)
+}
+
 // An idle destination group with offsets passes, but the operator is told sync will overwrite its offsets.
 func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
 	color.NoColor = true

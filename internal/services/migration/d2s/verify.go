@@ -89,6 +89,7 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		View:            view,
 		CommittedTopics: gf.TrackedTopics,
 		TargetStates:    gf.TargetStates,
+		TargetTypes:     gf.TargetTypes,
 	})
 	report.Unchanged = scope.Unchanged
 	report.FailFast = scope.FailFast

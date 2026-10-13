@@ -10,7 +10,8 @@ import (
 // layer: each destination group's state (as ListGroups reports it), and, per
 // source group from a strict listing of every source group, the topics it has
 // committed offsets on (an empty list for a group with no commits). The group
-// rule reads TrackedTopics; the split-brain check reads TargetStates for the
+// rule reads TrackedTopics; the split-brain check reads TargetStates and the
+// share-clash check TargetTypes (each destination group's type), for the
 // in-scope groups.
 //
 // SourceListingIncomplete and TargetListingIncomplete are empty when that
@@ -31,6 +32,7 @@ import (
 // do not prove, so a DESCRIBE-only credential would fail after the fence.
 type GroupFacts struct {
 	TargetStates            map[string]string
+	TargetTypes             map[string]string
 	TrackedTopics           map[string][]string
 	SourceListingIncomplete string
 	TargetListingIncomplete string
@@ -125,4 +127,32 @@ func CheckGroupSplitBrain(groups []string, targetStates map[string]string) (Prec
 			strings.Join(active, ", "), onDest)), warnings
 	}
 	return pass(GroupSplitBrainCheckName), warnings
+}
+
+// GroupShareClashCheckName names the precondition CheckGroupShareClash returns.
+const GroupShareClashCheckName = "no in-scope consumer group is a share group on the destination"
+
+// CheckGroupShareClash refuses when one of groups (the conversion's in-scope
+// source groups) exists on the destination as a share group (KIP-932). The
+// destination answers kcp's admin offset commit for such a group with
+// GROUP_ID_NOT_FOUND whatever the share group's state, so without this check an
+// idle share group passes the split-brain check and the conversion fails after
+// the fence. Other types accept the commit (classic, consumer and streams,
+// verified live), and an unknown type, from a ListGroups v4 broker that
+// predates share groups, is not a share group. Groups only on the destination
+// are ignored.
+func CheckGroupShareClash(groups []string, targetTypes map[string]string) PreconditionResult {
+	var clash []string
+	for _, g := range groups {
+		if strings.EqualFold(targetTypes[g], "share") {
+			clash = append(clash, g)
+		}
+	}
+	if len(clash) == 0 {
+		return pass(GroupShareClashCheckName)
+	}
+	sort.Strings(clash)
+	return fail(GroupShareClashCheckName, fmt.Sprintf(
+		"consumer group(s) %s exist on the source and as share groups on the destination; a share group does not accept a consumer group's committed offsets, so the conversion could not carry them — delete the destination share group(s) (kafka-share-groups --delete) or stop using these names for them",
+		strings.Join(clash, ", ")))
 }
