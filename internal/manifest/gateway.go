@@ -26,6 +26,15 @@ const KindGatewayMigration = "GatewayMigration"
 // clean result would mean "we did not look long enough", not "nothing found".
 const minDetectUnroutedProducersDuration = 10 * time.Second
 
+// DefaultDetectUnroutedCommitsDuration and DefaultOffsetSyncConcurrency are the
+// built-in values a route conversion uses when the matching DefaultPolicies
+// field is 0. Unlike detectUnroutedProducersDuration, 0 never means "skip": the
+// conversion's rogue-commit check is a safety check and cannot be skipped.
+const (
+	DefaultDetectUnroutedCommitsDuration = 30 * time.Second
+	DefaultOffsetSyncConcurrency         = 8
+)
+
 // GatewayMigration is the declarative form of a `kcp migration` run: the
 // topology, the cluster link, the gateway CRs, and the execute-time policy that
 // today are spread across 64 flags on four commands.
@@ -98,28 +107,37 @@ type GatewayClusterLink struct {
 	ConsumerOffsetSyncBaseline string `yaml:"consumerOffsetSyncBaseline,omitempty" json:"consumerOffsetSyncBaseline,omitempty"`
 }
 
-// Route names the route on the live Gateway CR to fence/switch, the target
-// streaming domain it switches to, and the topic selection that migrates. The
-// field set is identical for the static (all-at-once) and dynamic
-// (topic-based) modes.
+// RouteConvertToStatic is the one spec.route.convertTo value accepted today: convert
+// the route's live shape from dynamic to static.
+const RouteConvertToStatic = "static"
+
+// Route names the route on the live Gateway CR to act on and the target
+// streaming domain, plus exactly one of: the topic selection that migrates
+// (TopicGroup), or a declared conversion of the route's shape (ConvertTo).
 //
 // There is no bootstrapServerId or mode field: both are read from the live CR
-// on every run.
+// on every run. ConvertTo is not a restatement of the live mode — nothing in
+// the CR distinguishes "keep migrating topics on this dynamic route" from
+// "convert it to static", so the manifest has to say which.
 type Route struct {
 	// Name is the spec.routes[].name of the route to fence and switch over.
 	// Must exist in the initial CR. On a static route it must carry no fence
 	// other than kcp's own.
 	Name string `yaml:"name" json:"name"`
 	// TopicGroup pairs the topic selections that migrate on this route.
-	// Exactly one entry today.
-	TopicGroup []TopicGroupEntry `yaml:"topicGroup" json:"topicGroup"`
+	// Exactly one entry today. Absent when ConvertTo is set.
+	TopicGroup []TopicGroupEntry `yaml:"topicGroup,omitempty" json:"topicGroup,omitempty"`
 	// TargetStreamingDomain names a streaming domain already declared in the
 	// initial CR's spec.streamingDomains. kcp derives the bootstrap server id
-	// to bind the route to from that declaration in the live CR — it is not
-	// written here. Safe with no secret or auth change at cutover only because
-	// the route's security.cluster already carries pre-staged ("redundant")
-	// auth for this domain, which kcp checks on a static route on every run.
+	// to bind the route to from the live CR — it is not written here. Safe with
+	// no secret or auth change at cutover only because the route's
+	// security.cluster already carries auth for this domain.
 	TargetStreamingDomain string `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
+	// ConvertTo declares a conversion of the route's live shape instead of a
+	// topic selection: "static" converts a fully-migrated dynamic route to a
+	// static route bound to TargetStreamingDomain. Mutually exclusive with
+	// TopicGroup.
+	ConvertTo string `yaml:"convertTo,omitempty" json:"convertTo,omitempty"`
 }
 
 // TopicGroupEntry is a topic selection (literal names and/or anchored regex
@@ -171,6 +189,34 @@ type DefaultPolicies struct {
 	// polled per pod to confirm a config revision was applied. 0 uses the
 	// gateway default (9180).
 	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
+	// DetectUnroutedCommitsDuration is the wait between the two committed-offset
+	// snapshots a route conversion takes after fencing, to catch a consumer that
+	// bypasses the gateway and commits to the source directly. It is its own
+	// field, not a reuse of detectUnroutedProducersDuration, because that field's
+	// 0 means "skip the check" and this check can never be skipped. 0 uses the
+	// built-in 30s; when set the minimum is 10s (two default auto-commit
+	// intervals). Applies only to a conversion manifest.
+	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
+	// OffsetSyncConcurrency is how many workers, each with its own broker
+	// connection, read and write consumer-group offsets during a route
+	// conversion. 0 uses the built-in 8. Applies only to a conversion manifest.
+	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
+}
+
+// EffectiveDetectUnroutedCommitsDuration resolves 0 to the built-in default.
+func (p DefaultPolicies) EffectiveDetectUnroutedCommitsDuration() time.Duration {
+	if p.DetectUnroutedCommitsDuration == 0 {
+		return DefaultDetectUnroutedCommitsDuration
+	}
+	return p.DetectUnroutedCommitsDuration
+}
+
+// EffectiveOffsetSyncConcurrency resolves 0 to the built-in default.
+func (p DefaultPolicies) EffectiveOffsetSyncConcurrency() int {
+	if p.OffsetSyncConcurrency == 0 {
+		return DefaultOffsetSyncConcurrency
+	}
+	return p.OffsetSyncConcurrency
 }
 
 // envelope is the minimum needed to discriminate one kind from another. It is
@@ -330,10 +376,9 @@ func (g *GatewayMigration) Validate() []error {
 }
 
 // validateRoute applies the structural rules for spec.route: a non-blank name
-// and target streaming domain, exactly one topicGroup entry, and at least one
-// of topics/topicPatterns on it, each pattern compiling as an anchored RE2
-// full-match. It does no I/O — the mode and the bootstrap server id are
-// resolved from the live CR on every run, not the manifest.
+// and target streaming domain, and either a valid convertTo or exactly one
+// topicGroup entry with at least one of topics/topicPatterns on it, each
+// pattern compiling as an anchored RE2 full-match.
 func validateRoute(r Route) []error {
 	var errs []error
 	add := func(format string, args ...any) {
@@ -345,6 +390,16 @@ func validateRoute(r Route) []error {
 	}
 	if blank(r.TargetStreamingDomain) {
 		add("spec.route.targetStreamingDomain: must not be blank")
+	}
+
+	if r.ConvertTo != "" {
+		if r.ConvertTo != RouteConvertToStatic {
+			add("spec.route.convertTo: must be %q (got %q)", RouteConvertToStatic, r.ConvertTo)
+		}
+		if r.TopicGroup != nil {
+			add("spec.route: convertTo and topicGroup are mutually exclusive — a conversion selects no topics")
+		}
+		return errs
 	}
 
 	entries := r.TopicGroup
@@ -414,6 +469,16 @@ func (p DefaultPolicies) Validate() []error {
 	}
 	if p.GatewayConfigPort < 0 {
 		errs = append(errs, fmt.Errorf("spec.defaultPolicies.gatewayConfigPort: must not be negative (0 uses the default port)"))
+	}
+	if p.DetectUnroutedCommitsDuration < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.detectUnroutedCommitsDuration: must not be negative (0 uses the built-in %s)", DefaultDetectUnroutedCommitsDuration))
+	} else if p.DetectUnroutedCommitsDuration > 0 && p.DetectUnroutedCommitsDuration < minDetectUnroutedProducersDuration {
+		errs = append(errs, fmt.Errorf(
+			"spec.defaultPolicies.detectUnroutedCommitsDuration: must be at least %s when set (0 uses the built-in %s) — a shorter window can miss a consumer on default auto-commit settings",
+			minDetectUnroutedProducersDuration, DefaultDetectUnroutedCommitsDuration))
+	}
+	if p.OffsetSyncConcurrency < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", DefaultOffsetSyncConcurrency))
 	}
 	return errs
 }

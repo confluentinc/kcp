@@ -920,10 +920,82 @@ func TestLoadGatewayMigrationFile_RejectsWrongKind(t *testing.T) {
 	assert.Contains(t, err.Error(), KindGatewayMigration)
 }
 
+// TestValidate_ConvertTo — spec.route.convertTo declares a dynamic-to-static
+// conversion; it replaces topicGroup and accepts only "static".
+func TestValidate_ConvertTo(t *testing.T) {
+	const convert = "    convertTo: static\n"
+
+	t.Run("convertTo static without topicGroup is valid", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1))
+		assert.Empty(t, g.Validate())
+		assert.Equal(t, RouteConvertToStatic, g.Spec.Route.ConvertTo)
+		assert.Nil(t, g.Spec.Route.TopicGroup)
+	})
+
+	t.Run("convertTo with topicGroup is rejected", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+convert, 1))
+		requireErrContains(t, g.Validate(), "mutually exclusive")
+	})
+
+	t.Run("convertTo other than static is rejected", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    convertTo: dynamic\n", 1))
+		requireErrContains(t, g.Validate(), "spec.route.convertTo")
+	})
+
+	t.Run("a conversion still needs a route name and target domain", func(t *testing.T) {
+		doc := strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1)
+		doc = strings.Replace(doc, "    targetStreamingDomain: confluent-cloud\n", "", 1)
+		g := parseGateway(t, doc)
+		requireErrContains(t, g.Validate(), "spec.route.targetStreamingDomain")
+	})
+}
+
 // captureSlog redirects the default logger into buf and returns a restore func.
 func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	t.Helper()
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
+}
+
+func TestDefaultPolicies_ConversionPolicyDefaults(t *testing.T) {
+	var p DefaultPolicies
+	assert.Equal(t, 30*time.Second, p.EffectiveDetectUnroutedCommitsDuration(), "unset uses the built-in default")
+	assert.Equal(t, 8, p.EffectiveOffsetSyncConcurrency(), "unset uses the built-in default")
+
+	p = DefaultPolicies{DetectUnroutedCommitsDuration: 45 * time.Second, OffsetSyncConcurrency: 3}
+	assert.Equal(t, 45*time.Second, p.EffectiveDetectUnroutedCommitsDuration())
+	assert.Equal(t, 3, p.EffectiveOffsetSyncConcurrency())
+}
+
+func TestDefaultPolicies_ValidateConversionPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		p       DefaultPolicies
+		wantErr string // substring; empty means valid
+	}{
+		{"unset is valid", DefaultPolicies{}, ""},
+		{"commits window at the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 10 * time.Second}, ""},
+		{"commits window below the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 9 * time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
+		{"commits window negative", DefaultPolicies{DetectUnroutedCommitsDuration: -time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
+		{"concurrency positive", DefaultPolicies{OffsetSyncConcurrency: 16}, ""},
+		{"concurrency negative", DefaultPolicies{OffsetSyncConcurrency: -1}, "spec.defaultPolicies.offsetSyncConcurrency"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.p.Validate()
+			if tc.wantErr == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), tc.wantErr)
+		})
+	}
+}
+
+func TestDefaultPolicies_ConversionPoliciesDecodeFromYAML(t *testing.T) {
+	var p DefaultPolicies
+	require.NoError(t, yaml.Unmarshal([]byte("detectUnroutedCommitsDuration: 45s\noffsetSyncConcurrency: 4\n"), &p))
+	assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration)
+	assert.Equal(t, 4, p.OffsetSyncConcurrency)
 }
