@@ -1,0 +1,128 @@
+package reconcile
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// GroupFacts is the consumer-group data a conversion reads, gathered by the I/O
+// layer: each destination group's state (as ListGroups reports it), and, per
+// source group from a strict listing of every source group, the topics it has
+// committed offsets on (an empty list for a group with no commits). The group
+// rule reads TrackedTopics; the split-brain check reads TargetStates for the
+// in-scope groups.
+//
+// SourceListingIncomplete and TargetListingIncomplete are empty when that
+// cluster's listing is known to be complete. A non-empty value says why it may
+// not be (the listing credential can only see the groups it can describe
+// individually), and refuses the conversion: a source group the listing hides
+// is a group the group rule never sees, and a destination group it hides is a
+// split-brain the check cannot see.
+//
+// SourceTopicsIncomplete and TargetTopicsIncomplete are the same for topics: a
+// credential that may not describe every topic gets an offset fetch that
+// silently leaves out the topics it can't see (so a group committing outside
+// the link could pass the group rule), and a topic list that omits them.
+//
+// TargetCommitDenied is empty when the destination credential may commit offsets
+// for arbitrary groups and topics, and otherwise says why not: the conversion's
+// offset write needs READ on the groups and the topics, which the DESCRIBE probes
+// do not prove, so a DESCRIBE-only credential would fail after the fence.
+type GroupFacts struct {
+	TargetStates            map[string]string
+	TrackedTopics           map[string][]string
+	SourceListingIncomplete string
+	TargetListingIncomplete string
+	SourceTopicsIncomplete  string
+	TargetTopicsIncomplete  string
+	TargetCommitDenied      string
+}
+
+// The credential preconditions ReconcileConvert adds: whether each cluster's
+// credential can see every consumer group and every topic, and whether the
+// destination credential can write consumer-group offsets.
+const (
+	SourceGroupVisibilityCheckName = "source credential can list every consumer group"
+	TargetGroupVisibilityCheckName = "destination credential can list every consumer group"
+	SourceTopicVisibilityCheckName = "source credential can describe every topic"
+	TargetTopicVisibilityCheckName = "destination credential can describe every topic"
+	TargetOffsetCommitCheckName    = "destination credential can write consumer-group offsets"
+)
+
+// checkVisibility refuses with reason when a credential's view may be partial.
+func checkVisibility(name, reason string) PreconditionResult {
+	if reason != "" {
+		return fail(name, reason)
+	}
+	return pass(name)
+}
+
+// ConvertCredentialChecks returns a conversion's five credential preconditions,
+// in order: each cluster's group listing and topic view are complete, and the
+// destination credential can write consumer-group offsets. ReconcileConvert and
+// the d2s state machine's verify_fence both report exactly these, so the two
+// cannot drift.
+func ConvertCredentialChecks(groups GroupFacts) []PreconditionResult {
+	return []PreconditionResult{
+		checkVisibility(SourceGroupVisibilityCheckName, groups.SourceListingIncomplete),
+		checkVisibility(TargetGroupVisibilityCheckName, groups.TargetListingIncomplete),
+		checkVisibility(SourceTopicVisibilityCheckName, groups.SourceTopicsIncomplete),
+		checkVisibility(TargetTopicVisibilityCheckName, groups.TargetTopicsIncomplete),
+		checkVisibility(TargetOffsetCommitCheckName, groups.TargetCommitDenied),
+	}
+}
+
+// GroupSplitBrainCheckName names the precondition CheckGroupSplitBrain returns.
+const GroupSplitBrainCheckName = "no in-scope consumer group is active on the destination"
+
+// CheckGroupSplitBrain refuses when one of groups (the conversion's in-scope
+// source groups) is active on the destination: after the switch, coordination
+// for the route's clients moves to the destination, so the group's members
+// would join a group that already has members, and kcp's admin offset commit
+// for it would be refused. Groups only on the destination are ignored. A group
+// sitting Empty on the destination (retained only while it has committed
+// offsets) passes with a warning, since the conversion will overwrite those
+// offsets. Dead is ignored. Any other state — including an empty or
+// unrecognised one — counts as active, so an unreadable state can't let a
+// split-brain through.
+func CheckGroupSplitBrain(groups []string, targetStates map[string]string) (PreconditionResult, []string) {
+	var active, idle []string
+	anyUnknown := false
+	for _, g := range groups {
+		state, onTarget := targetStates[g]
+		if !onTarget {
+			continue
+		}
+		switch strings.ToLower(state) {
+		case "empty":
+			idle = append(idle, g)
+		case "dead":
+		case "":
+			anyUnknown = true
+			active = append(active, g+" (state unknown; treated as active)")
+		default:
+			active = append(active, fmt.Sprintf("%s (%s)", g, state))
+		}
+	}
+	sort.Strings(active)
+	sort.Strings(idle)
+
+	var warnings []string
+	if len(idle) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"consumer group(s) %s exist on the destination with committed offsets but no members; the conversion will overwrite their offsets with the source's — check nothing consumed on the destination under these names",
+			strings.Join(idle, ", ")))
+	}
+	if len(active) > 0 {
+		// Only claim members when every listed state was actually read.
+		onDest := "already have members on the destination"
+		if anyUnknown {
+			onDest = "are active, or of unreadable state, on the destination"
+		}
+		return fail(GroupSplitBrainCheckName, fmt.Sprintf(
+			"consumer group(s) %s exist on the source and %s; after the switch the source members would join the same group — stop the destination members first",
+			strings.Join(active, ", "), onDest)), warnings
+	}
+	return pass(GroupSplitBrainCheckName), warnings
+}
