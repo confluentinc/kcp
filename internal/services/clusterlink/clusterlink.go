@@ -13,6 +13,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // httpStatusError is returned by doRequest/doPostRequest when the server
@@ -179,7 +182,9 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 // GetClusterLink fetches the cluster link resource. Translates common
 // failure statuses (404, 401/403) into user-facing messages so callers can
 // surface actionable errors to the CLI.
-func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error) {
+func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (_ *ClusterLink, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.get_cluster_link")
+	defer func() { tracing.End(span, err) }()
 	var link ClusterLink
 	if err := s.doRequest(ctx, config, linkPath(config), &link); err != nil {
 		var statusErr *httpStatusError
@@ -196,7 +201,12 @@ func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Confi
 	return &link, nil
 }
 
-func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {
+func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) (mirrors []MirrorTopic, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.list_mirror_topics")
+	defer func() {
+		span.SetAttributes(attribute.Int("kcp.mirrors", len(mirrors)))
+		tracing.End(span, err)
+	}()
 	path := linkPath(config) + "/mirrors"
 
 	var response struct {
@@ -252,7 +262,9 @@ func (s *ConfluentCloudService) ListClusterLinks(ctx context.Context, config Con
 }
 
 // ListConfigs retrieves cluster link configurations
-func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
+func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (_ map[string]string, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.list_configs")
+	defer func() { tracing.End(span, err) }()
 	path := linkPath(config) + "/configs"
 
 	var response struct {
@@ -299,7 +311,9 @@ func (s *ConfluentCloudService) ValidateTopics(topics []string, clusterLinkTopic
 //
 // Empty alterations short-circuit without a network call. 404 / 401 / 403
 // translate to actionable messages matching GetClusterLink's style.
-func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) error {
+func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.alter_configs", attribute.Int("kcp.alterations", len(alterations)))
+	defer func() { tracing.End(span, err) }()
 	if len(alterations) == 0 {
 		return nil
 	}
@@ -342,7 +356,9 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 }
 
 // PromoteMirrorTopics promotes the specified mirror topics
-func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
+func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (_ *PromoteMirrorTopicsResponse, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.promote_mirror_topics", attribute.Int("kcp.batch.size", len(topicNames)))
+	defer func() { tracing.End(span, err) }()
 	if len(topicNames) == 0 {
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
