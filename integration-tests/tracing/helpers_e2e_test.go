@@ -36,6 +36,10 @@ import (
 // kcpBinary is the in-pod path run.sh copies the linux kcp binary to.
 const kcpBinary = "/workspace/kcp"
 
+// runLabel is set as the run=<label> resource attribute on every kcp run, the
+// way a performance tester labels runs; the test checks it reaches the trace.
+const runLabel = "tracing-smoke"
+
 // offsetSyncEnableKey is the cluster-link config the static FSM's offset-sync
 // pause disables and its restore sets back to the declared baseline.
 const offsetSyncEnableKey = "consumer.offset.sync.enable"
@@ -145,9 +149,12 @@ func envOrDefault(key, fallback string) string {
 // and writes it into the in-pod rendered dir (the test runs in-cluster), so each
 // test can target its own disjoint slice without a fixed batch template. Reuses
 // the rendered credential files setup.sh already staged. Returns the in-pod path.
+// writeManifest renders a migration manifest for topics with unrouted-producer
+// detection on (its minimum window), so the trace covers verify_fence's
+// detection and its wait span rather than a skipped step.
 func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
 	t.Helper()
-	return e.renderManifest(t, name, topics, "", "")
+	return e.renderManifest(t, name, topics, "", "  defaultPolicies:\n    detectUnroutedProducersDuration: 10s\n")
 }
 
 // renderManifest writes the manifest for writeManifest and its variants;
@@ -212,8 +219,7 @@ func (e *env) linkConfig() clusterlink.Config {
 }
 
 // mirrorStatus reads the live per-topic mirror status from the cluster link
-// (ACTIVE / PENDING_STOPPED / STOPPED). Used to assert the partial world an
-// interrupted promote leaves.
+// (ACTIVE / PENDING_STOPPED / STOPPED).
 func (e *env) mirrorStatus(t *testing.T, ctx context.Context) map[string]string {
 	t.Helper()
 	mirrors, err := e.linkSvc.ListMirrorTopics(ctx, e.linkConfig())
@@ -236,7 +242,8 @@ func (e *env) runKCP(t *testing.T, reportName, traceFile string, args ...string)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kcpBinary, args...)
-	cmd.Env = append(os.Environ(), "KCP_TRACING_ENABLED=true", "KCP_TRACE_FILE="+traceFile)
+	cmd.Env = append(os.Environ(), "KCP_TRACING_ENABLED=true", "KCP_TRACE_FILE="+traceFile,
+		"OTEL_RESOURCE_ATTRIBUTES=run="+runLabel)
 	out, err := cmd.CombinedOutput()
 
 	desc := "kcp " + strings.Join(args, " ")
@@ -298,7 +305,7 @@ func (e *env) saveManifest(t *testing.T, path string) {
 }
 
 // offsetSyncForReport reads the cluster link's consumer.offset.sync.enable for
-// a checkpoint report without failing the test when it can't.
+// a before/after report without failing the test when it can't.
 func (e *env) offsetSyncForReport(ctx context.Context) string {
 	cfgs, err := e.linkSvc.ListConfigs(ctx, e.linkConfig())
 	if err != nil {

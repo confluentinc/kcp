@@ -17,7 +17,8 @@ make test-tracing-run          # as often as you like (see "Topics" below)
 make test-tracing-teardown
 ```
 
-`make test-tracing` does setup → run → teardown in one go. `GATEWAY_MODE=static` gives an AAO run instead.
+`make test-tracing` does setup → run → teardown in one go. `GATEWAY_MODE=static` (with its own setup) gives an AAO
+run instead; the test expects the strategy and steps of whichever mode the environment was set up in.
 
 ## The trace
 
@@ -42,9 +43,11 @@ fewer than five are left the test says so; tear the environment down and set it 
 
 ## What the test checks
 
-- one trace for the whole run, rooted at the `kcp migration execute` span (resource `service.name=kcp`);
-- `migplan.reconcile`, `migration.build_services` and `migration.run` (`kcp.strategy=tbm`) directly under it;
-- the TBM steps in order: initialize, wait_for_lags, fence, verify_fence, promote, switch;
-- the shared spans present: offset sweeps and per-broker offset reads, gateway patch/accept/verify, cluster-link
+- one trace for the whole run, rooted at the `kcp migration execute` span (resource `service.name=kcp`, and the
+  `run=tracing-smoke` label set through `OTEL_RESOURCE_ATTRIBUTES`);
+- `migplan.reconcile`, `migration.build_services` and `migration.run` directly under it, with `kcp.strategy` and the
+  steps in order for the mode (TBM: initialize, wait_for_lags, fence, verify_fence, promote, switch);
+- the shared spans present: offset sweeps and per-broker offset reads, unrouted-producer detection and its 10s
+  `wait.unrouted_producers_window` (the manifest turns detection on), gateway patch/accept/verify, cluster-link
   list/promote, reconcile's topic, cluster-ID and link-status reads;
-- no span with an error status, and no attribute carrying a topic name.
+- no error status on the command, the run or any step, and no attribute carrying a topic name.
