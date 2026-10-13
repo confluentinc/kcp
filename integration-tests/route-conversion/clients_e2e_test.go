@@ -29,6 +29,18 @@ type clientProc struct {
 // startClient runs tool (on the runner image's PATH) with args.
 func startClient(t *testing.T, dir, name, tool string, args ...string) *clientProc {
 	t.Helper()
+	p := prepareClient(t, dir, name, tool, args...)
+	require.NoErrorf(t, p.start(), "start %s", name)
+	t.Logf("started %s: %s %s", name, tool, strings.Join(args, " "))
+	return p
+}
+
+// prepareClient is startClient without the start, for a client started later
+// from a goroutine that must not fail the test (an onLine callback): it calls
+// start and reports the error. The log files are closed when the test ends if
+// the client never started.
+func prepareClient(t *testing.T, dir, name, tool string, args ...string) *clientProc {
+	t.Helper()
 	p := &clientProc{name: name, logPath: filepath.Join(dir, name+".log"), errPath: filepath.Join(dir, name+".err"), done: make(chan error, 1)}
 	stdout, err := os.Create(p.logPath)
 	require.NoError(t, err)
@@ -38,21 +50,34 @@ func startClient(t *testing.T, dir, name, tool string, args ...string) *clientPr
 	p.cmd.Stdout, p.cmd.Stderr = stdout, stderr
 	// Several JVMs share the runner pod; keep each one small.
 	p.cmd.Env = append(os.Environ(), "KAFKA_HEAP_OPTS=-Xms64m -Xmx256m")
-	require.NoErrorf(t, p.cmd.Start(), "start %s", name)
-	go func() {
-		p.done <- p.cmd.Wait()
-		_ = stdout.Close()
-		_ = stderr.Close()
-	}()
-	t.Logf("started %s: %s %s", name, tool, strings.Join(args, " "))
+	t.Cleanup(func() {
+		if p.cmd.Process == nil {
+			_ = stdout.Close()
+			_ = stderr.Close()
+		}
+	})
 	return p
 }
 
+// start starts a prepared client. It does not touch t, so any goroutine may call it.
+func (p *clientProc) start() error {
+	if err := p.cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		p.done <- p.cmd.Wait()
+		_ = p.cmd.Stdout.(*os.File).Close()
+		_ = p.cmd.Stderr.(*os.File).Close()
+	}()
+	return nil
+}
+
 // stop sends SIGTERM (the tools close their client and log shutdown_complete)
-// and waits up to 30s before killing. Idempotent.
+// and waits up to 30s before killing. Idempotent, and a no-op for a client
+// that never started.
 func (p *clientProc) stop(t *testing.T) {
 	t.Helper()
-	if p.stopped {
+	if p.stopped || p.cmd.Process == nil {
 		return
 	}
 	p.stopped = true
@@ -97,16 +122,29 @@ func (e *env) destClientProps(t *testing.T) string {
 	return path
 }
 
-// startConsumer runs a classic-protocol kafka-verifiable-consumer member of
-// group on topic, reading from the earliest offset and logging every record.
-func (e *env) startConsumer(t *testing.T, dir, bootstrap, props, group, topic, member string, autoCommit bool) *clientProc {
+// startConsumer runs a kafka-verifiable-consumer member of group on topic with
+// the given group protocol ("classic", or "consumer" for KIP-848), reading from
+// the earliest offset and logging every record.
+func (e *env) startConsumer(t *testing.T, dir, bootstrap, props, protocol, group, topic, member string, autoCommit bool) *clientProc {
 	t.Helper()
-	args := []string{"--bootstrap-server", bootstrap, "--consumer.config", props, "--group-protocol", "classic",
+	return startClient(t, dir, "consumer-"+group+"-"+member, "kafka-verifiable-consumer",
+		consumerArgs(bootstrap, props, protocol, group, topic, autoCommit)...)
+}
+
+// prepareConsumer is startConsumer without the start (see prepareClient).
+func (e *env) prepareConsumer(t *testing.T, dir, bootstrap, props, protocol, group, topic, member string) *clientProc {
+	t.Helper()
+	return prepareClient(t, dir, "consumer-"+group+"-"+member, "kafka-verifiable-consumer",
+		consumerArgs(bootstrap, props, protocol, group, topic, false)...)
+}
+
+func consumerArgs(bootstrap, props, protocol, group, topic string, autoCommit bool) []string {
+	args := []string{"--bootstrap-server", bootstrap, "--consumer.config", props, "--group-protocol", protocol,
 		"--group-id", group, "--topic", topic, "--reset-policy", "earliest", "--verbose"}
 	if autoCommit {
 		args = append(args, "--enable-autocommit")
 	}
-	return startClient(t, dir, "consumer-"+group+"-"+member, "kafka-verifiable-consumer", args...)
+	return args
 }
 
 // gatewayClientProps writes the client config for a client that talks to the

@@ -273,3 +273,34 @@ func (e *env) waitGroupState(t *testing.T, c cluster, group, state string, membe
 		time.Sleep(time.Second)
 	}
 }
+
+// waitListedGroup waits until c's group listing (ListGroups, what kcp's
+// split-brain check reads) shows group with the given type and state
+// (case-insensitive). Unlike waitGroupState it works for a KIP-848 group, which
+// the classic DescribeGroups API does not describe.
+func (e *env) waitListedGroup(t *testing.T, c cluster, group, groupType, state string, timeout time.Duration) {
+	t.Helper()
+	gc := e.groupClient(t, c)
+	var last string
+	deadline := time.Now().Add(timeout)
+	for {
+		listing, err := gc.ListGroupsWithType()
+		if err != nil {
+			last = err.Error()
+			t.Logf("poll (group %s): transient listing error, retrying: %v", group, err)
+		}
+		for _, l := range listing {
+			if l.GroupID != group {
+				continue
+			}
+			if strings.EqualFold(l.Type, groupType) && strings.EqualFold(l.State, state) {
+				return
+			}
+			last = "listed as type " + l.Type + ", state " + l.State
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("group %s on the %s must be listed as type %s, state %s within %s; last seen: %s", group, c, groupType, state, timeout, last)
+		}
+		time.Sleep(time.Second)
+	}
+}

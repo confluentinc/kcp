@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,24 +73,84 @@ func TestRefusal_GroupCommitsOutsideTheLink(t *testing.T) {
 // An in-scope source group with live members on the destination refuses the
 // conversion (split brain).
 func TestRefusal_GroupActiveOnTheDestination(t *testing.T) {
+	refuseGroupActiveOnTheDestination(t, "active", types.ConsumerGroupTypeClassic)
+}
+
+// The same split brain with a KIP-848 (consumer protocol) group on the
+// destination: kcp's listing must report it, and with an active state.
+func TestRefusal_KIP848GroupActiveOnTheDestination(t *testing.T) {
+	refuseGroupActiveOnTheDestination(t, "active848", types.ConsumerGroupTypeConsumer)
+}
+
+// refuseGroupActiveOnTheDestination starts one destination member of an
+// in-scope group with the given group protocol, waits for the listing to show
+// it Stable, and expects reconcile to refuse and change nothing.
+func refuseGroupActiveOnTheDestination(t *testing.T, name, protocol string) {
 	e := newEnv(t)
 	ctx := context.Background()
 	e.reset(t, ctx)
-	seeds := e.seedGroups(t, e.defaultSeeds("active")...)
+	seeds := e.seedGroups(t, e.defaultSeeds(name)...)
 	group := seeds[1].group
 	dir := e.workDir(t)
-	c := e.startConsumer(t, dir, e.destBootstrap, e.destClientProps(t), group, e.topic(3), "dest", false)
+	c := e.startConsumer(t, dir, e.destBootstrap, e.destClientProps(t), protocol, group, e.topic(3), "dest", false)
 	defer c.stop(t)
-	e.waitGroupState(t, destCluster, group, "Stable", 1, 2*time.Minute)
+	// A classic consumer forms a classic group; a consumer-protocol one a "consumer" group.
+	e.waitListedGroup(t, destCluster, group, protocol, "Stable", 2*time.Minute)
 	routeBefore := e.liveRoute(t, ctx)
-	mani, _ := e.writeManifest(t, "refuse-active", minDetect)
+	mani, _ := e.writeManifest(t, "refuse-"+name, minDetect)
 
 	out, err := e.execute(t, "kcp-run-1-refused.log", mani, nil, nil)
 	// The live destination member commits its own offsets for seeds[1], so only
 	// seeds[0] is checked for the absence of kcp's sync.
 	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds[:1],
 		group+" (Stable) exist on the source and already have members on the destination")
-	t.Logf("\n✅ RESULT: an in-scope group live on the destination refused the conversion and nothing changed.")
+	t.Logf("\n✅ RESULT: an in-scope %s group live on the destination refused the conversion and nothing changed.", protocol)
+}
+
+// A destination member that joins an in-scope group during verify_fence's
+// detection window (after reconcile's check and verify_fence's first check
+// passed) is caught by the second check, on a fresh destination listing
+// (decision 23): the run fails, the fence comes off, and nothing is synced.
+func TestRefusal_GroupActiveOnTheDestinationDuringTheWindow(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.reset(t, ctx)
+	seeds := e.seedGroups(t, e.defaultSeeds("window")...)
+	group := seeds[1].group
+	// Long enough for the consumer's JVM to start and its group to stabilise
+	// before the second check lists the destination.
+	detect := 45 * time.Second
+	mani, _ := e.writeManifest(t, "refuse-window", detect)
+	c := e.prepareConsumer(t, e.workDir(t), e.destBootstrap, e.destClientProps(t), types.ConsumerGroupTypeClassic, group, e.topic(3), "dest")
+	defer c.stop(t)
+
+	// The member starts when kcp announces its window, so verify_fence's
+	// first check (before the window) cannot see it. onLine runs on the output
+	// reader's goroutine, so it reports through a channel.
+	var once sync.Once
+	started := make(chan error, 1)
+	watching := fmt.Sprintf(watchingLine, detect)
+	onLine := func(line string) {
+		if strings.Contains(line, watching) {
+			once.Do(func() { started <- c.start() })
+		}
+	}
+
+	out, err := e.execute(t, "kcp-run-1-fails.log", mani, nil, onLine)
+	select {
+	case serr := <-started:
+		require.NoError(t, serr, "start the destination consumer")
+	default:
+		t.Fatalf("kcp never printed %q, so no destination member was started", watching)
+	}
+	require.Error(t, err, "a destination member joining during the window must fail the run")
+	require.Contains(t, out, group+" (Stable) exist on the source and already have members on the destination")
+	require.Contains(t, out, "Conversion check failed after the fence — removing fence")
+	require.Contains(t, out, gatewayUnfenced)
+	e.requirePostTBM(t, ctx, "the fence must come off after the refusal")
+	// As above, the destination member commits its own offsets for seeds[1].
+	e.requireNoDestOffsets(t, seeds[:1], "a refused run")
+	t.Logf("\n✅ RESULT: a destination member joining during the window was caught, the fence came off, and nothing was synced.")
 }
 
 // A client committing straight to the source while the fence is up is caught

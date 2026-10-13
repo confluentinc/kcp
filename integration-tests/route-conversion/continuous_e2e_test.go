@@ -53,7 +53,7 @@ func (e *env) startClientRun(t *testing.T, dir string) *clientRun {
 	props := e.gatewayClientProps(t, dir)
 	for _, s := range run.specs {
 		for _, m := range s.members {
-			c := e.startConsumer(t, dir, e.gatewayBootstrap, props, s.group, s.topic, m, s.autoCommit)
+			c := e.startConsumer(t, dir, e.gatewayBootstrap, props, "classic", s.group, s.topic, m, s.autoCommit)
 			run.consumers[s.group] = append(run.consumers[s.group], c)
 		}
 	}

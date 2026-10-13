@@ -45,7 +45,7 @@ deleted on both clusters.
 | `baseline_e2e_test.go` | `TestConversion_Baseline`: dry run, execute, offsets copied with metadata and leader epoch -1, re-run is nothing to do |
 | `resume_e2e_test.go` | `TestResume_After{Initialized,Fenced,FenceVerified,OffsetsSynced,Switched}`: interrupted after each state, then resumed |
 | `rollback_e2e_test.go` | failures at `verify_fence`, `sync_offsets` and `switch`, and at `fence` on a re-run after an interrupted fence |
-| `refusal_e2e_test.go` | an unpromoted link topic, a group committing outside the link, a group live on the destination, a direct commit during the window, a refusal with kcp's fence already up |
+| `refusal_e2e_test.go` | an unpromoted link topic, a group committing outside the link, a group live on the destination (classic and KIP-848), a destination member joining during the window, a direct commit during the window, a refusal with kcp's fence already up |
 | `continuous_e2e_test.go` | `TestContinuousClients_Conversion` and `TestContinuousClients_ResumeAfterOffsetsSynced`: producers and consumers through the gateway across the conversion |
 
 The continuous-client tests assert **traffic after the switch** (each
