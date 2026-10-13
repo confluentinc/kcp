@@ -1,7 +1,7 @@
 # Tracing — live smoke E2E
 
 Proves that clean, uninterrupted `kcp migration execute` runs each produce **one complete OpenTelemetry trace** against a
-live Confluent Gateway (dynamic route, hot reload), a real cluster link and Kafka in minikube (profile
+live Confluent Gateway, a real cluster link and Kafka in minikube (profile
 `kcp-e2e-tracing-<mode>`). Unit tests cover the span trees of all three strategies; this suite checks the whole chain
 in the real binary: environment variables read, spans written as each ends, flushed on exit, and the shared gateway,
 offset and cluster-link spans present.

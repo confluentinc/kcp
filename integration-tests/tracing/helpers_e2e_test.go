@@ -1,10 +1,10 @@
 //go:build e2e
 
-// Package tracing_e2e proves a clean TBM migration produces one complete
-// OpenTelemetry trace, against the same live topology as the idempotent-fsm suite
-// (Minikube profile kcp-e2e-tracing-<mode>): a dynamic-mode Confluent Gateway with
-// hot reload, a real cluster link and Kafka. The test drives the real `kcp
-// migration execute` with tracing on and checks the trace file kcp writes.
+// Package tracing_e2e proves clean static and dynamic migrations each produce one
+// complete OpenTelemetry trace, against the same live topology as the
+// idempotent-fsm suite (Minikube profile kcp-e2e-tracing-<mode>): a Confluent
+// Gateway, a real cluster link and Kafka. The test drives the real `kcp migration
+// execute` with tracing on and checks the trace file kcp writes.
 //
 // Like the sibling suites, this binary runs INSIDE the cluster (see
 // manifests/kcp-runner.yaml): reconcile reads the live gateway CR with in-cluster
@@ -141,10 +141,6 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// writeManifest renders a GatewayMigration manifest for exactly the given topics
-// and writes it into the in-pod rendered dir (the test runs in-cluster), so each
-// test can target its own disjoint slice without a fixed batch template. Reuses
-// the rendered credential files setup.sh already staged. Returns the in-pod path.
 // policies are the spec.defaultPolicies a run varies: the unrouted-producer
 // detection window (0 = detection off, the default) and the promote batch size
 // (0 = promote every topic at once).
@@ -153,8 +149,10 @@ type policies struct {
 	promoteBatch int
 }
 
-// writeManifest renders a migration manifest for topics with the run's
-// policies.
+// writeManifest renders a GatewayMigration manifest for exactly the given topics
+// with the run's policies and writes it into the in-pod rendered dir (the test
+// runs in-cluster), reusing the credential files setup.sh staged. Returns the
+// in-pod path.
 func (e *env) writeManifest(t *testing.T, name string, topics []string, p policies) string {
 	t.Helper()
 	var spec strings.Builder
@@ -167,13 +165,12 @@ func (e *env) writeManifest(t *testing.T, name string, topics []string, p polici
 	if p.promoteBatch > 0 {
 		fmt.Fprintf(&spec, "    promoteBatchSize: %d\n", p.promoteBatch)
 	}
-	return e.renderManifest(t, name, topics, "", spec.String())
+	return e.renderManifest(t, name, topics, spec.String())
 }
 
-// renderManifest writes the manifest for writeManifest and its variants;
-// clusterLinkExtra is appended verbatim to the spec.clusterLink block and
-// specExtra to the end of spec.
-func (e *env) renderManifest(t *testing.T, name string, topics []string, clusterLinkExtra, specExtra string) string {
+// renderManifest writes the manifest for writeManifest; specExtra is appended to
+// the end of spec.
+func (e *env) renderManifest(t *testing.T, name string, topics []string, specExtra string) string {
 	t.Helper()
 	var tb strings.Builder
 	for _, tp := range topics {
@@ -202,7 +199,7 @@ spec:
     bootstrapServers:
       - %q
     linkCredentials: /workspace/rendered/link-creds.yaml
-%s  gateway:
+  gateway:
     namespace: %q
     cr-name: %q
   route:
@@ -211,7 +208,7 @@ spec:
       - topics:
 %s    targetStreamingDomain: %q
 %s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
-		e.linkName, e.destBootstrap, clusterLinkExtra, e.namespace, e.gateway, e.route, tb.String(), e.destDomain,
+		e.linkName, e.destBootstrap, e.namespace, e.gateway, e.route, tb.String(), e.destDomain,
 		specExtra)
 
 	path := filepath.Join(e.renderedDir, name+".yaml")

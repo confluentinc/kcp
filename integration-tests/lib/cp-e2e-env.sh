@@ -1,5 +1,6 @@
 # Shared setup steps for the live Confluent Platform + Confluent Gateway e2e
-# suites (integration-tests/idempotent-fsm and integration-tests/route-conversion).
+# suites (integration-tests/idempotent-fsm, integration-tests/route-conversion, and
+# the tracing suite's copies of them under integration-tests/tracing).
 # Sourced by each suite's setup.sh, never run on its own. Each function is one
 # step of the original idempotent-fsm setup.sh, moved here unchanged so the two
 # environments cannot drift: the version pins, minikube, ECR images, the CFK

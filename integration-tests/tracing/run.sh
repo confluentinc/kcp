@@ -148,5 +148,13 @@ for dir in "${RUN_DIR}"/*/; do
   awk -v start="=== RUN   ${name}" -v end="^--- (PASS|FAIL|SKIP): ${name} " \
     '$0 == start { on = 1 } on { print } on && $0 ~ end { exit }' "${RUN_DIR}/run.log" > "${dir}test.log"
 done
+# Each run is a subtest with its own folder (<test>/<run label>/): its slice runs
+# from its `=== RUN` line to the next `=== RUN` line or the parent's result.
+for dir in "${RUN_DIR}"/*/*/; do
+  [ -d "${dir}" ] || continue
+  name="$(basename "$(dirname "${dir}")")/$(basename "${dir}")"
+  awk -v start="=== RUN   ${name}" \
+    '$0 == start { on = 1; print; next } on && (/^=== RUN/ || /^--- /) { exit } on { print }' "${RUN_DIR}/run.log" > "${dir}test.log"
+done
 echo "Reports saved: ${RUN_DIR}"
 exit "${status}"

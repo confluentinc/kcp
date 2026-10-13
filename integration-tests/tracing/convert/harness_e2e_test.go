@@ -17,19 +17,12 @@ import (
 // Lines kcp prints that the tests assert on (cmd/migration/execute,
 // internal/services/migration/d2s, internal/services/migplan).
 const (
-	killPointLine      = "kill-point"
-	completedLine      = "✅ Route conversion completed: %s"
-	nothingToDoSuffix  = " — nothing to do: the route is already static on its target domain"
-	watchingLine       = "Watching committed offsets for %s"
-	fenceAppliedLine   = "Fenced gateway CR applied"
-	idleGroupWarning   = "exist on the destination with committed offsets but no members"
-	gatewayUnfenced    = "Gateway unfenced — traffic restored to pre-fence state"
-	rogueCommitsError  = "committed offsets changed after the fence"
-	rogueCommitsReason = "Direct commits detected — removing fence"
+	completedLine     = "✅ Route conversion completed: %s"
+	nothingToDoSuffix = " — nothing to do: the route is already static on its target domain"
 )
 
 // reset puts the environment back in the state setup.sh leaves, before every
-// test: every link mirror promoted (one an earlier test added included), the
+// test: every link mirror promoted, the
 // route in its post-TBM shape over every link topic with a fresh configId
 // hot-reloaded on every pod, and no consumer group on either cluster. The
 // mirrors are promoted first so the route can list every link topic.

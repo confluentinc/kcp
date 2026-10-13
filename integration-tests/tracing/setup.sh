@@ -3,8 +3,8 @@
 # profile (kcp-e2e-tracing-<mode>, see state.sh): a source CP Kafka (PLAINTEXT) and a
 # destination CP Kafka (SASL_SSL) linked by one ClusterLink, plus a Confluent
 # Gateway — dynamic-mode (hot reload) or static-mode (rollout), per GATEWAY_MODE.
-# The engine (migplan.Reconcile) reads the live gateway CR; the harness drives one
-# clean kcp migration execute with tracing on and checks the trace it writes. The
+# The engine (migplan.Reconcile) reads the live gateway CR; the harness drives clean
+# kcp migration execute runs with tracing on and checks the trace each writes. The
 # topology is the idempotent-fsm suite's, copied so that suite stays untouched.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
@@ -13,7 +13,7 @@
 # plumbing is copied from integration-tests/migration-hot-reload. The steps this
 # suite shares with integration-tests/route-conversion (version pins, minikube,
 # images, operator, clusters, licence, client-tls, REST credential, REST class,
-# swap-auth secrets) live in ../lib/cp-e2e-env.sh, which both setups source.
+# swap-auth secrets) live in ../lib/cp-e2e-env.sh, which every minikube e2e setup sources.
 #
 # Why chart 0.1838.0 and NOT hot-reload's 0.1718.34: 0.1718.34 predates the
 # dynamic-route CRD (mode: dynamic, plural streamingDomains, rules.routing,

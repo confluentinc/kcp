@@ -35,7 +35,7 @@ RUNNER="${KCP_RC_RUNNER_POD}"
 
 # Optional test selector: `run.sh 'TestFoo'` -> -test.run TestFoo, or export
 # GOTEST_FLAGS for anything else. -test.v is always on; -test.timeout is raised
-# because the whole suite takes about 20-25 minutes.
+# above go test's 10-minute default.
 RUN_SELECTOR=""
 [ -n "${1:-}" ] && RUN_SELECTOR="-test.run ${1}"
 GOTEST_FLAGS="${GOTEST_FLAGS:-}"
@@ -125,12 +125,10 @@ main() {
     KCP_RC_DEST_BOOTSTRAP_ID="${KCP_RC_DEST_BOOTSTRAP_ID}" \
     KCP_RC_SOURCE_BOOTSTRAP="${KCP_RC_SOURCE_BOOTSTRAP}" \
     KCP_RC_DEST_BOOTSTRAP="${KCP_RC_DEST_BOOTSTRAP}" \
-    KCP_RC_GATEWAY_BOOTSTRAP="${KCP_RC_GATEWAY_BOOTSTRAP}" \
     KCP_RC_REST_ENDPOINT="${KCP_RC_REST_ENDPOINT}" \
     KCP_RC_DEST_CLUSTER_ID="${KCP_RC_DEST_CLUSTER_ID}" \
     KCP_RC_CLUSTER_LINK_NAME="${KCP_RC_CLUSTER_LINK_NAME}" \
     KCP_RC_TOPIC_PREFIX="${KCP_RC_TOPIC_PREFIX}" \
-    KCP_RC_ORPHAN_TOPIC="${KCP_RC_ORPHAN_TOPIC}" \
     ${OTLP_ENV[@]+"${OTLP_ENV[@]}"} \
     /workspace/tracing-convert-e2e.test -test.v -test.timeout 90m ${RUN_SELECTOR} ${GOTEST_FLAGS}
 }
@@ -155,6 +153,14 @@ for dir in "${RUN_DIR}"/*/; do
   name="$(basename "${dir}")"
   awk -v start="=== RUN   ${name}" -v end="^--- (PASS|FAIL|SKIP): ${name} " \
     '$0 == start { on = 1 } on { print } on && $0 ~ end { exit }' "${RUN_DIR}/run.log" > "${dir}test.log"
+done
+# Each run is a subtest with its own folder (<test>/<run label>/): its slice runs
+# from its `=== RUN` line to the next `=== RUN` line or the parent's result.
+for dir in "${RUN_DIR}"/*/*/; do
+  [ -d "${dir}" ] || continue
+  name="$(basename "$(dirname "${dir}")")/$(basename "${dir}")"
+  awk -v start="=== RUN   ${name}" \
+    '$0 == start { on = 1; print; next } on && (/^=== RUN/ || /^--- /) { exit } on { print }' "${RUN_DIR}/run.log" > "${dir}test.log"
 done
 echo "Reports saved: ${RUN_DIR}"
 exit "${status}"

@@ -32,22 +32,20 @@ const executeTimeout = 10 * time.Minute
 // env is the live topology, read from the KCP_RC_* environment run.sh passes
 // (setup.sh's .env) plus the two secret-backed pod-spec vars.
 type env struct {
-	namespace        string
-	gateway          string
-	route            string
-	domains          Domains
-	sourceBootstrap  string
-	destBootstrap    string
-	gatewayBootstrap string
-	restEndpoint     string
-	destClusterID    string
-	linkName         string
-	topicPrefix      string
-	orphanTopic      string
-	renderedDir      string
-	reportsDir       string
-	saslUser         string
-	saslPassword     string
+	namespace       string
+	gateway         string
+	route           string
+	domains         Domains
+	sourceBootstrap string
+	destBootstrap   string
+	restEndpoint    string
+	destClusterID   string
+	linkName        string
+	topicPrefix     string
+	renderedDir     string
+	reportsDir      string
+	saslUser        string
+	saslPassword    string
 
 	svc     *gateway.K8sService
 	linkSvc *clusterlink.ConfluentCloudService
@@ -63,18 +61,16 @@ func newEnv(t *testing.T) *env {
 			Source: envOr("KCP_RC_SOURCE_DOMAIN", "source-domain"), SourceID: envOr("KCP_RC_SOURCE_BOOTSTRAP_ID", "SOURCE"),
 			Dest: envOr("KCP_RC_DEST_DOMAIN", "destination-domain"), DestID: envOr("KCP_RC_DEST_BOOTSTRAP_ID", "DESTINATION"),
 		},
-		sourceBootstrap:  os.Getenv("KCP_RC_SOURCE_BOOTSTRAP"),
-		destBootstrap:    os.Getenv("KCP_RC_DEST_BOOTSTRAP"),
-		gatewayBootstrap: envOr("KCP_RC_GATEWAY_BOOTSTRAP", "bootstrap.gw.local:9595"),
-		restEndpoint:     os.Getenv("KCP_RC_REST_ENDPOINT"),
-		destClusterID:    os.Getenv("KCP_RC_DEST_CLUSTER_ID"),
-		linkName:         envOr("KCP_RC_CLUSTER_LINK_NAME", "rc-link"),
-		topicPrefix:      envOr("KCP_RC_TOPIC_PREFIX", "rc-topic-"),
-		orphanTopic:      envOr("KCP_RC_ORPHAN_TOPIC", "rc-orphan"),
-		renderedDir:      envOr("KCP_RC_RENDERED_DIR", "/workspace/rendered"),
-		reportsDir:       os.Getenv("KCP_RC_REPORTS_DIR"),
-		saslUser:         os.Getenv("KCP_RC_DEST_SASL_USER"),
-		saslPassword:     os.Getenv("KCP_RC_DEST_SASL_PASSWORD"),
+		sourceBootstrap: os.Getenv("KCP_RC_SOURCE_BOOTSTRAP"),
+		destBootstrap:   os.Getenv("KCP_RC_DEST_BOOTSTRAP"),
+		restEndpoint:    os.Getenv("KCP_RC_REST_ENDPOINT"),
+		destClusterID:   os.Getenv("KCP_RC_DEST_CLUSTER_ID"),
+		linkName:        envOr("KCP_RC_CLUSTER_LINK_NAME", "rc-link"),
+		topicPrefix:     envOr("KCP_RC_TOPIC_PREFIX", "rc-topic-"),
+		renderedDir:     envOr("KCP_RC_RENDERED_DIR", "/workspace/rendered"),
+		reportsDir:      os.Getenv("KCP_RC_REPORTS_DIR"),
+		saslUser:        os.Getenv("KCP_RC_DEST_SASL_USER"),
+		saslPassword:    os.Getenv("KCP_RC_DEST_SASL_PASSWORD"),
 
 		svc:     gateway.NewK8sService(""),
 		linkSvc: clusterlink.NewConfluentCloudService(http.DefaultClient),
@@ -100,11 +96,10 @@ func envOr(key, fallback string) string {
 // matching setup.sh.
 func (e *env) topic(i int) string { return fmt.Sprintf("%s%03d", e.topicPrefix, i) }
 
-// writeManifest renders a conversion manifest for this environment into the
-// in-pod rendered dir and saves a copy in the test's report folder. Its
+// writeManifest renders a conversion manifest for this environment, with the
+// run's commit-detection window and offset-sync worker count (0 = the default),
+// into the in-pod rendered dir and saves a copy in the test's report folder. Its
 // metadata.name, which kcp prints as the migration id, is "rc-<name>".
-// writeManifest renders a conversion manifest named name, with the run's
-// commit-detection window and offset-sync worker count (0 = the default).
 func (e *env) writeManifest(t *testing.T, name string, detect time.Duration, workers int) (path, id string) {
 	t.Helper()
 	id = "rc-" + name

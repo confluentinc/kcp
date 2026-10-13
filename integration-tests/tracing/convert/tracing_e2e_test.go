@@ -46,14 +46,15 @@ func TestTracing_ConversionsEmitCompleteTraces(t *testing.T) {
 	}
 }
 
-// seeds returns n consumer groups, each with a committed offset on one link
-// topic (cycling through the six), for the conversion to copy.
+// seeds returns n consumer groups, each with a committed offset on partition 0
+// of one link topic (cycling through the six), for the conversion to copy. The
+// offsets stay at or below 10, the records setup.sh guarantees per partition.
 func (e *env) seeds(prefix string, n int) []seed {
 	out := make([]seed, 0, n)
 	for i := 0; i < n; i++ {
 		out = append(out, seed{
 			group:   fmt.Sprintf("%s-%02d", prefix, i+1),
-			offsets: offsets{e.topic(i%6 + 1): {0: {Offset: int64(10 + i)}}},
+			offsets: offsets{e.topic(i%6 + 1): {0: {Offset: int64(1 + i%10)}}},
 		})
 	}
 	return out
