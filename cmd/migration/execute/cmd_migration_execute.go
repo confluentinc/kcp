@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -286,4 +287,17 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	if cmd.Flags().Changed("offset-sync-concurrency") {
 		p.OffsetSyncConcurrency = offsetSyncConcurrencyOverride
 	}
+}
+
+// tracerName is the instrumentation scope of this package's spans.
+const tracerName = "kcp/cmd/migration/execute"
+
+// commandContext is the command's context, which carries the command's root
+// span. A command run outside cobra's Execute — as the executor tests do — has
+// none, so it falls back to Background.
+func commandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }

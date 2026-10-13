@@ -1,13 +1,13 @@
 package execute
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/d2s"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
 )
 
@@ -38,17 +38,20 @@ func runConvertBranch(
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
-	ctx := context.Background()
+	ctx := commandContext(cmd)
 	policy := g.Spec.DefaultPolicies
 
 	if deps.convert == nil {
 		return fmt.Errorf("no route-conversion services are configured for this command")
 	}
+	_, buildSpan := tracing.Start(ctx, tracerName, "migration.build_services")
 	gatewayService, err := deps.gateway(g)
 	if err != nil {
+		tracing.End(buildSpan, err)
 		return fmt.Errorf("failed to build gateway service: %w", err)
 	}
 	svc, err := deps.convert(g)
+	tracing.End(buildSpan, err)
 	if err != nil {
 		return fmt.Errorf("failed to build route-conversion services: %w", err)
 	}

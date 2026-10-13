@@ -12,7 +12,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/looplab/fsm"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrUnroutedProducers is returned when the post-fence check detects producers
@@ -194,12 +196,20 @@ func (o *MigrationOrchestrator) CurrentState() string {
 // (cmd/migration/execute) computes live via migplan.Reconcile on every
 // invocation — not only the first — and is now non-nil on every call;
 // onInitialize consumes it directly.
-func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) error {
+func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) (err error) {
 	// Own a cancellable child context so the test-only kill-point seam can
 	// interrupt the run after a chosen checkpoint via a real cancellation
 	// (inert unless killpoint.EnvVar is set — never fires in production).
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run",
+		attribute.String("kcp.migration.id", o.config.MigrationId),
+		attribute.String("kcp.strategy", "aao"),
+		attribute.Int64("kcp.lag_threshold", lagThreshold),
+		attribute.Int("kcp.promote_batch_size", o.actions.promoteBatchSize),
+	)
+	defer func() { tracing.End(runSpan, err) }()
 
 	params := ExecutionParams{
 		LagThreshold:    lagThreshold,
@@ -208,19 +218,32 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	// Drive execution from canonical workflow - single source of truth
+	//
+	// Step spans are opened here rather than on the FSM's before/after
+	// callbacks: looplab runs the named before_<EVENT> callback — which is where
+	// the step's actual work happens — BEFORE the general before_event one, so
+	// before_event fires after the work is already done and cannot mark a start.
 	for _, step := range canonicalWorkflow {
 		if header, ok := stepHeaders[step.Event]; ok {
 			o.reporter.section(header)
 		}
 		slog.Debug("executing migration step", "step", step.Description)
+		stepCtx, stepSpan := tracing.Start(ctx, tracerName, "step."+step.Event,
+			attribute.String("kcp.step.from", step.FromState),
+			attribute.String("kcp.step.to", step.ToState),
+		)
 		// Test-only failure hook: fails this step in place of its action when
 		// killpoint.FailEnvVar names it. nil in production.
-		err := killpoint.FailAt(step.Event)
-		if err == nil {
-			err = o.fsm.Event(ctx, step.Event, params)
+		stepErr := killpoint.FailAt(step.Event)
+		if stepErr == nil {
+			stepErr = o.fsm.Event(stepCtx, step.Event, params)
 		}
-		if err != nil {
-			return o.handleStepFailure(ctx, step, err, params)
+		tracing.End(stepSpan, stepErr)
+		if stepErr != nil {
+			return o.handleStepFailure(ctx, step, stepErr, params)
+		}
+		if step.Event == EventInitialize {
+			runSpan.SetAttributes(RunAttributes(o.config)...)
 		}
 		o.reporter.stepDone()
 
@@ -303,8 +326,23 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
+	path := RollbackPathAbortFence
+	if !thisRunsFence {
+		path = RollbackPathEarlierRunFence
+	}
+	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback", attribute.String("kcp.rollback.path", path))
+	var rollbackErr error
+	defer func() { tracing.End(rollback, rollbackErr) }()
+
 	if thisRunsFence {
-		if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
+		abortCtx, abortSpan := tracing.Start(ctx, tracerName, "step."+EventAbortFence,
+			attribute.String("kcp.step.from", o.fsm.Current()),
+			attribute.String("kcp.step.to", StateInitialized),
+		)
+		err := o.fsm.Event(abortCtx, EventAbortFence)
+		tracing.End(abortSpan, err)
+		if err != nil {
+			rollbackErr = err
 			slog.Error("❌ failed to roll back to initialized", "error", err)
 			return stepFailure
 		}
@@ -319,6 +357,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 			err = o.actions.unfenceGateway(ctx, o.config)
 		}
 		if err != nil {
+			rollbackErr = err
 			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 			return stepFailure
 		}
@@ -326,7 +365,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 
 	// Restore the paused sync config now that the rollback landed.
-	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth)
+	o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
 
 	return stepFailure
 }
@@ -367,6 +406,11 @@ func beforeFenceStep(state string) bool {
 // The FSM is deliberately untouched: the fence transition was cancelled, so the
 // machine still sits at its pre-fence state, which is already the truth.
 func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error, params ExecutionParams) error {
+	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback",
+		attribute.String("kcp.rollback.path", RollbackPathUnconfirmedFence))
+	var rollbackErr error
+	defer func() { tracing.End(rollback, rollbackErr) }()
+
 	// A definite rejection is not the ambiguous timeout the rest of this path is
 	// written for: CFK explicitly refused the fenced spec, so it never took effect
 	// on any pod. Restoring is still right — the refused spec is live in etcd and
@@ -383,6 +427,7 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	}
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+		rollbackErr = err
 		slog.Error("❌ failed to restore the gateway after an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
 	}
@@ -393,7 +438,7 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
 	// An earlier, interrupted run may have paused offset sync.
-	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth)
+	o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
 	return stepFailure
 }
 
