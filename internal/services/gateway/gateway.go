@@ -11,7 +11,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
-	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -86,9 +85,7 @@ func NewK8sService(kubeConfigPath string) *K8sService {
 }
 
 // GetGatewayYAML retrieves the gateway resource as YAML
-func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) (_ []byte, err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "gateway.get_cr")
-	defer func() { tracing.End(span, err) }()
+func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error) {
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
@@ -581,9 +578,7 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
-func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (_ map[types.UID]struct{}, err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "gateway.get_pod_uids")
-	defer func() { tracing.End(span, err) }()
+func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
@@ -603,7 +598,6 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 		return nil, fmt.Errorf("failed to list gateway pods: %w", err)
 	}
 
-	span.SetAttributes(attribute.Int("kcp.pods.total", len(pods.Items)))
 	uids := make(map[types.UID]struct{}, len(pods.Items))
 	for _, pod := range pods.Items {
 		uids[pod.UID] = struct{}{}

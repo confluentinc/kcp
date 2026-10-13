@@ -127,10 +127,9 @@ func (e *env) runAndCheckTrace(t *testing.T, r tracedRun) {
 	}
 
 	for _, name := range []string{
-		"offset.sweep", "offset.get_many", "offset.list_offsets",
+		"offset.sweep", "offset.get_many",
 		"gateway.patch_cr", "gateway.wait_accepted",
 		"clusterlink.list_mirror_topics", "clusterlink.promote_mirror_topics",
-		"kafka.list_topics", "kafka.cluster_id", "clusterlink.link_status",
 	} {
 		assert.NotEmptyf(t, byName[name], "expected at least one %s span", name)
 	}

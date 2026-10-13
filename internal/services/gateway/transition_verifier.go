@@ -103,9 +103,7 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
 // without touching anything else. Used only by VerifyHotReloadCapability.
-func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (_ ApplyResult, err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "gateway.patch_config_id", stepAttr(step))
-	defer func() { tracing.End(span, err) }()
+func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
 	configID, err := NewConfigID()
 	if err != nil {
 		return ApplyResult{}, err

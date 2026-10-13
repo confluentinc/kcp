@@ -149,9 +149,7 @@ func DetectRogueCommits(ctx context.Context, first Snapshot, listGroups GroupLis
 	if err != nil {
 		return nil, err
 	}
-	listCtx, listSpan := tracing.Start(ctx, tracerName, "groupoffsets.list_groups", attribute.String("kcp.cluster", "source"))
-	groups, err := listGroups(listCtx)
-	tracing.End(listSpan, err)
+	groups, err := listGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups for the second snapshot: %w", err)
 	}

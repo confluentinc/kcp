@@ -195,10 +195,7 @@ func (t *Service) fetchBatch(ctx context.Context, tps []topicPartition, results 
 				req.AddBlock(tp.topic, tp.partition, sarama.OffsetNewest, 1)
 			}
 
-			_, brokerSpan := tracing.Start(ctx, tracerName, "offset.list_offsets",
-				attribute.Int("kcp.broker.id", int(broker.ID())), attribute.Int("kcp.partitions", len(parts)))
 			resp, err := broker.GetAvailableOffsets(req)
-			tracing.End(brokerSpan, err)
 			if err != nil {
 				// A transport-level failure (connection refused/reset, EOF from
 				// a restarting broker) is the blunt form of stale metadata: the

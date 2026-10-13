@@ -22,11 +22,10 @@ func TestTracing_DetectRogueCommits_SpansWaitListAndSnapshot(t *testing.T) {
 
 	spans := tracingtest.Spans(rec)
 	detect := tracingtest.Find(t, spans, "groupoffsets.detect_rogue_commits")
-	assert.Equal(t, []string{"wait.rogue_commit_window", "groupoffsets.list_groups", "groupoffsets.snapshot"},
+	assert.Equal(t, []string{"wait.rogue_commit_window", "groupoffsets.snapshot"},
 		tracingtest.Names(tracingtest.Children(spans, detect)))
 	snap := tracingtest.Find(t, spans, "groupoffsets.snapshot")
 	n, _ := tracingtest.Attr(snap, "kcp.groups.with_commits")
 	assert.Equal(t, int64(1), n.AsInt64())
-	assert.Len(t, tracingtest.FindAll(spans, "groupoffsets.worker_setup"), 1, "one group → one worker")
 	tracingtest.AssertNoValues(t, spans, "orders-app", "orders")
 }

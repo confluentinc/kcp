@@ -129,9 +129,9 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 	}
 
 	for _, name := range []string{
-		"migplan.gather_convert_facts", "gateway.patch_cr", "gateway.wait_accepted",
-		"groupoffsets.list_groups", "groupoffsets.snapshot", "groupoffsets.detect_rogue_commits",
-		"groupoffsets.destination_hwm", "groupoffsets.build_plan", "groupoffsets.apply",
+		"gateway.patch_cr", "gateway.wait_accepted",
+		"groupoffsets.snapshot", "groupoffsets.detect_rogue_commits",
+		"groupoffsets.destination_hwm", "groupoffsets.apply",
 	} {
 		assert.NotEmptyf(t, byName[name], "expected at least one %s span", name)
 	}
@@ -144,12 +144,11 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 	assert.GreaterOrEqualf(t, took, r.detect, "the window ran its full %s (took %s)", r.detect, took)
 	assert.Lessf(t, took, r.detect+detectionSlack, "the window took %s, configured %s", took, r.detect)
 
-	// Every seeded group was synced, by the configured number of workers.
+	// Every seeded group was synced, with the configured number of workers.
 	apply := byName["groupoffsets.apply"]
 	require.Len(t, apply, 1)
 	assert.Equal(t, strconv.Itoa(r.groups), apply[0].attrs["kcp.groups"], "groups synced")
-	assert.Len(t, byName["groupoffsets.worker_setup"], 3*min(wantWorkers, r.groups),
-		"min(workers, groups) workers for each of the two snapshots and the apply")
+	assert.Equal(t, strconv.Itoa(wantWorkers), apply[0].attrs["kcp.workers"])
 
 	counts := map[string]int{}
 	for n, ss := range byName {

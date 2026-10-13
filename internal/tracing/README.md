@@ -141,12 +141,7 @@ records kcp's error message, which may name topics, as the terminal output does.
 ```
 kcp migration execute                       root span, one per command
 ├─ migplan.reconcile                        kcp.route.mode, kcp.refused, kcp.nothing_to_do, kcp.topics.migrate
-│  ├─ migplan.load_gateway                  → gateway.get_cr
-│  ├─ kafka.list_topics ×2                  kcp.cluster = source | destination
-│  ├─ clusterlink.link_status               → clusterlink.list_mirror_topics, .list_configs, .get_cluster_link
-│  ├─ kafka.cluster_id ×2                   kcp.cluster
-│  ├─ k8s.check_secrets                     static routes; kcp.secrets
-│  └─ (conversion) migplan.gather_convert_facts, migplan.committed_topics (kcp.groups)
+│  └─ clusterlink.list_mirror_topics        (its link-status read)
 ├─ migration.build_services                 client setup
 └─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, plan counts
    ├─ step.<event> …                        kcp.step.from / kcp.step.to; kcp.step.skipped + kcp.step.skip_reason on pass-throughs
@@ -167,27 +162,30 @@ kcp migration execute                       root span, one per command
 | Span | Where / attributes |
 |---|---|
 | `offset.sweep` | One per lag poll and promote iteration; children `offset.get_many` ×2 |
-| `offset.get_many` | `kcp.cluster`, `kcp.topics`, `kcp.partitions`, `kcp.brokers`, `kcp.retried_partitions`; child `offset.list_offsets` per leader broker (`kcp.broker.id`) |
+| `offset.get_many` | `kcp.cluster`, `kcp.topics`, `kcp.partitions`, `kcp.brokers`, `kcp.retried_partitions` |
 | `offset.detect_unrouted_producers` | `kcp.topics`, `kcp.violations`; contains `wait.unrouted_producers_window` |
 | `gateway.resolve_capability` | `kcp.gateway.mode`, `kcp.gateway.hot_reload`, `kcp.gateway.crd_supports_config_id` |
-| `gateway.verify_hot_reload` | Only when the gateway hot-reloads; `gateway.patch_config_id`, `gateway.wait_accepted`, `gateway.wait_config_applied` |
+| `gateway.verify_hot_reload` | Only when the gateway hot-reloads; contains `gateway.wait_accepted`, `gateway.wait_config_applied` |
 | `gateway.patch_cr` | `kcp.gateway.config_id_injected` |
 | `gateway.wait_accepted`, `gateway.wait_config_applied` | — |
 | `gateway.verify_transition` | `kcp.gateway.mechanism` = `config_id` \| `rollout`; contains `gateway.wait_config_applied` or `gateway.wait_ready` (→ `gateway.observe_rollout`, `kcp.gateway.rolled`) |
-| `gateway.get_pod_uids`, `gateway.wait_pods` | AAO fence with producer detection; `kcp.pods.total` |
+| `gateway.wait_pods` | Static fence with producer detection |
 | every `gateway.*` verifier span | `kcp.gateway.step` = `fence`, `switchover`, `unfence` or `hot-reload check` |
-| `clusterlink.*` | `promote_mirror_topics` (`kcp.batch.size`), `list_mirror_topics` (`kcp.mirrors`), `alter_configs` (`kcp.alterations`), `list_configs`, `get_cluster_link` |
+| `clusterlink.*` | `promote_mirror_topics` (`kcp.batch.size`), `list_mirror_topics` (`kcp.mirrors`) |
 | `step.wait_for_lags` | `kcp.polls`, `kcp.topics_behind` |
 | `step.promote` | `kcp.polls`, `kcp.batches`, `kcp.promote_errors`; one `promote_batch` event per batch (`kcp.batch.index`, `kcp.batch.size`); `wait.promote_poll` between polls |
-| `wait.offset_sync_drain` | AAO pause_offset_sync drain |
-| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers`; `groupoffsets.worker_setup` per worker |
-| `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.list_groups`, `groupoffsets.snapshot` |
-| `groupoffsets.list_groups` | `kcp.cluster` |
-| `groupoffsets.destination_hwm`, `groupoffsets.build_plan`, `groupoffsets.apply` | d2s sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers` |
+| `wait.offset_sync_drain` | Static pause_offset_sync drain |
+| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers` |
+| `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.snapshot` |
+| `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers` |
 
 Every `wait.*` span carries `kcp.wait.configured_ms`.
 
 ## Adding spans
+
+A span earns its place when it is a state-machine step, a deliberate wait, or I/O that is (or could plausibly be)
+slow. Cheap one-off reads stay inside their parent: the parent's duration still covers them, so no time goes
+missing — only attribution inside it gets coarser. Add a span where a parent's unexplained time turns out to matter.
 
 - Open and close spans with `tracing.Start(ctx, tracerName, "area.operation", attrs...)` and `tracing.End(span, err)`;
   annotate the current span with `tracing.SetAttributes`, mark a pass-through step with `tracing.MarkSkipped`, and make

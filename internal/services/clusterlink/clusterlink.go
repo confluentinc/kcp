@@ -182,9 +182,7 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 // GetClusterLink fetches the cluster link resource. Translates common
 // failure statuses (404, 401/403) into user-facing messages so callers can
 // surface actionable errors to the CLI.
-func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (_ *ClusterLink, err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.get_cluster_link")
-	defer func() { tracing.End(span, err) }()
+func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error) {
 	var link ClusterLink
 	if err := s.doRequest(ctx, config, linkPath(config), &link); err != nil {
 		var statusErr *httpStatusError
@@ -262,9 +260,7 @@ func (s *ConfluentCloudService) ListClusterLinks(ctx context.Context, config Con
 }
 
 // ListConfigs retrieves cluster link configurations
-func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (_ map[string]string, err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.list_configs")
-	defer func() { tracing.End(span, err) }()
+func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
 	path := linkPath(config) + "/configs"
 
 	var response struct {
@@ -311,9 +307,7 @@ func (s *ConfluentCloudService) ValidateTopics(topics []string, clusterLinkTopic
 //
 // Empty alterations short-circuit without a network call. 404 / 401 / 403
 // translate to actionable messages matching GetClusterLink's style.
-func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) (err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.alter_configs", attribute.Int("kcp.alterations", len(alterations)))
-	defer func() { tracing.End(span, err) }()
+func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) error {
 	if len(alterations) == 0 {
 		return nil
 	}

@@ -17,9 +17,9 @@ func TestTracing_D2S_VerifyAndSyncInnerSpans(t *testing.T) {
 	spans := tracingtest.Spans(rec)
 	verify := tracingtest.Find(t, spans, "step.verify_fence")
 	assert.Subset(t, tracingtest.Names(tracingtest.Children(spans, verify)),
-		[]string{"groupoffsets.list_groups", "groupoffsets.snapshot", "groupoffsets.detect_rogue_commits"})
+		[]string{"groupoffsets.snapshot", "groupoffsets.detect_rogue_commits"})
 	sync := tracingtest.Find(t, spans, "step.sync_offsets")
-	assert.Equal(t, []string{"groupoffsets.destination_hwm", "groupoffsets.build_plan", "groupoffsets.apply"},
+	assert.Equal(t, []string{"groupoffsets.destination_hwm", "groupoffsets.apply"},
 		tracingtest.Names(tracingtest.Children(spans, sync)))
 	tracingtest.AssertNoValues(t, spans, "orders-app", "orders")
 }
