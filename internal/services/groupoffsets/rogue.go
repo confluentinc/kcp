@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrRogueCommits is returned by DetectRogueCommits when committed offsets did not stay put between two
@@ -135,11 +138,20 @@ type GroupLister func(ctx context.Context) ([]string, error)
 //
 // The caller has already applied the conversion's group rule to first, so every group in it is in scope;
 // there is no filter here.
-func DetectRogueCommits(ctx context.Context, first Snapshot, listGroups GroupLister, newFetcher FetcherFactory, workers int, window time.Duration, wait WaitFunc) (Snapshot, error) {
-	if err := wait(ctx, window); err != nil {
+func DetectRogueCommits(ctx context.Context, first Snapshot, listGroups GroupLister, newFetcher FetcherFactory, workers int, window time.Duration, wait WaitFunc) (_ Snapshot, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.detect_rogue_commits")
+	defer func() { tracing.End(span, err) }()
+	// The wait is injected (tests pass an instant one), so it is wrapped in its
+	// wait span here rather than replaced with tracing.Wait.
+	_, waitSpan := tracing.Start(ctx, tracerName, "wait.rogue_commit_window", attribute.Int64("kcp.wait.configured_ms", window.Milliseconds()))
+	err = wait(ctx, window)
+	tracing.End(waitSpan, err)
+	if err != nil {
 		return nil, err
 	}
-	groups, err := listGroups(ctx)
+	listCtx, listSpan := tracing.Start(ctx, tracerName, "groupoffsets.list_groups", attribute.String("kcp.cluster", "source"))
+	groups, err := listGroups(listCtx)
+	tracing.End(listSpan, err)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups for the second snapshot: %w", err)
 	}
@@ -147,7 +159,9 @@ func DetectRogueCommits(ctx context.Context, first Snapshot, listGroups GroupLis
 	if err != nil {
 		return nil, err
 	}
-	if changes := Changes(first, second); len(changes) > 0 {
+	changes := Changes(first, second)
+	span.SetAttributes(attribute.Int("kcp.changes", len(changes)))
+	if len(changes) > 0 {
 		return nil, &RogueCommitsError{Changes: changes}
 	}
 	return second, nil

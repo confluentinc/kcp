@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // CommittedOffset is one partition's committed offset and the metadata stored with it.
@@ -59,10 +61,13 @@ type FetcherFactory func() (GroupOffsetFetcher, func(), error)
 
 // TakeSnapshot reads the committed offsets of every group in groups, on up to workers workers. Any failure
 // fails the whole snapshot: a group silently skipped is a consumer left without its offset.
-func TakeSnapshot(ctx context.Context, newFetcher FetcherFactory, groups []string, workers int) (Snapshot, error) {
+func TakeSnapshot(ctx context.Context, newFetcher FetcherFactory, groups []string, workers int) (_ Snapshot, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.snapshot",
+		attribute.Int("kcp.groups", len(groups)), attribute.Int("kcp.workers", workers))
+	defer func() { tracing.End(span, err) }()
 	snap := Snapshot{}
 	var mu sync.Mutex
-	err := forEach(ctx, groups, workers, func() (worker, error) {
+	err = forEach(ctx, groups, workers, func() (worker, error) {
 		f, release, err := newFetcher()
 		if err != nil {
 			return worker{}, err
@@ -87,5 +92,6 @@ func TakeSnapshot(ctx context.Context, newFetcher FetcherFactory, groups []strin
 	if err != nil {
 		return nil, fmt.Errorf("reading committed offsets: %w", err)
 	}
+	span.SetAttributes(attribute.Int("kcp.groups.with_commits", len(snap)))
 	return snap, nil
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // errNoHandoff is returned by SyncOffsets when this run's verify_fence handed over no snapshot.
@@ -66,11 +68,17 @@ func (a *D2SActions) SyncOffsets(ctx context.Context, config *migration.Migratio
 	if err != nil {
 		return err
 	}
+	_, planSpan := tracing.Start(ctx, tracerName, "groupoffsets.build_plan")
 	plan, err := groupoffsets.BuildPlan(snap, hwm)
+	if plan != nil {
+		planSpan.SetAttributes(attribute.Int("kcp.groups", len(plan.Commits)), attribute.Int("kcp.partitions", plan.Partitions()))
+	}
+	tracing.End(planSpan, err)
 	if err != nil {
 		return err
 	}
 	if len(plan.Commits) == 0 {
+		tracing.MarkSkipped(ctx, "no_commits")
 		a.reporter.Success("No in-scope consumer group has committed offsets — nothing to sync")
 		return nil
 	}

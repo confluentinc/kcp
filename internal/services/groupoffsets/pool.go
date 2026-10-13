@@ -12,6 +12,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"github.com/confluentinc/kcp/internal/tracing"
 )
 
 // worker is one pool member: the function that handles an item and the function that releases whatever the
@@ -52,7 +54,9 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 
 	jobs := make(chan string)
 	for i := 0; i < n; i++ {
+		_, setupSpan := tracing.Start(ctx, tracerName, "groupoffsets.worker_setup")
 		w, err := setup()
+		tracing.End(setupSpan, err)
 		if err != nil {
 			fail(fmt.Sprintf("<worker %d>", i), fmt.Errorf("starting worker: %w", err))
 			break

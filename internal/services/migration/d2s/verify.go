@@ -11,7 +11,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrVerifyRefused is returned by VerifyFence when a conversion check refuses on the facts gathered after the
@@ -68,7 +70,9 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	a.reporter.Success("Route and credentials re-checked after the fence")
 
 	// 2. Snapshot 1.
-	groups, err := a.deps.SourceGroups(ctx)
+	listCtx, listSpan := tracing.Start(ctx, tracerName, "groupoffsets.list_groups", attribute.String("kcp.cluster", "source"))
+	groups, err := a.deps.SourceGroups(listCtx)
+	tracing.End(listSpan, err)
 	if err != nil {
 		return fmt.Errorf("listing source consumer groups for the first snapshot: %w", err)
 	}
@@ -111,7 +115,9 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	a.reporter.Success("Committed offsets held still while fenced — no direct commits detected")
 
 	// 7. Split-brain again, after the wait. Refusal only; the idle-group warning is not repeated.
-	listing, err := a.deps.DestinationGroups(ctx)
+	listCtx, listSpan = tracing.Start(ctx, tracerName, "groupoffsets.list_groups", attribute.String("kcp.cluster", "destination"))
+	listing, err := a.deps.DestinationGroups(listCtx)
+	tracing.End(listSpan, err)
 	if err != nil {
 		return fmt.Errorf("listing destination consumer groups after the wait: %w", err)
 	}
