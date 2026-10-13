@@ -1,6 +1,7 @@
 # Grafana dashboard provisioning for the local trace viewer: `make otel-up`
 # mounts this directory into the grafana/otel-lgtm container and this file into
-# its provisioning folder, so the kcp dashboards are loaded at startup.
+# its provisioning folder, so the kcp dashboards are loaded at startup
+# (tempo-config.yaml, mounted alongside, keeps the span metrics they chart).
 apiVersion: 1
 
 providers:

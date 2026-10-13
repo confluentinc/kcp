@@ -16,7 +16,7 @@ These notes are for contributors; they are not published with the user docs.
 | `KCP_TRACE_FILE` | Append spans to this file (OTLP/JSON lines). |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT` | Also send spans over OTLP/HTTP to this endpoint. Headers, timeouts and TLS come from the standard `OTEL_EXPORTER_OTLP_*` variables. |
 | `OTEL_EXPORTER_OTLP_(TRACES_)PROTOCOL` | Only `http/protobuf` is supported. |
-| `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME` | Added to every span's resource — handy for labelling runs (below). |
+| `OTEL_RESOURCE_ATTRIBUTES` | Added to every span's resource — use `run=<label>` to label runs (below). Leave `OTEL_SERVICE_NAME` unset: it replaces `service.name=kcp`, which the dashboard selects on. |
 
 The file and OTLP are independent: set either or both. The rules, applied once at startup:
 

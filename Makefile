@@ -182,6 +182,7 @@ otel-up: ## Start a local OTel backend with the kcp tracing dashboard (Grafana o
 	docker run -d --rm --name $(OTEL_LGTM_NAME) -p 3000:3000 -p 4317:4317 -p 4318:4318 \
 	  -v $(CURDIR)/internal/tracing/grafana:/otel-lgtm/kcp-dashboards:ro \
 	  -v $(CURDIR)/internal/tracing/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/kcp.yaml:ro \
+	  -v $(CURDIR)/internal/tracing/grafana/tempo-config.yaml:/otel-lgtm/tempo-config.yaml:ro \
 	  $(OTEL_LGTM_IMAGE)
 	@echo "kcp tracing dashboard: http://localhost:3000/d/kcp-tracing (ready in ~30s). Send traces with:"
 	@echo "  KCP_TRACING_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 kcp ..."
