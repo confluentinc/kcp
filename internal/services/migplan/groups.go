@@ -109,13 +109,13 @@ func topicGap(side string, canDescribe bool) string {
 // credential may not commit offsets for arbitrary groups and topics, or "" when
 // it may. The DESCRIBE probes don't cover it: committing needs READ on the
 // group and on each topic, so a DESCRIBE-only credential would pass every other
-// check and fail in sync_offsets, after the fence. The MSK IAM actions are
-// named from AWS's documentation and are not verified live yet (plan 4).
+// check and fail in sync_offsets, after the fence. Only the destination needs
+// it, and the destination is never MSK, so the advice names ACLs only.
 func commitGap(canCommit bool) string {
 	if canCommit {
 		return ""
 	}
-	return "the destination credential cannot commit offsets for arbitrary consumer groups and topics, so writing the consumer groups' offsets after the fence would fail. Grant it READ on all consumer groups and all topics (ACLs on '*'; with MSK IAM, the kafka-cluster:AlterGroup action on every group resource and kafka-cluster:ReadData on every topic resource, named from AWS's documentation and not yet verified live) and retry"
+	return "the destination credential cannot commit offsets for arbitrary consumer groups and topics, so writing the consumer groups' offsets after the fence would fail. Grant it READ on all consumer groups and all topics (ACLs on '*') and retry"
 }
 
 // listingGaps holds the reason, per cluster, that a group listing or a topic view

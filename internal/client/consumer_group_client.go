@@ -79,8 +79,13 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 // ListGroupsAllBrokers is ListGroupsWithType without the tolerance: each broker
 // reports only the groups it coordinates, so one silent broker hides its groups,
 // and a caller making a safety decision from the listing must not get a partial
-// one. It errors if any broker fails or refuses.
+// one. It errors if any broker fails or refuses. It refreshes the broker list
+// first: the client's is from its last metadata read, so a broker added or
+// replaced since would go unasked and its groups would be missing.
 func (c *ConsumerGroupClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
+	if err := c.client.RefreshMetadata(); err != nil {
+		return nil, fmt.Errorf("refreshing the broker list before listing consumer groups: %w", err)
+	}
 	return mergeListings(c.listGroupsPerBroker(), true)
 }
 

@@ -221,14 +221,14 @@ e2e_deploy_kafka() {
   kubectl --context "${PROFILE}" apply -f "${E2E_MANIFESTS_DIR}/destination-kraftcontroller.yaml"
   wait_for_pods "app=source-kraftcontroller" & p1=$!
   wait_for_pods "app=destination-kraftcontroller" & p2=$!
-  wait $p1 $p2 || { echo "FATAL: KRaft controllers failed to start"; exit 1; }
+  { wait "$p1" && wait "$p2"; } || { echo "FATAL: KRaft controllers failed to start"; exit 1; }
 
   echo "Deploying Kafka brokers..."
   kubectl --context "${PROFILE}" apply -f "${E2E_MANIFESTS_DIR}/source-kafka.yaml"
   kubectl --context "${PROFILE}" apply -f "${E2E_MANIFESTS_DIR}/destination-kafka.yaml"
   wait_for_pods "app=source-kafka" & p1=$!
   wait_for_pods "app=destination-kafka" & p2=$!
-  wait $p1 $p2 || { echo "FATAL: Kafka brokers failed to start"; exit 1; }
+  { wait "$p1" && wait "$p2"; } || { echo "FATAL: Kafka brokers failed to start"; exit 1; }
 }
 
 # create_license_secret — the licence JWT reaches the cluster through a pipe —

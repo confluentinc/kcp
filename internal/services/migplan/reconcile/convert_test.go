@@ -318,6 +318,29 @@ func TestReconcileConvert_RefusesAFenceKcpDidNotWrite(t *testing.T) {
 	}
 }
 
+// A topic-based migration batch that stopped after promote leaves its own fence ({topics, blocked}) on its
+// still-source-routed topics. Removing that fence by hand sends producers back to a source copy the link no
+// longer mirrors, so the refusal must not just say "remove": it points at finishing the batch.
+func TestReconcileConvert_ForeignFenceAdviceCoversAnUnfinishedBatch(t *testing.T) {
+	gw := convertGateway()
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topics": []any{"orders"}, "blocked": true}}
+
+	p := reconcileConverged(gw, GroupFacts{})
+
+	pc := convertPrecondition(t, p.Report, "route has no fence kcp didn't write")
+	if pc.OK {
+		t.Fatalf("foreign-fence precondition = %+v, want a failure", pc)
+	}
+	if strings.Contains(pc.Detail, "so remove them first") {
+		t.Errorf("detail = %q must not tell the operator to just remove the fence", pc.Detail)
+	}
+	for _, want := range []string{"topic-based migration batch", "kcp migration execute"} {
+		if !strings.Contains(pc.Detail, want) {
+			t.Errorf("detail = %q, want it to contain %q", pc.Detail, want)
+		}
+	}
+}
+
 func TestReconcileConvert_RefusesWithoutTargetAuth(t *testing.T) {
 	gw := convertGateway()
 	delete(gw.Route.Raw["security"].(map[string]any)["cluster"].(map[string]any), "cc")

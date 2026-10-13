@@ -173,6 +173,36 @@ func TestListGroupsAllBrokers_PreKafka38BrokerIsListedOverV4(t *testing.T) {
 	assert.Equal(t, []int16{4}, versions, "the request must go out once, clamped to v4")
 }
 
+// A broker that joined after the client last read metadata (a broker added or
+// replaced mid-run) coordinates groups too: the strict listing refreshes the
+// broker list first, so its groups are not silently missed.
+func TestListGroupsAllBrokers_AsksABrokerThatJoinedAfterTheLastMetadata(t *testing.T) {
+	c, mb1 := newClientAndMockBroker(t, 9, func(*sarama.MockBroker) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{"ListGroupsRequest": sarama.NewMockListGroupsResponse(t).AddGroup("g1", "consumer")}
+	})
+	mb2 := sarama.NewMockBroker(t, 2)
+	t.Cleanup(mb2.Close)
+	mb2.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"ListGroupsRequest":  sarama.NewMockListGroupsResponse(t).AddGroup("g2", "consumer"),
+	})
+	mb1.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"ListGroupsRequest":  sarama.NewMockListGroupsResponse(t).AddGroup("g1", "consumer"),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(mb1.Addr(), mb1.BrokerID()).SetBroker(mb2.Addr(), mb2.BrokerID()).SetController(mb1.BrokerID()),
+	})
+
+	got, err := c.ListGroupsAllBrokers()
+
+	require.NoError(t, err)
+	var ids []string
+	for _, l := range got {
+		ids = append(ids, l.GroupID)
+	}
+	assert.ElementsMatch(t, []string{"g1", "g2"}, ids, "the broker that joined must be asked too")
+}
+
 // fakeOffsetFetcher answers ListConsumerGroupOffsets from canned responses and
 // insists on an all-topics fetch (nil topicPartitions).
 type fakeOffsetFetcher struct {

@@ -314,8 +314,9 @@ and the cluster link:
   list every consumer group and describe every topic (a credential that sees
   part of a cluster would hide a group or a topic from these checks), and the
   destination credential must be able to write consumer-group offsets (`READ`
-  on the groups and the topics). On MSK IAM the actions these probes need have
-  not been verified yet.
+  on the groups and the topics). On an MSK IAM source, listing every group and
+  describing every topic need the `kafka-cluster:DescribeGroup` and
+  `kafka-cluster:DescribeTopic` actions on every group and topic resource.
 
 ### What it does
 
@@ -378,7 +379,8 @@ on every gateway pod, as in a migration.
 | A group commits on a topic that is not on the link | Migrate that topic; or delete the group's stale offsets on it (`kafka-consumer-groups --delete-offsets`), or the group; or stop or move the application outside this route that owns it. |
 | An in-scope group has members on the destination | Stop the destination members first. |
 | A credential can't list every group, describe every topic, or write offsets | Grant what the refusal names, then re-run. |
-| The route has a fence kcp didn't write, or a route-level fence | Remove it: the conversion would drop the first, and the static route would enforce the second. |
+| The route has a fence kcp didn't write | Find out what it is for first. If it is an unfinished topic-based migration batch's, finish that batch (rerun `kcp migration execute` on its manifest): removing its fence would send producers back to a source topic the link no longer mirrors. Otherwise remove it: the conversion would drop it. |
+| The route has a route-level fence | Remove it: the static route would enforce it. |
 | Committed offsets changed after the fence | A client commits to the source directly. Send it through the gateway, then re-run. |
 
 A refusal before the fence changes nothing, and `--dry-run` shows it.

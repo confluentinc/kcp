@@ -95,18 +95,71 @@ func (r *clientRun) stopAll(t *testing.T) {
 	r.stopConsumers(t)
 }
 
-// finishClientRun waits for the watcher to see the switch, lets the clients run
-// on, stops the producers, lets the consumers drain, stops them, and returns
-// the watcher's windows.
-func finishClientRun(t *testing.T, w *watcher, run *clientRun) Windows {
+// rejoinWait bounds how long a group takes to be Stable on the destination
+// after the switch. It covers a rejoin whose first JoinGroup a gateway pod
+// loses right after a hot reload: the client retries after its JoinGroup
+// timeout (max.poll.interval.ms + 5s, 65s with gatewayClientProps).
+const rejoinWait = 2 * time.Minute
+
+// advanceFor is the least time the clients run between the two destination
+// offset reads requireMovedToDestination compares.
+const advanceFor = 20 * time.Second
+
+// finishClientRun waits for the watcher to see the switch and checks that
+// coordination moved (requireMovedToDestination), lets the clients run on,
+// stops the producers, lets the consumers drain, stops them, and returns the
+// watcher's windows.
+func (e *env) finishClientRun(t *testing.T, w *watcher, run *clientRun) Windows {
 	t.Helper()
 	require.Eventually(t, func() bool { return w.windows().SwitchDoneMs > 0 }, switchSeenBy, 500*time.Millisecond,
 		"the watcher must see the route static")
-	time.Sleep(runAfter)
+	switched := time.Now()
+	frozen := map[string]offsets{}
+	rejoined := map[string]map[string]map[int32]destOffset{}
+	for _, s := range run.specs {
+		frozen[s.group] = e.sourceOffsets(t, s.group)
+	}
+	for _, s := range run.specs {
+		e.waitGroupState(t, destCluster, s.group, "Stable", len(s.members), rejoinWait)
+		rejoined[s.group] = e.destOffsets(t, s.group)
+	}
+	time.Sleep(max(runAfter-time.Since(switched), advanceFor))
+	for _, s := range run.specs {
+		e.requireMovedToDestination(t, s.group, frozen[s.group], rejoined[s.group])
+	}
 	run.stopProducers(t)
 	time.Sleep(drainFor)
 	run.stopConsumers(t)
 	return w.stop()
+}
+
+// requireMovedToDestination asserts that group's coordination moved with the
+// switch, which the clients' own logs cannot show (a group left coordinating
+// on the source would miss and re-read nothing): its source offsets have not
+// moved since the switch (frozen); on the destination, where it is already
+// Stable, every partition is at or past its frozen source offset, and at least
+// one has advanced since the group rejoined there.
+func (e *env) requireMovedToDestination(t *testing.T, group string, frozen offsets, rejoined map[string]map[int32]destOffset) {
+	t.Helper()
+	require.NotEmptyf(t, frozen, "group %s must have committed offsets on the source before the switch", group)
+	now := e.sourceOffsets(t, group)
+	dst := e.destOffsets(t, group)
+	advanced := false
+	for topic, parts := range frozen {
+		for p, o := range parts {
+			require.Equalf(t, o.Offset, now[topic][p].Offset,
+				"group %s %s[%d]: the source offset moved after the switch, so the group still commits there", group, topic, p)
+			d, ok := dst[topic][p]
+			require.Truef(t, ok, "group %s %s[%d]: no committed offset on the destination", group, topic, p)
+			require.GreaterOrEqualf(t, d.Offset, o.Offset,
+				"group %s %s[%d]: destination offset is behind the source's at the switch", group, topic, p)
+			if d.Offset > rejoined[topic][p].Offset {
+				advanced = true
+			}
+		}
+	}
+	require.Truef(t, advanced, "group %s: no destination offset advanced in %s after it rejoined there", group, advanceFor)
+	t.Logf("group %s: Stable on the destination, source offsets frozen, destination offsets advancing", group)
 }
 
 // checkClientRun parses every client log, runs the checker per group, saves
@@ -150,9 +203,9 @@ func (e *env) checkClientRun(t *testing.T, run *clientRun, win Windows) {
 	}
 }
 
-// Clients run through the gateway across an uninterrupted conversion: no
-// acknowledged record is missed, and every re-read is the fence onset's or the
-// switch's, within its bound.
+// Clients run through the gateway across an uninterrupted conversion: their
+// groups move to the destination, no acknowledged record is missed, and every
+// re-read is the fence onset's or the switch's, within its bound.
 func TestContinuousClients_Conversion(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -166,7 +219,7 @@ func TestContinuousClients_Conversion(t *testing.T) {
 	mani, id := e.writeManifest(t, "continuous", minDetect)
 	out, err := e.execute(t, "kcp-run-1-execute.log", mani, nil, nil)
 	requireCompleted(t, out, err, id)
-	win := finishClientRun(t, w, run)
+	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
 	t.Logf("\n✅ RESULT: clients through the gateway missed nothing across the conversion; every re-read was bounded.")
@@ -190,7 +243,7 @@ func TestContinuousClients_ResumeAfterOffsetsSynced(t *testing.T) {
 	e.requireFenced(t, ctx, "interrupted after sync_offsets")
 	out, err = e.execute(t, "kcp-run-2-resume.log", mani, nil, nil)
 	requireCompleted(t, out, err, id)
-	win := finishClientRun(t, w, run)
+	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
 	t.Logf("\n✅ RESULT: clients missed nothing across an interrupted-then-resumed conversion; every re-read was bounded.")

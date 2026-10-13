@@ -180,10 +180,14 @@ func TestCommitGap(t *testing.T) {
 		t.Errorf("allowed: gap = %q, want none", got)
 	}
 	denied := commitGap(false)
-	for _, want := range []string{"destination credential", "READ on all consumer groups and all topics", "kafka-cluster:AlterGroup", "kafka-cluster:ReadData", "not yet verified"} {
+	for _, want := range []string{"destination credential", "READ on all consumer groups and all topics"} {
 		if !strings.Contains(denied, want) {
 			t.Errorf("denied: gap = %q, want it to contain %q", denied, want)
 		}
+	}
+	// The check runs on the destination only, which is never MSK.
+	if strings.Contains(denied, "MSK") {
+		t.Errorf("denied: gap = %q must not give MSK IAM advice for the destination", denied)
 	}
 	if strings.Contains(denied, "DESCRIBE") {
 		t.Errorf("denied: gap = %q must ask for READ, not DESCRIBE", denied)

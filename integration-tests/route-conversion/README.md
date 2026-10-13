@@ -48,7 +48,10 @@ deleted on both clusters.
 | `refusal_e2e_test.go` | an unpromoted link topic, a group committing outside the link, a group live on the destination (classic and KIP-848), a destination member joining during the window, a direct commit during the window, a refusal with kcp's fence already up |
 | `continuous_e2e_test.go` | `TestContinuousClients_Conversion` and `TestContinuousClients_ResumeAfterOffsetsSynced`: producers and consumers through the gateway across the conversion |
 
-The continuous-client tests assert **traffic after the switch** (each
+The continuous-client tests assert **coordination moved** (after the switch,
+while the clients run, each group is Stable on the destination with all its
+members, its source offsets no longer move, and its destination offsets are at
+or past them and advance), **traffic after the switch** (each
 group's producer has a record acknowledged after the route went static, and
 no send error at all), **no missed record** (every acknowledged value read at
 least once by each group) and **bounded re-reads**: a value read twice must be
