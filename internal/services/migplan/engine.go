@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ReconciliationEngine is the I/O layer: it holds the five provider seams,
@@ -47,29 +49,29 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 		return e.runConvert(ctx, in)
 	}
 
-	gw, err := e.gateway.Load(ctx)
+	gw, err := traced(ctx, "migplan.load_gateway", e.gateway.Load)
 	if err != nil {
 		return nil, fmt.Errorf("loading gateway config: %w", err)
 	}
-	src, err := e.source.ListTopics(ctx)
+	src, err := traced(ctx, "kafka.list_topics", e.source.ListTopics, clusterAttr("source"))
 	if err != nil {
 		return nil, fmt.Errorf("listing source topics: %w", err)
 	}
-	tgt, err := e.target.ListTopics(ctx)
+	tgt, err := traced(ctx, "kafka.list_topics", e.target.ListTopics, clusterAttr("destination"))
 	if err != nil {
 		return nil, fmt.Errorf("listing target topics: %w", err)
 	}
-	link, err := e.link.LinkStatus(ctx)
+	link, err := traced(ctx, "clusterlink.link_status", e.link.LinkStatus)
 	if err != nil {
 		return nil, fmt.Errorf("reading cluster-link status: %w", err)
 	}
 
 	// Cluster identities, to verify the clusters we read are the real source/dest.
-	srcID, err := e.source.ClusterID(ctx)
+	srcID, err := traced(ctx, "kafka.cluster_id", e.source.ClusterID, clusterAttr("source"))
 	if err != nil {
 		return nil, fmt.Errorf("reading source cluster id: %w", err)
 	}
-	tgtID, err := e.target.ClusterID(ctx)
+	tgtID, err := traced(ctx, "kafka.cluster_id", e.target.ClusterID, clusterAttr("destination"))
 	if err != nil {
 		return nil, fmt.Errorf("reading target cluster id: %w", err)
 	}
@@ -79,7 +81,9 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	var secretCheckSkipped string
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		if names := reconcile.ResolveStagedSecretNames(gw, in.TargetDomain); len(names) > 0 {
-			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(ctx, names)
+			secretsCtx, secretsSpan := tracing.Start(ctx, tracerName, "k8s.check_secrets", attribute.Int("kcp.secrets", len(names)))
+			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(secretsCtx, names)
+			tracing.End(secretsSpan, err)
 			if err != nil {
 				return nil, fmt.Errorf("checking staged auth secrets: %w", err)
 			}
@@ -128,13 +132,15 @@ func (e *ReconciliationEngine) convertProviders() ConvertProviders {
 // refuses on the probe before it reads them, and a filtered credential could
 // turn them into an error instead of that refusal.
 func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
-	facts, err := GatherConvertFacts(ctx, e.convertProviders())
+	facts, err := traced(ctx, "migplan.gather_convert_facts", func(ctx context.Context) (*ConvertFacts, error) {
+		return GatherConvertFacts(ctx, e.convertProviders())
+	})
 	if err != nil {
 		return nil, err
 	}
 	var tracked map[string][]string
 	if facts.describeAllowed() {
-		if tracked, err = e.sourceCommittedTopics(ctx); err != nil {
+		if tracked, err = traced(ctx, "migplan.committed_topics", e.sourceCommittedTopics); err != nil {
 			return nil, err
 		}
 	}
@@ -156,6 +162,7 @@ func (e *ReconciliationEngine) sourceCommittedTopics(ctx context.Context) (map[s
 	for _, g := range srcGroups {
 		srcIDs = append(srcIDs, g.GroupID)
 	}
+	tracing.SetAttributes(ctx, attribute.Int("kcp.groups", len(srcIDs)))
 	tracked, err := e.sourceGroups.CommittedTopics(ctx, srcIDs)
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
