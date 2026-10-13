@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
+	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -84,7 +86,9 @@ func NewK8sService(kubeConfigPath string) *K8sService {
 }
 
 // GetGatewayYAML retrieves the gateway resource as YAML
-func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error) {
+func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) (_ []byte, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.get_cr")
+	defer func() { tracing.End(span, err) }()
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
@@ -577,7 +581,9 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
-func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
+func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (_ map[types.UID]struct{}, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.get_pod_uids")
+	defer func() { tracing.End(span, err) }()
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
@@ -597,6 +603,7 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 		return nil, fmt.Errorf("failed to list gateway pods: %w", err)
 	}
 
+	span.SetAttributes(attribute.Int("kcp.pods.total", len(pods.Items)))
 	uids := make(map[types.UID]struct{}, len(pods.Items))
 	for _, pod := range pods.Items {
 		uids[pod.UID] = struct{}{}
@@ -623,7 +630,9 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 //
 // baselineGeneration is the Deployment's metadata.generation captured before the
 // apply, via GetGatewayDeploymentGeneration.
-func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_pods")
+	defer func() { tracing.End(span, err) }()
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
@@ -810,7 +819,9 @@ func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gateway
 
 // waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
 // Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
+func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_ready")
+	defer func() { tracing.End(span, err) }()
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
