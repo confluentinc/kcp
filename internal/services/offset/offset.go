@@ -9,8 +9,13 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 )
+
+// tracerName is the instrumentation scope of this package's spans.
+const tracerName = "kcp/services/offset"
 
 // retryBackoff is how long GetMany waits after refreshing metadata before
 // retrying failed partitions. An immediate retry tends to observe the same
@@ -26,12 +31,20 @@ type Provider interface {
 
 // Service provides offset operations against a Kafka cluster.
 type Service struct {
-	client sarama.Client
+	client  sarama.Client
+	cluster string // "source" or "destination", for span attributes; "" when unset
 }
 
 // NewOffsetService creates a Service backed by the given Kafka client.
 func NewOffsetService(client sarama.Client) *Service {
 	return &Service{client: client}
+}
+
+// WithCluster labels the service's spans with which cluster it reads
+// ("source" or "destination") and returns it.
+func (t *Service) WithCluster(cluster string) *Service {
+	t.cluster = cluster
+	return t
 }
 
 // Close closes the underlying Kafka client.
@@ -72,11 +85,19 @@ type failedPartition struct {
 // Partitions that fail because cached metadata went stale mid-sweep (leader
 // moved, replica unavailable, or the cached leader broker unreachable) are
 // retried once against refreshed metadata before the sweep fails.
-func (t *Service) GetMany(ctx context.Context, topics []string) (map[string]map[int32]int64, error) {
-	results := make(map[string]map[int32]int64, len(topics))
+func (t *Service) GetMany(ctx context.Context, topics []string) (_ map[string]map[int32]int64, err error) {
 	if len(topics) == 0 {
-		return results, nil
+		return map[string]map[int32]int64{}, nil
 	}
+	ctx, span := tracing.Start(ctx, tracerName, "offset.get_many",
+		attribute.String("kcp.cluster", t.cluster), attribute.Int("kcp.topics", len(topics)))
+	defer func() { tracing.End(span, err) }()
+	return t.getMany(ctx, topics)
+}
+
+// getMany is GetMany's body, run inside its offset.get_many span.
+func (t *Service) getMany(ctx context.Context, topics []string) (map[string]map[int32]int64, error) {
+	results := make(map[string]map[int32]int64, len(topics))
 
 	slog.Debug("fetching offsets for topic batch", "topics", len(topics))
 
@@ -92,7 +113,8 @@ func (t *Service) GetMany(ctx context.Context, topics []string) (map[string]map[
 		}
 	}
 
-	retriable, err := t.fetchBatch(pending, results)
+	tracing.SetAttributes(ctx, attribute.Int("kcp.partitions", len(pending)))
+	retriable, err := t.fetchBatch(ctx, pending, results)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +131,7 @@ func (t *Service) GetMany(ctx context.Context, topics []string) (map[string]map[
 		}
 		slog.Debug("retrying offset fetch after metadata refresh",
 			"partitions", len(retriable), "topics", len(refresh))
+		tracing.SetAttributes(ctx, attribute.Int("kcp.retried_partitions", len(retriable)))
 		if err := t.client.RefreshMetadata(refresh...); err != nil {
 			return nil, fmt.Errorf("failed to refresh metadata for retry: %w", err)
 		}
@@ -118,7 +141,7 @@ func (t *Service) GetMany(ctx context.Context, topics []string) (map[string]map[
 		case <-time.After(retryBackoff):
 		}
 
-		stillFailed, err := t.fetchBatch(retry, results)
+		stillFailed, err := t.fetchBatch(ctx, retry, results)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +160,7 @@ func (t *Service) GetMany(ctx context.Context, topics []string) (map[string]map[
 // leader lookup failed, whose offset block carried a stale-metadata error,
 // or whose broker request failed at the transport level are returned (with
 // their cause) for the caller to retry; any other failure aborts the batch.
-func (t *Service) fetchBatch(tps []topicPartition, results map[string]map[int32]int64) ([]failedPartition, error) {
+func (t *Service) fetchBatch(ctx context.Context, tps []topicPartition, results map[string]map[int32]int64) ([]failedPartition, error) {
 	var failed []failedPartition
 
 	brokerPartitions := make(map[*sarama.Broker][]topicPartition)
@@ -155,6 +178,8 @@ func (t *Service) fetchBatch(tps []topicPartition, results map[string]map[int32]
 		brokerPartitions[leader] = append(brokerPartitions[leader], tp)
 	}
 
+	tracing.SetAttributes(ctx, attribute.Int("kcp.brokers", len(brokerPartitions)))
+
 	// Brokers are independent, so fan the per-broker requests out
 	// concurrently: the sweep costs one round trip, not brokers' worth.
 	var (
@@ -170,7 +195,10 @@ func (t *Service) fetchBatch(tps []topicPartition, results map[string]map[int32]
 				req.AddBlock(tp.topic, tp.partition, sarama.OffsetNewest, 1)
 			}
 
+			_, brokerSpan := tracing.Start(ctx, tracerName, "offset.list_offsets",
+				attribute.Int("kcp.broker.id", int(broker.ID())), attribute.Int("kcp.partitions", len(parts)))
 			resp, err := broker.GetAvailableOffsets(req)
+			tracing.End(brokerSpan, err)
 			if err != nil {
 				// A transport-level failure (connection refused/reset, EOF from
 				// a restarting broker) is the blunt form of stale metadata: the

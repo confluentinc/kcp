@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrUnroutedProducers is returned by DetectUnroutedProducers when a source
@@ -31,7 +34,15 @@ type Reporter interface {
 // pays the slower of the two sweeps rather than their sum. Shared by the AAO
 // (migration) and TBM orchestrators, which otherwise hand-maintained two
 // identical copies.
-func FetchSourceAndDestinationOffsets(ctx context.Context, source, destination Provider, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
+func FetchSourceAndDestinationOffsets(ctx context.Context, source, destination Provider, topics []string) (_, _ map[string]map[int32]int64, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "offset.sweep", attribute.Int("kcp.topics", len(topics)))
+	defer func() { tracing.End(span, err) }()
+	return fetchSourceAndDestinationOffsets(ctx, source, destination, topics)
+}
+
+// fetchSourceAndDestinationOffsets is FetchSourceAndDestinationOffsets' body,
+// run inside its offset.sweep span.
+func fetchSourceAndDestinationOffsets(ctx context.Context, source, destination Provider, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
 	var (
 		wg                     sync.WaitGroup
 		sourceOffsets, destOff map[string]map[int32]int64
@@ -68,7 +79,9 @@ func FetchSourceAndDestinationOffsets(ctx context.Context, source, destination P
 // (migration) and TBM orchestrators, which otherwise hand-maintained two
 // identical copies — both wrap the same ErrUnroutedProducers, so either
 // package's orchestrator can errors.Is against it.
-func DetectUnroutedProducers(ctx context.Context, source Provider, reporter Reporter, topics []string, duration time.Duration) error {
+func DetectUnroutedProducers(ctx context.Context, source Provider, reporter Reporter, topics []string, duration time.Duration) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "offset.detect_unrouted_producers", attribute.Int("kcp.topics", len(topics)))
+	defer func() { tracing.End(span, err) }()
 	// Snapshot 1 — one batched sweep across all topics.
 	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
 	snapshot1, err := source.GetMany(ctx, topics)
@@ -78,10 +91,8 @@ func DetectUnroutedProducers(ctx context.Context, source Provider, reporter Repo
 
 	// Wait, then snapshot 2
 	reporter.Detail("Monitoring source offsets for %s...", duration)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(duration):
+	if err := tracing.Wait(ctx, "unrouted_producers_window", duration); err != nil {
+		return err
 	}
 
 	slog.Debug("taking second source offset snapshot")
@@ -107,6 +118,7 @@ func DetectUnroutedProducers(ctx context.Context, source Provider, reporter Repo
 		}
 	}
 
+	span.SetAttributes(attribute.Int("kcp.violations", len(violations)))
 	if len(violations) > 0 {
 		sort.Strings(violations)
 		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
