@@ -189,18 +189,23 @@ otel-up: ## Start a local OTel backend with the kcp tracing dashboard (Grafana o
 otel-down: ## Stop the local OTel backend
 	docker stop $(OTEL_LGTM_NAME)
 
-test-tracing: test-tracing-setup ## Run the tracing smoke E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static
-	@trap 'echo ""; echo "Tearing down tracing E2E infrastructure..."; bash integration-tests/tracing/teardown.sh' EXIT; \
-	bash integration-tests/tracing/run.sh
+# GATEWAY_MODE picks the migration kind the tracing suite runs: dynamic (the
+# default) or static from integration-tests/tracing, convert (dynamic to static)
+# from integration-tests/tracing/convert. Each has its own Minikube profile.
+TRACING_SUITE = $(if $(filter convert,$(GATEWAY_MODE)),integration-tests/tracing/convert,integration-tests/tracing)
 
-test-tracing-setup: ## Set up the tracing smoke cluster (GATEWAY_MODE=dynamic default)
-	@bash integration-tests/tracing/setup.sh
+test-tracing: test-tracing-setup ## Run the tracing smoke E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static|convert
+	@trap 'echo ""; echo "Tearing down tracing E2E infrastructure..."; bash $(TRACING_SUITE)/teardown.sh' EXIT; \
+	bash $(TRACING_SUITE)/run.sh
 
-test-tracing-run: ## Run the tracing smoke E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
-	@bash integration-tests/tracing/run.sh "$(RUN)"
+test-tracing-setup: ## Set up a tracing smoke cluster (GATEWAY_MODE=dynamic default, static, or convert)
+	@bash $(TRACING_SUITE)/setup.sh
 
-test-tracing-teardown: ## Tear down the tracing smoke cluster
-	@bash integration-tests/tracing/teardown.sh
+test-tracing-run: ## Run the tracing smoke E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static|convert
+	@bash $(TRACING_SUITE)/run.sh "$(RUN)"
+
+test-tracing-teardown: ## Tear down a tracing smoke cluster (GATEWAY_MODE=dynamic|static|convert)
+	@bash $(TRACING_SUITE)/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh

@@ -36,10 +36,6 @@ import (
 // kcpBinary is the in-pod path run.sh copies the linux kcp binary to.
 const kcpBinary = "/workspace/kcp"
 
-// runLabel is set as the run=<label> resource attribute on every kcp run, the
-// way a performance tester labels runs; the test checks it reaches the trace.
-const runLabel = "tracing-smoke"
-
 // offsetSyncEnableKey is the cluster-link config the static FSM's offset-sync
 // pause disables and its restore sets back to the declared baseline.
 const offsetSyncEnableKey = "consumer.offset.sync.enable"
@@ -149,12 +145,29 @@ func envOrDefault(key, fallback string) string {
 // and writes it into the in-pod rendered dir (the test runs in-cluster), so each
 // test can target its own disjoint slice without a fixed batch template. Reuses
 // the rendered credential files setup.sh already staged. Returns the in-pod path.
-// writeManifest renders a migration manifest for topics with unrouted-producer
-// detection on (its minimum window), so the trace covers verify_fence's
-// detection and its wait span rather than a skipped step.
-func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
+// policies are the spec.defaultPolicies a run varies: the unrouted-producer
+// detection window (0 = detection off, the default) and the promote batch size
+// (0 = promote every topic at once).
+type policies struct {
+	detect       time.Duration
+	promoteBatch int
+}
+
+// writeManifest renders a migration manifest for topics with the run's
+// policies.
+func (e *env) writeManifest(t *testing.T, name string, topics []string, p policies) string {
 	t.Helper()
-	return e.renderManifest(t, name, topics, "", "  defaultPolicies:\n    detectUnroutedProducersDuration: 10s\n")
+	var spec strings.Builder
+	if p.detect > 0 || p.promoteBatch > 0 {
+		spec.WriteString("  defaultPolicies:\n")
+	}
+	if p.detect > 0 {
+		fmt.Fprintf(&spec, "    detectUnroutedProducersDuration: %s\n", p.detect)
+	}
+	if p.promoteBatch > 0 {
+		fmt.Fprintf(&spec, "    promoteBatchSize: %d\n", p.promoteBatch)
+	}
+	return e.renderManifest(t, name, topics, "", spec.String())
 }
 
 // renderManifest writes the manifest for writeManifest and its variants;
@@ -232,18 +245,19 @@ func (e *env) mirrorStatus(t *testing.T, ctx context.Context) map[string]string 
 }
 
 // runKCP execs the in-pod kcp binary as a local subprocess (this test already
-// runs inside the cluster) with tracing on, appending its spans to traceFile.
+// runs inside the cluster) with tracing on, appending its spans to traceFile and
+// labelling the run run=<label>, the way a performance tester labels runs.
 // The command, its full output and its exit result are also saved as reportName
 // in the test's report folder. Returns combined stdout+stderr and the process
 // error.
-func (e *env) runKCP(t *testing.T, reportName, traceFile string, args ...string) (string, error) {
+func (e *env) runKCP(t *testing.T, reportName, traceFile, label string, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), executeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kcpBinary, args...)
 	cmd.Env = append(os.Environ(), "KCP_TRACING_ENABLED=true", "KCP_TRACE_FILE="+traceFile,
-		"OTEL_RESOURCE_ATTRIBUTES=run="+runLabel)
+		"OTEL_RESOURCE_ATTRIBUTES=run="+label)
 	out, err := cmd.CombinedOutput()
 
 	desc := "kcp " + strings.Join(args, " ")
