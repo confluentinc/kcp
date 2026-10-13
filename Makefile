@@ -80,7 +80,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown otel-up otel-down test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -185,6 +185,19 @@ otel-up: ## Start a local OTel backend for viewing kcp traces (Grafana on :3000,
 
 otel-down: ## Stop the local OTel backend
 	docker stop $(OTEL_LGTM_NAME)
+
+test-tracing: test-tracing-setup ## Run the tracing smoke E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static
+	@trap 'echo ""; echo "Tearing down tracing E2E infrastructure..."; bash integration-tests/tracing/teardown.sh' EXIT; \
+	bash integration-tests/tracing/run.sh
+
+test-tracing-setup: ## Set up the tracing smoke cluster (GATEWAY_MODE=dynamic default)
+	@bash integration-tests/tracing/setup.sh
+
+test-tracing-run: ## Run the tracing smoke E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
+	@bash integration-tests/tracing/run.sh "$(RUN)"
+
+test-tracing-teardown: ## Tear down the tracing smoke cluster
+	@bash integration-tests/tracing/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
