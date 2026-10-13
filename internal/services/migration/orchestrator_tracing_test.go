@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -81,4 +82,41 @@ func TestTracing_Execute_RollbackIsASiblingOfTheFailedStep(t *testing.T) {
 	abort := tracingtest.Find(t, spans, "step.abort_fence")
 	assert.Equal(t, rollback.SpanContext().SpanID(), abort.Parent().SpanID())
 	assert.Equal(t, codes.Error, tracingtest.Find(t, spans, "step.verify_fence").Status().Code)
+}
+
+func TestTracing_Execute_RollbackIsAnErrorWhenTheOffsetSyncRestoreFails(t *testing.T) {
+	rec := tracingtest.Install(t)
+	orch, config := newHappyPathOrchestrator(t, nil)
+	config.PauseConsumerOffsetSync = true
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
+	var listCalls int64
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listConfigsFn: func(context.Context, clusterlink.Config) (map[string]string, error) {
+			if atomic.AddInt64(&listCalls, 1) == 1 {
+				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
+			}
+			return map[string]string{"consumer.offset.sync.enable": "false"}, nil
+		},
+		alterConfigsFn: func(_ context.Context, _ clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
+			for _, a := range alts {
+				if a.Value == "true" {
+					return errors.New("restore refused")
+				}
+			}
+			return nil
+		},
+	}
+	var calls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{getFn: func(string) (map[int32]int64, error) {
+		n := atomic.AddInt64(&calls, 1)
+		return map[int32]int64{0: 100 + n*10}, nil
+	}}
+	orch.actions.destinationOffset = caughtUpDestination()
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	require.ErrorIs(t, orch.Execute(context.Background(), 0, testAuth, resultFromConfig(config)), ErrUnroutedProducers)
+
+	rollback := tracingtest.Find(t, tracingtest.Spans(rec), "migration.rollback")
+	assert.Equal(t, codes.Error, rollback.Status().Code, "the unfence landed but the offset-sync restore did not")
 }

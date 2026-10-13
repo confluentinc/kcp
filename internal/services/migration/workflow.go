@@ -755,7 +755,8 @@ func (s *MigrationActions) PauseOffsetSync(
 // declared baseline, as the second half of the abort_fence rollback.
 // Soft-fail: the unfence already succeeded, the run is already failing with
 // the step error that triggered the rollback, and a restore error must not
-// undo the unfence, so a failure prints manual remediation instead. Gated only
+// undo the unfence, so a failure prints manual remediation instead; the error
+// is returned only so the rollback's span can record it. Gated only
 // on config.PauseConsumerOffsetSync, never on whether a prior pause actually
 // landed, so it is safe to call even when the pause failed before its own
 // AlterConfigs. It runs on a context that ignores cancellation but keeps the
@@ -766,18 +767,19 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-) {
+) error {
 	if !config.PauseConsumerOffsetSync {
-		return
+		return nil
 	}
 	r := newReporter()
 	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
 	want, err := setOffsetSyncBaseline(context.WithoutCancel(ctx), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
 	if err != nil {
 		r.Remediation("Gateway unfenced but %v — re-apply manually.", err)
-		return
+		return err
 	}
 	r.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+	return nil
 }
 
 // RestoreOffsetSync runs the restore_offset_sync stage, the last in the

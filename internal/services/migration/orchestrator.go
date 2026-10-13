@@ -364,8 +364,9 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		o.reporter.Success("Gateway unfenced — traffic restored to pre-migration state")
 	}
 
-	// Restore the paused sync config now that the rollback landed.
-	o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
+	// Restore the paused sync config now that the rollback landed. A failure is
+	// reported to the operator inside; here it only marks the rollback span.
+	rollbackErr = o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
 
 	return stepFailure
 }
@@ -438,7 +439,7 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
 	// An earlier, interrupted run may have paused offset sync.
-	o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
+	rollbackErr = o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
 	return stepFailure
 }
 
