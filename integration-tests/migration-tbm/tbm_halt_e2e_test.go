@@ -51,7 +51,7 @@ func TestPromotedNotSwitchedResumesAsSwitchOnly(t *testing.T) {
 	require.Empty(t, res.PromoteTopics, "an already-STOPPED mirror must not be promoted again")
 	require.Empty(t, res.AwaitStopped)
 	require.Contains(t, res.SwitchoverYAML, reserved, "the switchover must route the promoted topic")
-	require.Contains(t, res.SwitchoverYAML, g.Spec.Route.TargetStreamingDomain, "…to the target domain")
+	require.Contains(t, res.SwitchoverYAML, g.Spec.DeclaredRoute().TargetStreamingDomain, "…to the target domain")
 }
 
 // TestHaltScenarios proves migplan.Reconcile refuses each known-bad condition with
@@ -95,15 +95,6 @@ func TestHaltScenarios(t *testing.T) {
 		res := h.Decide(t, h.loadManifest(t, "halt-offset-sync-enabled.yaml"))
 		assertRefusedNoArtifacts(t, res)
 		require.Truef(t, hasFailedPrecondition(res.Report, "consumer offset sync disabled on link"),
-			"preconditions=%+v", res.Report.Preconditions)
-	})
-
-	// The manifest asks for the offset-sync pause, which a dynamic route has no
-	// use for: its link runs with consumer offset sync off.
-	t.Run("offset-sync-pause-requested", func(t *testing.T) {
-		res := h.Decide(t, h.loadManifest(t, "halt-offset-sync-pause-requested.yaml"))
-		assertRefusedNoArtifacts(t, res)
-		require.Truef(t, hasFailedPrecondition(res.Report, "offset-sync pause not requested"),
 			"preconditions=%+v", res.Report.Preconditions)
 	})
 
@@ -154,10 +145,10 @@ func TestHaltScenarios(t *testing.T) {
 	probe := h.e.manifestPath("gateway-static-probe.yaml")
 
 	// static-route (gateway-static-probe.yaml) has no pre-staged
-	// security.cluster.<domain> block, so the static-route strategy
-	// (reconcile/staticpreconditions.go) refuses on missing staged auth before
-	// the dynamic-only "route is dynamic" check is ever reached — see
-	// route-mode-unrecognized below for that check.
+	// security.cluster.<domain> block. The halt manifest declares
+	// spec.staticMigration, so the static strategy
+	// (reconcile/staticpreconditions.go) refuses on the missing staged auth —
+	// see route-mode-unrecognized below for the dynamic type's route check.
 	t.Run("route-missing-staged-auth", func(t *testing.T) {
 		res := h.DecideHermetic(t, h.loadManifest(t, "halt-route-missing-staged-auth.yaml"), probe)
 		assertRefusedNoArtifacts(t, res)
@@ -165,10 +156,9 @@ func TestHaltScenarios(t *testing.T) {
 			"preconditions=%+v", res.Report.Preconditions)
 	})
 
-	// A route mode that is neither "static" nor "dynamic" falls through
-	// Reconcile's static-only dispatch (reconcile/reconcile.go) into the
-	// dynamic strategy, whose "route is dynamic" precondition fails on the
-	// literal unrecognized value.
+	// A route mode that is neither "static" nor "dynamic" fails the declared
+	// dynamicMigration's "route is dynamic" precondition on the literal
+	// unrecognized value ("dynamicMigration is declared but route ... is ...").
 	t.Run("route-mode-unrecognized", func(t *testing.T) {
 		res := h.DecideHermetic(t, h.loadManifest(t, "halt-route-mode-unrecognized.yaml"), probe)
 		assertRefusedNoArtifacts(t, res)

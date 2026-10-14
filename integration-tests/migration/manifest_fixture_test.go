@@ -76,18 +76,18 @@ func renderCredentialFiles(opts manifestOpts) (credentialFiles, error) {
 	}, nil
 }
 
-// fenceRouteOpts carries spec.route: Name and SwitchoverDomainName (taken from
+// fenceRouteOpts carries spec.staticMigration.route: Name and SwitchoverDomainName (taken from
 // its first element only — the manifest allows exactly one route) name the
 // route to fence and the target streaming domain it switches to at cutover.
 // There is no separate switchover CR file — kcp derives the switch from the
 // live initial CR plus this target. The bootstrap server id is NOT set here:
 // kcp derives it from the target domain's declaration in the live CR at init.
 //
-// Topics names this entry's own spec.route.topicGroup[] topic(s) explicitly.
+// Topics names this entry's own spec.staticMigration.topicGroup[] topic(s) explicitly.
 // Every real e2e scenario sets it (from envConfig.TopicNames) — a match-all
 // topicPatterns is only still correct in the single-scenario case, since this
 // suite's ten scenarios share one source/destination Kafka pair: resolving
-// ".*" against the full source topic list (spec.route.topicGroup's real
+// ".*" against the full source topic list (spec.staticMigration.topicGroup's real
 // semantics) pulls
 // in every OTHER scenario's own topics too, tripping an all-or-nothing
 // refusal. Found live, the hard way. Empty falls back to the old match-all

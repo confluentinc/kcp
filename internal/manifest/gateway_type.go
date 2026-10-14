@@ -292,7 +292,7 @@ func (p StaticPolicies) LogArgs() []any {
 		"rollout_timeout", p.RolloutTimeout,
 		"detect_unrouted_producers_duration", p.DetectUnroutedProducersDuration,
 		"consumer_offset_sync_drain_duration", p.ConsumerOffsetSyncDrainDuration,
-	}, p.CommonPolicies.logArgs()...)
+	}, p.logArgs()...)
 }
 
 func (p DynamicPolicies) LogArgs() []any {
@@ -301,7 +301,7 @@ func (p DynamicPolicies) LogArgs() []any {
 		"promote_batch_size", p.PromoteBatchSize,
 		"rollout_timeout", p.RolloutTimeout,
 		"detect_unrouted_producers_duration", p.DetectUnroutedProducersDuration,
-	}, p.CommonPolicies.logArgs()...)
+	}, p.logArgs()...)
 }
 
 func (p DynamicToStaticPolicies) LogArgs() []any {
@@ -309,7 +309,7 @@ func (p DynamicToStaticPolicies) LogArgs() []any {
 		"rollout_timeout", p.RolloutTimeout,
 		"detect_unrouted_commits_duration", p.EffectiveDetectUnroutedCommitsDuration(),
 		"offset_sync_concurrency", p.EffectiveOffsetSyncConcurrency(),
-	}, p.CommonPolicies.logArgs()...)
+	}, p.logArgs()...)
 }
 
 // --- validation ---
@@ -364,7 +364,7 @@ func (p StaticPolicies) Validate(path string) []error {
 	if p.ConsumerOffsetSyncDrainDuration < 0 {
 		errs = append(errs, fmt.Errorf("%s.consumerOffsetSyncDrainDuration: must not be negative (0 means no wait)", path))
 	}
-	return append(errs, p.CommonPolicies.validate(path)...)
+	return append(errs, p.validate(path)...)
 }
 
 // Validate checks the dynamic policies.
@@ -372,7 +372,7 @@ func (p DynamicPolicies) Validate(path string) []error {
 	errs := validateLagAndBatch(path, p.LagThreshold, p.PromoteBatchSize)
 	errs = append(errs, validateRollout(path, p.RolloutTimeout)...)
 	errs = append(errs, validateDetectProducers(path, p.DetectUnroutedProducersDuration)...)
-	return append(errs, p.CommonPolicies.validate(path)...)
+	return append(errs, p.validate(path)...)
 }
 
 // Validate checks the conversion policies.
@@ -389,7 +389,7 @@ func (p DynamicToStaticPolicies) Validate(path string) []error {
 	if p.OffsetSyncConcurrency < 0 {
 		errs = append(errs, fmt.Errorf("%s.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", path, DefaultOffsetSyncConcurrency))
 	}
-	return append(errs, p.CommonPolicies.validate(path)...)
+	return append(errs, p.validate(path)...)
 }
 
 func validateRouteRef(path string, r RouteRef) []error {

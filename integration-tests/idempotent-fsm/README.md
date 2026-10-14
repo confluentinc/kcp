@@ -107,7 +107,7 @@ static/AAO (`GATEWAY_MODE=dynamic|static`) — across all
 five kill-points: baseline, after-fence, after-promote, during-promote
 (intra-promote / PENDING_STOPPED), after-switch — plus, on static,
 after-offset-sync-pause and after-switch with the pause on, which leaves the
-restore owed to the resume (`pauseConsumerOffsetSync` on; the static suite's
+restore owed to the resume (`staticMigration.consumerOffsetSync.pause` on; the static suite's
 link starts with consumer offset sync enabled so the pause and restore are
 observable). Both modes also cover a mid-batch kill: with
 `promoteBatchSize: 2`, the run is killed after the first batch of 2 is
