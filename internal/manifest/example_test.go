@@ -48,16 +48,25 @@ func TestValidCCFixtureIsValid(t *testing.T) {
 	require.Empty(t, m.Validate(), "valid_cc.yaml must validate clean (it must not put a managed key in clusterLink.configs)")
 }
 
-// TestGatewayExampleManifestIsValid keeps the documented gateway example in
-// step with the parser and validator. Credentials are referenced files, so the
-// example carries no secrets and validates structurally without any I/O.
-func TestGatewayExampleManifestIsValid(t *testing.T) {
-	t.Skip("docs/assets/gateway-examples still use the retired spec.route shape; rewritten in Task 3")
-	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
-	require.NoError(t, err)
-	g, err := ParseGatewayMigration(data)
-	require.NoError(t, err)
-	require.Empty(t, g.Validate(), "the documented gateway example must validate clean")
+// TestGatewayExamplesAreValid keeps each documented example in step with the
+// parser and validator, and proves each declares the type its file name says.
+// Credentials are referenced files, so the examples carry no secrets and
+// validate structurally without any I/O.
+func TestGatewayExamplesAreValid(t *testing.T) {
+	for file, want := range map[string]MigrationType{
+		"gateway-static-migration.yaml":  MigrationTypeStatic,
+		"gateway-dynamic-migration.yaml": MigrationTypeDynamic,
+		"gateway-route-conversion.yaml":  MigrationTypeDynamicToStatic,
+	} {
+		t.Run(file, func(t *testing.T) {
+			data, err := os.ReadFile("../../docs/assets/gateway-examples/" + file)
+			require.NoError(t, err)
+			g, err := ParseGatewayMigration(data)
+			require.NoError(t, err)
+			require.Empty(t, g.Validate(), "the documented example must validate clean")
+			require.Equal(t, want, g.Spec.MigrationType())
+		})
+	}
 }
 
 // TestGatewayExampleResolvesEveryLeg proves the example is not merely
@@ -65,8 +74,7 @@ func TestGatewayExampleManifestIsValid(t *testing.T) {
 // /etc/kcp/*.yaml paths, all three connection legs resolve to the auth shapes
 // the file's own comments document.
 func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
-	t.Skip("docs/assets/gateway-examples still use the retired spec.route shape; rewritten in Task 3")
-	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-static-migration.yaml")
 	require.NoError(t, err)
 	doc := string(data)
 
@@ -100,17 +108,14 @@ func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
 	require.Equal(t, "CC_KEY", rest.APIKey)
 }
 
-// TestGatewayRouteConversionExampleIsValid keeps the documented route
-// conversion example in step with the parser and validator: it must validate
-// clean and declare a conversion, not a topic selection.
+// TestGatewayRouteConversionExampleIsValid: a conversion declares no topic
+// selection and carries the conversion policies.
 func TestGatewayRouteConversionExampleIsValid(t *testing.T) {
-	t.Skip("docs/assets/gateway-examples still use the retired spec.route shape; rewritten in Task 3")
 	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-route-conversion.yaml")
 	require.NoError(t, err)
 	g, err := ParseGatewayMigration(data)
 	require.NoError(t, err)
-	require.Empty(t, g.Validate(), "the documented route conversion example must validate clean")
-	require.Equal(t, MigrationTypeDynamicToStatic, g.Spec.MigrationType())
+	require.NotNil(t, g.Spec.DynamicToStaticConversion)
 	require.Nil(t, g.Spec.DeclaredTopicGroup(), "a conversion selects no topics")
 	require.Equal(t, 30*time.Second, g.Spec.DynamicToStaticConversion.Policies.EffectiveDetectUnroutedCommitsDuration())
 }
