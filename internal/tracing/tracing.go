@@ -71,7 +71,12 @@ func newProvider(ctx context.Context, c config) (*sdktrace.TracerProvider, error
 		),
 		resource.WithFromEnv(), // OTEL_RESOURCE_ATTRIBUTES, OTEL_SERVICE_NAME
 	)
-	if err != nil && !errors.Is(err, resource.ErrPartialResource) {
+	switch {
+	case errors.Is(err, resource.ErrPartialResource):
+		// A malformed entry (e.g. run:x for run=x) is dropped; say so, or the run
+		// goes unlabelled with no hint why.
+		slog.Warn("⚠️ some OTEL_RESOURCE_ATTRIBUTES entries were ignored", "error", err)
+	case err != nil:
 		return nil, err
 	}
 	opts := []sdktrace.TracerProviderOption{

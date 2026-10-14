@@ -2,8 +2,10 @@ package tracing
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,4 +82,21 @@ func TestSetupShutdown_WritesARootSpanWithTheCommandError(t *testing.T) {
 	assert.Equal(t, ptrace.StatusCodeError, root.Status().Code())
 	assert.Equal(t, root.SpanID(), spans["migration.run"].ParentSpanID())
 	assert.Nil(t, active, "Shutdown clears the session")
+}
+
+func TestSetup_WarnsWhenResourceAttributesAreIgnored(t *testing.T) {
+	resetGlobal(t)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Setenv(EnvEnabled, "true")
+	t.Setenv(EnvTraceFile, filepath.Join(t.TempDir(), "t.jsonl"))
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "run:perf-1") // ':' for '=': the SDK drops the entry
+
+	Setup(context.Background())
+	t.Cleanup(func() { Shutdown(nil) })
+
+	require.NotNil(t, active, "a malformed entry doesn't stop tracing")
+	assert.Contains(t, logs.String(), "OTEL_RESOURCE_ATTRIBUTES entries were ignored")
 }
