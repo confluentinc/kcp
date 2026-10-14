@@ -36,13 +36,7 @@ func TestTracing_PromoteRecordsBatchesAndPolls(t *testing.T) {
 	promote := tracingtest.Find(t, spans, "step.promote")
 	batches, _ := tracingtest.Attr(promote, "kcp.batches")
 	assert.Equal(t, int64(2), batches.AsInt64(), "batch size 1 over two topics → two batches")
-	var events int
-	for _, e := range promote.Events() {
-		if e.Name == "promote_batch" {
-			events++
-		}
-	}
-	assert.Equal(t, 2, events)
+	assert.Empty(t, promote.Events(), "each batch is a clusterlink.promote_mirror_topics span, not an event")
 	polls, _ := tracingtest.Attr(promote, "kcp.polls")
 	assert.GreaterOrEqual(t, polls.AsInt64(), int64(2))
 	assert.NotEmpty(t, tracingtest.FindAll(spans, "wait.promote_poll"))

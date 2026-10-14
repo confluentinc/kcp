@@ -178,13 +178,6 @@ func checkPromoteBatches(t *testing.T, r tracedRun, byName map[string][]span) {
 	if r.promoteBatch > 0 {
 		want = (r.topics + r.promoteBatch - 1) / r.promoteBatch
 	}
-	batches := 0
-	for _, ev := range promote[0].events {
-		if ev == "promote_batch" {
-			batches++
-		}
-	}
-	assert.Equal(t, want, batches, "promote_batch events")
 	assert.Equal(t, fmt.Sprint(want), promote[0].attrs["kcp.batches"])
 	assert.Len(t, byName["clusterlink.promote_mirror_topics"], want, "one promote call per batch")
 }

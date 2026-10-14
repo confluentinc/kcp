@@ -18,6 +18,8 @@ func TestTracing_TBM_DetectionDisabledIsMarkedSkipped(t *testing.T) {
 	spans := tracingtest.Spans(rec)
 	reason, _ := tracingtest.Attr(tracingtest.Find(t, spans, "step.verify_fence"), "kcp.step.skip_reason")
 	assert.Equal(t, "detection_disabled", reason.AsString())
-	batches, _ := tracingtest.Attr(tracingtest.Find(t, spans, "step.promote"), "kcp.batches")
+	promote := tracingtest.Find(t, spans, "step.promote")
+	batches, _ := tracingtest.Attr(promote, "kcp.batches")
 	assert.GreaterOrEqual(t, batches.AsInt64(), int64(1))
+	assert.Empty(t, promote.Events(), "each batch is a clusterlink.promote_mirror_topics span, not an event")
 }

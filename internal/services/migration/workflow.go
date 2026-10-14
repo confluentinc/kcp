@@ -18,7 +18,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
@@ -1035,9 +1034,6 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		batches++
-		trace.SpanFromContext(ctx).AddEvent("promote_batch", trace.WithAttributes(
-			attribute.Int("kcp.batch.index", batches),
-			attribute.Int("kcp.batch.size", len(topicsToPromote))))
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)

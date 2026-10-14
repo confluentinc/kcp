@@ -17,7 +17,6 @@ import (
 type span struct {
 	name, traceID, spanID, parentID string
 	start, end                      uint64
-	events                          []string
 	failed                          bool
 	attrs                           map[string]string
 	resource                        map[string]string
@@ -43,14 +42,9 @@ func readTrace(t *testing.T, path string) []span {
 				ss := sss.At(j).Spans()
 				for k := 0; k < ss.Len(); k++ {
 					s := ss.At(k)
-					var events []string
-					for e := 0; e < s.Events().Len(); e++ {
-						events = append(events, s.Events().At(e).Name())
-					}
 					out = append(out, span{
 						name: s.Name(), traceID: s.TraceID().String(), spanID: s.SpanID().String(),
 						parentID: s.ParentSpanID().String(), start: uint64(s.StartTimestamp()), end: uint64(s.EndTimestamp()),
-						events: events,
 						failed: s.Status().Code() == ptrace.StatusCodeError,
 						attrs:  attrMap(s.Attributes()), resource: res,
 					})

@@ -18,7 +18,6 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -530,9 +529,6 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		batches++
-		trace.SpanFromContext(ctx).AddEvent("promote_batch", trace.WithAttributes(
-			attribute.Int("kcp.batch.index", batches),
-			attribute.Int("kcp.batch.size", len(topicsToPromote))))
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
