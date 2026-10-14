@@ -718,8 +718,8 @@ REST credentials files; `lag-check` reads only the REST one.
 
 One fully-annotated, ready-to-copy manifest per migration type — every field,
 with comments. Each is also available as a plain file under
-[`gateway-examples/`](gateway-examples/) (a link downloads the raw file rather
-than opening it in-browser).
+`gateway-examples/` (a link downloads the raw file rather than opening it
+in-browser).
 
 ### Static migration
 
