@@ -279,3 +279,28 @@ func snakeCase(camel string) string {
 	}
 	return b.String()
 }
+
+// Review Focus 4: an old-shape manifest gets a targeted hint — and no inference.
+func TestParse_LegacyShapeGetsATargetedHint(t *testing.T) {
+	legacyRoute := gatewayDocBase + "  route:\n    name: migration-route\n    targetStreamingDomain: confluent-cloud\n" + topicGroupEntryBlock
+	legacyPolicies := validGatewayDoc + "  defaultPolicies:\n    lagThreshold: 0\n"
+	legacyPause := strings.Replace(validGatewayDoc, "    name: msk-to-cc\n", "    name: msk-to-cc\n    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)
+
+	for name, doc := range map[string]string{
+		"spec.route":                          legacyRoute,
+		"spec.defaultPolicies":                legacyPolicies,
+		"clusterLink.pauseConsumerOffsetSync": legacyPause,
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, err := ParseGatewayMigration([]byte(doc))
+			require.Error(t, err)
+			require.Nil(t, g, "an old-shape manifest must not be inferred into a new one")
+			assert.Contains(t, err.Error(), "the manifest shape changed")
+			assert.Contains(t, err.Error(), "staticMigration, dynamicMigration, dynamicToStaticConversion")
+		})
+	}
+
+	_, err := ParseGatewayMigration([]byte(validGatewayDoc + "  typoSection: x\n"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "the manifest shape changed", "an ordinary typo keeps the plain unknown-field error")
+}

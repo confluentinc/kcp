@@ -174,9 +174,59 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 
 	var g GatewayMigration
 	if err := parseStrict(data, &g); err != nil {
-		return nil, fmt.Errorf("parsing gateway migration manifest: %w", yamlsafe.StripSourceExcerpt(err))
+		cause := yamlsafe.StripSourceExcerpt(err)
+		if hint := legacyShapeHint(data); hint != "" {
+			return nil, fmt.Errorf("parsing gateway migration manifest: %s: %w", hint, cause)
+		}
+		return nil, fmt.Errorf("parsing gateway migration manifest: %w", cause)
 	}
 	return &g, nil
+}
+
+// legacyShapeHint recognises a manifest written for the shape that preceded the
+// declared migration type and says what replaced it. It is a diagnostic only:
+// the manifest is still rejected, never inferred into the new shape. The probe
+// decode is lenient (unknown fields ignored) and its errors are discarded — the
+// strict decode has already failed and carries the real error.
+func legacyShapeHint(data []byte) string {
+	var probe struct {
+		Spec struct {
+			Route           any `yaml:"route"`
+			DefaultPolicies any `yaml:"defaultPolicies"`
+			ClusterLink     struct {
+				Pause    any `yaml:"pauseConsumerOffsetSync"`
+				Baseline any `yaml:"consumerOffsetSyncBaseline"`
+			} `yaml:"clusterLink"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return ""
+	}
+	var found []string
+	if probe.Spec.Route != nil {
+		found = append(found, "spec.route")
+	}
+	if probe.Spec.DefaultPolicies != nil {
+		found = append(found, "spec.defaultPolicies")
+	}
+	if probe.Spec.ClusterLink.Pause != nil {
+		found = append(found, "spec.clusterLink.pauseConsumerOffsetSync")
+	}
+	if probe.Spec.ClusterLink.Baseline != nil {
+		found = append(found, "spec.clusterLink.consumerOffsetSyncBaseline")
+	}
+	if len(found) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the manifest shape changed: %s %s no longer valid — declare the migration type by providing exactly one of %s, each carrying its own route, topicGroup and policies (see docs/assets/gateway-examples/)",
+		strings.Join(found, ", "), pluralIs(len(found)), strings.Join(sectionKeys, ", "))
+}
+
+func pluralIs(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
 }
 
 // Validate performs structural validation and returns ALL problems found, each
