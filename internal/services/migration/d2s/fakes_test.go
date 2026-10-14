@@ -19,9 +19,9 @@ func testPolicy() Policy {
 
 func quietReporter() *reporter { return &reporter{out: io.Discard, err: io.Discard} }
 
-// convertInput is spec.route of a conversion manifest for testGatewayYAML's route.
+// convertInput is the reconcile input of a dynamicToStaticConversion manifest for testGatewayYAML's route.
 func convertInput() reconcile.ReconcileInput {
-	return reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "target", ConvertTo: "static"}
+	return reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "target", Type: reconcile.TypeDynamicToStatic}
 }
 
 // fencedRoute is testGatewayYAML's route as GatherConvertFacts reads it after the fence: dynamic, bound to

@@ -249,28 +249,30 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		MigrateTopics: sortedCopy(toMigrate)}}
 }
 
-// Reconcile is the single entry point for both route-mode strategies. It
-// resolves the route's mode (already determined by the provider layer — see
-// migplan/gatewayfile.go's field-first, structural-fallback resolution) and
-// dispatches to reconcileDynamic or reconcileStatic. An unresolvable route
-// (gw == nil || gw.Route == nil) defaults to the dynamic path, matching this
-// function's pre-existing behavior for that case — both strategies' own
-// preconditions independently fail loudly on "route not found" as their
-// first check either way. An input with ConvertTo set is a route conversion,
-// not a topic migration: Reconcile refuses it (Mode "convert") and the caller
-// must use ReconcileConvert instead.
+// Reconcile is the single entry point for both topic-migration strategies. The
+// strategy is chosen by the declared in.Type, never inferred from the live
+// route: TypeStatic runs reconcileStatic, TypeDynamic reconcileDynamic, and each
+// strategy's own preconditions refuse a route whose mode disagrees with the
+// declaration. A conversion type is not a topic migration: Reconcile refuses it
+// (Mode "convert") and the caller must use ReconcileConvert instead. An empty or
+// unrecognized type is refused, never defaulted into a strategy.
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
-	if in.ConvertTo != "" {
-		return &Plan{Mode: "convert", Report: Report{Preconditions: []PreconditionResult{fail(
-			"conversion reconciled by ReconcileConvert",
-			"spec.route.convertTo is set, so this run must be reconciled by ReconcileConvert, not the topic-migration strategies")}}}
-	}
-	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+	switch in.Type {
+	case TypeStatic:
 		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
+	case TypeDynamic:
+		return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
+	case TypeDynamicToStatic:
+		return &Plan{Mode: convertMode, Report: Report{Preconditions: []PreconditionResult{fail(
+			"conversion reconciled by ReconcileConvert",
+			"the declared type is a dynamic-to-static conversion, so this run must be reconciled by ReconcileConvert, not the topic-migration strategies")}}}
+	default:
+		return &Plan{Report: Report{Preconditions: []PreconditionResult{fail(
+			"migration type declared",
+			fmt.Sprintf("migration type %q is not recognized; declare exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion", in.Type))}}}
 	}
-	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
 }
 
 // rollbackAllowed reports whether a pre-promote failure may roll the batch back

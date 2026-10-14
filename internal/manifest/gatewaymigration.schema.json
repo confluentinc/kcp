@@ -130,18 +130,6 @@
             "linkCredentials": {
               "type": "string",
               "description": "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg."
-            },
-            "pauseConsumerOffsetSync": {
-              "type": "boolean",
-              "description": "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true."
-            },
-            "consumerOffsetSyncBaseline": {
-              "type": "string",
-              "description": "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pauseConsumerOffsetSync is set; kcp restores sync to this value after the migration completes or fails.",
-              "enum": [
-                "enabled",
-                "disabled"
-              ]
             }
           },
           "required": [
@@ -172,12 +160,27 @@
           ],
           "additionalProperties": false
         },
-        "route": {
+        "staticMigration": {
           "type": "object",
           "properties": {
-            "name": {
-              "type": "string",
-              "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own."
+            "route": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own."
+                },
+                "targetStreamingDomain": {
+                  "type": "string",
+                  "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
+                }
+              },
+              "description": "Names the route on the live Gateway CR to act on and the streaming domain it ends up bound to.",
+              "required": [
+                "name",
+                "targetStreamingDomain"
+              ],
+              "additionalProperties": false
             },
             "topicGroup": {
               "type": [
@@ -222,86 +225,248 @@
                   }
                 ]
               },
-              "description": "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here."
+              "description": "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target."
             },
-            "targetStreamingDomain": {
-              "type": "string",
-              "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
+            "consumerOffsetSync": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "pause": {
+                  "type": "boolean",
+                  "description": "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover."
+                },
+                "baseline": {
+                  "type": "string",
+                  "description": "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pause is set; kcp restores sync to this value after the migration completes or fails.",
+                  "enum": [
+                    "enabled",
+                    "disabled"
+                  ]
+                }
+              },
+              "description": "Pause the cluster link's consumer.offset.sync.enable around the cutover: disabled right after the fence, restored after the switch. Requires the link to currently have consumer.offset.sync.enable=true unless baseline says otherwise.",
+              "additionalProperties": false
             },
-            "convertTo": {
-              "type": "string",
-              "description": "Convert the route's shape instead of migrating topics. \"static\" converts a dynamic route into a static route bound to targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Source topics not on the link only warn. Mutually exclusive with topicGroup.",
-              "enum": [
-                "static"
-              ]
+            "policies": {
+              "type": "object",
+              "properties": {
+                "lagThreshold": {
+                  "type": "integer",
+                  "description": "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration."
+                },
+                "promoteBatchSize": {
+                  "type": "integer",
+                  "description": "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (\u003e0), each batch is promoted and confirmed STOPPED before the next batch is submitted."
+                },
+                "rolloutTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "detectUnroutedProducersDuration": {
+                  "type": "string",
+                  "description": "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "consumerOffsetSyncDrainDuration": {
+                  "type": "string",
+                  "description": "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless consumerOffsetSync.pause is set. 0 (the default) disables the wait.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "hotReloadTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "gatewayConfigPort": {
+                  "type": "integer",
+                  "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
+                }
+              },
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "required": [
+                "lagThreshold"
+              ],
+              "additionalProperties": false
             }
           },
-          "description": "Names the route on the live Gateway CR to act on and the target streaming domain, plus exactly one of: topicGroup (the topic selection(s) that migrate) or convertTo (convert the route's shape). The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
+          "description": "Declares a static (all-at-once) migration: every selected topic cuts over together across a static route. The live route must be static. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
           "required": [
-            "name",
-            "targetStreamingDomain"
+            "route",
+            "topicGroup"
           ],
-          "additionalProperties": false,
-          "oneOf": [
-            {
-              "required": [
-                "topicGroup"
-              ]
-            },
-            {
-              "required": [
-                "convertTo"
-              ]
-            }
-          ]
+          "additionalProperties": false
         },
-        "defaultPolicies": {
+        "dynamicMigration": {
           "type": "object",
           "properties": {
-            "lagThreshold": {
-              "type": "integer",
-              "description": "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration."
+            "route": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own."
+                },
+                "targetStreamingDomain": {
+                  "type": "string",
+                  "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
+                }
+              },
+              "description": "Names the route on the live Gateway CR to act on and the streaming domain it ends up bound to.",
+              "required": [
+                "name",
+                "targetStreamingDomain"
+              ],
+              "additionalProperties": false
             },
-            "promoteBatchSize": {
-              "type": "integer",
-              "description": "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (\u003e0), each batch is promoted and confirmed STOPPED before the next batch is submitted."
+            "topicGroup": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "topics": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Topics to cut over, as a flat list of LITERAL names — not globs. Combined with topicPatterns: the union of the two is migrated. At least one of topics or topicPatterns is required. Each selected topic must exist on the source and be a mirror topic on the cluster link, or the run is refused."
+                  },
+                  "topicPatterns": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Topic selection as a list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Combined with topics: the union of the two is migrated. Use ['.*'] to select every source topic. At least one of topics or topicPatterns is required. Each selected topic must be a mirror topic on the cluster link, or the run is refused."
+                  }
+                },
+                "additionalProperties": false,
+                "anyOf": [
+                  {
+                    "required": [
+                      "topics"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "topicPatterns"
+                    ]
+                  }
+                ]
+              },
+              "description": "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target."
             },
-            "rolloutTimeout": {
-              "type": "string",
-              "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
-              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
-            },
-            "detectUnroutedProducersDuration": {
-              "type": "string",
-              "description": "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
-              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
-            },
-            "consumerOffsetSyncDrainDuration": {
-              "type": "string",
-              "description": "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
-              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
-            },
-            "hotReloadTimeout": {
-              "type": "string",
-              "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
-              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
-            },
-            "gatewayConfigPort": {
-              "type": "integer",
-              "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
-            },
-            "detectUnroutedCommitsDuration": {
-              "type": "string",
-              "description": "Route conversion only. Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
-              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
-            },
-            "offsetSyncConcurrency": {
-              "type": "integer",
-              "description": "Route conversion only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8."
+            "policies": {
+              "type": "object",
+              "properties": {
+                "lagThreshold": {
+                  "type": "integer",
+                  "description": "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration."
+                },
+                "promoteBatchSize": {
+                  "type": "integer",
+                  "description": "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (\u003e0), each batch is promoted and confirmed STOPPED before the next batch is submitted."
+                },
+                "rolloutTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "detectUnroutedProducersDuration": {
+                  "type": "string",
+                  "description": "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "hotReloadTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "gatewayConfigPort": {
+                  "type": "integer",
+                  "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
+                }
+              },
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "required": [
+                "lagThreshold"
+              ],
+              "additionalProperties": false
             }
           },
+          "description": "Declares a dynamic (topic-based) migration: topics cut over incrementally across a dynamic route, promoting mirror topics at zero lag. The live route must be dynamic. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
           "required": [
-            "lagThreshold"
+            "route",
+            "topicGroup"
+          ],
+          "additionalProperties": false
+        },
+        "dynamicToStaticConversion": {
+          "type": "object",
+          "properties": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR. On a static route it must carry no fence other than kcp's own."
+                },
+                "targetStreamingDomain": {
+                  "type": "string",
+                  "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp checks on a static route on every run."
+                }
+              },
+              "description": "Names the route on the live Gateway CR to act on and the streaming domain it ends up bound to.",
+              "required": [
+                "name",
+                "targetStreamingDomain"
+              ],
+              "additionalProperties": false
+            },
+            "policies": {
+              "type": "object",
+              "properties": {
+                "rolloutTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "detectUnroutedCommitsDuration": {
+                  "type": "string",
+                  "description": "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "offsetSyncConcurrency": {
+                  "type": "integer",
+                  "description": "Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8."
+                },
+                "hotReloadTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "gatewayConfigPort": {
+                  "type": "integer",
+                  "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
+                }
+              },
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "additionalProperties": false
+            }
+          },
+          "description": "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
+          "required": [
+            "route"
           ],
           "additionalProperties": false
         }
@@ -310,10 +475,26 @@
         "source",
         "target",
         "clusterLink",
-        "gateway",
-        "route"
+        "gateway"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "staticMigration"
+          ]
+        },
+        {
+          "required": [
+            "dynamicMigration"
+          ]
+        },
+        {
+          "required": [
+            "dynamicToStaticConversion"
+          ]
+        }
+      ]
     }
   },
   "required": [

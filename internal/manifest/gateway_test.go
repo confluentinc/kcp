@@ -15,24 +15,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// topicGroupEntryBlock is the topicGroup stanza within spec.route; tests
-// replace it to vary spec.route.topicGroup while keeping route.name and
-// route.targetStreamingDomain fixed.
+// topicGroupEntryBlock is the topicGroup stanza of a migration section; tests
+// replace it to vary the topic selection.
 const topicGroupEntryBlock = `    topicGroup:
       - topics:
           - t1.order
           - t1.inventory
 `
 
-// routeBlock is the spec.route stanza in the canonical doc; tests replace it
-// wholesale to vary spec.route.
-const routeBlock = "  route:\n    name: migration-route\n" + topicGroupEntryBlock + "    targetStreamingDomain: confluent-cloud\n"
+const routeRefBlock = "    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n"
 
-// validGatewayDoc is the canonical manifest from the design §4, minus the
-// optional blocks. Every credentials slot is a file path; validation does no
-// I/O, so these placeholder paths satisfy the structural rules. Tests that
-// RESOLVE credentials use gatewayDocWithCreds to point the slots at real files.
-const validGatewayDoc = `apiVersion: kcp.confluent.io/v1alpha1
+const (
+	dynamicMigrationBlock = "  dynamicMigration:\n" + routeRefBlock + topicGroupEntryBlock
+	staticMigrationBlock  = "  staticMigration:\n" + routeRefBlock + topicGroupEntryBlock
+	conversionBlock       = "  dynamicToStaticConversion:\n" + routeRefBlock
+)
+
+// gatewayDocBase is the canonical manifest up to and including spec.gateway;
+// append exactly one section block to make it valid. Every credentials slot is a
+// file path; validation does no I/O, so these placeholder paths satisfy the
+// structural rules. Tests that RESOLVE credentials use gatewayDocWithCreds to
+// point the slots at real files.
+const gatewayDocBase = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
   name: msk-prod-to-cc-batch-1
@@ -58,7 +62,10 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-` + routeBlock
+`
+
+// validGatewayDoc is the canonical valid manifest: a dynamicMigration (TBM).
+const validGatewayDoc = gatewayDocBase + dynamicMigrationBlock
 
 // Default credential-file bodies for the canonical document.
 const (
@@ -123,11 +130,11 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "./dest-kafka-creds.yaml", g.Spec.Target.Kafka.ClusterCredentials.Path)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CrName)
-	assert.Equal(t, "migration-route", g.Spec.Route.Name)
-	assert.Equal(t, "confluent-cloud", g.Spec.Route.TargetStreamingDomain)
-	require.Len(t, g.Spec.Route.TopicGroup, 1)
-	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
-	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.Route.TopicGroup[0].Topics)
+	assert.Equal(t, "migration-route", g.Spec.DeclaredRoute().Name)
+	assert.Equal(t, "confluent-cloud", g.Spec.DeclaredRoute().TargetStreamingDomain)
+	require.Len(t, g.Spec.DeclaredTopicGroup(), 1)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.DeclaredTopicGroup()[0].Topics)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -385,52 +392,6 @@ func TestGateway_RequiresClusterLinkName(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.clusterLink.name")
 }
 
-func TestGateway_PauseConsumerOffsetSyncDefaultsFalse(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	assert.False(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
-}
-
-// TestValidate_ConsumerOffsetSyncBaseline — spec.clusterLink.consumerOffsetSyncBaseline
-// is required (enabled|disabled) when pauseConsumerOffsetSync is set (a resumed
-// run cannot observe the pre-migration value), and, if set at all, must be one
-// of those two values regardless of pause.
-func TestValidate_ConsumerOffsetSyncBaseline(t *testing.T) {
-	cases := []struct {
-		name       string
-		pause      bool
-		baseline   string
-		wantErrHas string // "" = expect NO error about the baseline field
-	}{
-		{"pause+enabled ok", true, OffsetSyncBaselineEnabled, ""},
-		{"pause+disabled ok", true, OffsetSyncBaselineDisabled, ""},
-		{"pause+missing baseline errors", true, "", "consumerOffsetSyncBaseline"},
-		{"pause+invalid baseline errors", true, "on", "consumerOffsetSyncBaseline"},
-		{"no pause, baseline omitted ok", false, "", ""},
-		{"no pause, invalid baseline still errors", false, "yes", "consumerOffsetSyncBaseline"},
-		{"no pause, valid baseline ok", false, OffsetSyncBaselineEnabled, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			g := parseGateway(t, validGatewayDoc)
-			g.Spec.ClusterLink.PauseConsumerOffsetSync = c.pause
-			g.Spec.ClusterLink.ConsumerOffsetSyncBaseline = c.baseline
-			errs := g.Validate()
-
-			var joined []string
-			for _, e := range errs {
-				joined = append(joined, e.Error())
-			}
-			got := strings.Join(joined, "; ")
-
-			if c.wantErrHas == "" {
-				assert.NotContains(t, got, "consumerOffsetSyncBaseline", "unexpected baseline error: %s", got)
-			} else {
-				requireErrContains(t, errs, c.wantErrHas)
-			}
-		})
-	}
-}
-
 func TestGateway_RequiresGatewayNamespace(t *testing.T) {
 	g := parseGateway(t, withField(t, "    namespace: confluent", "    namespace: \"\""))
 	requireErrContains(t, g.Validate(), "spec.gateway.namespace")
@@ -473,16 +434,16 @@ func TestGateway_RejectsRetiredKeys(t *testing.T) {
 func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 	t.Run("omitted", func(t *testing.T) {
 		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "", 1))
-		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 	t.Run("empty list", func(t *testing.T) {
 		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    topicGroup: []\n", 1))
-		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 	t.Run("more than one", func(t *testing.T) {
 		second := "      - topics:\n          - t2.orders\n"
 		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+second, 1))
-		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 }
 
@@ -490,8 +451,8 @@ func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 // fail at fence time; catch it at parse.
 func TestGateway_RejectsBlankRoute(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"    name: migration-route\n", "    name: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.route.name")
+		"      name: migration-route\n", "      name: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.route.name")
 }
 
 // TestGateway_RejectsBlankTargetStreamingDomain — an empty target domain name
@@ -499,8 +460,8 @@ func TestGateway_RejectsBlankRoute(t *testing.T) {
 // parse.
 func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"    targetStreamingDomain: confluent-cloud\n", "    targetStreamingDomain: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.route.targetStreamingDomain")
+		"      targetStreamingDomain: confluent-cloud\n", "      targetStreamingDomain: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.route.targetStreamingDomain")
 }
 
 // TestGateway_RejectsEntryWithNeitherTopicsNorPatterns requires at least one of
@@ -509,7 +470,7 @@ func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
 func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
 	block := "    topicGroup:\n      - {}\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_TopicsPresentButEmptyIsRejected — an explicitly empty topics list
@@ -518,13 +479,13 @@ func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
 func TestGateway_TopicsPresentButEmptyIsRejected(t *testing.T) {
 	block := "    topicGroup:\n      - topics: []\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicName(t *testing.T) {
 	block := "    topicGroup:\n      - topics:\n          - t1.order\n          - '  '\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_TopicsOnlyValidates — topics set, topicPatterns omitted, is the
@@ -532,8 +493,8 @@ func TestGateway_RejectsBlankTopicName(t *testing.T) {
 func TestGateway_TopicsOnlyValidates(t *testing.T) {
 	g := parseGateway(t, validGatewayDoc)
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
-	assert.Nil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.Nil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
 }
 
 // TestGateway_TopicPatternsOnlyValidates — topicPatterns set, topics omitted,
@@ -542,21 +503,21 @@ func TestGateway_TopicPatternsOnlyValidates(t *testing.T) {
 	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
-	assert.Nil(t, g.Spec.Route.TopicGroup[0].Topics)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
+	assert.Nil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
 }
 
 // TestGateway_TopicPatternsPresentButEmptyIsRejected mirrors the topics case.
 func TestGateway_TopicPatternsPresentButEmptyIsRejected(t *testing.T) {
 	block := "    topicGroup:\n      - topicPatterns: []\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
 	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n          - '  '\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_RejectsInvalidTopicPatternRegex — each pattern must compile
@@ -565,7 +526,7 @@ func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
 func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 	block := "    topicGroup:\n      - topicPatterns:\n          - '*'\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_RejectsAnchorEscapingPattern rejects a
@@ -576,7 +537,7 @@ func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 func TestGateway_RejectsAnchorEscapingPattern(t *testing.T) {
 	block := "    topicGroup:\n      - topicPatterns:\n          - 'foo)|(evil'\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestAnchoredPattern_IsAFullMatch pins the anchoring: a compiled topicPattern
@@ -608,8 +569,8 @@ func TestGateway_BothTopicsAndPatternsIsAllowed(t *testing.T) {
 	block := "    topicGroup:\n      - topics:\n          - t1.order\n        topicPatterns:\n          - 'orders\\..*'\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	assert.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
-	assert.NotNil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
+	assert.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.NotNil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a
@@ -652,46 +613,38 @@ func TestGateway_KubeconfigUnsetInAPodIsInCluster(t *testing.T) {
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
-	doc := validGatewayDoc + `  defaultPolicies:
-    lagThreshold: 0
-    promoteBatchSize: 100
-    rolloutTimeout: 10m
-    detectUnroutedProducersDuration: 30s
-    consumerOffsetSyncDrainDuration: 15s
+	doc := gatewayDocBase + staticMigrationBlock + `    policies:
+      lagThreshold: 0
+      promoteBatchSize: 100
+      rolloutTimeout: 10m
+      detectUnroutedProducersDuration: 30s
+      consumerOffsetSyncDrainDuration: 15s
 `
 	g := parseGateway(t, doc)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, 100, g.Spec.DefaultPolicies.PromoteBatchSize)
-	assert.Equal(t, 10*time.Minute, g.Spec.DefaultPolicies.RolloutTimeout)
-	assert.Equal(t, 30*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
-}
-
-// TestGateway_PolicyOmittedIsZeroValued — every policy knob is optional and 0
-// carries meaning (0 = promote all at once / no deadline / check skipped).
-func TestGateway_PolicyOmittedIsZeroValued(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	require.Empty(t, g.Validate())
-	assert.Equal(t, DefaultPolicies{}, g.Spec.DefaultPolicies)
+	assert.Equal(t, 100, g.Spec.StaticMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Minute, g.Spec.StaticMigration.Policies.RolloutTimeout)
+	assert.Equal(t, 30*time.Second, g.Spec.StaticMigration.Policies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.StaticMigration.Policies.ConsumerOffsetSyncDrainDuration)
 }
 
 // TestGateway_RejectsSubTenSecondDetectDuration mirrors the retired flag's
 // documented minimum, which existed because a shorter window cannot observe a
 // producer's metadata refresh.
 func TestGateway_RejectsSubTenSecondDetectDuration(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n")
+	g := parseGateway(t, validGatewayDoc+"    policies:\n      detectUnroutedProducersDuration: 5s\n")
 	requireErrContains(t, g.Validate(), "detectUnroutedProducersDuration")
 }
 
 func TestGateway_AcceptsZeroDetectDurationMeaningSkipped(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 0s\n")
+	g := parseGateway(t, validGatewayDoc+"    policies:\n      detectUnroutedProducersDuration: 0s\n")
 	require.Empty(t, g.Validate())
 }
 
 func TestGateway_RejectsNegativePolicyNumbers(t *testing.T) {
-	for _, line := range []string{"    lagThreshold: -1", "    promoteBatchSize: -1"} {
+	for _, line := range []string{"      lagThreshold: -1", "      promoteBatchSize: -1"} {
 		t.Run(strings.TrimSpace(line), func(t *testing.T) {
-			g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n"+line+"\n")
+			g := parseGateway(t, validGatewayDoc+"    policies:\n"+line+"\n")
 			require.NotEmpty(t, g.Validate())
 		})
 	}
@@ -920,82 +873,10 @@ func TestLoadGatewayMigrationFile_RejectsWrongKind(t *testing.T) {
 	assert.Contains(t, err.Error(), KindGatewayMigration)
 }
 
-// TestValidate_ConvertTo — spec.route.convertTo declares a dynamic-to-static
-// conversion; it replaces topicGroup and accepts only "static".
-func TestValidate_ConvertTo(t *testing.T) {
-	const convert = "    convertTo: static\n"
-
-	t.Run("convertTo static without topicGroup is valid", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1))
-		assert.Empty(t, g.Validate())
-		assert.Equal(t, RouteConvertToStatic, g.Spec.Route.ConvertTo)
-		assert.Nil(t, g.Spec.Route.TopicGroup)
-	})
-
-	t.Run("convertTo with topicGroup is rejected", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+convert, 1))
-		requireErrContains(t, g.Validate(), "mutually exclusive")
-	})
-
-	t.Run("convertTo other than static is rejected", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    convertTo: dynamic\n", 1))
-		requireErrContains(t, g.Validate(), "spec.route.convertTo")
-	})
-
-	t.Run("a conversion still needs a route name and target domain", func(t *testing.T) {
-		doc := strings.Replace(validGatewayDoc, topicGroupEntryBlock, convert, 1)
-		doc = strings.Replace(doc, "    targetStreamingDomain: confluent-cloud\n", "", 1)
-		g := parseGateway(t, doc)
-		requireErrContains(t, g.Validate(), "spec.route.targetStreamingDomain")
-	})
-}
-
 // captureSlog redirects the default logger into buf and returns a restore func.
 func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	t.Helper()
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
-}
-
-func TestDefaultPolicies_ConversionPolicyDefaults(t *testing.T) {
-	var p DefaultPolicies
-	assert.Equal(t, 30*time.Second, p.EffectiveDetectUnroutedCommitsDuration(), "unset uses the built-in default")
-	assert.Equal(t, 8, p.EffectiveOffsetSyncConcurrency(), "unset uses the built-in default")
-
-	p = DefaultPolicies{DetectUnroutedCommitsDuration: 45 * time.Second, OffsetSyncConcurrency: 3}
-	assert.Equal(t, 45*time.Second, p.EffectiveDetectUnroutedCommitsDuration())
-	assert.Equal(t, 3, p.EffectiveOffsetSyncConcurrency())
-}
-
-func TestDefaultPolicies_ValidateConversionPolicies(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		p       DefaultPolicies
-		wantErr string // substring; empty means valid
-	}{
-		{"unset is valid", DefaultPolicies{}, ""},
-		{"commits window at the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 10 * time.Second}, ""},
-		{"commits window below the minimum", DefaultPolicies{DetectUnroutedCommitsDuration: 9 * time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
-		{"commits window negative", DefaultPolicies{DetectUnroutedCommitsDuration: -time.Second}, "spec.defaultPolicies.detectUnroutedCommitsDuration"},
-		{"concurrency positive", DefaultPolicies{OffsetSyncConcurrency: 16}, ""},
-		{"concurrency negative", DefaultPolicies{OffsetSyncConcurrency: -1}, "spec.defaultPolicies.offsetSyncConcurrency"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			errs := tc.p.Validate()
-			if tc.wantErr == "" {
-				assert.Empty(t, errs)
-				return
-			}
-			require.Len(t, errs, 1)
-			assert.Contains(t, errs[0].Error(), tc.wantErr)
-		})
-	}
-}
-
-func TestDefaultPolicies_ConversionPoliciesDecodeFromYAML(t *testing.T) {
-	var p DefaultPolicies
-	require.NoError(t, yaml.Unmarshal([]byte("detectUnroutedCommitsDuration: 45s\noffsetSyncConcurrency: 4\n"), &p))
-	assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration)
-	assert.Equal(t, 4, p.OffsetSyncConcurrency)
 }

@@ -629,7 +629,7 @@ func TestMigrationE2E(t *testing.T) {
 
 	// --- Step 0: prime source with baseline producer + consumer offsets ---
 	// The consumer commits offsets on the source pre-migration. With the
-	// default migration flow (no spec.clusterLink.pauseConsumerOffsetSync flag), the
+	// default migration flow (no spec.staticMigration.consumerOffsetSync.pause flag), the
 	// cluster link will mirror these committed offsets to the destination.
 	t.Run("seed_baseline_producer", func(t *testing.T) {
 		// 10 quick records to give the consumer something to commit on.
@@ -678,7 +678,7 @@ func TestMigrationE2E(t *testing.T) {
 		assert.Contains(t, stdout, fmt.Sprintf("Migration completed: %s", opts.MetadataName),
 			"execute's own success narrative must name metadata.name as the migration id")
 
-		// Without spec.clusterLink.pauseConsumerOffsetSync the pause_offset_sync FSM
+		// Without spec.staticMigration.consumerOffsetSync.pause the pause_offset_sync FSM
 		// stage still fires as a pass-through and says so.
 		assert.Contains(t, stdout, "Offset-sync pause not requested",
 			"the pause stage must announce the pass-through path")
@@ -727,11 +727,11 @@ func TestMigrationE2E(t *testing.T) {
 	// touched the cluster link's consumer.offset.sync.enable config.
 	t.Run("offset_sync_unchanged", func(t *testing.T) {
 		value := getClusterLinkOffsetSyncEnable(t, cfg)
-		assert.Equal(t, "true", value, "without spec.clusterLink.pauseConsumerOffsetSync, the cluster link config must remain true throughout the migration")
+		assert.Equal(t, "true", value, "without spec.staticMigration.consumerOffsetSync.pause, the cluster link config must remain true throughout the migration")
 	})
 }
 
-// TestMigrationE2E_PromoteBatchSize exercises spec.defaultPolicies.promoteBatchSize against a
+// TestMigrationE2E_PromoteBatchSize exercises spec.staticMigration.policies.promoteBatchSize against a
 // scenario whose cluster link mirrors many topics. With a batch size of 1, kcp
 // must promote one topic at a time, waiting for each to reach STOPPED before
 // promoting the next — i.e. fully synchronous batches. Asserts:
@@ -752,7 +752,7 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 	const logPath = "/workspace/kcp.log"
 
 	// --- Step 1: write manifest, snapshot kcp.log, then execute with
-	// spec.defaultPolicies.promoteBatchSize: 1 (runs the full cutover in one
+	// spec.staticMigration.policies.promoteBatchSize: 1 (runs the full cutover in one
 	// call) ---
 	var logStart int
 	t.Run("execute_batched", func(t *testing.T) {
@@ -808,16 +808,16 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 
 		n := len(cfg.TopicNames)
 		assert.Equal(t, n, singleTopicPromotes,
-			"expected exactly one single-topic promote call per topic with spec.defaultPolicies.promoteBatchSize: 1")
+			"expected exactly one single-topic promote call per topic with spec.staticMigration.policies.promoteBatchSize: 1")
 		assert.Zero(t, bulkPromotes,
-			"no promote call should contain more than one topic with spec.defaultPolicies.promoteBatchSize: 1")
+			"no promote call should contain more than one topic with spec.staticMigration.policies.promoteBatchSize: 1")
 		assert.Equal(t, n, stoppedConfirms,
 			"each promoted topic should be individually confirmed STOPPED")
 	})
 }
 
 // TestMigrationE2E_PauseOffsetSync_HappyPath exercises the full
-// spec.clusterLink.pauseConsumerOffsetSync flow: execute disables the config
+// spec.staticMigration.consumerOffsetSync.pause flow: execute disables the config
 // from the pause_offset_sync FSM stage (immediately after fencing, so
 // destination offsets stay fresh through the lag and fence phases), runs the
 // migration, then restores the config after switchover. Asserts the true → false → true transition is observable via
@@ -951,8 +951,8 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 }
 
 // TestMigrationE2E_PauseOffsetSync_Drain verifies the
-// spec.defaultPolicies.consumerOffsetSyncDrainDuration flag end-to-end: with
-// spec.clusterLink.pauseConsumerOffsetSync set, execute holds after fencing (sync still
+// spec.staticMigration.policies.consumerOffsetSyncDrainDuration flag end-to-end: with
+// spec.staticMigration.consumerOffsetSync.pause set, execute holds after fencing (sync still
 // enabled) for the drain duration before disabling consumer.offset.sync.enable,
 // then completes the switchover and restores the config.
 //
@@ -1307,7 +1307,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 // the gateway but also restore consumer.offset.sync.enable on the real
 // cluster link.
 //
-// Phase A: execute runs with spec.clusterLink.pauseConsumerOffsetSync while a
+// Phase A: execute runs with spec.staticMigration.consumerOffsetSync.pause while a
 // rogue producer writes directly to source. The pause stage disables sync,
 // then detection trips, and the rollback restores enable=true.
 //

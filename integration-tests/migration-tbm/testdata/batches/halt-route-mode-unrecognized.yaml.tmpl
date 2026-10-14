@@ -5,11 +5,11 @@
 # gateway-static-probe.yaml. The halt sub-test drives this against that fixture
 # via migplan.WithGatewaySource(NewGatewayFile(gateway-static-probe.yaml,
 # "unrecognized-mode-route")), so the live tbm-route stays valid. Reconcile only
-# special-cases mode == "static" (reconcile/reconcile.go); every other mode value
-# — including one findRoute passed through verbatim rather than normalizing
-# (internal/services/migplan/gatewayfile.go) — falls through to the dynamic
-# strategy, whose "route is dynamic" precondition then fails on the literal
-# unrecognized value (reconcile/preconditions.go). The topic selection is
+# dispatches on the declared type (this manifest declares spec.dynamicMigration),
+# whose "route is dynamic" precondition fails on the literal unrecognized mode —
+# findRoute passes an explicit mode through verbatim, unvalidated
+# (internal/services/migplan/gatewayfile.go) — with the detail "dynamicMigration
+# is declared but route ... is ..." (reconcile/preconditions.go). The topic selection is
 # incidental (the shape check refuses first).
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
@@ -37,9 +37,10 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  route:
-    name: "unrecognized-mode-route"
+  dynamicMigration:
+    route:
+      name: "unrecognized-mode-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"
     topicGroup:
       - topics:
           - "tbm-topic-046"
-    targetStreamingDomain: "__DEST_DOMAIN__"

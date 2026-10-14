@@ -21,6 +21,7 @@ import (
 func TestStaticRouteHappyPathLive(t *testing.T) {
 	eng := newLiveEngineFor(t, "testdata/gateway-static-redundant-auth.yaml", "migration-route", fakeSecretChecker{})
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeStatic,
 		Topics:          []string{"team-a.orders", "team-a.payments", "billing-v2"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",
@@ -72,6 +73,7 @@ func TestStaticRouteHappyPathLive(t *testing.T) {
 func TestStaticRouteAlreadyFencedLive(t *testing.T) {
 	eng := newLiveEngineFor(t, "testdata/gateway-static-already-fenced.yaml", "migration-route", fakeSecretChecker{})
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeStatic,
 		Topics:          []string{"team-a.orders", "team-a.payments", "billing-v2"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",

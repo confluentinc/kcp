@@ -27,11 +27,13 @@ import (
 // migplan.Reconcile cannot succeed in this process), the gateway is stubbed through executorDependencies,
 // and the conversion's two clusters are a fake world behind executorDependencies.convert.
 
-// convertFixture is the canonical manifest as a route conversion: spec.route.convertTo: static in place of
-// the topicGroup.
+// convertFixture is the canonical manifest declared as a route conversion: a dynamicToStaticConversion
+// section in place of the staticMigration one (no topicGroup).
 func convertFixture(t *testing.T) fixture {
 	return newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "    topicGroup:\n      - topicPatterns:\n          - '.*'\n", "    convertTo: static\n", 1)
+		old := "  staticMigration:\n    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n    topicGroup:\n      - topicPatterns:\n          - '.*'\n"
+		require.Contains(t, doc, old)
+		return strings.Replace(doc, old, "  dynamicToStaticConversion:\n    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n", 1)
 	})
 }
 
@@ -191,8 +193,9 @@ func runConvertBranchFor(t *testing.T, f fixture, editGateway func(*manifest.Gat
 
 func TestConvertFixture_IsAConversionManifest(t *testing.T) {
 	g := loadGateway(t, convertFixture(t).manifestPath)
-	assert.Equal(t, manifest.RouteConvertToStatic, g.Spec.Route.ConvertTo)
-	assert.Nil(t, g.Spec.Route.TopicGroup)
+	assert.Equal(t, manifest.MigrationTypeDynamicToStatic, g.Spec.MigrationType())
+	assert.Nil(t, g.Spec.StaticMigration)
+	assert.Nil(t, g.Spec.DynamicMigration)
 }
 
 func TestExecute_ConvertMode_RunsToCompletionOnStubbedServices(t *testing.T) {
@@ -212,8 +215,8 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 	t.Run("manifest values", func(t *testing.T) {
 		w := newConvertWorld(groups...)
 		edit := func(g *manifest.GatewayMigration) {
-			g.Spec.DefaultPolicies.DetectUnroutedCommitsDuration = 45 * time.Second
-			g.Spec.DefaultPolicies.OffsetSyncConcurrency = 3
+			g.Spec.DynamicToStaticConversion.Policies.DetectUnroutedCommitsDuration = 45 * time.Second
+			g.Spec.DynamicToStaticConversion.Policies.OffsetSyncConcurrency = 3
 		}
 
 		_, err := runConvertBranchFor(t, convertFixture(t), edit, convertDeps(&patchRecordingGateway{}, w))
@@ -255,7 +258,7 @@ func TestBuildConvertServices_RefusesATopicMigrationManifest(t *testing.T) {
 	_, err := buildConvertServices(g)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "convertTo")
+	assert.Contains(t, err.Error(), "not a route conversion")
 }
 
 // TestExecute_ConvertMode_AServicesBuildFailureNamesTheConversionServices — building the conversion's

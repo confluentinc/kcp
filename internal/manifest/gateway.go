@@ -27,7 +27,7 @@ const KindGatewayMigration = "GatewayMigration"
 const minDetectUnroutedProducersDuration = 10 * time.Second
 
 // DefaultDetectUnroutedCommitsDuration and DefaultOffsetSyncConcurrency are the
-// built-in values a route conversion uses when the matching DefaultPolicies
+// built-in values a route conversion uses when the matching DynamicToStaticPolicies
 // field is 0. Unlike detectUnroutedProducersDuration, 0 never means "skip": the
 // conversion's rogue-commit check is a safety check and cannot be skipped.
 const (
@@ -50,17 +50,12 @@ type GatewaySpec struct {
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Route names the route on the live Gateway CR to fence/switch, pairs it
-	// with the target streaming domain it switches to, and carries the topic
-	// selection (literal names and/or anchored regex patterns) that migrates.
-	// The bootstrap server id and the migration mode are not carried here: both
-	// are read from the live CR on every run.
-	Route Route `yaml:"route" json:"route"`
-	// DefaultPolicies is read fresh on every execute, so a change takes effect on
-	// the next run. Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
-	// (e.g. --detect-unrouted-producers-duration) that overrides the value here
-	// for a single run.
-	DefaultPolicies DefaultPolicies `yaml:"defaultPolicies,omitempty" json:"defaultPolicies,omitempty"`
+	// Exactly one of the three sections is declared; it IS the migration type
+	// (see MigrationType). The live Gateway CR's route mode is checked against
+	// it by the reconcile preconditions, never used to choose it.
+	StaticMigration           *StaticMigration           `yaml:"staticMigration,omitempty" json:"staticMigration,omitempty"`
+	DynamicMigration          *DynamicMigration          `yaml:"dynamicMigration,omitempty" json:"dynamicMigration,omitempty"`
+	DynamicToStaticConversion *DynamicToStaticConversion `yaml:"dynamicToStaticConversion,omitempty" json:"dynamicToStaticConversion,omitempty"`
 }
 
 // GatewayTarget is the destination envelope. It is deliberately NOT
@@ -80,7 +75,7 @@ type GatewayTarget struct {
 
 // Offset-sync baseline values: the operator-declared state of the cluster
 // link's consumer.offset.sync.enable BEFORE the migration started. Required
-// when pauseConsumerOffsetSync is set; a later run restores sync to this value.
+// when consumerOffsetSync.pause is set; a later run restores sync to this value.
 const (
 	OffsetSyncBaselineEnabled  = "enabled"
 	OffsetSyncBaselineDisabled = "disabled"
@@ -97,51 +92,11 @@ type GatewayClusterLink struct {
 	// LinkCredentials is the destination REST leg used to drive the cluster link
 	// (mirror promotion, offset sync). Always required — there is no derivation
 	// from the Kafka leg.
-	LinkCredentials         CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
-	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
-	// ConsumerOffsetSyncBaseline is the state consumer.offset.sync.enable was in
-	// before the migration started ("enabled" or "disabled"). Required when
-	// PauseConsumerOffsetSync is set: because a resumed run cannot observe the
-	// pre-migration value (a fenced link with sync disabled is ambiguous), the
-	// operator declares it here and kcp restores sync to it at the end.
-	ConsumerOffsetSyncBaseline string `yaml:"consumerOffsetSyncBaseline,omitempty" json:"consumerOffsetSyncBaseline,omitempty"`
-}
-
-// RouteConvertToStatic is the one spec.route.convertTo value accepted today: convert
-// the route's live shape from dynamic to static.
-const RouteConvertToStatic = "static"
-
-// Route names the route on the live Gateway CR to act on and the target
-// streaming domain, plus exactly one of: the topic selection that migrates
-// (TopicGroup), or a declared conversion of the route's shape (ConvertTo).
-//
-// There is no bootstrapServerId or mode field: both are read from the live CR
-// on every run. ConvertTo is not a restatement of the live mode — nothing in
-// the CR distinguishes "keep migrating topics on this dynamic route" from
-// "convert it to static", so the manifest has to say which.
-type Route struct {
-	// Name is the spec.routes[].name of the route to fence and switch over.
-	// Must exist in the initial CR. On a static route it must carry no fence
-	// other than kcp's own.
-	Name string `yaml:"name" json:"name"`
-	// TopicGroup pairs the topic selections that migrate on this route.
-	// Exactly one entry today. Absent when ConvertTo is set.
-	TopicGroup []TopicGroupEntry `yaml:"topicGroup,omitempty" json:"topicGroup,omitempty"`
-	// TargetStreamingDomain names a streaming domain already declared in the
-	// initial CR's spec.streamingDomains. kcp derives the bootstrap server id
-	// to bind the route to from the live CR — it is not written here. Safe with
-	// no secret or auth change at cutover only because the route's
-	// security.cluster already carries auth for this domain.
-	TargetStreamingDomain string `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
-	// ConvertTo declares a conversion of the route's live shape instead of a
-	// topic selection: "static" converts a fully-migrated dynamic route to a
-	// static route bound to TargetStreamingDomain. Mutually exclusive with
-	// TopicGroup.
-	ConvertTo string `yaml:"convertTo,omitempty" json:"convertTo,omitempty"`
+	LinkCredentials CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
 }
 
 // TopicGroupEntry is a topic selection (literal names and/or anchored regex
-// patterns) belonging to spec.route.
+// patterns) belonging to a migration section.
 //
 // Topics and TopicPatterns are pointers so nil (omitted) stays distinct from []
 // (present but empty, rejected). At least one of the two must be set.
@@ -158,65 +113,9 @@ type Gateway struct {
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
 	// from the cluster on every run. The route to fence and the domain it switches to
-	// live in spec.route; there is no fenced-CR or switchover-CR file — both
+	// live in the declared migration section's route; there is no fenced-CR or switchover-CR file — both
 	// are derived from this live CR at cutover.
 	CrName string `yaml:"cr-name" json:"cr-name"`
-}
-
-// DefaultPolicies is the execute-time knobs. Every value is optional and zero
-// carries meaning: 0 promotes all at once / imposes no deadline / skips the
-// check. Each field is a default that `kcp migration execute` can override with
-// a per-policy flag for a single run.
-type DefaultPolicies struct {
-	LagThreshold     int `yaml:"lagThreshold,omitempty" json:"lagThreshold,omitempty"`
-	PromoteBatchSize int `yaml:"promoteBatchSize,omitempty" json:"promoteBatchSize,omitempty"`
-	// RolloutTimeout bounds the gateway rollout. 0 means no deadline.
-	RolloutTimeout time.Duration `yaml:"rolloutTimeout,omitempty" json:"rolloutTimeout,omitempty"`
-	// DetectUnroutedProducersDuration opts in to the pre-switchover unrouted
-	// producer check; a detected increase aborts before switchover. 0 SKIPS the
-	// check entirely; when set the minimum is 10s.
-	DetectUnroutedProducersDuration time.Duration `yaml:"detectUnroutedProducersDuration,omitempty" json:"detectUnroutedProducersDuration,omitempty"`
-	// ConsumerOffsetSyncDrainDuration waits after fencing, before disabling
-	// consumer offset sync. 0 means no wait; it has no effect unless
-	// pauseConsumerOffsetSync.
-	ConsumerOffsetSyncDrainDuration time.Duration `yaml:"consumerOffsetSyncDrainDuration,omitempty" json:"consumerOffsetSyncDrainDuration,omitempty"`
-	// HotReloadTimeout bounds the per-pod configId verification used when the
-	// gateway supports hot-reload. 0 uses gateway.DefaultHotReloadTimeout; unlike
-	// RolloutTimeout this is never unbounded, since a hot-reload moves no
-	// Kubernetes signal to wait on.
-	HotReloadTimeout time.Duration `yaml:"hotReloadTimeout,omitempty" json:"hotReloadTimeout,omitempty"`
-	// GatewayConfigPort is the port serving the gateway's /config endpoint,
-	// polled per pod to confirm a config revision was applied. 0 uses the
-	// gateway default (9180).
-	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
-	// DetectUnroutedCommitsDuration is the wait between the two committed-offset
-	// snapshots a route conversion takes after fencing, to catch a consumer that
-	// bypasses the gateway and commits to the source directly. It is its own
-	// field, not a reuse of detectUnroutedProducersDuration, because that field's
-	// 0 means "skip the check" and this check can never be skipped. 0 uses the
-	// built-in 30s; when set the minimum is 10s (two default auto-commit
-	// intervals). Applies only to a conversion manifest.
-	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
-	// OffsetSyncConcurrency is how many workers, each with its own broker
-	// connection, read and write consumer-group offsets during a route
-	// conversion. 0 uses the built-in 8. Applies only to a conversion manifest.
-	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
-}
-
-// EffectiveDetectUnroutedCommitsDuration resolves 0 to the built-in default.
-func (p DefaultPolicies) EffectiveDetectUnroutedCommitsDuration() time.Duration {
-	if p.DetectUnroutedCommitsDuration == 0 {
-		return DefaultDetectUnroutedCommitsDuration
-	}
-	return p.DetectUnroutedCommitsDuration
-}
-
-// EffectiveOffsetSyncConcurrency resolves 0 to the built-in default.
-func (p DefaultPolicies) EffectiveOffsetSyncConcurrency() int {
-	if p.OffsetSyncConcurrency == 0 {
-		return DefaultOffsetSyncConcurrency
-	}
-	return p.OffsetSyncConcurrency
 }
 
 // envelope is the minimum needed to discriminate one kind from another. It is
@@ -275,9 +174,59 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 
 	var g GatewayMigration
 	if err := parseStrict(data, &g); err != nil {
-		return nil, fmt.Errorf("parsing gateway migration manifest: %w", yamlsafe.StripSourceExcerpt(err))
+		cause := yamlsafe.StripSourceExcerpt(err)
+		if hint := legacyShapeHint(data); hint != "" {
+			return nil, fmt.Errorf("parsing gateway migration manifest: %s: %w", hint, cause)
+		}
+		return nil, fmt.Errorf("parsing gateway migration manifest: %w", cause)
 	}
 	return &g, nil
+}
+
+// legacyShapeHint recognises a manifest written for the shape that preceded the
+// declared migration type and says what replaced it. It is a diagnostic only:
+// the manifest is still rejected, never inferred into the new shape. The probe
+// decode is lenient (unknown fields ignored) and its errors are discarded — the
+// strict decode has already failed and carries the real error.
+func legacyShapeHint(data []byte) string {
+	var probe struct {
+		Spec struct {
+			Route           any `yaml:"route"`
+			DefaultPolicies any `yaml:"defaultPolicies"`
+			ClusterLink     struct {
+				Pause    any `yaml:"pauseConsumerOffsetSync"`
+				Baseline any `yaml:"consumerOffsetSyncBaseline"`
+			} `yaml:"clusterLink"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return ""
+	}
+	var found []string
+	if probe.Spec.Route != nil {
+		found = append(found, "spec.route")
+	}
+	if probe.Spec.DefaultPolicies != nil {
+		found = append(found, "spec.defaultPolicies")
+	}
+	if probe.Spec.ClusterLink.Pause != nil {
+		found = append(found, "spec.clusterLink.pauseConsumerOffsetSync")
+	}
+	if probe.Spec.ClusterLink.Baseline != nil {
+		found = append(found, "spec.clusterLink.consumerOffsetSyncBaseline")
+	}
+	if len(found) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the manifest shape changed: %s %s no longer valid — declare the migration type by providing exactly one of %s, each carrying its own route, policies and, for migrations, topicGroup (see docs/assets/gateway-examples/)",
+		strings.Join(found, ", "), pluralIs(len(found)), strings.Join(sectionKeys, ", "))
+}
+
+func pluralIs(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
 }
 
 // Validate performs structural validation and returns ALL problems found, each
@@ -345,19 +294,6 @@ func (g *GatewayMigration) Validate() []error {
 		add("spec.clusterLink.linkCredentials: must not be empty")
 	}
 
-	// consumerOffsetSyncBaseline: required (enabled|disabled) when pausing;
-	// if set at all it must be a valid value.
-	switch b := g.Spec.ClusterLink.ConsumerOffsetSyncBaseline; {
-	case b == "":
-		if g.Spec.ClusterLink.PauseConsumerOffsetSync {
-			add("spec.clusterLink.consumerOffsetSyncBaseline: required when pauseConsumerOffsetSync is set; must be %q or %q",
-				OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled)
-		}
-	case b != OffsetSyncBaselineEnabled && b != OffsetSyncBaselineDisabled:
-		add("spec.clusterLink.consumerOffsetSyncBaseline: must be %q or %q (got %q)",
-			OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled, b)
-	}
-
 	// --- gateway ---
 	if blank(g.Spec.Gateway.Namespace) {
 		add("spec.gateway.namespace: must not be empty")
@@ -366,68 +302,9 @@ func (g *GatewayMigration) Validate() []error {
 		add("spec.gateway.cr-name: must not be empty (a Kubernetes object name, read live)")
 	}
 
-	// --- route ---
-	errs = append(errs, validateRoute(g.Spec.Route)...)
+	// --- the declared migration type: exactly one section, and its rules ---
+	errs = append(errs, g.Spec.validateSection()...)
 
-	// --- defaultPolicies ---
-	errs = append(errs, g.Spec.DefaultPolicies.Validate()...)
-
-	return errs
-}
-
-// validateRoute applies the structural rules for spec.route: a non-blank name
-// and target streaming domain, and either a valid convertTo or exactly one
-// topicGroup entry with at least one of topics/topicPatterns on it, each
-// pattern compiling as an anchored RE2 full-match.
-func validateRoute(r Route) []error {
-	var errs []error
-	add := func(format string, args ...any) {
-		errs = append(errs, fmt.Errorf(format, args...))
-	}
-
-	if blank(r.Name) {
-		add("spec.route.name: must not be blank")
-	}
-	if blank(r.TargetStreamingDomain) {
-		add("spec.route.targetStreamingDomain: must not be blank")
-	}
-
-	if r.ConvertTo != "" {
-		if r.ConvertTo != RouteConvertToStatic {
-			add("spec.route.convertTo: must be %q (got %q)", RouteConvertToStatic, r.ConvertTo)
-		}
-		if r.TopicGroup != nil {
-			add("spec.route: convertTo and topicGroup are mutually exclusive — a conversion selects no topics")
-		}
-		return errs
-	}
-
-	entries := r.TopicGroup
-	if len(entries) != 1 {
-		add("spec.route.topicGroup: must have exactly one entry (got %d)", len(entries))
-		if len(entries) == 0 {
-			return errs
-		}
-	}
-
-	e := entries[0]
-	if e.Topics == nil && e.TopicPatterns == nil {
-		add("spec.route.topicGroup[0]: at least one of topics or topicPatterns is required")
-	}
-	if e.Topics != nil {
-		errs = append(errs, validateSelection("spec.route.topicGroup[0].topics", *e.Topics)...)
-	}
-	if e.TopicPatterns != nil {
-		errs = append(errs, validateSelection("spec.route.topicGroup[0].topicPatterns", *e.TopicPatterns)...)
-		for i, pat := range *e.TopicPatterns {
-			if blank(pat) {
-				continue
-			}
-			if _, err := anchoredPattern(pat); err != nil {
-				add("spec.route.topicGroup[0].topicPatterns[%d]: not a valid regular expression: %v", i, err)
-			}
-		}
-	}
 	return errs
 }
 
@@ -438,49 +315,6 @@ func validateRoute(r Route) []error {
 // two cannot diverge.
 func anchoredPattern(p string) (*regexp.Regexp, error) {
 	return regexanchor.Compile(p)
-}
-
-// Validate checks the policy block. It is exported because `kcp migration
-// execute` re-validates after applying command-line overrides, which can
-// introduce a value the manifest itself never carried.
-func (p DefaultPolicies) Validate() []error {
-	var errs []error
-	if p.LagThreshold < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.lagThreshold: must not be negative"))
-	}
-	if p.PromoteBatchSize < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.promoteBatchSize: must not be negative (0 promotes all at once)"))
-	}
-	if p.RolloutTimeout < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.rolloutTimeout: must not be negative (0 means no deadline)"))
-	}
-	if p.ConsumerOffsetSyncDrainDuration < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.consumerOffsetSyncDrainDuration: must not be negative (0 means no wait)"))
-	}
-	if p.DetectUnroutedProducersDuration < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.detectUnroutedProducersDuration: must not be negative (0 skips the check)"))
-	} else if p.DetectUnroutedProducersDuration > 0 && p.DetectUnroutedProducersDuration < minDetectUnroutedProducersDuration {
-		errs = append(errs, fmt.Errorf(
-			"spec.defaultPolicies.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
-			minDetectUnroutedProducersDuration))
-	}
-	if p.HotReloadTimeout < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.hotReloadTimeout: must not be negative (0 uses the built-in default)"))
-	}
-	if p.GatewayConfigPort < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.gatewayConfigPort: must not be negative (0 uses the default port)"))
-	}
-	if p.DetectUnroutedCommitsDuration < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.detectUnroutedCommitsDuration: must not be negative (0 uses the built-in %s)", DefaultDetectUnroutedCommitsDuration))
-	} else if p.DetectUnroutedCommitsDuration > 0 && p.DetectUnroutedCommitsDuration < minDetectUnroutedProducersDuration {
-		errs = append(errs, fmt.Errorf(
-			"spec.defaultPolicies.detectUnroutedCommitsDuration: must be at least %s when set (0 uses the built-in %s) — a shorter window can miss a consumer on default auto-commit settings",
-			minDetectUnroutedProducersDuration, DefaultDetectUnroutedCommitsDuration))
-	}
-	if p.OffsetSyncConcurrency < 0 {
-		errs = append(errs, fmt.Errorf("spec.defaultPolicies.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", DefaultOffsetSyncConcurrency))
-	}
-	return errs
 }
 
 // checkSourceAuthAgainstType gates iam to an MSK source. Only MSK serves IAM,

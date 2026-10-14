@@ -8,7 +8,7 @@
 # It ends in the state a finished topic-based migration leaves: every link
 # mirror promoted (STOPPED) and the route sending every link topic to the
 # destination with group coordination on the source and no fence. That is the
-# state `spec.route.convertTo: static` converts from. The shared steps (version
+# state `spec.dynamicToStaticConversion` converts from. The shared steps (version
 # pins, minikube, images, operator, clusters, licence, client-tls, REST
 # credential, REST class, swap-auth secrets) come from ../lib/cp-e2e-env.sh,
 # which idempotent-fsm's setup.sh sources too.
