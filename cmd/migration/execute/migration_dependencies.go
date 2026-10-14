@@ -226,8 +226,8 @@ func buildClusterLinkService(g *manifest.GatewayMigration) (clusterlink.Service,
 // high-water-mark sweep over a destination client that never auto-creates a
 // topic.
 func buildConvertServices(g *manifest.GatewayMigration) (convertServices, error) {
-	if g.Spec.Route.ConvertTo == "" {
-		return convertServices{}, fmt.Errorf("spec.route.convertTo is not set: this manifest is not a route conversion")
+	if g.Spec.MigrationType() != manifest.MigrationTypeDynamicToStatic {
+		return convertServices{}, fmt.Errorf("spec.dynamicToStaticConversion is not set: this manifest is not a route conversion")
 	}
 	in, err := migplan.BuildReconcileInput(g)
 	if err != nil {

@@ -16,8 +16,25 @@ import (
 
 func gm(name, target string, tgs []manifest.TopicGroupEntry) *manifest.GatewayMigration {
 	g := &manifest.GatewayMigration{}
-	g.Spec.Route = manifest.Route{Name: name, TopicGroup: tgs, TargetStreamingDomain: target}
+	g.Spec.DynamicMigration = &manifest.DynamicMigration{
+		Route:      manifest.RouteRef{Name: name, TargetStreamingDomain: target},
+		TopicGroup: tgs,
+	}
 	return g
+}
+
+// asConversion turns g into a dynamicToStaticConversion on the same route.
+func asConversion(g *manifest.GatewayMigration) {
+	route := g.Spec.DeclaredRoute()
+	g.Spec.StaticMigration, g.Spec.DynamicMigration = nil, nil
+	g.Spec.DynamicToStaticConversion = &manifest.DynamicToStaticConversion{Route: route}
+}
+
+// asStatic turns g into a staticMigration with the same route and topic group.
+func asStatic(g *manifest.GatewayMigration) {
+	route, tg := g.Spec.DeclaredRoute(), g.Spec.DeclaredTopicGroup()
+	g.Spec.DynamicMigration, g.Spec.DynamicToStaticConversion = nil, nil
+	g.Spec.StaticMigration = &manifest.StaticMigration{Route: route, TopicGroup: tg}
 }
 
 func strs(s ...string) *[]string { return &s }
@@ -51,8 +68,8 @@ func TestBuildReconcileInput_CarriesOffsetSyncPause(t *testing.T) {
 	} {
 		t.Run(c.baseline, func(t *testing.T) {
 			g := gm("migration-route", "cc", []manifest.TopicGroupEntry{{Topics: strs("a")}})
-			g.Spec.ClusterLink.PauseConsumerOffsetSync = true
-			g.Spec.ClusterLink.ConsumerOffsetSyncBaseline = c.baseline
+			asStatic(g)
+			g.Spec.StaticMigration.ConsumerOffsetSync = &manifest.OffsetSyncPause{Pause: true, Baseline: c.baseline}
 			in, err := buildReconcileInput(g)
 			if err != nil {
 				t.Fatal(err)
@@ -248,7 +265,7 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 
 func TestBuildReconcileInput_Conversion(t *testing.T) {
 	g := gm("migration-route", "cc", nil)
-	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	asConversion(g)
 	g.Spec.Target.ClusterID = "lkc-123"
 
 	in, err := buildReconcileInput(g)
@@ -256,14 +273,14 @@ func TestBuildReconcileInput_Conversion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, reconcile.ReconcileInput{
 		Route: "migration-route", TargetDomain: "cc", TargetClusterID: "lkc-123",
-		ConvertTo: "static", OffsetSyncBaselineEnabled: true,
+		Type: reconcile.TypeDynamicToStatic, OffsetSyncBaselineEnabled: true,
 	}, in)
 }
 
 func TestBuildReconcileInput_ConversionStillNeedsRouteAndTarget(t *testing.T) {
 	for _, c := range []struct{ route, target string }{{"", "cc"}, {"r", ""}} {
 		g := gm(c.route, c.target, nil)
-		g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+		asConversion(g)
 		_, err := buildReconcileInput(g)
 		assert.Error(t, err, "route=%q target=%q", c.route, c.target)
 	}
@@ -308,7 +325,7 @@ func TestTargetConn_SASLPlainWithCACertIsLeftAlone(t *testing.T) {
 
 func TestBuildReconcileInput_IsTheInternalBuilder(t *testing.T) {
 	g := gm("migration-route", "cc", nil)
-	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	asConversion(g)
 
 	got, err := BuildReconcileInput(g)
 	require.NoError(t, err)
@@ -320,7 +337,7 @@ func TestBuildReconcileInput_IsTheInternalBuilder(t *testing.T) {
 func TestBuildConvertProviders_ABadManifestIsAnErrorAndOpensNothing(t *testing.T) {
 	homeWithFakeKubeconfig(t)
 	g := gm("migration-route", "cc", nil)
-	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	asConversion(g)
 	g.Spec.Gateway.Namespace = "confluent"
 	g.Spec.Gateway.CrName = "my-gateway"
 
@@ -352,7 +369,7 @@ func (f closerFunc) Close() error { return f() }
 func TestReconcile_AConversionBuildsItsProvidersLikeVerifyFence(t *testing.T) {
 	homeWithFakeKubeconfig(t)
 	g := gm("migration-route", "cc", nil)
-	g.Spec.Route.ConvertTo = manifest.RouteConvertToStatic
+	asConversion(g)
 	g.Spec.Gateway.Namespace = "confluent"
 	g.Spec.Gateway.CrName = "my-gateway"
 
@@ -363,4 +380,34 @@ func TestReconcile_AConversionBuildsItsProvidersLikeVerifyFence(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, wantErr.Error(), err.Error())
+}
+
+func TestBuildReconcileInput_TypePerSection(t *testing.T) {
+	g := gm("migration-route", "cc", []manifest.TopicGroupEntry{{Topics: strs("t1")}})
+
+	in, err := buildReconcileInput(g)
+	require.NoError(t, err)
+	require.Equal(t, reconcile.TypeDynamic, in.Type)
+	require.Equal(t, []string{"t1"}, in.Topics)
+
+	asStatic(g)
+	g.Spec.StaticMigration.ConsumerOffsetSync = &manifest.OffsetSyncPause{Pause: true, Baseline: manifest.OffsetSyncBaselineDisabled}
+	in, err = buildReconcileInput(g)
+	require.NoError(t, err)
+	require.Equal(t, reconcile.TypeStatic, in.Type)
+	require.True(t, in.PauseConsumerOffsetSync)
+	require.False(t, in.OffsetSyncBaselineEnabled)
+
+	asConversion(g)
+	in, err = buildReconcileInput(g)
+	require.NoError(t, err)
+	require.Equal(t, reconcile.TypeDynamicToStatic, in.Type)
+	require.Empty(t, in.Topics, "a conversion carries no topic selection")
+}
+
+func TestBuildReconcileInput_NoDeclaredTypeErrors(t *testing.T) {
+	g := gm("migration-route", "cc", []manifest.TopicGroupEntry{{Topics: strs("t1")}})
+	g.Spec.DynamicMigration = nil
+	_, err := buildReconcileInput(g)
+	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
 }

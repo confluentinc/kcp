@@ -121,50 +121,128 @@ func TestGenerateGateway_Enums(t *testing.T) {
 	require.Equal(t, []any{"confluent-cloud", "confluent-platform"}, tgtType["enum"])
 }
 
-// TestGenerateGateway_OffsetSyncBaselineEnum guards that
-// spec.clusterLink.consumerOffsetSyncBaseline is constrained to the two values
-// Validate() accepts, so an editor or CI lint catches a typo before
-// `kcp migration execute` does.
-func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
-	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
-	clusterLink := props(t, spec["clusterLink"].(map[string]any))
-	baseline := clusterLink["consumerOffsetSyncBaseline"].(map[string]any)
-	require.Equal(t, []any{"enabled", "disabled"}, baseline["enum"])
+func sections(t *testing.T) (spec, static, dynamic, conv map[string]any) {
+	t.Helper()
+	spec = props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
+	return spec, spec["staticMigration"].(map[string]any), spec["dynamicMigration"].(map[string]any), spec["dynamicToStaticConversion"].(map[string]any)
 }
 
-// TestGenerateGateway_DurationsAreStringsNotIntegers: jsonschema-go reflects
-// time.Duration as an integer, but goccy parses "10m" — without the override
-// the yaml-language-server header would flag the documented example as invalid.
-//
-// The duration fields are enumerated from manifest.DefaultPolicies by reflection
-// rather than a hardcoded list: a copy of the list here would pass even if
-// GenerateGateway forgot to patch a newly-added time.Duration field, which is
-// exactly the omission this test exists to catch.
-func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
-	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
-	policy := props(t, spec["defaultPolicies"].(map[string]any))
+func requiredOf(schema map[string]any) []any {
+	r, _ := schema["required"].([]any)
+	return r
+}
 
-	durationType := reflect.TypeOf(time.Duration(0))
-	policyType := reflect.TypeOf(manifest.DefaultPolicies{})
-	sawDuration := false
-	for i := 0; i < policyType.NumField(); i++ {
-		field := policyType.Field(i)
-		if field.Type != durationType {
-			continue
+func TestGenerateGateway_SpecDeclaresExactlyOneSection(t *testing.T) {
+	p := props(t, gatewayMap(t))["spec"].(map[string]any)
+	oneOf, ok := p["oneOf"].([]any)
+	require.True(t, ok, "spec must carry a oneOf: exactly one of the three migration sections")
+	require.Len(t, oneOf, 3)
+	var got []string
+	for _, b := range oneOf {
+		got = append(got, b.(map[string]any)["required"].([]any)[0].(string))
+	}
+	require.ElementsMatch(t, []string{"staticMigration", "dynamicMigration", "dynamicToStaticConversion"}, got)
+	spec := props(t, p)
+	for _, k := range []string{"route", "defaultPolicies"} {
+		require.NotContains(t, spec, k, "spec.%s is retired — see the three migration sections", k)
+	}
+	for _, k := range []string{"pauseConsumerOffsetSync", "consumerOffsetSyncBaseline"} {
+		require.NotContains(t, props(t, spec["clusterLink"].(map[string]any)), k)
+	}
+}
+
+func TestGenerateGateway_SectionsAreObjectsWithTheirOwnFields(t *testing.T) {
+	_, static, dynamic, conv := sections(t)
+	for name, sec := range map[string]map[string]any{"static": static, "dynamic": dynamic, "conv": conv} {
+		require.Equal(t, "object", sec["type"], "%s must be a plain object, not nullable", name)
+		route := props(t, sec)["route"].(map[string]any)
+		require.ElementsMatch(t, []any{"name", "targetStreamingDomain"}, requiredOf(route))
+		require.NotEmpty(t, sec["description"], "%s must carry a description", name)
+		require.NotEmpty(t, route["description"])
+	}
+	require.ElementsMatch(t, []any{"route", "topicGroup"}, requiredOf(static))
+	require.ElementsMatch(t, []any{"route", "topicGroup"}, requiredOf(dynamic))
+	require.ElementsMatch(t, []any{"route"}, requiredOf(conv))
+	require.NotContains(t, props(t, conv), "topicGroup", "a conversion selects no topics")
+	require.Contains(t, props(t, static), "consumerOffsetSync")
+	require.NotContains(t, props(t, dynamic), "consumerOffsetSync")
+
+	// At least one of topics/topicPatterns (not expressible on the struct).
+	for _, sec := range []map[string]any{static, dynamic} {
+		item := props(t, sec)["topicGroup"].(map[string]any)["items"].(map[string]any)
+		anyOf, ok := item["anyOf"].([]any)
+		require.True(t, ok)
+		require.Len(t, anyOf, 2)
+	}
+}
+
+func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
+	_, static, _, _ := sections(t)
+	cos := props(t, props(t, static)["consumerOffsetSync"].(map[string]any))
+	require.Equal(t, []any{"enabled", "disabled"}, cos["baseline"].(map[string]any)["enum"])
+}
+
+// Review Focus: every policies block carries its section's fields — including the
+// inlined common fields, which the reflector must promote.
+func TestGenerateGateway_PoliciesPerSection(t *testing.T) {
+	_, static, dynamic, conv := sections(t)
+	want := map[string][]string{
+		"static":  {"lagThreshold", "promoteBatchSize", "rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout", "gatewayConfigPort"},
+		"dynamic": {"lagThreshold", "promoteBatchSize", "rolloutTimeout", "detectUnroutedProducersDuration", "hotReloadTimeout", "gatewayConfigPort"},
+		"conv":    {"rolloutTimeout", "detectUnroutedCommitsDuration", "offsetSyncConcurrency", "hotReloadTimeout", "gatewayConfigPort"},
+	}
+	for name, sec := range map[string]map[string]any{"static": static, "dynamic": dynamic, "conv": conv} {
+		policy := props(t, props(t, sec)["policies"].(map[string]any))
+		var got []string
+		for k := range policy {
+			got = append(got, k)
 		}
-		sawDuration = true
-		name := jsonFieldName(field)
-		f, ok := policy[name].(map[string]any)
-		require.True(t, ok, "policy.%s (a time.Duration) is missing from the schema", name)
-		require.Equal(t, "string", f["type"], "%s must be a duration string", name)
-		require.NotEmpty(t, f["pattern"], "%s must carry a duration pattern", name)
+		require.ElementsMatch(t, want[name], got, "%s policies", name)
+		for k, v := range policy {
+			require.NotEmpty(t, v.(map[string]any)["description"], "%s.policies.%s needs a description", name, k)
+		}
 	}
-	require.True(t, sawDuration, "expected at least one time.Duration field in manifest.DefaultPolicies")
+	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(props(t, static)["policies"].(map[string]any)))
+	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(props(t, dynamic)["policies"].(map[string]any)))
+}
 
-	// The counts stay integers.
-	for _, k := range []string{"lagThreshold", "promoteBatchSize"} {
-		require.Equal(t, "integer", policy[k].(map[string]any)["type"])
+// jsonschema-go reflects time.Duration as an integer, but goccy parses "10m";
+// without the override the yaml-language-server header would flag the documented
+// examples as invalid. Durations are found by reflection (recursing into the
+// inlined common fields) so a newly added Duration field that GenerateGateway
+// forgets to patch fails here.
+func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
+	_, static, dynamic, conv := sections(t)
+	durationType := reflect.TypeOf(time.Duration(0))
+	check := func(name string, sec map[string]any, v any) {
+		policy := props(t, props(t, sec)["policies"].(map[string]any))
+		saw := false
+		var walk func(rt reflect.Type)
+		walk = func(rt reflect.Type) {
+			for i := 0; i < rt.NumField(); i++ {
+				f := rt.Field(i)
+				if f.Anonymous {
+					walk(f.Type)
+					continue
+				}
+				if f.Type != durationType {
+					continue
+				}
+				saw = true
+				n := jsonFieldName(f)
+				got, ok := policy[n].(map[string]any)
+				require.True(t, ok, "%s policies.%s (a time.Duration) is missing from the schema", name, n)
+				require.Equal(t, "string", got["type"], "%s.%s must be a duration string", name, n)
+				require.NotEmpty(t, got["pattern"])
+			}
+		}
+		walk(reflect.TypeOf(v))
+		require.True(t, saw, "%s: expected at least one time.Duration field", name)
 	}
+	check("static", static, manifest.StaticPolicies{})
+	check("dynamic", dynamic, manifest.DynamicPolicies{})
+	check("conv", conv, manifest.DynamicToStaticPolicies{})
+	require.Equal(t, "integer", props(t, props(t, static)["policies"].(map[string]any))["lagThreshold"].(map[string]any)["type"])
 }
 
 // jsonFieldName returns the schema property name for a struct field: its json
@@ -228,82 +306,42 @@ func assertNoKey(t *testing.T, v any, key string) {
 	}
 }
 
-// TestGenerateGateway_PortsRetiredFlagGuidance — retiring ~56 flags retires ~56
-// pieces of --help guidance, so every ported field carries its flag's usage text.
-func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
-	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
+func TestGenerateGateway_RequiredSets(t *testing.T) {
+	doc := gatewayMap(t)
+	p := props(t, doc)
+	spec := props(t, p["spec"].(map[string]any))
+	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
+	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway"}, requiredOf(p["spec"].(map[string]any)),
+		"the three sections are optional individually; the spec-level oneOf requires exactly one")
+	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
+	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "clusterCredentials"},
+		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
+	require.ElementsMatch(t, []any{"name", "linkCredentials"}, requiredOf(spec["clusterLink"].(map[string]any)))
+	require.ElementsMatch(t, []any{"namespace", "cr-name"}, requiredOf(spec["gateway"].(map[string]any)))
+	gwProps := props(t, spec["gateway"].(map[string]any))
+	require.NotContains(t, gwProps, "crs", "the crs block is retired — see cr-name")
+	require.NotContains(t, gwProps, "routes", "routes are retired — see the section's route")
+	require.NotContains(t, spec, "topics", "spec.topics is retired — see the section's topicGroup")
+}
 
-	policy := props(t, spec["defaultPolicies"].(map[string]any))
-	require.Contains(t, policy["detectUnroutedProducersDuration"].(map[string]any)["description"],
-		"minimum 10s", "the opt-in check's minimum was documented on the flag")
+func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
+	spec, static, dynamic, _ := sections(t)
+	policy := props(t, props(t, static)["policies"].(map[string]any))
+	require.Contains(t, policy["detectUnroutedProducersDuration"].(map[string]any)["description"], "minimum 10s")
 	require.Contains(t, policy["promoteBatchSize"].(map[string]any)["description"], "0")
 
 	gatewayProps := props(t, spec["gateway"].(map[string]any))
 	require.Contains(t, gatewayProps["cr-name"].(map[string]any)["description"], "name")
 
-	require.NotEmpty(t, spec["route"].(map[string]any)["description"],
-		"spec.route itself must carry a description, not just its sub-fields")
-	route := props(t, spec["route"].(map[string]any))
+	route := props(t, props(t, dynamic)["route"].(map[string]any))
 	require.NotEmpty(t, route["name"].(map[string]any)["description"])
 	require.NotEmpty(t, route["targetStreamingDomain"].(map[string]any)["description"])
 
-	topicGroup := route["topicGroup"].(map[string]any)
+	topicGroup := props(t, dynamic)["topicGroup"].(map[string]any)
 	require.Contains(t, topicGroup["description"], "fence")
-
 	item := props(t, topicGroup["items"].(map[string]any))
-	require.NotEmpty(t, item["topics"].(map[string]any)["description"])
-	require.NotContains(t, item["topics"].(map[string]any)["description"], "lag-check",
-		"topic selection has no effect on lag-check; the description must not imply otherwise")
+	require.NotContains(t, item["topics"].(map[string]any)["description"], "lag-check")
 	require.Contains(t, item["topicPatterns"].(map[string]any)["description"], "regular expression")
-}
-
-func TestGenerateGateway_RequiredSets(t *testing.T) {
-	doc := gatewayMap(t)
-	p := props(t, doc)
-	spec := props(t, p["spec"].(map[string]any))
-
-	requiredOf := func(schema map[string]any) []any {
-		r, _ := schema["required"].([]any)
-		return r
-	}
-	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
-	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway", "route"}, requiredOf(p["spec"].(map[string]any)))
-	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
-	// kafka's reflected required set is only restEndpoint, but Validate() also
-	// requires bootstrapServers and clusterCredentials — the schema must match so a
-	// lint pass cannot green-light a manifest init will reject.
-	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "clusterCredentials"},
-		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
-	// linkCredentials is always required (no derivation), alongside the link name.
-	require.ElementsMatch(t, []any{"name", "linkCredentials"}, requiredOf(spec["clusterLink"].(map[string]any)))
-	require.ElementsMatch(t, []any{"namespace", "cr-name"}, requiredOf(spec["gateway"].(map[string]any)))
-	// The old crs/routes/topics shape is gone from the schema entirely: a
-	// stale key must be flagged by the editor, not offered as legal.
-	gwProps := props(t, spec["gateway"].(map[string]any))
-	require.NotContains(t, gwProps, "crs", "the crs block is retired — see cr-name")
-	require.NotContains(t, gwProps, "routes", "routes are retired — see spec.route")
-	require.NotContains(t, spec, "topics", "spec.topics is retired — see spec.route.topicGroup")
-	// spec.route names the route and its target streaming domain; the bootstrap
-	// server id is derived from the live CR and mode from the CR, so neither is
-	// a required manifest field.
-	route := props(t, spec["route"].(map[string]any))
-	require.ElementsMatch(t, []any{"name", "targetStreamingDomain"}, requiredOf(spec["route"].(map[string]any)))
-	oneOf, ok := spec["route"].(map[string]any)["oneOf"].([]any)
-	require.True(t, ok, "spec.route must carry a oneOf: exactly one of topicGroup or convertTo")
-	require.Len(t, oneOf, 2)
-	convertTo := route["convertTo"].(map[string]any)
-	require.Equal(t, []any{"static"}, convertTo["enum"])
-	require.NotEmpty(t, convertTo["description"])
-	// At least one of topics/topicPatterns, hand-patched as an anyOf since
-	// the constraint isn't expressible on the struct.
-	item := route["topicGroup"].(map[string]any)["items"].(map[string]any)
-	anyOf, ok := item["anyOf"].([]any)
-	require.True(t, ok, "the topicGroup item must carry an anyOf for the at-least-one topics/topicPatterns rule")
-	require.Len(t, anyOf, 2)
-	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
-	// stand-in for "omitted", so the key must be required even though the
-	// block it lives in (spec.defaultPolicies) stays optional.
-	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(spec["defaultPolicies"].(map[string]any)))
 }
 
 func TestGatewaySchemaInSync(t *testing.T) {

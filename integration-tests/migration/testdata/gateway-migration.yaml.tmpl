@@ -38,20 +38,19 @@ spec:
       - {{ .DestBootstrap | yamlQuote }}
     # The cluster-link REST credential, always required (never derived).
     linkCredentials: {{ .LinkCredPath | yamlQuote }}
-{{- if .PauseConsumerOffsetSync }}
-    pauseConsumerOffsetSync: true
-{{- end }}
-{{- if .ConsumerOffsetSyncBaseline }}
-    consumerOffsetSyncBaseline: {{ .ConsumerOffsetSyncBaseline | yamlQuote }}
-{{- end }}
 
   gateway:
     namespace: {{ .Namespace | yamlQuote }}
     kubeconfig: {{ .KubePath | yamlQuote }}
     cr-name: {{ .GatewayName | yamlQuote }}
-  route:
+  # This suite runs the static (all-at-once) migration.
+  staticMigration:
+    route:
 {{- with .FenceRoutes }}
-    name: {{ (index . 0).Name | yamlQuote }}
+      name: {{ (index . 0).Name | yamlQuote }}
+{{- end }}
+{{- with .FenceRoutes }}
+      targetStreamingDomain: {{ (index . 0).SwitchoverDomainName | yamlQuote }}
 {{- end }}
     topicGroup:
 {{- range .FenceRoutes }}
@@ -73,29 +72,33 @@ spec:
         - {{ ".*" | yamlQuote }}
 {{- end }}
 {{- end }}
-{{- with .FenceRoutes }}
-    targetStreamingDomain: {{ (index . 0).SwitchoverDomainName | yamlQuote }}
+{{- if .PauseConsumerOffsetSync }}
+    consumerOffsetSync:
+      pause: true
+{{- if .ConsumerOffsetSyncBaseline }}
+      baseline: {{ .ConsumerOffsetSyncBaseline | yamlQuote }}
+{{- end }}
 {{- end }}
 {{- if .Policy.Any }}
 
-  # Read FRESH by execute on every run and never snapshotted, which is what lets a
-  # scenario re-render this file between init and execute. Every knob is emitted
-  # only when non-zero: an absent key already means the zero the retired flags
-  # defaulted to, and a literal 0 would not match the schema's duration pattern.
-  defaultPolicies:
+    # Read FRESH by execute on every run and never snapshotted, which is what lets a
+    # scenario re-render this file between init and execute. Every knob is emitted
+    # only when non-zero: an absent key already means the zero the retired flags
+    # defaulted to, and a literal 0 would not match the schema's duration pattern.
+    policies:
 {{- if .Policy.LagThreshold }}
-    lagThreshold: {{ .Policy.LagThreshold }}
+      lagThreshold: {{ .Policy.LagThreshold }}
 {{- end }}
 {{- if .Policy.PromoteBatchSize }}
-    promoteBatchSize: {{ .Policy.PromoteBatchSize }}
+      promoteBatchSize: {{ .Policy.PromoteBatchSize }}
 {{- end }}
 {{- if .Policy.RolloutTimeout }}
-    rolloutTimeout: {{ .Policy.RolloutTimeout }}
+      rolloutTimeout: {{ .Policy.RolloutTimeout }}
 {{- end }}
 {{- if .Policy.DetectUnroutedProducers }}
-    detectUnroutedProducersDuration: {{ .Policy.DetectUnroutedProducers }}
+      detectUnroutedProducersDuration: {{ .Policy.DetectUnroutedProducers }}
 {{- end }}
 {{- if .Policy.ConsumerOffsetSyncDrain }}
-    consumerOffsetSyncDrainDuration: {{ .Policy.ConsumerOffsetSyncDrain }}
+      consumerOffsetSyncDrainDuration: {{ .Policy.ConsumerOffsetSyncDrain }}
 {{- end }}
 {{- end }}
