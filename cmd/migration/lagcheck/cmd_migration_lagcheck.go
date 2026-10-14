@@ -40,7 +40,7 @@ comes from the migration manifest, so this command works before
 api_key, basic, bearer, or mtls. lag-check never dials the source or destination Kafka
 legs directly.
 
-It always shows every mirror topic on the link; spec.route.topicGroup does not narrow the view.
+It always shows every mirror topic on the link; the declared migration's topicGroup does not narrow the view.
 
 Before the view opens, kcp reads the cluster link (15s timeout); if that fails, the command exits with an error.`,
 		Example:       `  kcp migration lag-check --migration-yaml gateway-static-migration.yaml`,

@@ -170,7 +170,7 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 }
 
 // TestExecute_VisibleFlagSurface — the visible flags are the manifest path,
-// --dry-run and the per-policy overrides that vary a spec.defaultPolicies value
+// --dry-run and the per-policy overrides that vary a spec.<section>.policies value
 // for a single run. --run-report is registered but hidden (a diagnostics
 // path whose only consumer is the performance rig), so it is asserted
 // separately rather than padding the advertised surface.
@@ -291,7 +291,7 @@ func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
 }
 
 // TestExecute_PolicyOverrideReachesTheConfig — an override applied to the
-// manifest's defaults flows through applyEffectivePolicy onto the config, the
+// manifest's defaults flows through applyPolicyOverrides onto the config, the
 // same path runMigrationExecute takes for both branches.
 func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
@@ -647,6 +647,19 @@ func TestExecute_DryRun_ValidatesPolicyOverrides(t *testing.T) {
 	assert.Contains(t, err.Error(), "lagThreshold: must not be negative")
 	assert.NotContains(t, err.Error(), "failed to produce the reconcile plan",
 		"an invalid override must be rejected before reconcile is attempted")
+}
+
+// TestExecute_DryRun_RejectsInapplicablePolicyFlag — a policy flag the declared
+// type does not have is an error under --dry-run too, before any I/O.
+func TestExecute_DryRun_RejectsInapplicablePolicyFlag(t *testing.T) {
+	f := newFixture(t, nil) // declares staticMigration
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run", "--offset-sync-concurrency=4")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offset-sync-concurrency")
+	assert.Contains(t, err.Error(), "staticMigration")
+	assert.NotContains(t, err.Error(), "failed to produce the reconcile plan",
+		"an inapplicable flag must be rejected before reconcile is attempted")
 }
 
 // TestExecute_DryRun_FailsAtReconcile proves --dry-run reaches migplan.Reconcile
