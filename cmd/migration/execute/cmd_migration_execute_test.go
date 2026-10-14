@@ -3,7 +3,6 @@ package execute
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -53,12 +52,13 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-  route:
-    name: migration-route
+  staticMigration:
+    route:
+      name: migration-route
+      targetStreamingDomain: confluent-cloud
     topicGroup:
       - topicPatterns:
           - '.*'
-    targetStreamingDomain: confluent-cloud
 `
 
 // Default credentials-file bodies for the canonical fixture.
@@ -106,6 +106,27 @@ func newFixtureCreds(t *testing.T, creds credOverrides, mutate func(string) stri
 	require.NoError(t, os.WriteFile(f.manifestPath, []byte(doc), 0600))
 
 	return f
+}
+
+// dynamicFixture is the canonical manifest declared as a dynamicMigration.
+func dynamicFixture(t *testing.T) fixture {
+	t.Helper()
+	return newFixture(t, func(doc string) string {
+		require.Contains(t, doc, "  staticMigration:\n")
+		return strings.Replace(doc, "  staticMigration:\n", "  dynamicMigration:\n", 1)
+	})
+}
+
+// fixtureForMode returns the fixture whose declared type matches a plan's Mode.
+func fixtureForMode(t *testing.T, mode string) fixture {
+	t.Helper()
+	switch mode {
+	case "dynamic":
+		return dynamicFixture(t)
+	case "convert":
+		return convertFixture(t)
+	}
+	return newFixture(t, nil)
 }
 
 func runExecute(t *testing.T, args ...string) (string, error) {
@@ -220,21 +241,24 @@ func TestExecute_AlwaysCallsReconcile(t *testing.T) {
 
 func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + `  defaultPolicies:
-    lagThreshold: 42
-    promoteBatchSize: 7
-    rolloutTimeout: 3m
-    detectUnroutedProducersDuration: 30s
-    consumerOffsetSyncDrainDuration: 15s
+		return doc + `    policies:
+      lagThreshold: 42
+      promoteBatchSize: 7
+      rolloutTimeout: 3m
+      detectUnroutedProducersDuration: 30s
+      consumerOffsetSyncDrainDuration: 15s
 `
 	})
 	g, cfg := freshConfig(t, f)
-	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
+	policy := g.Spec.StaticMigration.Policies
+	applyCommonPolicy(cfg, policy.CommonPolicies)
+	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
+	cfg.ConsumerOffsetSyncDrainDuration = policy.ConsumerOffsetSyncDrainDuration
 
-	// Both branches read these three straight from g.Spec.DefaultPolicies.
-	assert.Equal(t, 42, g.Spec.DefaultPolicies.LagThreshold)
-	assert.Equal(t, 7, g.Spec.DefaultPolicies.PromoteBatchSize)
-	assert.EqualValues(t, 180, g.Spec.DefaultPolicies.RolloutTimeout.Seconds())
+	// Both branches read these three straight from the declared section's policies.
+	assert.Equal(t, 42, policy.LagThreshold)
+	assert.Equal(t, 7, policy.PromoteBatchSize)
+	assert.EqualValues(t, 180, policy.RolloutTimeout.Seconds())
 	assert.EqualValues(t, 30, cfg.DetectUnroutedProducersDuration.Seconds())
 	assert.EqualValues(t, 15, cfg.ConsumerOffsetSyncDrainDuration.Seconds())
 }
@@ -252,12 +276,14 @@ func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
 		"--promote-batch-size", "0",
 	}))
 
-	p := manifest.DefaultPolicies{
+	g := gatewayOf(t, manifest.MigrationTypeStatic)
+	g.Spec.StaticMigration.Policies = manifest.StaticPolicies{
 		PromoteBatchSize:                100,
 		RolloutTimeout:                  10 * time.Minute,
 		DetectUnroutedProducersDuration: 30 * time.Second,
 	}
-	applyPolicyOverrides(cmd, &p)
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	p := g.Spec.StaticMigration.Policies
 
 	assert.Equal(t, 60*time.Second, p.DetectUnroutedProducersDuration, "an explicit flag replaces the default")
 	assert.Equal(t, 0, p.PromoteBatchSize, "an explicit 0 override replaces a non-zero default")
@@ -269,7 +295,7 @@ func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
 // same path runMigrationExecute takes for both branches.
 func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    detectUnroutedProducersDuration: 30s\n"
+		return doc + "    policies:\n      lagThreshold: 5\n      detectUnroutedProducersDuration: 30s\n"
 	})
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{
@@ -279,11 +305,13 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	}))
 
 	g, cfg := freshConfig(t, f)
-	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
-	require.Empty(t, g.Spec.DefaultPolicies.Validate())
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	require.Empty(t, g.Spec.ValidatePolicies())
 
-	applyEffectivePolicy(cfg, g.Spec.DefaultPolicies)
-	assert.Equal(t, 99, g.Spec.DefaultPolicies.LagThreshold,
+	policy := g.Spec.StaticMigration.Policies
+	applyCommonPolicy(cfg, policy.CommonPolicies)
+	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
+	assert.Equal(t, 99, policy.LagThreshold,
 		"the override replaces the manifest default in the policy both branches read")
 	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
 }
@@ -299,66 +327,29 @@ func TestExecute_ConversionPolicyOverrides(t *testing.T) {
 		"--offset-sync-concurrency", "0",
 	}))
 
-	p := manifest.DefaultPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
-	applyPolicyOverrides(cmd, &p)
+	g := gatewayOf(t, manifest.MigrationTypeDynamicToStatic)
+	g.Spec.DynamicToStaticConversion.Policies = manifest.DynamicToStaticPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	p := g.Spec.DynamicToStaticConversion.Policies
 
 	assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration, "an explicit flag replaces the default")
 	assert.Equal(t, 0, p.OffsetSyncConcurrency, "an explicit 0 replaces a non-zero default")
 
 	unset := NewMigrationExecuteCmd()
 	require.NoError(t, unset.Flags().Parse([]string{"--migration-yaml", "x"}))
-	q := manifest.DefaultPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
-	applyPolicyOverrides(unset, &q)
+	g2 := gatewayOf(t, manifest.MigrationTypeDynamicToStatic)
+	g2.Spec.DynamicToStaticConversion.Policies = manifest.DynamicToStaticPolicies{DetectUnroutedCommitsDuration: 20 * time.Second, OffsetSyncConcurrency: 4}
+	require.NoError(t, applyPolicyOverrides(unset, g2))
+	q := g2.Spec.DynamicToStaticConversion.Policies
 	assert.Equal(t, 20*time.Second, q.DetectUnroutedCommitsDuration, "an unset flag leaves the manifest value alone")
 	assert.Equal(t, 4, q.OffsetSyncConcurrency)
 }
 
-// TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
-// records "executing migration with effective policy" is hand-mirrored from
-// DefaultPolicies and has already drifted (hotReloadTimeout and gatewayConfigPort
-// were silently dropped). effectivePolicyLogArgs is the single place the log's
-// copy lives; this pins every field to it so a future field cannot slip out of
-// the audit trail unnoticed.
-func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
-	p := manifest.DefaultPolicies{
-		LagThreshold:                    11,
-		PromoteBatchSize:                22,
-		RolloutTimeout:                  33 * time.Second,
-		DetectUnroutedProducersDuration: 44 * time.Second,
-		ConsumerOffsetSyncDrainDuration: 55 * time.Second,
-		HotReloadTimeout:                66 * time.Second,
-		GatewayConfigPort:               9099,
-		DetectUnroutedCommitsDuration:   77 * time.Second,
-		OffsetSyncConcurrency:           12,
-	}
-	kv := kvMap(t, effectivePolicyLogArgs("mig-1", p))
-
-	// The two the audit line silently dropped — the whole point of this test.
-	assert.Equal(t, 66*time.Second, kv["hot_reload_timeout"])
-	assert.Equal(t, 9099, kv["gateway_config_port"])
-
-	// And the rest, so no field drops out unnoticed later.
-	assert.Equal(t, "mig-1", kv["migration_id"])
-	assert.Equal(t, 11, kv["lag_threshold"])
-	assert.Equal(t, 22, kv["promote_batch_size"])
-	assert.Equal(t, 33*time.Second, kv["rollout_timeout"])
-	assert.Equal(t, 44*time.Second, kv["detect_unrouted_producers_duration"])
-	assert.Equal(t, 55*time.Second, kv["consumer_offset_sync_drain_duration"])
-	assert.Equal(t, 77*time.Second, kv["detect_unrouted_commits_duration"])
-	assert.Equal(t, 12, kv["offset_sync_concurrency"])
-
-	// Every DefaultPolicies field must appear as a policy key (plus migration_id):
-	// the count guards against a new field being added to the struct but not to
-	// the log.
-	assert.Len(t, kv, reflect.TypeOf(p).NumField()+1)
-}
-
-// TestExecute_PolicyLogArgsLogEffectiveConversionDefaults — the spec has the
-// effective value land in the kcp.log audit line: a manifest that leaves the
-// conversion knobs unset runs with their defaults, so the audit line must show
-// those defaults (30s, 8), not the zero the manifest carried.
+// TestExecute_PolicyLogArgsLogEffectiveConversionDefaults — a conversion manifest
+// that leaves the conversion knobs unset runs with their defaults, so the audit
+// line must show those defaults (30s, 8), not the zero the manifest carried.
 func TestExecute_PolicyLogArgsLogEffectiveConversionDefaults(t *testing.T) {
-	kv := kvMap(t, effectivePolicyLogArgs("mig-1", manifest.DefaultPolicies{}))
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", gatewayOf(t, manifest.MigrationTypeDynamicToStatic).Spec))
 	assert.Equal(t, 30*time.Second, kv["detect_unrouted_commits_duration"])
 	assert.Equal(t, 8, kv["offset_sync_concurrency"])
 }
@@ -527,7 +518,7 @@ func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
 
 	t.Run("sub-10s detect duration", func(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
-			return doc + "  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n"
+			return doc + "    policies:\n      detectUnroutedProducersDuration: 5s\n"
 		})
 		_, err := runExecute(t, "--migration-yaml", f.manifestPath)
 		require.Error(t, err)
@@ -536,7 +527,7 @@ func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
 
 	t.Run("negative drain duration", func(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
-			return doc + "  defaultPolicies:\n    consumerOffsetSyncDrainDuration: -5s\n"
+			return doc + "    policies:\n      consumerOffsetSyncDrainDuration: -5s\n"
 		})
 		_, err := runExecute(t, "--migration-yaml", f.manifestPath)
 		require.Error(t, err)
@@ -724,7 +715,7 @@ func TestExecutePlan_NothingToDo_RunsNoStateMachine(t *testing.T) {
 			var builds serviceBuilds
 			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
 
-			out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(nil, nil), &builds))
 
 			require.NoError(t, err)
 			assert.Zero(t, builds.total(), "no service may be built when there is nothing to do")
@@ -746,7 +737,7 @@ func TestExecutePlan_PromotedNotSwitched_RunsTheStateMachine(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			var builds serviceBuilds
 
-			out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(nil, nil), &builds))
 
 			require.NoError(t, err)
 			assert.NotZero(t, builds.total(), "the state machine must run to apply the owed switch")
@@ -807,10 +798,123 @@ func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
 	var builds serviceBuilds
 	res := &migplan.Result{Route: "migration-route", Mode: "convert", NothingToDo: true}
 
-	out, err := runExecutePlan(t, newFixture(t, nil), res, countingDeps(stubDeps(nil, nil), &builds))
+	out, err := runExecutePlan(t, convertFixture(t), res, countingDeps(stubDeps(nil, nil), &builds))
 
 	require.NoError(t, err)
 	assert.Zero(t, builds.total())
 	assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1 — nothing to do: the route is already static on its target domain")
 	assert.NotContains(t, out, "Migration completed")
+}
+
+// --- declared migration type: typed policies and flag applicability ---
+
+func newExecuteCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	return NewMigrationExecuteCmd()
+}
+
+func gatewayOf(t *testing.T, mt manifest.MigrationType) *manifest.GatewayMigration {
+	t.Helper()
+	g := &manifest.GatewayMigration{}
+	route := manifest.RouteRef{Name: "migration-route", TargetStreamingDomain: "cc"}
+	tg := []manifest.TopicGroupEntry{{Topics: &[]string{"t1"}}}
+	switch mt {
+	case manifest.MigrationTypeStatic:
+		g.Spec.StaticMigration = &manifest.StaticMigration{Route: route, TopicGroup: tg}
+	case manifest.MigrationTypeDynamic:
+		g.Spec.DynamicMigration = &manifest.DynamicMigration{Route: route, TopicGroup: tg}
+	case manifest.MigrationTypeDynamicToStatic:
+		g.Spec.DynamicToStaticConversion = &manifest.DynamicToStaticConversion{Route: route}
+	}
+	return g
+}
+
+// Review Focus 3.
+func TestApplyPolicyOverrides_RejectsInapplicableFlag(t *testing.T) {
+	cases := []struct {
+		flag string
+		val  string
+		mt   manifest.MigrationType
+	}{
+		{"promote-batch-size", "5", manifest.MigrationTypeDynamicToStatic},
+		{"lag-threshold", "1", manifest.MigrationTypeDynamicToStatic},
+		{"detect-unrouted-producers-duration", "30s", manifest.MigrationTypeDynamicToStatic},
+		{"consumer-offset-sync-drain-duration", "5s", manifest.MigrationTypeDynamic},
+		{"detect-unrouted-commits-duration", "30s", manifest.MigrationTypeStatic},
+		{"offset-sync-concurrency", "4", manifest.MigrationTypeDynamic},
+	}
+	for _, c := range cases {
+		t.Run(c.flag+"/"+string(c.mt), func(t *testing.T) {
+			cmd := newExecuteCmd(t)
+			require.NoError(t, cmd.Flags().Set(c.flag, c.val))
+			err := applyPolicyOverrides(cmd, gatewayOf(t, c.mt))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--"+c.flag)
+			assert.Contains(t, err.Error(), c.mt.SectionKey())
+		})
+	}
+}
+
+// With several inapplicable flags set, the error names the alphabetically first,
+// so the message is deterministic run to run.
+func TestCheckPolicyFlagsApply_NamesTheAlphabeticallyFirstOffender(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		cmd := newExecuteCmd(t)
+		require.NoError(t, cmd.Flags().Set("promote-batch-size", "5"))
+		require.NoError(t, cmd.Flags().Set("lag-threshold", "1"))
+		err := checkPolicyFlagsApply(cmd, manifest.MigrationTypeDynamicToStatic)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--lag-threshold")
+		assert.NotContains(t, err.Error(), "--promote-batch-size")
+	}
+}
+
+func TestApplyPolicyOverrides_AppliesToTheDeclaredSection(t *testing.T) {
+	cmd := newExecuteCmd(t)
+	require.NoError(t, cmd.Flags().Set("promote-batch-size", "7"))
+	require.NoError(t, cmd.Flags().Set("hot-reload-timeout", "45s"))
+	g := gatewayOf(t, manifest.MigrationTypeStatic)
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	assert.Equal(t, 7, g.Spec.StaticMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 45*time.Second, g.Spec.StaticMigration.Policies.HotReloadTimeout)
+
+	cmd = newExecuteCmd(t)
+	require.NoError(t, cmd.Flags().Set("detect-unrouted-commits-duration", "20s"))
+	g = gatewayOf(t, manifest.MigrationTypeDynamicToStatic)
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	assert.Equal(t, 20*time.Second, g.Spec.DynamicToStaticConversion.Policies.DetectUnroutedCommitsDuration)
+}
+
+// An explicit 0 is meaningful (promote all / no deadline / skip) and must win
+// over the manifest default; an unset flag must leave the default alone.
+func TestApplyPolicyOverrides_ZeroStillOverrides(t *testing.T) {
+	cmd := newExecuteCmd(t)
+	require.NoError(t, cmd.Flags().Set("promote-batch-size", "0"))
+	g := gatewayOf(t, manifest.MigrationTypeDynamic)
+	g.Spec.DynamicMigration.Policies = manifest.DynamicPolicies{PromoteBatchSize: 100, LagThreshold: 4}
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	assert.Equal(t, 0, g.Spec.DynamicMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 4, g.Spec.DynamicMigration.Policies.LagThreshold, "an unset flag leaves the manifest default in force")
+}
+
+func TestExecutePlan_UnknownTypeErrors(t *testing.T) {
+	cmd := newExecuteCmd(t)
+	err := executePlan(cmd, &manifest.GatewayMigration{}, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{}, "")
+	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
+}
+
+func TestExecutePlan_ResultModeMustMatchDeclaredType(t *testing.T) {
+	cmd := newExecuteCmd(t)
+	g := gatewayOf(t, manifest.MigrationTypeDynamic)
+	err := executePlan(cmd, g, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{}, "")
+	require.ErrorContains(t, err, "does not match the declared")
+}
+
+func TestEffectivePolicyLogArgs_NamesTheType(t *testing.T) {
+	g := gatewayOf(t, manifest.MigrationTypeDynamic)
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", g.Spec))
+	assert.Equal(t, "mig-1", kv["migration_id"])
+	assert.Equal(t, "DYNAMIC", kv["migration_type"])
+	assert.Contains(t, kv, "promote_batch_size")
+	assert.NotContains(t, kv, "offset_sync_concurrency", "a dynamic migration's audit line carries only its own policies")
 }
