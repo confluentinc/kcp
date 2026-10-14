@@ -1,4 +1,4 @@
-# Dynamic-mode gateway for the route-conversion suite, in the shape a finished
+# Dynamic-mode gateway for the tracing suite's dynamic-to-static runs, in the shape a finished
 # topic-based migration leaves it: every link topic routed to the destination,
 # group coordination pinned to the source, no fence. setup.sh renders it into
 # .state/rendered/ (placeholder substitution) and applies it; each test's reset
@@ -21,7 +21,7 @@ metadata:
   namespace: confluent
   labels:
     app.kubernetes.io/name: confluent-for-kubernetes
-    app.kubernetes.io/managed-by: kcp-e2e-route-conversion
+    app.kubernetes.io/managed-by: kcp-e2e-tracing-convert
 spec:
   replicas: __REPLICAS__
   image:

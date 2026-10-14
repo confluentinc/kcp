@@ -12,7 +12,7 @@ profile, so that functional suite is untouched. Like it, setup needs a CP Enterp
 ## Running
 
 ```bash
-make test-tracing-setup        # once; GATEWAY_MODE=dynamic (default) → a TBM run
+make test-tracing-setup        # once; GATEWAY_MODE=dynamic (default) → dynamic migrations
 make test-tracing-run          # as often as you like (see "Topics" below)
 make test-tracing-teardown
 ```
@@ -71,11 +71,13 @@ For each run:
 - one trace for the whole run, rooted at the `kcp migration execute` span (resource `service.name=kcp`, and the run's
   label set through `OTEL_RESOURCE_ATTRIBUTES`);
 - `migplan.reconcile`, `migration.build_services` and `migration.run` directly under it, with `kcp.strategy` and the
-  steps in order for the mode (TBM: initialize, wait_for_lags, fence, verify_fence, promote, switch);
-- the shared spans present: offset sweeps and per-broker offset reads, gateway patch/accept/verify, cluster-link
-  list/promote, reconcile's topic, cluster-ID and link-status reads;
+  steps in order for the mode (dynamic: initialize, wait_for_lags, fence, verify_fence, promote, switch; static adds
+  pause_offset_sync after fence and restore_offset_sync after switch);
+- the shared spans present: offset sweeps and their offset reads (`offset.get_many`), gateway patch and accept
+  (`gateway.patch_cr`, `gateway.wait_accepted`) and verification (`gateway.verify_transition` or
+  `gateway.wait_config_applied`), and cluster-link list and promote;
 - detection as configured: off, `step.verify_fence` is a skipped step (`detection_disabled`); on,
   `wait.unrouted_producers_window` records the manifest's window (`kcp.wait.configured_ms`) and actually lasted that
   long (no more than 1s over);
-- one `promote_batch` event and one `clusterlink.promote_mirror_topics` call per promote batch;
+- one `clusterlink.promote_mirror_topics` call per promote batch, and `kcp.batches` on `step.promote` to match;
 - no error status on the command, the run or any step, and no attribute carrying a topic name.

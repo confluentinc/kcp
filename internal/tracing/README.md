@@ -54,7 +54,7 @@ Open **http://localhost:3000/d/kcp-tracing**.
 |---|---|
 | **Runs** | *Traced commands*: every traced kcp command (any command, not only migrations), newest first, with its run label and duration. *Migration runs*: each migration with its strategy, migration name and topic count. **Click a command or a strategy** to load that run into the section below. |
 | **Selected run** | The whole run's duration and how much of it was deliberate waiting (`wait.*`); the top-level phases (reconcile, service setup, the state machine); the full parent/child **timeline**; time per migration step in workflow order; each deliberate wait. |
-| **Across all runs** | Mean time per step and per inner operation (gateway, offset, cluster-link, reconcile reads, waits), and how often each ran, over every run since the backend started. |
+| **Across all runs** | Mean time per step and per inner operation (gateway, offset, cluster-link, group offsets, reconcile, waits), and how often each ran, over every run since the backend started. |
 
 The across-runs panels come from the span metrics Tempo derives in Prometheus, which carry span names but not the `run`
 label. To compare labelled runs, read the duration and step bars of each run in turn.
@@ -143,7 +143,8 @@ kcp migration execute                       root span, one per command
 ├─ migplan.reconcile                        kcp.route.mode, kcp.refused, kcp.nothing_to_do, kcp.topics.migrate
 │  └─ clusterlink.list_mirror_topics        (its link-status read)
 ├─ migration.build_services                 client setup
-└─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, plan counts
+└─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, the run's settings
+   │                                        (lag threshold, batch size, detection window, workers), plan counts
    ├─ step.<event> …                        kcp.step.from / kcp.step.to; kcp.step.skipped + kcp.step.skip_reason on pass-throughs
    └─ migration.rollback                    only when a failure rolls back; kcp.rollback.path
       └─ step.abort_fence                   when the rollback goes through the state machine
@@ -173,7 +174,7 @@ kcp migration execute                       root span, one per command
 | every `gateway.*` verifier span | `kcp.gateway.step` = `fence`, `switchover`, `unfence` or `hot-reload check` |
 | `clusterlink.*` | `promote_mirror_topics` (`kcp.batch.size`), `list_mirror_topics` (`kcp.mirrors`) |
 | `step.wait_for_lags` | `kcp.polls`, `kcp.topics_behind` |
-| `step.promote` | `kcp.polls`, `kcp.batches`, `kcp.promote_errors`; one `promote_batch` event per batch (`kcp.batch.index`, `kcp.batch.size`); `wait.promote_poll` between polls |
+| `step.promote` | `kcp.polls`, `kcp.batches`, `kcp.promote_errors`; one `clusterlink.promote_mirror_topics` per batch; `wait.promote_poll` between polls |
 | `wait.offset_sync_drain` | Static pause_offset_sync drain |
 | `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers` |
 | `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.snapshot` |

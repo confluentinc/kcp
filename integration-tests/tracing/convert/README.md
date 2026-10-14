@@ -38,7 +38,7 @@ The table is `conversionRuns` in `tracing_e2e_test.go`.
 For each run: the route is static on the destination afterwards and every seeded group's offsets are on the
 destination; one trace for the whole run with the run's label; `migration.run` (`kcp.strategy=d2s`, the configured
 workers and window) with the five steps in order — initialize, fence, verify_fence, sync_offsets, switch — and no
-error on the command, the run or any step; the groupoffsets spans present (list, snapshot, rogue-commit detection,
-destination high-water marks, plan, apply); `wait.rogue_commit_window` configured to and lasting the manifest's window
-(no more than 1s over); `groupoffsets.apply` syncing every seeded group, with one worker setup per worker for each of
-the two snapshots and the apply; and no attribute carrying a group name.
+error on the command, the run or any step; the gateway patch and accept spans; the groupoffsets spans present
+(snapshot, rogue-commit detection, destination high-water marks, apply); `wait.rogue_commit_window` configured to and
+lasting the manifest's window (no more than 1s over); one `groupoffsets.apply` syncing every seeded group with the
+configured number of workers; and no attribute carrying a group name.

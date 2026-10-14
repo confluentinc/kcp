@@ -36,9 +36,6 @@ GATEWAY_BOOTSTRAP="bootstrap.gw.local:9595"
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-rc-link}"
 TOPIC_PREFIX="rc-topic-"
 LINK_TOPIC_COUNT=6
-# On the source only and never on the link: the input for the untracked-topic
-# warning and for the commits-outside-the-link refusal.
-ORPHAN_TOPIC="rc-orphan"
 SOURCE_BOOTSTRAP="source-kafka.${NAMESPACE}.svc.cluster.local:9071"
 DEST_BOOTSTRAP="destination-kafka.${NAMESPACE}.svc.cluster.local:9071"
 REST_ENDPOINT="http://destination-kafka.${NAMESPACE}.svc.cluster.local:8090"
@@ -71,7 +68,7 @@ echo "=== KCP tracing dynamic-to-static E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, clients through it)"
-echo "Link topics:    ${LINK_TOPICS[*]} (+ ${ORPHAN_TOPIC} on the source only)"
+echo "Link topics:    ${LINK_TOPICS[*]}"
 echo ""
 
 # --- Preflight, minikube, images, operator, credentials, clusters (shared) ---
@@ -87,8 +84,8 @@ e2e_install_licence
 e2e_create_client_tls
 e2e_create_rest_credentials_secret
 
-# --- Source topics: the link topics + one source-only topic ---
-echo "Creating ${LINK_TOPIC_COUNT} link topics + ${ORPHAN_TOPIC} on the source..."
+# --- Source topics: the link topics ---
+echo "Creating ${LINK_TOPIC_COUNT} link topics on the source..."
 for i in $(seq 1 "${LINK_TOPIC_COUNT}"); do
   t="$(topic_name "$i")"
   k apply -f - >/dev/null <<EOF
@@ -106,20 +103,8 @@ spec:
     name: source-kafka
 EOF
 done
-k apply -f - >/dev/null <<EOF
-apiVersion: platform.confluent.io/v1beta1
-kind: KafkaTopic
-metadata:
-  name: ${ORPHAN_TOPIC}
-  namespace: ${NAMESPACE}
-spec:
-  replicas: 1
-  partitionCount: 1
-  kafkaClusterRef:
-    name: source-kafka
-EOF
 echo "Waiting for source topics to reach CREATED..."
-for t in "${LINK_TOPICS[@]}" "${ORPHAN_TOPIC}"; do
+for t in "${LINK_TOPICS[@]}"; do
   created=""
   for _ in $(seq 1 60); do
     if k get kafkatopic "${t}" -o jsonpath='{.status.state}' 2>/dev/null | grep -q CREATED; then created=1; break; fi
@@ -216,7 +201,7 @@ echo "Deploying the ${RUNNER} pod (gateway Service ${GATEWAY_IP})..."
 sed -e "s/__GATEWAY_IP__/${GATEWAY_IP}/g" "${TEMPLATES_DIR}/rc-runner.yaml" > "${RENDERED_DIR}/rc-runner.yaml"
 kubectl --context "${PROFILE}" apply -f "${RENDERED_DIR}/rc-runner.yaml"
 wait_for_pods "app=${RUNNER}"
-for tool in python3 curl kafka-console-producer kafka-get-offsets kafka-topics kafka-verifiable-producer kafka-verifiable-consumer; do
+for tool in python3 curl kafka-console-producer kafka-get-offsets kafka-topics; do
   k exec "${RUNNER}" -- sh -c "command -v ${tool}" >/dev/null 2>&1 || {
     echo "FATAL: ${tool} is not on the PATH of the ${RUNNER} image (cp-server:${CP_SERVER_TAG})" >&2; exit 1; }
 done
@@ -298,12 +283,10 @@ chmod 600 "${RENDERED_DIR}"/*-creds.yaml
   echo "KCP_RC_DEST_BOOTSTRAP_ID=${DEST_BOOTSTRAP_ID}"
   echo "KCP_RC_SOURCE_BOOTSTRAP=${SOURCE_BOOTSTRAP}"
   echo "KCP_RC_DEST_BOOTSTRAP=${DEST_BOOTSTRAP}"
-  echo "KCP_RC_GATEWAY_BOOTSTRAP=${GATEWAY_BOOTSTRAP}"
   echo "KCP_RC_REST_ENDPOINT=${REST_ENDPOINT}"
   echo "KCP_RC_DEST_CLUSTER_ID=${DEST_CLUSTER_ID}"
   echo "KCP_RC_CLUSTER_LINK_NAME=${CLUSTER_LINK_NAME}"
   echo "KCP_RC_TOPIC_PREFIX=${TOPIC_PREFIX}"
-  echo "KCP_RC_ORPHAN_TOPIC=${ORPHAN_TOPIC}"
 } > "${ENV_FILE}"
 
 echo ""

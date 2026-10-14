@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTracing_DetectRogueCommits_SpansWaitListAndSnapshot(t *testing.T) {
+func TestTracing_DetectRogueCommits_SpansWaitAndSnapshot(t *testing.T) {
 	rec := tracingtest.Install(t)
 	offs := Offsets{"orders": {0: at(5)}}
 	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{"orders-app": offs}})

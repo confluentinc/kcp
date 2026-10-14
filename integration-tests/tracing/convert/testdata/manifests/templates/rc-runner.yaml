@@ -1,13 +1,13 @@
-# Runner pod for the route-conversion suite, and the RBAC kcp and the harness
+# Runner pod for the tracing suite's dynamic-to-static runs, and the RBAC kcp and the harness
 # need. setup.sh renders __GATEWAY_IP__ (the gateway Service's ClusterIP) and
 # applies it once the gateway and the two truststore secrets exist.
 #
 # The test binary runs IN the cluster: reconcile reads the live gateway CR with
 # in-cluster config, and kcp and the harness verify a hot reload on each gateway
 # pod through the API server (pods/proxy). The image is cp-server, not alpine,
-# because the continuous-client tests run kafka-verifiable-producer and
-# kafka-verifiable-consumer as subprocesses of the test; the Go binaries are
-# static and run on it as they are.
+# because setup.sh runs the Kafka CLI tools (kafka-console-producer,
+# kafka-get-offsets, kafka-topics) in it; the Go binaries are static and run on
+# it as they are.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -125,9 +125,6 @@ spec:
     - name: gw-trust
       mountPath: /etc/rc-gw-trust
       readOnly: true
-    - name: dest-tls
-      mountPath: /etc/rc-dest-tls
-      readOnly: true
     resources:
       requests:
         cpu: "500m"
@@ -142,8 +139,3 @@ spec:
   - name: gw-trust
     secret:
       secretName: rc-gw-truststore
-  # The destination's CA truststore, for a client that talks to the
-  # destination directly (the split-brain refusal test).
-  - name: dest-tls
-    secret:
-      secretName: destination-kafka-tls
