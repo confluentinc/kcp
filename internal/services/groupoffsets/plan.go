@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrMissingTopics is returned by DestinationHighWaterMarks when a topic some group committed on is not on the
@@ -38,11 +40,13 @@ type TopicLister func(ctx context.Context) ([]string, error)
 //
 // sweep's client must be built with sarama's Metadata.AllowAutoTopicCreation set to false (its default is
 // true), so the sweep can never create a topic on a destination with auto.create.topics.enable.
-func DestinationHighWaterMarks(ctx context.Context, listTopics TopicLister, sweep offset.Provider, snap Snapshot) (map[string]map[int32]int64, error) {
+func DestinationHighWaterMarks(ctx context.Context, listTopics TopicLister, sweep offset.Provider, snap Snapshot) (_ map[string]map[int32]int64, err error) {
 	topics := snap.Topics()
 	if len(topics) == 0 {
 		return map[string]map[int32]int64{}, nil
 	}
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.destination_hwm", attribute.Int("kcp.topics", len(topics)))
+	defer func() { tracing.End(span, err) }()
 	listed, err := listTopics(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing destination topics: %w", err)

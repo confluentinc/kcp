@@ -8,6 +8,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/tracing"
 )
 
 // errNoHandoff is returned by SyncOffsets when this run's verify_fence handed over no snapshot.
@@ -71,6 +72,7 @@ func (a *D2SActions) SyncOffsets(ctx context.Context, config *migration.Migratio
 		return err
 	}
 	if len(plan.Commits) == 0 {
+		tracing.MarkSkipped(ctx, "no_commits")
 		a.reporter.Success("No in-scope consumer group has committed offsets — nothing to sync")
 		return nil
 	}

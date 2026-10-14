@@ -25,6 +25,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/logging"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -126,6 +127,11 @@ var RootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
 			os.Exit(1)
 		}
+
+		// Tracing starts after logging so its warnings reach the console and
+		// kcp.log. The root span covers the rest of the command; main ends it.
+		tracing.Setup(cmd.Context())
+		cmd.SetContext(tracing.StartRoot(cmd.Context(), cmd.CommandPath()))
 	},
 }
 

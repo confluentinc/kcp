@@ -1,12 +1,12 @@
 package execute
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
 )
 
@@ -19,21 +19,21 @@ import (
 // policy, i.e. the manifest's spec.defaultPolicies after applyPolicyOverrides
 // has folded in any per-run flag overrides.
 //
-// Beyond its twin, it carries the --run-report recorder, which is static-only
-// for now, and the offset-sync guidance printed when a run with the pause opted
-// in fails.
+// Beyond its twin, it prints the offset-sync guidance when a run with the pause
+// opted in fails.
 func runStaticBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
 	config *migration.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
-	runReportPath string,
 ) error {
-	ctx := context.Background()
+	ctx := commandContext(cmd)
 	policy := g.Spec.DefaultPolicies
 
+	_, buildSpan := tracing.Start(ctx, tracerName, "migration.build_services")
 	svc, err := buildExecutorServices(g, deps)
+	tracing.End(buildSpan, err)
 	if err != nil {
 		return err
 	}
@@ -48,17 +48,9 @@ func runStaticBranch(
 
 	orchestrator := migration.NewMigrationOrchestrator(config, actions)
 
-	// Stamped on the way out whatever the outcome: a failed run is a result
-	// worth recording, with the stages that did complete.
-	runReport := migration.NewRunReportRecorder(runReportPath, config.MigrationId,
-		len(config.Topics), int64(policy.LagThreshold), orchestrator.CurrentState())
-	orchestrator.SetRunReportRecorder(runReport)
-	var execErr error
-	defer func() { runReport.Finish(orchestrator.CurrentState(), execErr) }()
-
-	if execErr = orchestrator.Execute(ctx, int64(policy.LagThreshold), svc.restAuth, reconcileResult); execErr != nil {
-		migration.WarnIfPausedOnExecuteFailure(config, execErr)
-		return fmt.Errorf("failed to execute migration: %w", execErr)
+	if err := orchestrator.Execute(ctx, int64(policy.LagThreshold), svc.restAuth, reconcileResult); err != nil {
+		migration.WarnIfPausedOnExecuteFailure(config, err)
+		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s\n", config.MigrationId)
