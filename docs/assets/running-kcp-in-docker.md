@@ -133,21 +133,39 @@ Two container-specific gotchas:
 
 `kcp ui` binds to `localhost` by default, which a container can't expose to the
 host. Pass `--host 0.0.0.0` so the server listens on the container's network
-interface, and publish the port on your host's **loopback** so it stays off your
+interface, and publish the port to your host's **loopback** so it stays off your
 network:
 
 ```bash
-docker run --rm -p 127.0.0.1:5556:5556 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
+docker run --rm --publish 127.0.0.1:5556:5556 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
   confluentinc/kcp:latest ui --host 0.0.0.0 --state-file kcp-state.json
 # then open http://localhost:5556
 ```
 
-> **Security note:** the UI has **no authentication**. `--host 0.0.0.0` makes it
-> reachable from every interface *inside* the container; the
-> `-p 127.0.0.1:5556:5556` mapping is what keeps it reachable only from your own
-> machine. Publishing without that loopback restriction (plain `-p 5556:5556`)
-> would expose the UI to your whole network. kcp prints a warning whenever it
-> binds a non-local host.
+### Exposing the UI beyond your machine
+
+`kcp ui` has **no authentication** — anyone who can reach it has full access to
+your state file (clusters, costs, topology) and the asset-generation wizard.
+`--host 0.0.0.0` makes the server listen on *every* interface, so only use it
+with a network boundary in place:
+
+- **In a container**, publish to loopback only: `--publish 127.0.0.1:<port>:<port>`.
+  A publish without the `127.0.0.1` prefix (for example `--publish 5556:5556`) binds
+  every host interface and exposes the UI to your whole network.
+- **On a shared host or network**, restrict access with a firewall or
+  security-group rule scoped to trusted source IPs **and** the specific port you
+  chose — then pick that port deliberately so the rule can be precise.
+- The port is **not** a security control. A non-default port is obscurity, not
+  protection; the network boundary is what protects you. kcp prints a warning
+  whenever it binds a non-local host.
+
+To run on a non-default port, set the same value in both places — the publish
+mapping and `--port`:
+
+```bash
+docker run --rm --publish 127.0.0.1:8080:8080 -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
+  confluentinc/kcp:latest ui --host 0.0.0.0 --port 8080 --state-file kcp-state.json
+```
 
 ## Mirroring into JFrog Artifactory (locked-down networks)
 

@@ -43,7 +43,7 @@ By default the server binds to localhost and is reachable only from this machine
 	}
 
 	cmd.Flags().StringVar(&host, "host", "localhost", "Host/interface to bind the UI server to. Use 0.0.0.0 to allow access from other machines or from inside a container; the UI has no authentication, so restrict exposure (e.g. Docker: -p 127.0.0.1:<port>:<port>)")
-	cmd.Flags().StringVarP(&port, "port", "p", "5556", "Port to run the UI server on")
+	cmd.Flags().StringVar(&port, "port", "5556", "Port to run the UI server on")
 	cmd.Flags().StringVar(&stateFile, "state-file", "", "Path to a KCP state file to pre-load")
 
 	return cmd
