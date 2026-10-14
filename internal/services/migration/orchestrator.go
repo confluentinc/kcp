@@ -208,6 +208,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		attribute.String("kcp.strategy", "aao"),
 		attribute.Int64("kcp.lag_threshold", lagThreshold),
 		attribute.Int("kcp.promote_batch_size", o.actions.promoteBatchSize),
+		attribute.Int64("kcp.detect_unrouted_producers_ms", o.config.DetectUnroutedProducersDuration.Milliseconds()),
 	)
 	defer func() { tracing.End(runSpan, err) }()
 

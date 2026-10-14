@@ -43,6 +43,17 @@ func TestTracing_Execute_StepSpansUnderTheRunSpan(t *testing.T) {
 	tracingtest.AssertNoValues(t, spans, "topic-a", "topic-b")
 }
 
+func TestTracing_Execute_RunSpanRecordsTheDetectionWindow(t *testing.T) {
+	rec := tracingtest.Install(t)
+	orch, config := newHappyPathOrchestrator(t, nil)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	require.NoError(t, orch.Execute(context.Background(), 0, testAuth, uninitializedReconcileResult(nil)))
+
+	window, ok := tracingtest.Attr(tracingtest.Find(t, tracingtest.Spans(rec), "migration.run"), "kcp.detect_unrouted_producers_ms")
+	require.True(t, ok, "the static run span records the detection window, as the dynamic one does")
+	assert.Equal(t, int64(1), window.AsInt64())
+}
+
 func TestTracing_Execute_FailedStepIsAnError(t *testing.T) {
 	rec := tracingtest.Install(t)
 	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
