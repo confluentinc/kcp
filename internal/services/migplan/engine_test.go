@@ -111,7 +111,7 @@ func TestEngineRunHappyPath(t *testing.T) {
 		}},
 		&fakeSecretChecker{},
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestEngineRunProviderErrorIsError(t *testing.T) {
 		{"target", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{err: boom}, okLink, &fakeSecretChecker{})},
 		{"link", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{}, &fakeLink{err: boom}, &fakeSecretChecker{})},
 	}
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := c.eng.Run(context.Background(), in); err == nil {
@@ -167,7 +167,7 @@ func TestReconciliationEngine_Run_StaticMode_ChecksOnlyTargetSecret(t *testing.T
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeStatic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefus
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeStatic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider(t *testi
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	if _, err := eng.Run(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func convertEngine(src, tgt GroupLister) *ReconciliationEngine {
 	).WithGroupListers(src, tgt)
 }
 
-var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
+var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamicToStatic}
 
 func TestEngineRun_ConversionUsesBothGroupListers(t *testing.T) {
 	src := &fakeGroupLister{
@@ -544,7 +544,7 @@ func TestEngineRun_TopicMigrationNeverListsGroups(t *testing.T) {
 		&fakeSecretChecker{},
 	).WithGroupListers(src, tgt)
 
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	if _, err := eng.Run(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -691,5 +691,64 @@ func TestEngineRun_ConversionCommitProbeFailureIsAnError(t *testing.T) {
 	boom := errors.New("coordinator not available")
 	if _, err := convertEngine(&fakeGroupLister{}, &fakeGroupLister{commitErr: boom}).Run(context.Background(), convertIn); !errors.Is(err, boom) {
 		t.Fatalf("Run error = %v, want the probe failure as an error, not a refusal", err)
+	}
+}
+
+// TestReconciliationEngine_Run_SecretsGateFollowsTheDeclaredTypeAndRouteMode
+// pins the staged-secrets gate: the provider is consulted only when a declared
+// static migration meets a static-mode route. A declared type that disagrees
+// with the live route mode is refused by the route-mode precondition before any
+// secret is looked up.
+func TestReconciliationEngine_Run_SecretsGateFollowsTheDeclaredTypeAndRouteMode(t *testing.T) {
+	cases := []struct {
+		name        string
+		typ         reconcile.MigrationType
+		gw          *reconcile.GatewayConfig
+		wantCalled  bool
+		wantRefused string // failed precondition name; empty means not refused
+	}{
+		{"static declared on a static route consults the provider", reconcile.TypeStatic, staticGatewayConfig(), true, ""},
+		{"static declared on a dynamic route never consults the provider", reconcile.TypeStatic, dynGatewayConfig(), false, "route is static"},
+		{"dynamic declared on a static route never consults the provider", reconcile.TypeDynamic, staticGatewayConfig(), false, "route is dynamic"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			secrets := &fakeSecretChecker{}
+			eng := NewReconciliationEngine(
+				&fakeGateway{gw: tc.gw},
+				&fakeLister{topics: []string{"orders"}},
+				&fakeLister{topics: []string{"orders"}},
+				&fakeLink{ls: &LinkStatus{
+					Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorActive},
+				}},
+				secrets,
+			)
+			in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: tc.typ}
+			plan, err := eng.Run(context.Background(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if called := secrets.calledWith != nil; called != tc.wantCalled {
+				t.Fatalf("provider consulted = %v (calledWith=%v), want %v", called, secrets.calledWith, tc.wantCalled)
+			}
+			if tc.wantRefused == "" {
+				if plan.Report.Refused() {
+					t.Fatalf("unexpected refusal: %+v", plan.Report)
+				}
+				return
+			}
+			if !plan.Report.Refused() {
+				t.Fatalf("expected a refusal naming %q, got %+v", tc.wantRefused, plan.Report)
+			}
+			failed := false
+			for _, pc := range plan.Report.Preconditions {
+				if pc.Name == tc.wantRefused && !pc.OK {
+					failed = true
+				}
+			}
+			if !failed {
+				t.Fatalf("precondition %q did not fail: %+v", tc.wantRefused, plan.Report.Preconditions)
+			}
+		})
 	}
 }

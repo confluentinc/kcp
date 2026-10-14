@@ -1,22 +1,25 @@
 # Migration manifest reference
 
 `kcp migration execute` runs a cutover described by a single YAML manifest,
-`gateway-migration.yaml`: it fences the route in the Confluent Gateway,
+`gateway-static-migration.yaml`, `gateway-dynamic-migration.yaml` or
+`gateway-route-conversion.yaml`: it fences the route in the Confluent Gateway,
 promotes the mirror topics on the cluster link in batches, and switches
-production traffic over to the destination. It runs one of three workflows:
-all at once on a static route, topic by topic on a dynamic route, and, with
-`spec.route.convertTo: static`, a
-[conversion of a dynamic route to static](#converting-a-dynamic-route-to-static-specrouteconvertto)
-once every topic on the cluster link is migrated. `kcp migration lag-check`
+production traffic over to the destination. The manifest
+[declares which of three workflows it runs](#declaring-the-migration-type):
+all at once on a static route (`spec.staticMigration`), topic by topic on a
+dynamic route (`spec.dynamicMigration`), or a
+[conversion of a dynamic route to static](#converting-a-dynamic-route-to-static-specdynamictostaticconversion)
+(`spec.dynamicToStaticConversion`) once every topic on the cluster link is
+migrated. `kcp migration lag-check`
 reads the same manifest to show replication lag on the cluster link. This page
 is the field-by-field reference for that manifest, followed by fully-annotated
-[example manifests](#example-manifest).
+[example manifests](#example-manifests).
 
 ## Execution model
 
 This manifest drives a resumable migration workflow:
 
-- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode (see [`spec.route`](#specroute)) — and, on a static route, to derive the bootstrap server id from the target domain — and carries the migration forward through fence → promote → switch (a conversion: fence → verify → sync offsets → switch). Every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
+- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to check that the route's mode matches the declared migration type (see [Declaring the migration type](#declaring-the-migration-type)) — and, on a static route, to derive the bootstrap server id from the target domain — and carries the migration forward through fence → promote → switch (a conversion: fence → verify → sync offsets → switch). Every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
   - **`--dry-run`** runs only the reconcile step, against the live gateway CR, the source and destination Kafka clusters and the cluster link, and prints the plan: each precondition (the route exists and has the expected mode, the gateway CR is set up the way that mode needs, the cluster link mirrors from the source cluster and `spec.target.clusterId` matches the destination) and a verdict for every selected topic. Nothing is changed and no migration steps run. It exits non-zero if the plan is refused. Flag overrides are applied and validated first, so a dry run rejects an invalid override exactly as a real run would. Useful for iterating on the manifest and your infrastructure before scheduling a live cutover.
 - **`lag-check`** is an interactive terminal view of replication lag for every mirror topic on the cluster link, independent of `execute`. It uses only the destination REST leg (`spec.clusterLink.linkCredentials`), so it works before `execute` has ever run.
 
@@ -53,8 +56,8 @@ fence. An operator's plain `scope: ALL` fence reads back with the same
 defaulted `errorCode`, so kcp cannot tell it from its own and would remove it
 too; remove it before migrating.
 
-Each `spec.defaultPolicies` field is a default that a matching CLI flag can
-override for a single run, without editing the file.
+Each field under the declared section's `policies` is a default that a matching
+CLI flag can override for a single run, without editing the file.
 
 ## Before you run it
 
@@ -91,6 +94,31 @@ override for a single run, without editing the file.
   refused before anything is fenced or changed. `--dry-run` shows the plan and
   the reasons.
 
+## Declaring the migration type
+
+A `GatewayMigration` manifest declares what it does by which one section of
+`spec` it carries. Exactly one is required:
+
+| Section | What it does | Live route must be | Example |
+|---|---|---|---|
+| `staticMigration` | Migrates topics together across a static route (all-at-once). | `static` | [`gateway-static-migration.yaml`](gateway-examples/gateway-static-migration.yaml) |
+| `dynamicMigration` | Migrates topics in batches across a dynamic route (topic-based). | `dynamic` | [`gateway-dynamic-migration.yaml`](gateway-examples/gateway-dynamic-migration.yaml) |
+| `dynamicToStaticConversion` | Converts a fully-migrated dynamic route to a static route. Topics stay the same; the route's mode changes. | `dynamic` | [`gateway-route-conversion.yaml`](gateway-examples/gateway-route-conversion.yaml) |
+
+A *migration* moves topic ownership from the source to the destination and
+leaves the route's mode unchanged. A *conversion* changes the route's mode and
+leaves the topics unchanged, so it selects no topics. kcp compares your
+declaration with the live Gateway CR and refuses to run if the route's mode
+disagrees. Each section carries its own `route`, its own `policies` (only the
+fields that type uses), and — for migrations — a `topicGroup`. A policy flag
+(such as `--promote-batch-size`) that the declared type does not have is an
+error.
+
+If you are upgrading a manifest from an earlier build: `spec.route` and
+`spec.defaultPolicies` were replaced by the sections above, and
+`spec.clusterLink.pauseConsumerOffsetSync` / `consumerOffsetSyncBaseline` moved
+to `spec.staticMigration.consumerOffsetSync.pause` / `.baseline`.
+
 ## At a glance
 
 ```yaml
@@ -103,15 +131,18 @@ spec:
   target: { ... } # required — cluster being migrated to
   clusterLink: { ... } # required — an ALREADY-EXISTING cluster link
   gateway: { ... } # required — namespace, kubeconfig, initial gateway CR name
-  route: { ... } # required — the route name, topic selection, and target domain
-  defaultPolicies: { ... } # optional — execute-time policy defaults
+  # Exactly one of the next three — the declared migration type:
+  staticMigration: { ... } # route, topicGroup, consumerOffsetSync, policies
+  dynamicMigration: { ... } # route, topicGroup, policies
+  dynamicToStaticConversion: { ... } # route, policies (no topicGroup)
 ```
 
 `apiVersion` must equal `kcp.confluent.io/v1alpha1` and `kind` must equal
 `GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is the
 migration's identity, used as its `migration_id` in logs and output.
-`spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
-`spec.route` are always required; `spec.defaultPolicies` is optional.
+`spec.source`, `spec.target`, `spec.clusterLink` and `spec.gateway` are always
+required, as is exactly one of `spec.staticMigration`, `spec.dynamicMigration`
+and `spec.dynamicToStaticConversion`. Each section's `policies` is optional.
 
 Every credentials field is a **path to a credentials file** — the manifest never
 holds secret material inline, and there is no `${ENV_VAR}` substitution: a
@@ -171,8 +202,6 @@ destination (test/lab only).
 | `name`                    | string     | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
 | `bootstrapServers`        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
 | `linkCredentials`         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](#rest-credentials-specclusterlinklinkcredentials) below.  |
-| `pauseConsumerOffsetSync` | bool       | no       | `false` | Static routes only; a dynamic route refuses it. Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `consumerOffsetSyncBaseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. It is also restored if a failure before promote rolls the fence back. |
-| `consumerOffsetSyncBaseline` | string | when pausing | — | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
 
 **Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
 authenticates a direct Kafka-protocol connection to the destination
@@ -194,7 +223,7 @@ required** and never derived from the Kafka leg — its top-level shape is one o
 
 There is no `crs.fenced` or `crs.switchover` file: kcp derives both the fenced
 CR and the switched CR from the live initial CR at cutover. On a static route
-that is a route-level fence added to the route named in `spec.route`, then that
+that is a route-level fence added to the route named in the declared section's `route`, then that
 route's `streamingDomain` flipped to its declared target; on a dynamic route it
 is a `rules.fencing` entry for the selected topics, then a routing condition
 sending those topics to the target domain. The old `crs.initial` nesting
@@ -208,20 +237,27 @@ the strict decode with an unknown-field error.
 | `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. Unset: the pod's in-cluster service account when kcp runs in a pod, `~/.kube/config` otherwise. |
 | `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on each `execute` run, not a file path. |
 
-## `spec.route`
+## The migration sections
 
-Required. Names the route to fence and switch over, the target streaming
-domain it switches to, and either the topic selection(s) that migrate or, for
-a conversion, `convertTo`.
+Each of `spec.staticMigration`, `spec.dynamicMigration` and
+`spec.dynamicToStaticConversion` names the route to fence and switch over and
+the target streaming domain it switches to. The two migrations also carry the
+topic selection. `<section>` below stands for whichever one the manifest
+declares.
+
+### `spec.<section>.route`
 
 | Field                   | Type       | Required | Notes                                                                                                                              |
 | ----------------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `name`                  | string     | yes      | A `spec.routes[].name` in the initial CR to fence and switch over. Must be non-blank (checked when the manifest is read) and exist in the CR (checked at reconcile).                            |
-| `topicGroup`            | list       | yes, unless `convertTo` is set | A list validated to **exactly one** entry today (one route, one migration per file). Must not be set with `convertTo`. See below. |
-| `convertTo`             | string     | no       | `static` is the only value. Converts the dynamic route to a static route bound to `targetStreamingDomain` instead of migrating topics; mutually exclusive with `topicGroup`. See [Converting a dynamic route to static](#converting-a-dynamic-route-to-static-specrouteconvertto). |
-| `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to. On a **static** route it must be declared in the initial CR's `spec.streamingDomains` with exactly one bootstrap server id, and the route must already carry pre-staged `security.cluster.<domain>` auth for it (a `secretStore` and an `authentication` block, with the referenced Secrets present). On a **dynamic** route it must be one of the two domains the route binds. For a **conversion** (`convertTo`) it must be one of the two domains the dynamic route binds, and that binding must carry a `bootstrapServerId`: the static route binds to it.    |
+| `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to. On a **static** route it must be declared in the initial CR's `spec.streamingDomains` with exactly one bootstrap server id, and the route must already carry pre-staged `security.cluster.<domain>` auth for it (a `secretStore` and an `authentication` block, with the referenced Secrets present). On a **dynamic** route it must be one of the two domains the route binds. For a **conversion** (`dynamicToStaticConversion`) it must be one of the two domains the dynamic route binds, and that binding must carry a `bootstrapServerId`: the static route binds to it.    |
 
-### `spec.route.topicGroup`
+### `spec.<staticMigration|dynamicMigration>.topicGroup`
+
+Required for both migrations; a `dynamicToStaticConversion` has none (the
+cluster link is its scope). A list validated to **exactly one** entry today
+(one route, one migration per file).
+
 
 | Field           | Type       | Required | Notes                                                                                                            |
 | --------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -245,45 +281,57 @@ selected set can change between runs without the manifest changing. On a
 dynamic route that matters when resuming an interrupted migration — see
 [Execution model](#execution-model).
 
-The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
-— is **not** declared here; kcp reads it from the live CR on every execute
-run. It uses the route's own `mode` field when the CR sets one; otherwise it
-infers it from the binding: a named singular `streamingDomain` ⇒ static, a
-non-empty plural `streamingDomains` ⇒ dynamic. A route with both or neither is
-refused. On a static route the **bootstrap server id** is **derived** from the
+The route's **mode** is not declared separately: the section you declare
+fixes the mode the route must have, and kcp reads the live CR on every execute
+run to check it. It uses the route's own `mode` field when the CR sets one;
+otherwise it infers it from the binding: a named singular `streamingDomain` ⇒
+static, a non-empty plural `streamingDomains` ⇒ dynamic. A route with both or
+neither is refused, as is a route whose mode disagrees with the declared
+section. On a static route the **bootstrap server id** is **derived** from the
 target domain's declaration in the live CR, not written in the manifest.
-`kcp migration execute` runs the workflow that matches the route's mode: a
-whole-route cutover for a static route, topic by topic for a dynamic route.
+`kcp migration execute` runs the workflow that matches the declared type: a
+whole-route cutover for `staticMigration`, topic by topic for
+`dynamicMigration`.
 
 A dynamic route has two further requirements, both checked at reconcile (so
 `--dry-run` reports them): it must bind exactly two streaming domains (the
 source and the target), with `coordination.group` pinned to the source domain,
-and the cluster link's consumer offset sync must already be disabled, so
-`spec.clusterLink.pauseConsumerOffsetSync` is refused on a dynamic route.
+and the cluster link's consumer offset sync must already be disabled, which
+is why `spec.dynamicMigration` has no `consumerOffsetSync` section.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.
 
-## Converting a dynamic route to static (`spec.route.convertTo`)
+### `spec.staticMigration.consumerOffsetSync`
+
+Optional, static migrations only.
+
+| Field      | Type   | Required     | Default | Notes |
+| ---------- | ------ | ------------ | ------- | ----- |
+| `pause`    | bool   | no           | `false` | Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `baseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. It is also restored if a failure before promote rolls the fence back. |
+| `baseline` | string | when pausing | —       | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
+
+## Converting a dynamic route to static (`spec.dynamicToStaticConversion`)
 
 A topic-based migration leaves its route dynamic: each migrated topic is
 routed to the destination by a routing condition, and consumer-group
 coordination stays pinned to the source. Once every topic on the cluster link
-is migrated, `convertTo: static` replaces the dynamic route with a static route
+is migrated, `spec.dynamicToStaticConversion` replaces the dynamic route with a static route
 bound to the destination and copies the consumer groups' committed offsets
 there, so group coordination moves too. Run it when the last batch has
 switched.
 
 ```yaml
-route:
-  name: migration-route
-  convertTo: static
-  targetStreamingDomain: confluent-cloud
+spec:
+  dynamicToStaticConversion:
+    route:
+      name: migration-route
+      targetStreamingDomain: confluent-cloud
 ```
 
 A conversion selects no topics: the cluster link is its scope. The rest of
-the manifest is the topic-based migration's; see the
-[conversion example](#example-manifest).
+the manifest (`source`, `target`, `clusterLink`, `gateway`) is the topic-based
+migration's; see the [conversion example](#route-conversion).
 
 ### What is checked
 
@@ -400,26 +448,40 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
   of re-running: a re-run would report nothing to do.
 - **A finished conversion re-runs as nothing to do.**
 
-## `spec.defaultPolicies`
+## Policies
 
-Optional. Every field is a default that a matching `kcp migration execute` flag
-can override for a single run; the section is re-read fresh from the manifest
-on every `execute`, never fixed once. Duration values need a unit — `0s`,
-`90s`, `10m`; in the manifest a bare number such as `0` or `90` is a parse
-error (the command-line flags do accept a plain `0`). Negative values are
-rejected.
+Optional. Each declared section has its own `policies` block, and every field
+in it is a default that a matching `kcp migration execute` flag can override
+for a single run; the block is re-read fresh from the manifest on every
+`execute`, never fixed once. A field a section does not have is rejected by the
+strict decode, and a policy **flag** the declared type does not have is an error
+(it names the flag and the section). Duration values need a unit — `0s`, `90s`,
+`10m`; in the manifest a bare number such as `0` or `90` is a parse error (the
+command-line flags do accept a plain `0`). Negative values are rejected.
+
+| Field                             | `staticMigration` | `dynamicMigration` | `dynamicToStaticConversion` |
+| --------------------------------- | :---: | :---: | :---: |
+| `lagThreshold`                    | yes | yes | — |
+| `promoteBatchSize`                | yes | yes | — |
+| `rolloutTimeout`                  | yes | yes | yes |
+| `detectUnroutedProducersDuration` | yes | yes | — |
+| `consumerOffsetSyncDrainDuration` | yes | — | — |
+| `detectUnroutedCommitsDuration`   | — | — | yes |
+| `offsetSyncConcurrency`           | — | — | yes |
+| `hotReloadTimeout`                | yes | yes | yes |
+| `gatewayConfigPort`               | yes | yes | yes |
 
 | Field                             | Type     | Default | Override flag                           | Notes                                                                                                                                                                                                                                                                          |
 | --------------------------------- | -------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `lagThreshold`                    | int      | `0`     | `--lag-threshold`                       | Replication lag tolerated per topic: each selected topic's lag (the sum of its partition lags) must be at or below this before the run fences. `0` is the strictest (fully caught up).                                                                                        |
 | `promoteBatchSize`                | int      | `0`     | `--promote-batch-size`                  | Max mirror topics promoted per batch. `0` promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted.                                                                                                                           |
 | `rolloutTimeout`                  | duration | `0s`    | `--rollout-timeout`                     | Max wait for the operator to report the gateway `Ready` during fence and switchover (e.g. `10m`). `0s` means no deadline — waits until convergence or cancellation.                                                                                                            |
-| `detectUnroutedProducersDuration` | duration | `0s`    | `--detect-unrouted-producers-duration`  | After fencing, kcp takes two source-offset snapshots this far apart to catch producers still bypassing the gateway; if any partition's offset advanced, the run stops before promote. `0s` **skips the check entirely** (the default); minimum `10s` when set — shorter can't span a producer's metadata refresh. Ignored by a route conversion, which uses `detectUnroutedCommitsDuration` instead. |
-| `consumerOffsetSyncDrainDuration` | duration | `0s`    | `--consumer-offset-sync-drain-duration` | Static routes only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set (which a dynamic route refuses). `0s` means no wait.                                           |
+| `detectUnroutedProducersDuration` | duration | `0s`    | `--detect-unrouted-producers-duration`  | After fencing, kcp takes two source-offset snapshots this far apart to catch producers still bypassing the gateway; if any partition's offset advanced, the run stops before promote. `0s` **skips the check entirely** (the default); minimum `10s` when set — shorter can't span a producer's metadata refresh. Not available on a conversion, which uses `detectUnroutedCommitsDuration` instead. |
+| `consumerOffsetSyncDrainDuration` | duration | `0s`    | `--consumer-offset-sync-drain-duration` | `staticMigration` only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `consumerOffsetSync.pause` is set. `0s` means no wait.                                           |
 | `hotReloadTimeout`                | duration | `0s`    | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0s` uses the built-in 90s budget rather than waiting forever. |
 | `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
-| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | Route conversion only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` uses the built-in `30s` (this check can never be skipped); minimum `10s` when set. Ignored by AAO/TBM. |
-| `offsetSyncConcurrency`           | int      | `0`     | `--offset-sync-concurrency`             | Route conversion only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. Ignored by AAO/TBM. |
+| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` uses the built-in `30s` (this check can never be skipped); minimum `10s` when set. |
+| `offsetSyncConcurrency`           | int      | `0`     | `--offset-sync-concurrency`             | `dynamicToStaticConversion` only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. |
 
 ## Credentials
 
@@ -539,7 +601,7 @@ tables above:
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
 |                           | `--dry-run`                                                                                                                                                                                      | no                                  | Run only the reconcile step and print the plan; change nothing. Exits non-zero if the plan is refused.                                   |
-|                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port`, `--detect-unrouted-commits-duration`, `--offset-sync-concurrency` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
+|                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port`, `--detect-unrouted-commits-duration`, `--offset-sync-concurrency` | no                                  | Per-run overrides of the matching field in the declared section's `policies`, for this run only. A flag the declared type does not have is an error, including under `--dry-run`. |
 | `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 |                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds. Values outside `1`-`60` are clamped to that range.                                                                                                      |
 
@@ -552,7 +614,7 @@ Every flag can also be set through an upper-case environment variable of the
 same name with dashes as underscores (`--lag-threshold` is `LAG_THRESHOLD`,
 `--dry-run` is `DRY_RUN`, `--poll-interval` is `POLL_INTERVAL`); an explicit
 flag wins. A policy value set through an environment variable overrides the
-manifest exactly as the flag would, so a stray `LAG_THRESHOLD` in the shell
+manifest exactly as the flag would (and an inapplicable one is rejected the same way), so a stray `LAG_THRESHOLD` in the shell
 silently changes a run. The overrides are validated with the rest of the
 effective policy, including under `--dry-run`.
 
@@ -570,7 +632,7 @@ fail-fast, so an operator fixes the file in one pass:
 3 problem(s) found in the migration manifest:
   - spec.source.bootstrapServers: must not be empty
   - spec.target.clusterId: required for target type "confluent-cloud"
-  - spec.defaultPolicies.detectUnroutedProducersDuration: must be at least 10s when set (0 skips the check)
+  - spec.staticMigration.policies.detectUnroutedProducersDuration: must be at least 10s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh
 ```
 
 Key rules, beyond required/optional per field above:
@@ -579,9 +641,12 @@ Key rules, beyond required/optional per field above:
 - `spec.source.type` and `spec.target.type` must be one of their listed enum
   values.
 - Every `bootstrapServers` entry must be `host:port`.
-- `spec.clusterLink.consumerOffsetSyncBaseline` is required when
-  `pauseConsumerOffsetSync` is set, and if set at all must be `enabled` or
-  `disabled`.
+- Exactly one of `spec.staticMigration`, `spec.dynamicMigration` and
+  `spec.dynamicToStaticConversion` must be set. A manifest still using
+  `spec.route` or `spec.defaultPolicies` is rejected with a hint to move to the
+  new shape.
+- `spec.staticMigration.consumerOffsetSync.baseline` is required when `pause`
+  is set, and if set at all must be `enabled` or `disabled`.
 - `spec.clusterLink.name` must not be blank (existence itself isn't checked
   until the first `execute` run touches the destination); `spec.clusterLink.linkCredentials` must
   not be blank.
@@ -590,18 +655,16 @@ Key rules, beyond required/optional per field above:
   must be a non-blank file path; an inline mapping is rejected at parse.
 - `spec.gateway.namespace` and `cr-name` must not be blank; the retired
   `crs`/`routes` keys must not be set at all (they fail the strict decode).
-- `spec.route.name` and `spec.route.targetStreamingDomain` must not be blank;
-  unless `spec.route.convertTo` is set, `spec.route.topicGroup` must have
-  exactly one entry.
-- `spec.route.convertTo`, if set, must be `static`, and `spec.route.topicGroup`
-  must not be set with it.
+- The declared section's `route.name` and `route.targetStreamingDomain` must
+  not be blank. A migration's `topicGroup` must have exactly one entry; a
+  `dynamicToStaticConversion` has no `topicGroup` field.
 - Each entry must set at least one of `topics` / `topicPatterns` (both is
   allowed). Neither present is rejected. `topics`/`topicPatterns`, if present,
   must be non-empty with no blank entries; each `topicPatterns` entry must
   compile as an anchored RE2 regular expression.
 - Duration policies are written with a unit (`0s`, `10m`); a bare number is a
   parse error.
-- No `spec.defaultPolicies` field may be negative;
+- No `policies` field may be negative;
   `detectUnroutedProducersDuration` and `detectUnroutedCommitsDuration`, if
   greater than zero, must be at least `10s`.
 
@@ -631,43 +694,55 @@ REST credentials files; `lag-check` reads only the REST one.
 | `spec.clusterLink.name`                                   | string         | yes                                                    | —                                            | must reference an existing link                              |
 | `spec.clusterLink.bootstrapServers`                       | `[]string`     | no                                                     | —                                            | repeats `spec.target.kafka.bootstrapServers`; unvalidated   |
 | `spec.clusterLink.linkCredentials`                        | path           | yes                                                    | —                                            | file path; `api_key`/`api_secret`, `basic`, `bearer`, or `mtls` |
-| `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
-| `spec.clusterLink.consumerOffsetSyncBaseline`             | string         | when `pauseConsumerOffsetSync` is set                  | —                                            | `enabled`, `disabled`                                        |
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
 | `spec.gateway.kubeconfig`                                 | string         | no                                                     | in-cluster in a pod, else `~/.kube/config`   | `~/` expanded                                                |
 | `spec.gateway.cr-name`                                    | string         | yes                                                    | —                                            | K8s object name                                              |
-| `spec.route.name`                                         | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
-| `spec.route.topicGroup`                                   | list           | unless `convertTo` is set                              | —                                            | exactly one entry; not with `convertTo`                     |
-| `spec.route.convertTo`                                    | string         | no                                                     | —                                            | `static`                                                     |
-| `spec.route.topicGroup[].topics`                          | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, literal names                         |
-| `spec.route.topicGroup[].topicPatterns`                   | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, anchored RE2 patterns (`['.*']` = all) |
-| `spec.route.targetStreamingDomain`                        | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
-| `spec.defaultPolicies.lagThreshold`                       | int            | no                                                     | `0`                                          | `>= 0`                                                       |
-| `spec.defaultPolicies.promoteBatchSize`                   | int            | no                                                     | `0`                                          | `>= 0`                                                       |
-| `spec.defaultPolicies.rolloutTimeout`                     | duration       | no                                                     | `0s`                                         | `>= 0s`                                                      |
-| `spec.defaultPolicies.detectUnroutedProducersDuration`    | duration       | no                                                     | `0s`                                         | `0s`, or `>= 10s`                                            |
-| `spec.defaultPolicies.consumerOffsetSyncDrainDuration`    | duration       | no                                                     | `0s`                                         | `>= 0s`                                                      |
-| `spec.defaultPolicies.hotReloadTimeout`                   | duration       | no                                                     | `0s`                                         | `>= 0s`                                                      |
-| `spec.defaultPolicies.gatewayConfigPort`                  | int            | no                                                     | `0`                                          | `>= 0`                                                       |
-| `spec.defaultPolicies.detectUnroutedCommitsDuration`      | duration       | no                                                     | `0s`                                         | `0s`, or `>= 10s`                                           |
-| `spec.defaultPolicies.offsetSyncConcurrency`              | int            | no                                                     | `0`                                          | `>= 0`                                                      |
+| `spec.<section>.route.name`                               | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
+| `spec.<section>.route.targetStreamingDomain`              | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
+| `spec.<migration>.topicGroup`                             | list           | yes (migrations only)                                  | —                                            | exactly one entry                                            |
+| `spec.<migration>.topicGroup[].topics`                    | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, literal names                         |
+| `spec.<migration>.topicGroup[].topicPatterns`             | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, anchored RE2 patterns (`['.*']` = all) |
+| `spec.staticMigration.consumerOffsetSync.pause`           | bool           | no                                                     | `false`                                      | —                                                            |
+| `spec.staticMigration.consumerOffsetSync.baseline`        | string         | when `pause` is set                                    | —                                            | `enabled`, `disabled`                                        |
+| `spec.<section>.policies.lagThreshold`                    | int            | no                                                     | `0`                                          | `>= 0`; static, dynamic                                      |
+| `spec.<section>.policies.promoteBatchSize`                | int            | no                                                     | `0`                                          | `>= 0`; static, dynamic                                      |
+| `spec.<section>.policies.rolloutTimeout`                  | duration       | no                                                     | `0s`                                         | `>= 0s`; all                                                 |
+| `spec.<section>.policies.detectUnroutedProducersDuration` | duration       | no                                                     | `0s`                                         | `0s`, or `>= 10s`; static, dynamic                           |
+| `spec.staticMigration.policies.consumerOffsetSyncDrainDuration` | duration | no                                                     | `0s`                                         | `>= 0s`                                                      |
+| `spec.<section>.policies.hotReloadTimeout`                | duration       | no                                                     | `0s`                                         | `>= 0s`; all                                                 |
+| `spec.<section>.policies.gatewayConfigPort`               | int            | no                                                     | `0`                                          | `>= 0`; all                                                  |
+| `spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration` | duration | no                                                 | `0s`                                         | `0s`, or `>= 10s`                                            |
+| `spec.dynamicToStaticConversion.policies.offsetSyncConcurrency` | int      | no                                                     | `0`                                          | `>= 0`                                                       |
 
-## Example manifest
+## Example manifests
 
-A fully-annotated, ready-to-copy `gateway-migration.yaml` — every field, with
-comments. It is also available as a plain file at
-[`gateway-examples/gateway-migration.yaml`](gateway-examples/gateway-migration.yaml)
-(that link downloads the raw file rather than opening it in-browser).
+One fully-annotated, ready-to-copy manifest per migration type — every field,
+with comments. Each is also available as a plain file under
+[`gateway-examples/`](gateway-examples/) (a link downloads the raw file rather
+than opening it in-browser).
+
+### Static migration
+
+[`gateway-static-migration.yaml`](gateway-examples/gateway-static-migration.yaml)
 
 ```yaml
---8<-- "docs/assets/gateway-examples/gateway-migration.yaml"
+--8<-- "docs/assets/gateway-examples/gateway-static-migration.yaml"
 ```
 
-A route conversion uses the same manifest with `spec.route.convertTo` in
-place of `topicGroup` (see
-[Converting a dynamic route to static](#converting-a-dynamic-route-to-static-specrouteconvertto)).
-This shorter example is also available as a plain file at
-[`gateway-examples/gateway-route-conversion.yaml`](gateway-examples/gateway-route-conversion.yaml).
+### Dynamic migration
+
+[`gateway-dynamic-migration.yaml`](gateway-examples/gateway-dynamic-migration.yaml)
+
+```yaml
+--8<-- "docs/assets/gateway-examples/gateway-dynamic-migration.yaml"
+```
+
+### Route conversion
+
+A route conversion declares `spec.dynamicToStaticConversion` in place of a
+migration section (see
+[Converting a dynamic route to static](#converting-a-dynamic-route-to-static-specdynamictostaticconversion)).
+[`gateway-route-conversion.yaml`](gateway-examples/gateway-route-conversion.yaml)
 
 ```yaml
 --8<-- "docs/assets/gateway-examples/gateway-route-conversion.yaml"
@@ -675,7 +750,7 @@ This shorter example is also available as a plain file at
 
 ## Editor support
 
-`gateway-examples/gateway-migration.yaml` carries a `# yaml-language-server:
+Each file under `gateway-examples/` carries a `# yaml-language-server:
 $schema=…` modeline that fetches the manifest's JSON schema from the `main`
 branch of the kcp repository on GitHub
 (`internal/manifest/gatewaymigration.schema.json`), so VS Code with the

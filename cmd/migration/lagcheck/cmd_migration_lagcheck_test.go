@@ -47,12 +47,13 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-  route:
-    name: migration-route
+  staticMigration:
+    route:
+      name: migration-route
+      targetStreamingDomain: confluent-cloud
     topicGroup:
       - topicPatterns:
           - '.*'
-    targetStreamingDomain: confluent-cloud
 `
 
 // Default credential-file bodies for the canonical lag-check manifest. The
@@ -195,8 +196,8 @@ func TestLagCheck_AlwaysWatchesEveryMirrorTopic(t *testing.T) {
 	// Confirm the manifest actually carries an explicit selection, so this test
 	// exercises "explicit topics are ignored" rather than passing vacuously
 	// because the match-all pattern was left in place.
-	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
-	assert.Equal(t, []string{"t1.order"}, *g.Spec.Route.TopicGroup[0].Topics)
+	require.NotNil(t, g.Spec.StaticMigration.TopicGroup[0].Topics)
+	assert.Equal(t, []string{"t1.order"}, *g.Spec.StaticMigration.TopicGroup[0].Topics)
 
 	cfg, _, err := buildLagCheckConfig(g)
 	require.NoError(t, err)

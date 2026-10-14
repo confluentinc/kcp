@@ -1,5 +1,5 @@
 // Package routeconversion is the live e2e suite for a dynamic-to-static route
-// conversion (spec.route.convertTo: static) against a real Confluent Gateway,
+// conversion (spec.dynamicToStaticConversion) against a real Confluent Gateway,
 // cluster link and clients (Minikube profile kcp-e2e-route-conversion). The
 // e2e tests (build tag e2e) drive the real `kcp migration execute`, interrupt
 // or fail it with the killpoint seams, and run verifiable clients through the

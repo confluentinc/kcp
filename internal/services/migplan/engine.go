@@ -36,14 +36,14 @@ func (e *ReconciliationEngine) WithGroupListers(source, target GroupLister) *Rec
 // Run gathers the live inputs and reconciles. A provider read failure is
 // returned as an error; a feasibility refusal is carried in the *Plan's Report
 // (with Artifacts nil), not as an error. The secrets provider is only
-// consulted for a static-mode route — a dynamic-route migration has no
+// consulted for a declared static migration on a static-mode route — a dynamic-route migration has no
 // redundant-auth concept, so no live secret lookup is made for one.
-// A route conversion (in.ConvertTo set) reads its facts through
+// A route conversion (in.Type is TypeDynamicToStatic) reads its facts through
 // GatherConvertFacts, lists the source groups and fetches the topics they have
 // committed on, and reconciles through reconcile.ReconcileConvert; the secrets
 // provider is not consulted for it.
 func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
-	if in.ConvertTo != "" {
+	if in.Type == reconcile.TypeDynamicToStatic {
 		return e.runConvert(ctx, in)
 	}
 
@@ -77,7 +77,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 
 	var missingSecrets []string
 	var secretCheckSkipped string
-	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+	if in.Type == reconcile.TypeStatic && gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		if names := reconcile.ResolveStagedSecretNames(gw, in.TargetDomain); len(names) > 0 {
 			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(ctx, names)
 			if err != nil {

@@ -1,6 +1,6 @@
 # Route conversion (d2s) — live E2E
 
-Proves `spec.route.convertTo: static` end to end against a **live Confluent
+Proves `spec.dynamicToStaticConversion` end to end against a **live Confluent
 Gateway** (dynamic route, hot reload), a real cluster link and real clients
 (Minikube profile `kcp-e2e-route-conversion`): a dynamic route left by a
 finished topic-based migration is converted to a static route on the
