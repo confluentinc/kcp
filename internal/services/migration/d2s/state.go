@@ -1,5 +1,5 @@
 // Package d2s implements the FSM-driven orchestrator for a dynamic-to-static route conversion
-// (spec.route.convertTo: static): fence the dynamic route, re-check the conversion on post-fence data, copy
+// (spec.dynamicToStaticConversion): fence the dynamic route, re-check the conversion on post-fence data, copy
 // the in-scope consumer groups' committed offsets to the destination, and switch the route to static. It reads
 // and writes migration.MigrationConfig, built from the manifest and the run's reconcile result on every run,
 // like AAO and TBM.

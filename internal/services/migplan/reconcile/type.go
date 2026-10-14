@@ -12,3 +12,17 @@ const (
 	TypeDynamic         MigrationType = "DYNAMIC"
 	TypeDynamicToStatic MigrationType = "DYNAMIC_TO_STATIC"
 )
+
+// sectionKey is the manifest section that declares this type, for refusals that
+// must name the declaration the operator actually wrote ("" for an unknown type).
+func (t MigrationType) sectionKey() string {
+	switch t {
+	case TypeStatic:
+		return "staticMigration"
+	case TypeDynamic:
+		return "dynamicMigration"
+	case TypeDynamicToStatic:
+		return "dynamicToStaticConversion"
+	}
+	return ""
+}

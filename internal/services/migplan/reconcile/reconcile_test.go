@@ -800,7 +800,7 @@ func TestReconcileDynamic_RefusesOffsetSyncPause(t *testing.T) {
 			if p.Report.Refused() != pause {
 				t.Fatalf("Refused = %v, want %v", p.Report.Refused(), pause)
 			}
-			if pause && !strings.Contains(found.Detail, "pauseConsumerOffsetSync") {
+			if pause && !strings.Contains(found.Detail, "cannot pause consumer offset sync") {
 				t.Fatalf("the refusal must name the manifest field, got %q", found.Detail)
 			}
 			if p.Report.RestoreOffsetSync || p.NothingToDo {
@@ -1236,5 +1236,22 @@ func TestReconcile_ConversionTypeMustUseReconcileConvert(t *testing.T) {
 	}
 	if plan.Mode != "convert" {
 		t.Fatalf("Mode = %q, want convert", plan.Mode)
+	}
+}
+
+// A conversion against a route with an unrecognized live mode is refused by the
+// shared "route is dynamic" precondition, and the refusal names the declaration
+// the operator actually wrote.
+func TestReconcileConvert_UnrecognizedRouteModeNamesTheConversionDeclaration(t *testing.T) {
+	gw := dynGateway()
+	gw.Route.Mode = "bogus"
+	plan := ReconcileConvert(ReconcileInput{Type: TypeDynamicToStatic, Route: "migration-route", TargetDomain: "cc"},
+		gw, nil, nil, nil, PartitionCounts{}, false, ClusterIDs{}, GroupFacts{})
+	if !plan.Report.Refused() {
+		t.Fatal("a conversion against an unrecognized route mode must be refused")
+	}
+	d := failedDetail(t, plan.Report, "route is dynamic")
+	if !strings.Contains(d, "dynamicToStaticConversion is declared") || strings.Contains(d, "dynamicMigration") {
+		t.Fatalf("detail = %q", d)
 	}
 }

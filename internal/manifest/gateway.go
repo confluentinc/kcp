@@ -218,7 +218,7 @@ func legacyShapeHint(data []byte) string {
 	if len(found) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("the manifest shape changed: %s %s no longer valid — declare the migration type by providing exactly one of %s, each carrying its own route, topicGroup and policies (see docs/assets/gateway-examples/)",
+	return fmt.Sprintf("the manifest shape changed: %s %s no longer valid — declare the migration type by providing exactly one of %s, each carrying its own route, policies and, for migrations, topicGroup (see docs/assets/gateway-examples/)",
 		strings.Join(found, ", "), pluralIs(len(found)), strings.Join(sectionKeys, ", "))
 }
 

@@ -279,8 +279,9 @@ func (s GatewaySpec) PolicyLogArgs() []any {
 	return nil
 }
 
-// LogArgs, one per policies type, is the single place that policy's fields are
-// spelled out for the audit log, so a new field cannot silently drop out of it.
+// logArgs spells out the common policy fields for the audit log; each policies
+// type's exported LogArgs appends its own fields to it, so each type's fields
+// are spelled out in exactly one place and a new field cannot silently drop out.
 func (p CommonPolicies) logArgs() []any {
 	return []any{"hot_reload_timeout", p.HotReloadTimeout, "gateway_config_port", p.GatewayConfigPort}
 }
