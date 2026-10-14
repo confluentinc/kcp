@@ -48,6 +48,7 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 	// None of these may panic.
 	r.StageStarted(EventFence, StateLagsOk, StateFenced)
 	r.StageEnded(StateFenced)
+	r.SetTopics(5)
 	r.StageFailed(errors.New("boom"))
 	r.Finish(StateFenced, nil)
 }
@@ -104,6 +105,33 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.False(t, report.EndedAt.IsZero())
 	assert.GreaterOrEqual(t, report.DurationMs, int64(0))
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
+}
+
+func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "run-report.json")
+	recorder := NewRunReportRecorder(reportPath, "migration-1", 0, 0, StateUninitialized)
+	require.Equal(t, 0, readRunReport(t, reportPath).Topics)
+
+	recorder.SetTopics(7)
+
+	assert.Equal(t, 7, readRunReport(t, reportPath).Topics)
+}
+
+func TestRunReport_RecordsReconciledTopics(t *testing.T) {
+	topics := []string{"topic-a", "topic-b", "topic-c"}
+	orch, config := newHappyPathOrchestrator(t, topics)
+	config.Topics = nil // not yet reconciled when the command layer builds the recorder
+	reportPath := filepath.Join(t.TempDir(), "run-report.json")
+
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, orch.CurrentState())
+	orch.SetRunReportRecorder(recorder)
+
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(topics)))
+	recorder.Finish(orch.CurrentState(), nil)
+
+	report := readRunReport(t, reportPath)
+	assert.Equal(t, len(topics), report.Topics)
+	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 }
 
 // TestRunReport_FailedRunIsRecorded is the case the perf rig depends on: a run

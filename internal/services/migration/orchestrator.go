@@ -237,6 +237,10 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
+		if step.Event == EventInitialize {
+			// The recorder is built before initialize reconciles the topics.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
 		o.runReport.StageEnded(o.fsm.Current())
 		o.reporter.stepDone()
 
