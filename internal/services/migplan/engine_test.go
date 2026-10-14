@@ -111,7 +111,7 @@ func TestEngineRunHappyPath(t *testing.T) {
 		}},
 		&fakeSecretChecker{},
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestEngineRunProviderErrorIsError(t *testing.T) {
 		{"target", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{err: boom}, okLink, &fakeSecretChecker{})},
 		{"link", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{}, &fakeLink{err: boom}, &fakeSecretChecker{})},
 	}
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := c.eng.Run(context.Background(), in); err == nil {
@@ -167,7 +167,7 @@ func TestReconciliationEngine_Run_StaticMode_ChecksOnlyTargetSecret(t *testing.T
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeStatic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefus
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeStatic}
 	plan, err := eng.Run(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider(t *testi
 		}},
 		secrets,
 	)
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	if _, err := eng.Run(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func convertEngine(src, tgt GroupLister) *ReconciliationEngine {
 	).WithGroupListers(src, tgt)
 }
 
-var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
+var convertIn = reconcile.ReconcileInput{Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamicToStatic}
 
 func TestEngineRun_ConversionUsesBothGroupListers(t *testing.T) {
 	src := &fakeGroupLister{
@@ -544,7 +544,7 @@ func TestEngineRun_TopicMigrationNeverListsGroups(t *testing.T) {
 		&fakeSecretChecker{},
 	).WithGroupListers(src, tgt)
 
-	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
 	if _, err := eng.Run(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
