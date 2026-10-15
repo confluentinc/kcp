@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -86,7 +88,7 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 		// bury the error under Cobra's usage block.
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
-		PreRunE:      func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
+		PreRunE:      bindEnvAndMarkDerived,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runMigrationExecute(c, args, deps)
 		},
@@ -280,6 +282,31 @@ func effectivePolicyLogArgs(migrationID string, spec manifest.GatewaySpec) []any
 	return append([]any{"migration_id", migrationID, "migration_type", string(spec.MigrationType())}, spec.PolicyLogArgs()...)
 }
 
+// envDerivedAnnotation tags a flag whose value was filled from its environment
+// variable rather than typed on the command line.
+const envDerivedAnnotation = "kcp.env-derived"
+
+// bindEnvAndMarkDerived binds env vars to flags, then tags each flag the binding
+// set. BindEnvToFlags goes through pflag's Set, which marks a flag Changed, so
+// afterwards an env-derived value looks like an explicit --flag; the tag keeps
+// the two apart. An env var is a shell-wide default, not a request about this
+// migration, so an inapplicable one must stay silently ignored (as it was before
+// the type was declared) rather than fail the run.
+func bindEnvAndMarkDerived(cmd *cobra.Command, _ []string) error {
+	explicit := map[string]bool{}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) { explicit[f.Name] = f.Changed })
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+	var err error
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed && !explicit[f.Name] {
+			err = errors.Join(err, cmd.Flags().SetAnnotation(f.Name, envDerivedAnnotation, []string{"true"}))
+		}
+	})
+	return err
+}
+
 // policyFlagTypes names, per policy flag, the migration types whose policies
 // carry that field. A flag set for any other type fails the run before anything
 // is touched: a flag that silently does nothing is a hazard ahead of a cutover.
@@ -295,7 +322,7 @@ var policyFlagTypes = map[string][]manifest.MigrationType{
 	"offset-sync-concurrency":             {manifest.MigrationTypeDynamicToStatic},
 }
 
-// checkPolicyFlagsApply errors on a policy flag the operator set explicitly that
+// checkPolicyFlagsApply errors on a policy flag the operator set on the command line that
 // the declared migration type does not have. Flags are checked in sorted order
 // so the error is deterministic when several are inapplicable.
 func checkPolicyFlagsApply(cmd *cobra.Command, t manifest.MigrationType) error {
@@ -305,7 +332,7 @@ func checkPolicyFlagsApply(cmd *cobra.Command, t manifest.MigrationType) error {
 	}
 	sort.Strings(flags)
 	for _, flag := range flags {
-		if !cmd.Flags().Changed(flag) {
+		if !cmd.Flags().Changed(flag) || cmd.Flags().Lookup(flag).Annotations[envDerivedAnnotation] != nil {
 			continue
 		}
 		types := policyFlagTypes[flag]

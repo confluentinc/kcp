@@ -662,6 +662,23 @@ func TestExecute_DryRun_RejectsInapplicablePolicyFlag(t *testing.T) {
 		"an inapplicable flag must be rejected before reconcile is attempted")
 }
 
+// TestExecute_DryRun_IgnoresInapplicableEnvPolicy — an exported policy env var
+// the declared type does not carry is silently ignored (as before types were
+// declared); only an explicit --flag is an error.
+func TestExecute_DryRun_IgnoresInapplicableEnvPolicy(t *testing.T) {
+	f := newFixture(t, nil) // declares staticMigration
+	t.Setenv("OFFSET_SYNC_CONCURRENCY", "4")
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
+	require.Error(t, err, "reconcile still fails against the fixture's unreachable kubeconfig")
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan",
+		"an env-derived inapplicable value must not be rejected as a flag")
+
+	_, err = runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run", "--offset-sync-concurrency=4")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offset-sync-concurrency", "the explicit flag is still rejected")
+}
+
 // TestExecute_DryRun_FailsAtReconcile proves --dry-run reaches migplan.Reconcile
 // and nothing else — it runs no FSM transition.
 func TestExecute_DryRun_FailsAtReconcile(t *testing.T) {
