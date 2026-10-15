@@ -129,6 +129,7 @@ The full CLI reference is generated directly from the Cobra command definitions 
 ## Related guides
 
 - [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
+- [Running kcp in Docker](running-kcp-in-docker.md) — container usage, credentials, and internal-registry mirroring.
 - [Gateway Switchover Examples](gateway-switchover/index.md)
 - [Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md) — schema and worked examples for `apache-kafka-credentials.yaml`
 - [Apache Kafka configuration → Metrics collection](apache-kafka-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for Apache Kafka metrics

@@ -2,6 +2,8 @@ module github.com/confluentinc/kcp
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/IBM/sarama v1.46.3
 	github.com/aws/aws-msk-iam-sasl-signer-go v1.0.4
