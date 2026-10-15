@@ -80,7 +80,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -174,6 +174,39 @@ test-route-conversion-run: ## Run the route-conversion E2E against an already-pr
 
 test-route-conversion-teardown: ## Tear down the route-conversion E2E cluster
 	@bash integration-tests/route-conversion/teardown.sh
+
+OTEL_LGTM_IMAGE ?= grafana/otel-lgtm:0.34.0
+OTEL_LGTM_NAME  ?= kcp-otel-lgtm
+
+otel-up: ## Start a local OTel backend with the kcp tracing dashboard (Grafana on :3000, OTLP on :4317/:4318)
+	docker run -d --rm --name $(OTEL_LGTM_NAME) -p 3000:3000 -p 4317:4317 -p 4318:4318 \
+	  -v $(CURDIR)/internal/tracing/grafana:/otel-lgtm/kcp-dashboards:ro \
+	  -v $(CURDIR)/internal/tracing/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/kcp.yaml:ro \
+	  -v $(CURDIR)/internal/tracing/grafana/tempo-config.yaml:/otel-lgtm/tempo-config.yaml:ro \
+	  $(OTEL_LGTM_IMAGE)
+	@echo "kcp tracing dashboard: http://localhost:3000/d/kcp-tracing (ready in ~30s). Send traces with:"
+	@echo "  KCP_TRACING_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 kcp ..."
+
+otel-down: ## Stop the local OTel backend
+	docker stop $(OTEL_LGTM_NAME)
+
+# GATEWAY_MODE picks the migration kind the tracing suite runs: dynamic (the
+# default) or static from integration-tests/tracing, convert (dynamic to static)
+# from integration-tests/tracing/convert. Each has its own Minikube profile.
+TRACING_SUITE = $(if $(filter convert,$(GATEWAY_MODE)),integration-tests/tracing/convert,integration-tests/tracing)
+
+test-tracing: test-tracing-setup ## Run the tracing smoke E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static|convert
+	@trap 'echo ""; echo "Tearing down tracing E2E infrastructure..."; bash $(TRACING_SUITE)/teardown.sh' EXIT; \
+	bash $(TRACING_SUITE)/run.sh
+
+test-tracing-setup: ## Set up a tracing smoke cluster (GATEWAY_MODE=dynamic default, static, or convert)
+	@bash $(TRACING_SUITE)/setup.sh
+
+test-tracing-run: ## Run the tracing smoke E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static|convert
+	@bash $(TRACING_SUITE)/run.sh "$(RUN)"
+
+test-tracing-teardown: ## Tear down a tracing smoke cluster (GATEWAY_MODE=dynamic|static|convert)
+	@bash $(TRACING_SUITE)/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh

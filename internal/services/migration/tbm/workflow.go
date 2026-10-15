@@ -15,7 +15,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -141,8 +143,14 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 
 	if len(config.Topics) == 0 {
 		a.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
+
+	polls, behind := 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx, attribute.Int("kcp.polls", polls), attribute.Int("kcp.topics_behind", behind))
+	}()
 
 	ticker := time.NewTicker(a.lagPollInterval)
 	defer ticker.Stop()
@@ -160,6 +168,7 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 		allBelowThreshold := true
 		topicTotalLags := make(map[string]int64)
 
+		polls++
 		sourceOffsets, destinationOffsets, err := a.fetchSourceAndDestinationOffsets(ctx, config.Topics)
 		if err != nil {
 			sweepFailures++
@@ -184,6 +193,8 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 				topicTotalLags[topic] = lag
 			}
 		}
+
+		behind = len(topicTotalLags)
 
 		if allBelowThreshold {
 			a.reporter.blank()
@@ -251,6 +262,7 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	// batch awaiting switchover. Gating on Topics would silently skip that fence.
 	if config.FenceYAML == "" {
 		a.reporter.Success("No topics to fence")
+		tracing.MarkSkipped(ctx, "no_fence_in_plan")
 		return nil
 	}
 
@@ -333,6 +345,7 @@ func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	if detectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
 		a.reporter.Detail("Detection disabled (spec.dynamicMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
+		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
 	}
 
@@ -394,8 +407,16 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		}
 	}
 	sweepFailures := 0
+	polls, batches, promoteErrors := 0, 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx,
+			attribute.Int("kcp.polls", polls),
+			attribute.Int("kcp.batches", batches),
+			attribute.Int("kcp.promote_errors", promoteErrors))
+	}()
 
 	for {
+		polls++
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -441,12 +462,10 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			a.reporter.Detail("Waiting for current batch of %d topic(s) to reach STOPPED...", len(awaitingStop))
 			slog.Debug("batch in flight, waiting for STOPPED before next batch",
 				"awaitingStop", len(awaitingStop), "pollInterval", a.promotePollInterval)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(a.promotePollInterval):
-				continue
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
 			}
+			continue
 		}
 
 		candidates := make([]string, 0, len(remaining))
@@ -466,10 +485,8 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			}
 			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(a.promotePollInterval):
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
 			}
 			continue
 		}
@@ -497,12 +514,10 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 				slog.Debug("no topics at zero lag yet, waiting",
 					"remaining", len(remaining), "pollInterval", a.promotePollInterval)
 			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(a.promotePollInterval):
-				continue
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
 			}
+			continue
 		}
 
 		a.reporter.Success("%s confirmed at zero lag", color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
@@ -513,6 +528,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		a.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		batches++
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
@@ -520,6 +536,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
+				promoteErrors++
 				retryCount[topic.MirrorTopicName]++
 				a.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
 					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
@@ -548,10 +565,8 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		}
 
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", a.promotePollInterval)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(a.promotePollInterval):
+		if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+			return err
 		}
 	}
 }
@@ -576,6 +591,7 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 	// (config.SwitchoverYAML non-empty).
 	if config.SwitchoverYAML == "" {
 		a.reporter.Success("No topics to switch")
+		tracing.MarkSkipped(ctx, "no_switchover_in_plan")
 		return nil
 	}
 

@@ -171,9 +171,7 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 
 // TestExecute_VisibleFlagSurface — the visible flags are the manifest path,
 // --dry-run and the per-policy overrides that vary a spec.<section>.policies value
-// for a single run. --run-report is registered but hidden (a diagnostics
-// path whose only consumer is the performance rig), so it is asserted
-// separately rather than padding the advertised surface.
+// for a single run.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -189,10 +187,6 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"hot-reload-timeout", "gateway-config-port", "dry-run",
 		"detect-unrouted-commits-duration", "offset-sync-concurrency",
 	}, visible)
-
-	runReport := cmd.Flags().Lookup("run-report")
-	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
-	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
 // TestExecute_HasNoTopologyOrAuthFlags — topology and auth come from the
@@ -733,7 +727,7 @@ func runExecutePlan(t *testing.T, f fixture, res *migplan.Result, deps executorD
 	var out strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
-	err := executePlan(cmd, g, config, res, deps, "")
+	err := executePlan(cmd, g, config, res, deps)
 	return out.String(), err
 }
 
@@ -929,14 +923,14 @@ func TestApplyPolicyOverrides_ZeroStillOverrides(t *testing.T) {
 
 func TestExecutePlan_UnknownTypeErrors(t *testing.T) {
 	cmd := newExecuteCmd(t)
-	err := executePlan(cmd, &manifest.GatewayMigration{}, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{}, "")
+	err := executePlan(cmd, &manifest.GatewayMigration{}, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
 }
 
 func TestExecutePlan_ResultModeMustMatchDeclaredType(t *testing.T) {
 	cmd := newExecuteCmd(t)
 	g := gatewayOf(t, manifest.MigrationTypeDynamic)
-	err := executePlan(cmd, g, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{}, "")
+	err := executePlan(cmd, g, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "does not match the declared")
 }
 

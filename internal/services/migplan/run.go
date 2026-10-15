@@ -13,7 +13,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -129,7 +131,19 @@ func WithOutput(w io.Writer) Option {
 // consumes the returned Result for the machine-facing outputs. The gateway
 // source and the report destination are injectable (WithGatewaySource /
 // WithOutput) for testing without live Kubernetes; both default to production.
-func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option) (*Result, error) {
+func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option) (res *Result, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "migplan.reconcile")
+	defer func() {
+		if res != nil {
+			span.SetAttributes(
+				attribute.String("kcp.route.mode", res.Mode),
+				attribute.Bool("kcp.refused", res.Refused),
+				attribute.Bool("kcp.nothing_to_do", res.NothingToDo),
+				attribute.Int("kcp.topics.migrate", len(res.MigrateTopics)),
+			)
+		}
+		tracing.End(span, err)
+	}()
 	o := reconcileOptions{}
 	for _, opt := range opts {
 		opt(&o)

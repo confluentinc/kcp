@@ -50,6 +50,8 @@ crash.*.log
 !docs/assets/report-plan-examples/demo-scan.json
 !docs/assets/report-plan-examples/demo-osk-scan.json
 !docs/assets/report-plan-examples/*/plan.json
+# Allow the provisioned kcp tracing Grafana dashboard (`make otel-up`)
+!internal/tracing/grafana/kcp-tracing.json
 
 # Ignore coverage files
 coverage.out

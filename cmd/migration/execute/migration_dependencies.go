@@ -150,7 +150,7 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 	closeFn := func() error {
 		return errors.Join(srcClient.Close(), destClient.Close())
 	}
-	return offset.NewOffsetService(srcClient), offset.NewOffsetService(destClient), closeFn, nil
+	return offset.NewOffsetService(srcClient).WithCluster("source"), offset.NewOffsetService(destClient).WithCluster("destination"), closeFn, nil
 }
 
 // authForConn resolves conn's auth into the shared admin option, and the IAM
@@ -268,7 +268,7 @@ func buildConvertServices(g *manifest.GatewayMigration) (convertServices, error)
 			},
 			Wait:              groupoffsets.Sleep,
 			DestinationTopics: providers.Target.ListTopics,
-			HighWaterMarks:    offset.NewOffsetService(sweepClient),
+			HighWaterMarks:    offset.NewOffsetService(sweepClient).WithCluster("destination"),
 			Committers: func() (groupoffsets.GroupCommitter, func(), error) {
 				c, err := newConsumerGroupClientForConn(dstConn)
 				if err != nil {

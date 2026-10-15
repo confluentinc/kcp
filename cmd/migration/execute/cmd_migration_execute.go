@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,11 +35,6 @@ var (
 	gatewayConfigPortOverride               int
 	detectUnroutedCommitsDurationOverride   time.Duration
 	offsetSyncConcurrencyOverride           int
-	// runReport is the diagnostics knob carried over from #408. It stays a flag
-	// rather than a manifest policy field: the path is a per-run, machine-specific
-	// output location — operational, not versioned desired state — and the
-	// external migration performance rig (its only consumer) drives it this way.
-	runReport string
 )
 
 const executeLong = `Execute a migration: run the cutover described by a migration manifest.
@@ -110,15 +106,6 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override policies.gatewayConfigPort (all migration types): port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses the manifest's policies.gatewayConfigPort; 0 means the gateway default (9180).")
 	cmd.Flags().DurationVar(&detectUnroutedCommitsDurationOverride, "detect-unrouted-commits-duration", 0, "Override policies.detectUnroutedCommitsDuration (dynamicToStaticConversion only): window between the two committed-offset snapshots taken after fencing a route conversion, to catch a consumer committing to the source directly. 0 uses the built-in 30s; minimum 10s when set.")
 	cmd.Flags().IntVar(&offsetSyncConcurrencyOverride, "offset-sync-concurrency", 0, "Override policies.offsetSyncConcurrency (dynamicToStaticConversion only): number of workers (each with its own broker connection) reading and writing consumer-group offsets during a route conversion. 0 uses the built-in 8.")
-
-	// Hidden pending schema validation by the migration performance rig, its
-	// first consumer; intended to become user-facing, since the natural audience
-	// for per-stage timings is someone rehearsing their own migration. It is a
-	// flag, not a manifest policy field, because the path is a per-run output
-	// location rather than versioned desired state. PreRunE's BindEnvToFlags also
-	// binds it to the RUN_REPORT env var.
-	cmd.Flags().StringVar(&runReport, "run-report", "", "Write per-stage migration timings to <path> as JSON.")
-	_ = cmd.Flags().MarkHidden("run-report")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 	return cmd
@@ -202,7 +189,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
-	return executePlan(cmd, g, &config, reconcileResult, deps, runReport)
+	return executePlan(cmd, g, &config, reconcileResult, deps)
 }
 
 // executePlan acts on this run's reconcile result and makes no decision of its
@@ -215,7 +202,6 @@ func executePlan(
 	config *migration.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
-	runReportPath string,
 ) error {
 	if reconcileResult.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
@@ -251,7 +237,7 @@ func executePlan(
 	case manifest.MigrationTypeDynamicToStatic:
 		return runConvertBranch(cmd, g, config, reconcileResult, deps)
 	default: // manifest.MigrationTypeStatic
-		return runStaticBranch(cmd, g, config, reconcileResult, deps, runReportPath)
+		return runStaticBranch(cmd, g, config, reconcileResult, deps)
 	}
 }
 
@@ -419,4 +405,17 @@ func overrideCommon(cmd *cobra.Command, p *manifest.CommonPolicies) {
 	if cmd.Flags().Changed("gateway-config-port") {
 		p.GatewayConfigPort = gatewayConfigPortOverride
 	}
+}
+
+// tracerName is the instrumentation scope of this package's spans.
+const tracerName = "kcp/cmd/migration/execute"
+
+// commandContext is the command's context, which carries the command's root
+// span. A command run outside cobra's Execute — as the executor tests do — has
+// none, so it falls back to Background.
+func commandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }

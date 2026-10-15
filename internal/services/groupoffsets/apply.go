@@ -3,6 +3,9 @@ package groupoffsets
 import (
 	"context"
 	"fmt"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // GroupCommitter writes one group's offsets to the destination. *client.ConsumerGroupClient satisfies it.
@@ -18,17 +21,22 @@ type CommitterFactory func() (GroupCommitter, func(), error)
 // partial earlier attempt, or a rollback and redo, simply repeats them; there is deliberately no destination
 // read to skip equal ones, since a read costs the same round trip as the write it would save. Any failure
 // fails the run and stops further writes. A nil or empty plan writes nothing and builds no clients.
-func Apply(ctx context.Context, newCommitter CommitterFactory, plan *Plan, workers int) error {
+func Apply(ctx context.Context, newCommitter CommitterFactory, plan *Plan, workers int) (err error) {
 	if plan == nil || len(plan.Commits) == 0 {
 		return nil
 	}
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.apply",
+		attribute.Int("kcp.groups", len(plan.Commits)),
+		attribute.Int("kcp.partitions", plan.Partitions()),
+		attribute.Int("kcp.workers", workers))
+	defer func() { tracing.End(span, err) }()
 	byGroup := make(map[string]Offsets, len(plan.Commits))
 	groups := make([]string, 0, len(plan.Commits))
 	for _, c := range plan.Commits {
 		byGroup[c.Group] = c.Offsets
 		groups = append(groups, c.Group)
 	}
-	err := forEach(ctx, groups, workers, func() (worker, error) {
+	err = forEach(ctx, groups, workers, func() (worker, error) {
 		c, release, err := newCommitter()
 		if err != nil {
 			return worker{}, err

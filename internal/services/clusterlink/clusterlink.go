@@ -13,6 +13,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // httpStatusError is returned by doRequest/doPostRequest when the server
@@ -196,7 +199,12 @@ func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Confi
 	return &link, nil
 }
 
-func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {
+func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) (mirrors []MirrorTopic, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.list_mirror_topics")
+	defer func() {
+		span.SetAttributes(attribute.Int("kcp.mirrors", len(mirrors)))
+		tracing.End(span, err)
+	}()
 	path := linkPath(config) + "/mirrors"
 
 	var response struct {
@@ -342,7 +350,9 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 }
 
 // PromoteMirrorTopics promotes the specified mirror topics
-func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
+func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (_ *PromoteMirrorTopicsResponse, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.promote_mirror_topics", attribute.Int("kcp.batch.size", len(topicNames)))
+	defer func() { tracing.End(span, err) }()
 	if len(topicNames) == 0 {
 		return &PromoteMirrorTopicsResponse{}, nil
 	}

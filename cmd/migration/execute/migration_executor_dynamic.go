@@ -1,13 +1,13 @@
 package execute
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
 )
 
@@ -26,10 +26,12 @@ func runDynamicBranch(
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
-	ctx := context.Background()
+	ctx := commandContext(cmd)
 	policy := g.Spec.DynamicMigration.Policies
 
+	_, buildSpan := tracing.Start(ctx, tracerName, "migration.build_services")
 	svc, err := buildExecutorServices(g, deps)
+	tracing.End(buildSpan, err)
 	if err != nil {
 		return err
 	}
