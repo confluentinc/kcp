@@ -29,7 +29,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 	e.resetStaticRoute(t, ctx)
 	topics := e.topicRange(31, 35)
 	mani := e.renderManifest(t, "detect-mid-batch", topics, "",
-		fmt.Sprintf("  defaultPolicies:\n    promoteBatchSize: %d\n    detectUnroutedProducersDuration: 10s\n", midBatchPromoteSize))
+		fmt.Sprintf("    policies:\n      promoteBatchSize: %d\n      detectUnroutedProducersDuration: 10s\n", midBatchPromoteSize))
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 

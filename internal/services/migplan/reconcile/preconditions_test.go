@@ -55,7 +55,7 @@ func staticGateway() *GatewayConfig {
 }
 
 func TestPreconditionsHappy(t *testing.T) {
-	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+	in := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
 	res, view, ok := CheckPreconditions(in, dynGateway(), false, ClusterIDs{})
 	if !ok {
 		t.Fatalf("expected pass, got %+v", res)
@@ -66,10 +66,10 @@ func TestPreconditionsHappy(t *testing.T) {
 }
 
 func TestPreconditionsFailures(t *testing.T) {
-	base := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+	base := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
 
 	// target not bound
-	if _, _, ok := CheckPreconditions(ReconcileInput{Route: "migration-route", TargetDomain: "gcp"}, dynGateway(), false, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "gcp"}, dynGateway(), false, ClusterIDs{}); ok {
 		t.Error("unbound target domain must fail")
 	}
 	// offset sync enabled
@@ -120,7 +120,7 @@ func hasFailedCheck(res []PreconditionResult, name string) bool {
 }
 
 func TestPreconditionsClusterIdentity(t *testing.T) {
-	base := ReconcileInput{Route: "migration-route", TargetDomain: "cc", TargetClusterID: "tgt-1"}
+	base := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc", TargetClusterID: "tgt-1"}
 	gw := dynGateway()
 
 	// all identities line up → pass

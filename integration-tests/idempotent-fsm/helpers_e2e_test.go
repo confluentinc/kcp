@@ -214,32 +214,40 @@ func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
 }
 
 // writeManifestPausingOffsetSync is writeManifest with
-// spec.clusterLink.pauseConsumerOffsetSync set, declaring an "enabled"
+// spec.staticMigration.consumerOffsetSync.pause set, declaring an "enabled"
 // baseline — the static FSM then disables consumer.offset.sync.enable right
-// after fencing and restores it to enabled after switchover.
+// after fencing and restores it to enabled after switchover. Static only: a
+// dynamicMigration cannot carry the pause, so callers gate it on e.mode.
 func (e *env) writeManifestPausingOffsetSync(t *testing.T, name string, topics []string) string {
 	t.Helper()
+	require.Equal(t, "static", e.mode, "the offset-sync pause exists only under staticMigration")
 	return e.renderManifest(t, name, topics,
-		"    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", "")
+		"    consumerOffsetSync:\n      pause: true\n      baseline: enabled\n", "")
 }
 
 // writeManifestWithPromoteBatchSize is writeManifest with
-// spec.defaultPolicies.promoteBatchSize set, so the promote step submits at most
+// the declared section's policies.promoteBatchSize set, so the promote step submits at most
 // n topics per request and waits for each batch to reach STOPPED before the next.
 func (e *env) writeManifestWithPromoteBatchSize(t *testing.T, name string, topics []string, n int) string {
 	t.Helper()
 	return e.renderManifest(t, name, topics, "",
-		fmt.Sprintf("  defaultPolicies:\n    promoteBatchSize: %d\n", n))
+		fmt.Sprintf("    policies:\n      promoteBatchSize: %d\n", n))
 }
 
-// renderManifest writes the manifest for writeManifest and its variants;
-// clusterLinkExtra is appended verbatim to the spec.clusterLink block and
-// specExtra to the end of spec.
-func (e *env) renderManifest(t *testing.T, name string, topics []string, clusterLinkExtra, specExtra string) string {
+// renderManifest writes the manifest for writeManifest and its variants. The
+// declared section follows the suite's gateway mode: dynamicMigration (TBM) or
+// staticMigration (AAO). offsetSyncExtra is the section's consumerOffsetSync
+// block (static only) and policiesExtra its policies block; both are appended
+// verbatim after topicGroup, at the section's child indent (4 spaces).
+func (e *env) renderManifest(t *testing.T, name string, topics []string, offsetSyncExtra, policiesExtra string) string {
 	t.Helper()
 	var tb strings.Builder
 	for _, tp := range topics {
 		fmt.Fprintf(&tb, "          - %q\n", tp)
+	}
+	section := "dynamicMigration"
+	if e.mode == "static" {
+		section = "staticMigration"
 	}
 	manifest := fmt.Sprintf(`apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
@@ -264,17 +272,18 @@ spec:
     bootstrapServers:
       - %q
     linkCredentials: /workspace/rendered/link-creds.yaml
-%s  gateway:
+  gateway:
     namespace: %q
     cr-name: %q
-  route:
-    name: %q
+  %s:
+    route:
+      name: %q
+      targetStreamingDomain: %q
     topicGroup:
       - topics:
-%s    targetStreamingDomain: %q
-%s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
-		e.linkName, e.destBootstrap, clusterLinkExtra, e.namespace, e.gateway, e.route, tb.String(), e.destDomain,
-		specExtra)
+%s%s%s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
+		e.linkName, e.destBootstrap, e.namespace, e.gateway, section, e.route, e.destDomain, tb.String(),
+		offsetSyncExtra, policiesExtra)
 
 	path := filepath.Join(e.renderedDir, name+".yaml")
 	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write generated manifest")

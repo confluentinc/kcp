@@ -50,6 +50,7 @@ func newLiveEngineFor(t *testing.T, gatewayFile, route string, secrets migplan.S
 func TestEngineHappyPathLive(t *testing.T) {
 	eng := newLiveEngine(t)
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeDynamic,
 		Topics:          []string{"team-a.orders", "team-a.payments", "billing-v2"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",
@@ -136,6 +137,7 @@ func TestEngineHappyPathLive(t *testing.T) {
 func TestEngineFailFastLive(t *testing.T) {
 	eng := newLiveEngine(t)
 	in := reconcile.ReconcileInput{
+		Type:         reconcile.TypeDynamic,
 		Topics:       []string{"team-b.audit"},
 		Route:        "migration-route",
 		TargetDomain: "cc",
@@ -179,6 +181,7 @@ func TestReconcileClusterIdentityMismatchLive(t *testing.T) {
 	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link, fakeSecretChecker{})
 
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeDynamic,
 		Topics:          []string{"team-a.orders"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",

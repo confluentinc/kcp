@@ -60,7 +60,11 @@ func TestGatewayPermutationsLive(t *testing.T) {
 				secrets = fakeSecretChecker{}
 			}
 			eng := newLiveEngineFor(t, c.gatewayFile, "migration-route", secrets)
-			in := reconcile.ReconcileInput{Topics: batch, Route: "migration-route", TargetDomain: c.targetDomain}
+			typ := reconcile.TypeDynamic
+			if strings.Contains(c.gatewayFile, "gateway-static") {
+				typ = reconcile.TypeStatic
+			}
+			in := reconcile.ReconcileInput{Type: typ, Topics: batch, Route: "migration-route", TargetDomain: c.targetDomain}
 
 			plan, err := eng.Run(context.Background(), in)
 			if err != nil {
@@ -95,6 +99,7 @@ func TestOffsetSyncEnabledRefusesLive(t *testing.T) {
 
 	eng := newLiveEngine(t)
 	in := reconcile.ReconcileInput{
+		Type:         reconcile.TypeDynamic,
 		Topics:       []string{"team-a.orders", "team-a.payments", "billing-v2"},
 		Route:        "migration-route",
 		TargetDomain: "cc",

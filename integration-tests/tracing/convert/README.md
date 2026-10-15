@@ -1,7 +1,7 @@
 # Tracing — dynamic-to-static runs
 
 The tracing smoke suite's third migration kind: **dynamic to static** (a route conversion,
-`spec.route.convertTo: static`). Proves each conversion produces one complete OpenTelemetry trace against a live
+`spec.dynamicToStaticConversion`). Proves each conversion produces one complete OpenTelemetry trace against a live
 Confluent Gateway, cluster link and Kafka in minikube (profile `kcp-e2e-tracing-convert`).
 
 The topology, setup and runner pod are a deliberate copy of `integration-tests/route-conversion`, trimmed to what a

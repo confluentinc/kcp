@@ -42,7 +42,7 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 	if rc.Mode == "static" {
 		res = append(res, pass("route is static"))
 	} else {
-		res = append(res, fail("route is static", fmt.Sprintf("route %q is %q; the static (all-at-once) strategy requires a static route", rc.Name, rc.Mode)))
+		res = append(res, fail("route is static", fmt.Sprintf("staticMigration is declared but route %q is %q; it requires a static (all-at-once) route", rc.Name, rc.Mode)))
 	}
 
 	// A route carrying kcp's own fence is the state a resume finds after the

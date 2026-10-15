@@ -23,7 +23,7 @@ import (
 const convertMode = "convert"
 
 // Policy is the conversion's two execute-time policies, already resolved to their effective values
-// (manifest.DefaultPolicies.EffectiveDetectUnroutedCommitsDuration and EffectiveOffsetSyncConcurrency).
+// (manifest.DynamicToStaticPolicies.EffectiveDetectUnroutedCommitsDuration and EffectiveOffsetSyncConcurrency).
 type Policy struct {
 	// DetectUnroutedCommitsDuration is the wait between verify_fence's two committed-offset snapshots. It must
 	// be positive: the direct-commit check can never be skipped.

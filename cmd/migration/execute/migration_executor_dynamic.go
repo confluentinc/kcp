@@ -11,13 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// runDynamicBranch drives a dynamic-mode migration through tbm.TBMOrchestrator.
+// runDynamicBranch drives a dynamicMigration (TBM) through tbm.TBMOrchestrator.
 // Its twin is runStaticBranch; the shared live reconcile that produced
 // reconcileResult runs once, in runMigrationExecute.
 //
-// Every policy value is read from g.Spec.DefaultPolicies — the EFFECTIVE
-// policy, i.e. the manifest's spec.defaultPolicies after applyPolicyOverrides
-// has folded in any per-run flag overrides — so an unset flag leaves the
+// Every policy value is read from g.Spec.DynamicMigration.Policies — the
+// EFFECTIVE policy, i.e. the manifest's dynamicMigration.policies after
+// applyPolicyOverrides has folded in any per-run flag overrides — so an unset flag leaves the
 // manifest default in force rather than resetting the knob to zero.
 func runDynamicBranch(
 	cmd *cobra.Command,
@@ -27,7 +27,7 @@ func runDynamicBranch(
 	deps executorDependencies,
 ) error {
 	ctx := commandContext(cmd)
-	policy := g.Spec.DefaultPolicies
+	policy := g.Spec.DynamicMigration.Policies
 
 	_, buildSpan := tracing.Start(ctx, tracerName, "migration.build_services")
 	svc, err := buildExecutorServices(g, deps)
@@ -42,7 +42,8 @@ func runDynamicBranch(
 	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
-	applyEffectivePolicy(config, policy)
+	applyCommonPolicy(config, policy.CommonPolicies)
+	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)
 	if err := orchestrator.Execute(ctx, reconcileResult, int64(policy.LagThreshold),

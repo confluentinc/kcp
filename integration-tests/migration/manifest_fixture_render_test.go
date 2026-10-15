@@ -82,7 +82,7 @@ func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 // TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll is a regression
 // test for a real bug found via live e2e testing: this suite's ten scenarios
 // share one source/destination Kafka pair, so a match-all topicPatterns
-// resolves (per spec.route.topicGroup's real semantics) against every OTHER
+// resolves (per spec.staticMigration.topicGroup's real semantics) against every OTHER
 // scenario's topics too — not just this one's — tripping an all-or-nothing
 // refusal. A fenceRouteOpts entry with Topics set must render an explicit
 // topics: list instead, scoped to only the given names.
@@ -96,15 +96,15 @@ func TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll(t *testing.T) {
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 
-	require.Len(t, g.Spec.Route.TopicGroup, 1)
-	entry := g.Spec.Route.TopicGroup[0]
+	require.Len(t, g.Spec.DeclaredTopicGroup(), 1)
+	entry := g.Spec.DeclaredTopicGroup()[0]
 	assert.Nil(t, entry.TopicPatterns, "an explicit topics list must not also carry a match-all pattern")
 	require.NotNil(t, entry.Topics)
 	assert.Equal(t, []string{"e2e-test-topic-baseline"}, *entry.Topics)
 }
 
 // TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic is a regression test:
-// spec.route.name and spec.route.targetStreamingDomain read FenceRoutes[0]
+// spec.staticMigration.route.name and .targetStreamingDomain read FenceRoutes[0]
 // directly, and an unguarded `index .FenceRoutes 0` turns an empty slice into a
 // template execution error instead of the tolerant empty output the old
 // `range`-based rendering gave every field. No scenario populates an empty
@@ -144,11 +144,11 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
 	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CrName)
-	assert.Equal(t, opts.FenceRoutes[0].Name, g.Spec.Route.Name)
-	assert.Equal(t, opts.FenceRoutes[0].SwitchoverDomainName, g.Spec.Route.TargetStreamingDomain)
-	require.Len(t, g.Spec.Route.TopicGroup, len(opts.FenceRoutes))
+	assert.Equal(t, opts.FenceRoutes[0].Name, g.Spec.DeclaredRoute().Name)
+	assert.Equal(t, opts.FenceRoutes[0].SwitchoverDomainName, g.Spec.DeclaredRoute().TargetStreamingDomain)
+	require.Len(t, g.Spec.DeclaredTopicGroup(), len(opts.FenceRoutes))
 	for i := range opts.FenceRoutes {
-		got := g.Spec.Route.TopicGroup[i]
+		got := g.Spec.DeclaredTopicGroup()[i]
 		// The id is derived from the live CR at init, not carried in the
 		// manifest, and a match-all pattern selects every active mirror topic.
 		require.NotNil(t, got.TopicPatterns)
@@ -189,14 +189,14 @@ func TestRenderGatewayMigration_OmitsZeroPolicy(t *testing.T) {
 	rendered, err := renderGatewayMigration(baselineOpts())
 	require.NoError(t, err)
 
-	assert.NotContains(t, rendered, "defaultPolicies:", "a scenario with no policy must render no policy block")
+	assert.NotContains(t, rendered, "policies:", "a scenario with no policy must render no policy block")
 	assert.NotContains(t, rendered, "lagThreshold")
 	assert.NotContains(t, rendered, "detectUnroutedProducersDuration")
 
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, manifest.DefaultPolicies{}, g.Spec.DefaultPolicies, "an omitted policy block must parse to the zero DefaultPolicies")
+	assert.Equal(t, manifest.StaticPolicies{}, g.Spec.StaticMigration.Policies, "an omitted policy block must parse to the zero StaticPolicies")
 }
 
 // TestRenderGatewayMigration_PolicyRoundTrips covers the per-scenario policy the
@@ -219,15 +219,15 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
 
-	assert.Equal(t, 1, g.Spec.DefaultPolicies.PromoteBatchSize)
-	assert.Equal(t, 10*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
+	assert.Equal(t, 1, g.Spec.StaticMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Second, g.Spec.StaticMigration.Policies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.StaticMigration.Policies.ConsumerOffsetSyncDrainDuration)
 	// lagThreshold stays omitted at zero even when siblings are set.
-	assert.Equal(t, 0, g.Spec.DefaultPolicies.LagThreshold)
+	assert.Equal(t, 0, g.Spec.StaticMigration.Policies.LagThreshold)
 }
 
 // TestRenderGatewayMigration_PauseConsumerOffsetSync: a manifest rendered with
-// the offset-sync pause carries pauseConsumerOffsetSync and its declared
+// the offset-sync pause carries spec.staticMigration.consumerOffsetSync.pause and its declared
 // baseline, and validates.
 func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	opts := baselineOpts()
@@ -239,8 +239,9 @@ func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.True(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
-	assert.Equal(t, "enabled", g.Spec.ClusterLink.ConsumerOffsetSyncBaseline)
+	pause, baseline := g.Spec.DeclaredOffsetSync()
+	assert.True(t, pause)
+	assert.Equal(t, "enabled", baseline)
 }
 
 // TestRenderCredentialFiles_ValuesCannotInjectYAML is the abuse case for the

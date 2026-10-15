@@ -16,17 +16,17 @@ type ReconcileInput struct {
 	// (spec.target.clusterId), checked against the cluster we actually read.
 	TargetClusterID string
 	// PauseConsumerOffsetSync is the manifest's opt-in
-	// (spec.clusterLink.pauseConsumerOffsetSync) to pause the link's consumer
-	// offset sync during a static cutover.
+	// (spec.staticMigration.consumerOffsetSync.pause) to pause the link's
+	// consumer offset sync during a static cutover.
 	PauseConsumerOffsetSync bool
 	// OffsetSyncBaselineEnabled is the manifest's declared baseline for the
-	// link's consumer offset sync (spec.clusterLink.consumerOffsetSyncBaseline):
+	// link's consumer offset sync (spec.staticMigration.consumerOffsetSync.baseline):
 	// true for "enabled", false for "disabled".
 	OffsetSyncBaselineEnabled bool
-	// ConvertTo is the manifest's spec.route.convertTo ("static"), set only for
-	// a route conversion. A conversion reconciles through ReconcileConvert;
-	// Reconcile refuses an input that carries it.
-	ConvertTo string
+	// Type is the migration the manifest declared. It alone selects the
+	// strategy; the live route's mode is only checked against it by the
+	// strategy's own preconditions.
+	Type MigrationType
 }
 
 // ClusterIDs carries the live cluster identities gathered by the I/O layer, used
@@ -100,7 +100,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 	if rc.Mode == "dynamic" {
 		res = append(res, pass("route is dynamic"))
 	} else {
-		res = append(res, fail("route is dynamic", fmt.Sprintf("route %q is %q; only dynamic (topic-based) routes are currently supported", rc.Name, rc.Mode)))
+		res = append(res, fail("route is dynamic", fmt.Sprintf("%s is declared but route %q is %q; it requires a dynamic (topic-based) route", in.Type.sectionKey(), rc.Name, rc.Mode)))
 	}
 
 	if len(rc.BoundDomains) == 2 {
@@ -135,7 +135,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 	if !offsetSyncEnabled {
 		res = append(res, pass("consumer offset sync disabled on link"))
 	} else {
-		res = append(res, fail("consumer offset sync disabled on link", "consumer offset sync is enabled on the cluster link; disable it for a dynamic-route migration"))
+		res = append(res, fail("consumer offset sync disabled on link", fmt.Sprintf("consumer offset sync is enabled on the cluster link; disable it before running %s on a dynamic route", in.Type.sectionKey())))
 	}
 
 	// A dynamic route runs with the link's consumer offset sync off, so there is
@@ -144,7 +144,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, pass("offset-sync pause not requested"))
 	} else {
 		res = append(res, fail("offset-sync pause not requested",
-			"spec.clusterLink.pauseConsumerOffsetSync is set, but a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest"))
+			fmt.Sprintf("%s cannot pause consumer offset sync: a dynamic route requires it to be disabled, so there is nothing to pause (the pause is only available on staticMigration)", in.Type.sectionKey())))
 	}
 
 	// Cluster identity: the clusters we read must be the migration's real source

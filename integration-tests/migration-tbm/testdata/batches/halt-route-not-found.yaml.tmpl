@@ -30,9 +30,10 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  route:
-    name: "no-such-route"
+  dynamicMigration:
+    route:
+      name: "no-such-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"
     topicGroup:
       - topics:
           - "tbm-topic-047"
-    targetStreamingDomain: "__DEST_DOMAIN__"

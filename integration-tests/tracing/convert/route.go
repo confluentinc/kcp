@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Package tracing_convert_e2e proves dynamic-to-static migrations (route
-// conversions, spec.route.convertTo: static) each produce one complete
+// conversions, spec.dynamicToStaticConversion) each produce one complete
 // OpenTelemetry trace, against a live Confluent Gateway, cluster link and Kafka
 // (Minikube profile kcp-e2e-tracing-convert). It is a trimmed copy of the
 // route-conversion suite, so that suite stays untouched.
