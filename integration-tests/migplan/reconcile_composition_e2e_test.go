@@ -33,7 +33,7 @@ func TestReconcileResultReflectsManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	route := g.Spec.Route.Name
+	route := g.Spec.DeclaredRoute().Name
 
 	// The manifest's route is dynamic-mode, which never consults the secrets
 	// provider (see engine.go's Run) — but Reconcile builds one unconditionally,

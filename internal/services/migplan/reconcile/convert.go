@@ -7,15 +7,11 @@ import (
 
 const convertMode = "convert"
 
-// convertToStatic is the only ReconcileInput.ConvertTo this strategy runs. It
-// mirrors manifest.RouteConvertToStatic (the core does not import manifest).
-const convertToStatic = "static"
-
 // convertTargetCheckName names the precondition that refuses any other target.
 const convertTargetCheckName = "conversion target is static"
 
 // ReconcileConvert reconciles a dynamic-to-static route conversion
-// (spec.route.convertTo: static). The cluster link defines its scope: every
+// (spec.dynamicToStaticConversion). The cluster link defines its scope: every
 // mirror topic on the link, with no selector. It runs in stages and returns at
 // the first that refuses: the route checks (CheckPreconditions, then the
 // conversion's own: the target binding's bootstrap id, auth for the target
@@ -37,12 +33,12 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 
 	report := Report{}
 
-	// This strategy is the conversion to static only; a future
-	// convertTo: dynamic (or a caller dispatching here without ConvertTo) must
-	// never run it, nor be told a static route is "nothing to do".
-	if in.ConvertTo != convertToStatic {
+	// This strategy is the dynamic-to-static conversion only; any other
+	// declared type must never run it, nor be told a static route is "nothing
+	// to do".
+	if in.Type != TypeDynamicToStatic {
 		report.Preconditions = []PreconditionResult{fail(convertTargetCheckName, fmt.Sprintf(
-			"convertTo is %q; this strategy converts a route to %q only", in.ConvertTo, convertToStatic))}
+			"the declared type is %q; this strategy runs a dynamic-to-static conversion only", in.Type))}
 		return &Plan{Report: report, Mode: convertMode}
 	}
 

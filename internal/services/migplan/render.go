@@ -18,7 +18,7 @@ type RenderView struct {
 	TargetDomain string
 	Verbose      bool
 	ArtifactNote string // shown in the success footer, e.g. "artifacts → ./out"
-	// Conversion renders a route conversion (spec.route.convertTo): its topics are the cluster
+	// Conversion renders a route conversion (spec.dynamicToStaticConversion): its topics are the cluster
 	// link's, each promoted one reads "promoted", and the footer counts link topics instead of
 	// topics to migrate.
 	Conversion bool

@@ -28,7 +28,7 @@ func convertGateway() *GatewayConfig {
 }
 
 func convertInput() ReconcileInput {
-	return ReconcileInput{Route: "migration-route", TargetDomain: "cc", ConvertTo: "static"}
+	return ReconcileInput{Route: "migration-route", TargetDomain: "cc", Type: TypeDynamicToStatic}
 }
 
 var convergedTopics = []string{"orders", "payments"}
@@ -396,21 +396,21 @@ func TestReconcile_RefusesAConversionInput(t *testing.T) {
 	}
 }
 
-// ReconcileConvert runs only a conversion to static; any other ConvertTo (a
-// future convertTo: dynamic, or none) is refused before anything else.
+// ReconcileConvert runs only a dynamic-to-static conversion; any other declared
+// type (or none) is refused before anything else.
 func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
-	for _, to := range []string{"dynamic", "", "Static"} {
-		t.Run(to, func(t *testing.T) {
+	for _, to := range []MigrationType{TypeDynamic, "", TypeStatic} {
+		t.Run(string(to), func(t *testing.T) {
 			in := convertInput()
-			in.ConvertTo = to
+			in.Type = to
 
 			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{})
 
 			if !p.Report.Refused() || p.Artifacts != nil || p.NothingToDo {
-				t.Fatalf("ConvertTo %q must refuse, got %+v", to, p)
+				t.Fatalf("Type %q must refuse, got %+v", to, p)
 			}
 			pc := convertPrecondition(t, p.Report, "conversion target is static")
-			if pc.OK || !strings.Contains(pc.Detail, `"`+to+`"`) {
+			if pc.OK || !strings.Contains(pc.Detail, `"`+string(to)+`"`) {
 				t.Errorf("precondition = %+v, want a failure naming %q", pc, to)
 			}
 		})
@@ -420,9 +420,9 @@ func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
 	gw := staticGateway()
 	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	in := convertInput()
-	in.ConvertTo = "dynamic"
+	in.Type = TypeDynamic
 	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
-		t.Fatalf("ConvertTo dynamic on a static route must refuse, got %+v", p)
+		t.Fatalf("Type dynamic on a static route must refuse, got %+v", p)
 	}
 }
 
@@ -709,5 +709,17 @@ func TestReconcileConvert_APassOnARouteKcpFencedHasNoFenceWarning(t *testing.T) 
 	}
 	if got := leftFencedWarnings(p.Report); len(got) != 0 {
 		t.Errorf("warnings = %v, want none: the run proceeds and keeps or lifts the fence itself", got)
+	}
+}
+
+// A non-conversion declared type is refused before anything else.
+func TestReconcileConvert_NonConversionTypeIsRefused(t *testing.T) {
+	plan := ReconcileConvert(ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"},
+		dynGateway(), nil, nil, nil, PartitionCounts{}, false, ClusterIDs{}, GroupFacts{})
+	if !plan.Report.Refused() {
+		t.Fatal("a non-conversion type must be refused")
+	}
+	if got := plan.Report.Preconditions[0].Name; got != convertTargetCheckName {
+		t.Fatalf("first precondition = %q, want %q", got, convertTargetCheckName)
 	}
 }

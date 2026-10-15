@@ -135,7 +135,7 @@ func TestResume_InterruptAfterSwitch(t *testing.T) {
 }
 
 // Kill after the OFFSET-SYNC PAUSE (static only; the dynamic FSM has no pause
-// stage). The manifest sets spec.clusterLink.pauseConsumerOffsetSync with an
+// stage). The manifest sets spec.staticMigration.consumerOffsetSync.pause with an
 // "enabled" baseline, so right after fencing the static FSM disables the link's
 // consumer.offset.sync.enable. Partial world = route fenced, mirrors still
 // ACTIVE, offset sync off. The resume must re-apply the pause, complete, and
@@ -208,7 +208,7 @@ func TestResume_InterruptAfterSwitch_OffsetSyncPaused(t *testing.T) {
 // ACTIVE until a later batch.
 const midBatchPromoteSize = 2
 
-// Kill MID-BATCH: the manifest sets spec.defaultPolicies.promoteBatchSize, so
+// Kill MID-BATCH: the manifest sets the section's policies.promoteBatchSize, so
 // the first promote request takes midBatchPromoteSize of the 5 topics, and the
 // kill fires right after it is accepted (killpoint.AfterPromoteAccepted).
 // Partial world = route fenced, exactly midBatchPromoteSize mirrors promoting or

@@ -254,3 +254,9 @@ func TestSourceConn_CACertReachesEveryTLSPath(t *testing.T) {
 		})
 	}
 }
+
+// Review Focus 5.
+func TestBuildConvertServices_RequiresConversionType(t *testing.T) {
+	_, err := buildConvertServices(gatewayOf(t, manifest.MigrationTypeDynamic))
+	require.ErrorContains(t, err, "not a route conversion")
+}

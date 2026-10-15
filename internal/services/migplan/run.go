@@ -27,7 +27,7 @@ const defaultKafkaVersion = "3.6.0"
 // plan Refused is true, the three outputs are empty, and Reasons explains why.
 // A returned error is an I/O failure, NOT a refusal — a refusal is data.
 type Result struct {
-	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
+	Route          string   // the gateway route the fence/switchover rules apply to (the declared section's route.name)
 	PromoteTopics  []string // topics that must still reach STOPPED before switch (Migratable + AwaitStopped); exclude AwaitStopped before promoting. SwitchOnly topics are migrated but absent here
 	AwaitStopped   []string // subset of PromoteTopics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
 	FenceYAML      string   // dynamic: the whole rules: block, fenced; static: the {fence: …} block
@@ -74,9 +74,10 @@ type Result struct {
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
 
-	// Mode is the strategy this plan was reconciled under ("dynamic",
-	// "static" or "convert"), mirroring reconcile.Plan.Mode — so a caller
-	// knows how to interpret the artifacts (see reconcile.Plan.Mode): whole
+	// Mode describes the artifact shape ("dynamic",
+	// "static" or "convert"), mirroring reconcile.Plan.Mode; it is cross-checked
+	// against the declared type by the caller. It tells a caller how to
+	// interpret the artifacts (see reconcile.Plan.Mode): whole
 	// rules: blocks for dynamic; a {fence: …} block and whole {route: …}
 	// documents for static; whole rules: blocks for the fence and rollback and
 	// a whole {route: …} (the route converted to static) for the switchover
@@ -117,7 +118,7 @@ func WithOutput(w io.Writer) Option {
 }
 
 // Reconcile is the single in-code entry point: given the parsed manifest, it
-// derives the selector from spec.route, pulls the live Gateway CR named in
+// derives the selector from the declared migration section's route, pulls the live Gateway CR named in
 // spec.gateway, reads live source/target/link state, runs the engine, renders
 // the plan report, and returns the Result. It opens the cluster connections and
 // closes them before returning. err is an I/O failure only; a refusal is
@@ -143,7 +144,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	// verify_fence uses (BuildConvertProviders), so the two read the live world
 	// through identical wiring (decision 22). Only the gateway source stays
 	// injectable here, for testing.
-	if in.ConvertTo != "" {
+	if in.Type == reconcile.TypeDynamicToStatic {
 		p, closer, err := buildConvertProviders(g, o.gateway)
 		if err != nil {
 			return nil, err
@@ -206,10 +207,10 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 		out = os.Stdout
 	}
 	RenderReport(out, res.Report, RenderView{
-		Route:        g.Spec.Route.Name,
-		TargetDomain: g.Spec.Route.TargetStreamingDomain,
+		Route:        g.Spec.DeclaredRoute().Name,
+		TargetDomain: g.Spec.DeclaredRoute().TargetStreamingDomain,
 		ArtifactNote: "plan ready",
-		Conversion:   g.Spec.Route.ConvertTo != "",
+		Conversion:   in.Type == reconcile.TypeDynamicToStatic,
 	})
 	return res, nil
 }
@@ -278,60 +279,58 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 	return NewK8sSecretChecker(clientset, g.Spec.Gateway.Namespace), nil
 }
 
-// buildReconcileInput maps the manifest's spec.route onto the engine-owned
-// ReconcileInput: a conversion (convertTo set) carries no topic selection;
-// otherwise exactly one topicGroup entry is required.
+// buildReconcileInput maps the manifest's declared migration section onto the
+// engine-owned ReconcileInput: the declared type, the route, and — for the two
+// migrations — exactly one topicGroup entry. A conversion carries no topic
+// selection.
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
-	r := g.Spec.Route
-	if r.ConvertTo != "" {
-		if r.Name == "" {
-			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.name: required")
-		}
-		if r.TargetStreamingDomain == "" {
-			return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.targetStreamingDomain: required")
-		}
-		return reconcile.ReconcileInput{
-			Route:           r.Name,
-			TargetDomain:    r.TargetStreamingDomain,
-			TargetClusterID: g.Spec.Target.ClusterID,
-			ConvertTo:       r.ConvertTo,
-
-			PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
-			OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
-		}, nil
+	t := g.Spec.MigrationType()
+	if t == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
 	}
-	tgs := r.TopicGroup
-	if len(tgs) != 1 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup: exactly one entry is required, got %d", len(tgs))
-	}
-	tg := tgs[0]
-
-	var topics, patterns []string
-	if tg.Topics != nil {
-		topics = *tg.Topics
-	}
-	if tg.TopicPatterns != nil {
-		patterns = *tg.TopicPatterns
-	}
-	if len(topics) == 0 && len(patterns) == 0 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup[0]: at least one of topics / topicPatterns is required")
-	}
+	section := "spec." + t.SectionKey()
+	r := g.Spec.DeclaredRoute()
 	if r.Name == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.name: required")
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.route.name: required", section)
 	}
 	if r.TargetStreamingDomain == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.targetStreamingDomain: required")
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.route.targetStreamingDomain: required", section)
 	}
-	return reconcile.ReconcileInput{
-		Topics:          topics,
-		TopicPatterns:   patterns,
+	pause, baseline := g.Spec.DeclaredOffsetSync()
+	in := reconcile.ReconcileInput{
 		Route:           r.Name,
 		TargetDomain:    r.TargetStreamingDomain,
 		TargetClusterID: g.Spec.Target.ClusterID,
 
-		PauseConsumerOffsetSync:   g.Spec.ClusterLink.PauseConsumerOffsetSync,
-		OffsetSyncBaselineEnabled: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline != manifest.OffsetSyncBaselineDisabled,
-	}, nil
+		PauseConsumerOffsetSync:   pause,
+		OffsetSyncBaselineEnabled: baseline != manifest.OffsetSyncBaselineDisabled,
+	}
+
+	switch t {
+	case manifest.MigrationTypeDynamicToStatic:
+		in.Type = reconcile.TypeDynamicToStatic
+		return in, nil
+	case manifest.MigrationTypeStatic:
+		in.Type = reconcile.TypeStatic
+	case manifest.MigrationTypeDynamic:
+		in.Type = reconcile.TypeDynamic
+	}
+
+	tgs := g.Spec.DeclaredTopicGroup()
+	if len(tgs) != 1 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.topicGroup: exactly one entry is required, got %d", section, len(tgs))
+	}
+	tg := tgs[0]
+	if tg.Topics != nil {
+		in.Topics = *tg.Topics
+	}
+	if tg.TopicPatterns != nil {
+		in.TopicPatterns = *tg.TopicPatterns
+	}
+	if len(in.Topics) == 0 && len(in.TopicPatterns) == 0 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.topicGroup[0]: at least one of topics / topicPatterns is required", section)
+	}
+	return in, nil
 }
 
 // buildLinkStatusProvider mirrors lagcheck.buildLagCheckConfig: the destination
@@ -469,7 +468,7 @@ func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 }
 
 // BuildConvertProviders builds a route conversion's providers from the manifest
-// the way Reconcile builds its own: the live gateway CR pull for spec.route.name,
+// the way Reconcile builds its own: the live gateway CR pull for the declared route name,
 // the cluster-link status from the destination REST leg, a topic lister and a
 // consumer-group lister on each cluster. The returned io.Closer closes every
 // client it opened; the caller owns it. On an error nothing is left open and
@@ -490,7 +489,7 @@ func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource)
 
 	if gw == nil {
 		var err error
-		if gw, err = buildGatewaySource(g, g.Spec.Route.Name); err != nil {
+		if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name); err != nil {
 			return fail(err)
 		}
 	}

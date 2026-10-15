@@ -142,7 +142,7 @@ func runDynamicBranchWithConfig(
 // dynamic-mode run on stubbed services walks tbm.TBMOrchestrator's FSM all the
 // way to switched and prints the "Migration completed" banner.
 func TestExecute_DynamicMode_RunsToCompletionOnStubbedServices(t *testing.T) {
-	f := newFixture(t, nil)
+	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
 
 	out, err := runDynamicBranchWithConfig(t, f, config, nil, stubDeps(nil, nil))
@@ -162,15 +162,15 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 	topics := []string{"t1.order", "t2.inventory"}
 
 	t.Run("flag caps the batch", func(t *testing.T) {
-		f := newFixture(t, nil)
+		f := dynamicFixture(t)
 		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		// The CLI's --promote-batch-size relies on real cobra flag parsing
 		// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 		// seam skips (see its doc comment) — setting the manifest's
-		// spec.defaultPolicies field directly is equivalent for what this test
+		// policies field directly is equivalent for what this test
 		// observes: runDynamicBranch always reads the effective policy from there.
-		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
+		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DynamicMigration.Policies.PromoteBatchSize = 1 }
 		_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubDeps(nil, rec))
 		require.NoError(t, err)
 		assert.Equal(t, 1, rec.maxBatch(),
@@ -178,7 +178,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 	})
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
-		f := newFixture(t, nil)
+		f := dynamicFixture(t)
 		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		_, err := runDynamicBranchWithConfig(t, f, config, nil, stubDeps(nil, rec))
@@ -195,7 +195,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 // config.GatewayConfigPort before the dynamic capability probe
 // (DetectCapability) runs.
 func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *testing.T) {
-	f := newFixture(t, nil)
+	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
 
 	rec := &recordingGatewayService{}
@@ -203,8 +203,8 @@ func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *t
 	// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for
 	// what this test observes: runDynamicBranch reads GatewayConfigPort straight
-	// from g.Spec.DefaultPolicies.
-	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
+	// from g.Spec.DynamicMigration.Policies.
+	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DynamicMigration.Policies.GatewayConfigPort = 9999 }
 	_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubDeps(rec, nil))
 	require.NoError(t, err)
 	assert.Equal(t, 9999, rec.port(),

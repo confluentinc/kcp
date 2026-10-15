@@ -28,13 +28,13 @@ type MigrationConfig struct {
 	AwaitStopped []string
 
 	// PauseConsumerOffsetSync is the operator's opt-in (manifest
-	// spec.clusterLink.pauseConsumerOffsetSync, read each run) to pause
+	// spec.staticMigration.consumerOffsetSync.pause, read each run) to pause
 	// cluster-link consumer offset sync for the duration of execute.
 	PauseConsumerOffsetSync bool
 
 	// ConsumerOffsetSyncBaseline is the declared pre-migration state of
 	// consumer.offset.sync.enable on the cluster link (manifest
-	// spec.clusterLink.consumerOffsetSyncBaseline: "enabled" or "disabled"),
+	// spec.staticMigration.consumerOffsetSync.baseline: "enabled" or "disabled"),
 	// read from the manifest each run — never from the live cluster link. The
 	// restore_offset_sync step and the abort_fence rollback apply this value
 	// as an idempotent AlterConfigs SET.
