@@ -126,12 +126,12 @@ spec:
   gateway:
     namespace: %q
     cr-name: %q
-  route:
-    name: %q
-    convertTo: static
-    targetStreamingDomain: %q
-  defaultPolicies:
-    detectUnroutedCommitsDuration: %s
+  dynamicToStaticConversion:
+    route:
+      name: %q
+      targetStreamingDomain: %q
+    policies:
+      detectUnroutedCommitsDuration: %s
 %s`, id, e.sourceBootstrap, filepath.Join(e.renderedDir, "source-creds.yaml"),
 		e.destClusterID, e.destBootstrap, e.restEndpoint, filepath.Join(e.renderedDir, "dest-kafka-creds.yaml"),
 		e.linkName, e.destBootstrap, filepath.Join(e.renderedDir, "link-creds.yaml"),
@@ -148,7 +148,7 @@ func workersLine(workers int) string {
 	if workers == 0 {
 		return ""
 	}
-	return fmt.Sprintf("    offsetSyncConcurrency: %d\n", workers)
+	return fmt.Sprintf("      offsetSyncConcurrency: %d\n", workers)
 }
 
 // execute runs `kcp migration execute` on manifest with tracing on, appending

@@ -54,7 +54,7 @@ func TestExecute_StaticMode_TracesUnderTheCommandSpan(t *testing.T) {
 
 func TestExecute_DynamicMode_TracesUnderTheCommandSpan(t *testing.T) {
 	rec := tracingtest.Install(t)
-	f := newFixture(t, nil)
+	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
 	g := loadGateway(t, f.manifestPath)
 	cmd, root := commandWithRootSpan()

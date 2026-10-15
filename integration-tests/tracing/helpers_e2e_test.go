@@ -141,7 +141,7 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// policies are the spec.defaultPolicies a run varies: the unrouted-producer
+// policies are the declared section's policies a run varies: the unrouted-producer
 // detection window (0 = detection off, the default) and the promote batch size
 // (0 = promote every topic at once).
 type policies struct {
@@ -157,21 +157,26 @@ func (e *env) writeManifest(t *testing.T, name string, topics []string, p polici
 	t.Helper()
 	var spec strings.Builder
 	if p.detect > 0 || p.promoteBatch > 0 {
-		spec.WriteString("  defaultPolicies:\n")
+		spec.WriteString("    policies:\n")
 	}
 	if p.detect > 0 {
-		fmt.Fprintf(&spec, "    detectUnroutedProducersDuration: %s\n", p.detect)
+		fmt.Fprintf(&spec, "      detectUnroutedProducersDuration: %s\n", p.detect)
 	}
 	if p.promoteBatch > 0 {
-		fmt.Fprintf(&spec, "    promoteBatchSize: %d\n", p.promoteBatch)
+		fmt.Fprintf(&spec, "      promoteBatchSize: %d\n", p.promoteBatch)
 	}
 	return e.renderManifest(t, name, topics, spec.String())
 }
 
-// renderManifest writes the manifest for writeManifest; specExtra is appended to
-// the end of spec.
-func (e *env) renderManifest(t *testing.T, name string, topics []string, specExtra string) string {
+// renderManifest writes the manifest for writeManifest, declaring the section
+// that matches the environment's route mode (static -> staticMigration, dynamic
+// -> dynamicMigration); sectionExtra is appended to the end of that section.
+func (e *env) renderManifest(t *testing.T, name string, topics []string, sectionExtra string) string {
 	t.Helper()
+	section := "dynamicMigration"
+	if e.mode == "static" {
+		section = "staticMigration"
+	}
 	var tb strings.Builder
 	for _, tp := range topics {
 		fmt.Fprintf(&tb, "          - %q\n", tp)
@@ -202,14 +207,15 @@ spec:
   gateway:
     namespace: %q
     cr-name: %q
-  route:
-    name: %q
+  %s:
+    route:
+      name: %q
+      targetStreamingDomain: %q
     topicGroup:
       - topics:
-%s    targetStreamingDomain: %q
-%s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
-		e.linkName, e.destBootstrap, e.namespace, e.gateway, e.route, tb.String(), e.destDomain,
-		specExtra)
+%s%s`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
+		e.linkName, e.destBootstrap, e.namespace, e.gateway, section, e.route, e.destDomain, tb.String(),
+		sectionExtra)
 
 	path := filepath.Join(e.renderedDir, name+".yaml")
 	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write generated manifest")

@@ -37,6 +37,7 @@ import (
 func TestReconcileSwitchOnlyLive(t *testing.T) {
 	eng := newLiveEngine(t) // default fixture: routing defaults to source (msk)
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeDynamic,
 		Topics:          []string{"resume.switchonly"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",
@@ -95,6 +96,7 @@ func TestReconcileSwitchOnlyLive(t *testing.T) {
 func TestReconcileUnchangedLive(t *testing.T) {
 	eng := newLiveEngineFor(t, "testdata/gateway-resume-unchanged.yaml", "migration-route", fakeSecretChecker{})
 	in := reconcile.ReconcileInput{
+		Type:            reconcile.TypeDynamic,
 		Topics:          []string{"resume.switchonly"},
 		Route:           "migration-route",
 		TargetDomain:    "cc",

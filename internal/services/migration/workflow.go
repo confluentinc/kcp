@@ -686,7 +686,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 }
 
 // PauseOffsetSync runs the pause_offset_sync stage: with the operator's
-// spec.clusterLink.pauseConsumerOffsetSync opt-in, and only when this run has an actual
+// spec.staticMigration.consumerOffsetSync.pause opt-in, and only when this run has an actual
 // cutover in flight (config.FenceYAML set by the plan), it applies an
 // idempotent AlterConfigs SET disabling cluster-link consumer offset sync;
 // otherwise it passes through so the FSM still records offset_sync_paused.
@@ -826,7 +826,7 @@ func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *Migrat
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		s.reporter.Detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		s.reporter.Detail("Detection disabled (spec.staticMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
 		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
 	}

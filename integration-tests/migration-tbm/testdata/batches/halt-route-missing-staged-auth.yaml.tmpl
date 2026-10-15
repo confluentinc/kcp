@@ -7,10 +7,10 @@
 # so the live tbm-route stays valid. static-route has no security.cluster.
 # destination-domain block, so the engine refuses on the failed precondition
 # "route carries pre-staged auth for the target domain"
-# (reconcile/staticpreconditions.go) — the static-route strategy dispatches on
-# mode == "static" (reconcile/reconcile.go) before the dynamic-only "route is
-# dynamic" check ever runs. The topic selection is incidental (the shape check
-# refuses first).
+# (reconcile/staticpreconditions.go). This manifest declares spec.staticMigration
+# (not dynamicMigration): the declared type picks the strategy, and the
+# pre-staged-auth check belongs to the static one. The topic selection is
+# incidental (the shape check refuses first).
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -37,9 +37,10 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  route:
-    name: "static-route"
+  staticMigration:
+    route:
+      name: "static-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"
     topicGroup:
       - topics:
           - "tbm-topic-046"
-    targetStreamingDomain: "__DEST_DOMAIN__"

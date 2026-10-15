@@ -22,12 +22,12 @@ type convertServices struct {
 // convertServicesFunc builds a conversion's services from the manifest.
 type convertServicesFunc func(g *manifest.GatewayMigration) (convertServices, error)
 
-// runConvertBranch drives a route conversion (spec.route.convertTo: static) through d2s.D2SOrchestrator.
+// runConvertBranch drives a route conversion (spec.dynamicToStaticConversion) through d2s.D2SOrchestrator.
 // Its siblings are runStaticBranch and runDynamicBranch; the live reconcile that produced reconcileResult ran
 // once, in runMigrationExecute. It builds its own services rather than calling buildExecutorServices, which
 // always builds both offset providers and the cluster-link client, neither of which a conversion uses.
 //
-// Every policy is read from g.Spec.DefaultPolicies, the effective policy after applyPolicyOverrides. A
+// Every policy is read from g.Spec.DynamicToStaticConversion.Policies, the effective policy after applyPolicyOverrides. A
 // conversion reads detectUnroutedCommitsDuration and offsetSyncConcurrency (resolved to their defaults), and
 // the rollout and hot-reload timeouts and the gateway config port like every branch; lagThreshold and
 // promoteBatchSize are AAO/TBM-only.
@@ -39,7 +39,7 @@ func runConvertBranch(
 	deps executorDependencies,
 ) error {
 	ctx := commandContext(cmd)
-	policy := g.Spec.DefaultPolicies
+	policy := g.Spec.DynamicToStaticConversion.Policies
 
 	if deps.convert == nil {
 		return fmt.Errorf("no route-conversion services are configured for this command")
@@ -64,7 +64,7 @@ func runConvertBranch(
 	actions.SetRolloutTimeout(policy.RolloutTimeout)
 	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
 
-	applyEffectivePolicy(config, policy)
+	applyCommonPolicy(config, policy.CommonPolicies)
 
 	orchestrator := d2s.NewD2SOrchestrator(config, actions)
 	if err := orchestrator.Execute(ctx, reconcileResult, d2s.Policy{

@@ -10,14 +10,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// runStaticBranch drives a static-mode migration through
+// runStaticBranch drives a staticMigration (AAO) through
 // migration.MigrationOrchestrator. Its twin is runDynamicBranch; the shared
 // live reconcile that produced reconcileResult runs once, in
 // runMigrationExecute.
 //
-// Every policy value is read from g.Spec.DefaultPolicies — the EFFECTIVE
-// policy, i.e. the manifest's spec.defaultPolicies after applyPolicyOverrides
-// has folded in any per-run flag overrides.
+// Every policy value is read from g.Spec.StaticMigration.Policies — the
+// EFFECTIVE policy, i.e. the manifest's staticMigration.policies after
+// applyPolicyOverrides has folded in any per-run flag overrides.
 //
 // Beyond its twin, it prints the offset-sync guidance when a run with the pause
 // opted in fails.
@@ -29,7 +29,7 @@ func runStaticBranch(
 	deps executorDependencies,
 ) error {
 	ctx := commandContext(cmd)
-	policy := g.Spec.DefaultPolicies
+	policy := g.Spec.StaticMigration.Policies
 
 	_, buildSpan := tracing.Start(ctx, tracerName, "migration.build_services")
 	svc, err := buildExecutorServices(g, deps)
@@ -44,7 +44,9 @@ func runStaticBranch(
 	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
-	applyEffectivePolicy(config, policy)
+	applyCommonPolicy(config, policy.CommonPolicies)
+	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
+	config.ConsumerOffsetSyncDrainDuration = policy.ConsumerOffsetSyncDrainDuration
 
 	orchestrator := migration.NewMigrationOrchestrator(config, actions)
 

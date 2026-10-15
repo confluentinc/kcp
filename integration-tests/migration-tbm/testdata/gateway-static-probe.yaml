@@ -7,7 +7,7 @@
 #
 # findRoute (internal/services/migplan/gatewayfile.go) reads only, per route:
 #   - route.mode                     -> RouteConfig.Mode  ("route is dynamic" /
-#                                        static-strategy dispatch in reconcile.go)
+#                                        "route is static" against the declared type)
 #   - route.streamingDomains[].name  -> BoundDomains      ("route binds exactly two domains")
 #   - route.security.cluster.<domain> -> staged auth       ("route carries
 #                                        pre-staged auth for the target domain")
@@ -87,10 +87,9 @@ spec:
             onOneCluster: allow
             onBothClusters: source-domain
         fencing: []
-    # UNRECOGNIZED mode (neither "static" nor "dynamic") -> Reconcile only
-    # special-cases mode == "static" (reconcile/reconcile.go), so this falls
-    # through to the dynamic strategy, whose "route is dynamic" precondition
-    # fails on the literal value: findRoute passes an explicit mode string
+    # UNRECOGNIZED mode (neither "static" nor "dynamic") -> the declared
+    # dynamicMigration's "route is dynamic" precondition fails on the literal
+    # value: findRoute passes an explicit mode string
     # through verbatim, unvalidated (internal/services/migplan/gatewayfile.go).
     # Targeted by halt-route-mode-unrecognized.
     - name: unrecognized-mode-route

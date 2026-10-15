@@ -173,7 +173,7 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	// (internal/manifest/gateway.go's minDetectUnroutedProducersDuration) — also
 	// the exact value the sibling AAO e2e suite already proved live for this
 	// same check (migration_e2e_test.go's own rogue-producer tests).
-	g.Spec.DefaultPolicies.DetectUnroutedProducersDuration = 10 * time.Second
+	g.Spec.DynamicMigration.Policies.DetectUnroutedProducersDuration = 10 * time.Second
 
 	manifestBytes, err := yaml.Marshal(g)
 	require.NoError(t, err)

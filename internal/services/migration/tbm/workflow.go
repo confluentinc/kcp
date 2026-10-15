@@ -344,7 +344,7 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
 	if detectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		a.reporter.Detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		a.reporter.Detail("Detection disabled (spec.dynamicMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
 		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
 	}
