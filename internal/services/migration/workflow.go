@@ -14,8 +14,10 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
+	"go.opentelemetry.io/otel/attribute"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
@@ -303,8 +305,14 @@ func (s *MigrationActions) CheckLags(
 
 	if len(config.Topics) == 0 {
 		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
+
+	polls, behind := 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx, attribute.Int("kcp.polls", polls), attribute.Int("kcp.topics_behind", behind))
+	}()
 
 	ticker := time.NewTicker(s.lagPollInterval)
 	defer ticker.Stop()
@@ -322,6 +330,7 @@ func (s *MigrationActions) CheckLags(
 		allBelowThreshold := true
 		topicTotalLags := make(map[string]int64)
 
+		polls++
 		sourceOffsets, destinationOffsets, err := s.fetchSourceAndDestinationOffsets(ctx, config.Topics)
 		if err != nil {
 			sweepFailures++
@@ -350,6 +359,8 @@ func (s *MigrationActions) CheckLags(
 				topicTotalLags[topic] = lag
 			}
 		}
+
+		behind = len(topicTotalLags)
 
 		if allBelowThreshold {
 			s.reporter.blank()
@@ -428,6 +439,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// the still-owed fence/switch.
 	if config.FenceYAML == "" {
 		s.reporter.Detail("No fence artifact in plan — nothing to fence")
+		tracing.MarkSkipped(ctx, "no_fence_in_plan")
 		return nil
 	}
 
@@ -689,6 +701,7 @@ func (s *MigrationActions) PauseOffsetSync(
 	if !config.PauseConsumerOffsetSync {
 		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
 		s.reporter.Detail("Offset-sync pause not requested — skipping")
+		tracing.MarkSkipped(ctx, "offset_sync_pause_not_requested")
 		return nil
 	}
 	// Plan-driven: only pause when there is an active cutover this run
@@ -697,6 +710,7 @@ func (s *MigrationActions) PauseOffsetSync(
 	if config.FenceYAML == "" {
 		slog.Debug("⏭️ no cutover in flight, skipping offset-sync pause")
 		s.reporter.Detail("No cutover in flight — offset-sync pause skipped")
+		tracing.MarkSkipped(ctx, "no_fence_in_plan")
 		return nil
 	}
 
@@ -717,10 +731,8 @@ func (s *MigrationActions) PauseOffsetSync(
 	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
 		s.reporter.Detail("Draining consumer offset sync for %s before pausing...", drain)
 		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(drain):
+		if err := tracing.Wait(ctx, "offset_sync_drain", drain); err != nil {
+			return err
 		}
 	}
 
@@ -742,27 +754,31 @@ func (s *MigrationActions) PauseOffsetSync(
 // declared baseline, as the second half of the abort_fence rollback.
 // Soft-fail: the unfence already succeeded, the run is already failing with
 // the step error that triggered the rollback, and a restore error must not
-// undo the unfence, so a failure prints manual remediation instead. Gated only
+// undo the unfence, so a failure prints manual remediation instead; the error
+// is returned only so the rollback's span can record it. Gated only
 // on config.PauseConsumerOffsetSync, never on whether a prior pause actually
 // landed, so it is safe to call even when the pause failed before its own
-// AlterConfigs. It runs on a fresh context: the rollback only fires while the
-// run's context is still live, and the restore must not be cut short by a
-// signal arriving after the unfence.
+// AlterConfigs. It runs on a context that ignores cancellation but keeps the
+// caller's span: the rollback only fires while the run's context is still
+// live, and the restore must not be cut short by a signal arriving after the
+// unfence.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
+	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-) {
+) error {
 	if !config.PauseConsumerOffsetSync {
-		return
+		return nil
 	}
 	r := newReporter()
 	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
-	want, err := setOffsetSyncBaseline(context.Background(), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
+	want, err := setOffsetSyncBaseline(context.WithoutCancel(ctx), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
 	if err != nil {
 		r.Remediation("Gateway unfenced but %v — re-apply manually.", err)
-		return
+		return err
 	}
 	r.Success("%s set to %s on cluster link %s", offsetSyncEnableKey, want, config.ClusterLinkName)
+	return nil
 }
 
 // RestoreOffsetSync runs the restore_offset_sync stage, the last in the
@@ -775,6 +791,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 // reconcile still finds the restore owed, retries it.
 func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
 	if !config.RestoreOffsetSync {
+		tracing.MarkSkipped(ctx, "nothing_to_restore")
 		if !config.PauseConsumerOffsetSync {
 			slog.Debug("⏭️ consumer offset sync pause not requested, nothing to restore")
 			s.reporter.Detail("Offset-sync pause not requested — nothing to restore")
@@ -810,6 +827,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
 		s.reporter.Detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
 	}
 
@@ -818,6 +836,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 	// plan (config.MigrateTopics), never the live cluster.
 	if len(config.MigrateTopics) == 0 {
 		s.reporter.Detail("No topics to migrate — nothing to check for unrouted producers")
+		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
 
@@ -839,6 +858,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	// live cluster — the reconcile engine already decided.
 	if len(config.Topics) == 0 {
 		s.reporter.Detail("No topics to migrate — nothing to promote")
+		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
 
@@ -882,8 +902,16 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		}
 	}
 	sweepFailures := 0
+	polls, batches, promoteErrors := 0, 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx,
+			attribute.Int("kcp.polls", polls),
+			attribute.Int("kcp.batches", batches),
+			attribute.Int("kcp.promote_errors", promoteErrors))
+	}()
 
 	for {
+		polls++
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -928,12 +956,10 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 				len(awaitingStop))
 			slog.Debug("batch in flight, waiting for STOPPED before next batch",
 				"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(s.promotePollInterval):
-				continue
+			if err := tracing.Wait(ctx, "promote_poll", s.promotePollInterval); err != nil {
+				return err
 			}
+			continue
 		}
 
 		// Find topics at zero lag that still need a promote request. Topics
@@ -956,10 +982,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			}
 			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(s.promotePollInterval):
+			if err := tracing.Wait(ctx, "promote_poll", s.promotePollInterval); err != nil {
+				return err
 			}
 			continue
 		}
@@ -990,12 +1014,10 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 				slog.Debug("no topics at zero lag yet, waiting",
 					"remaining", len(remaining), "pollInterval", s.promotePollInterval)
 			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(s.promotePollInterval):
-				continue
+			if err := tracing.Wait(ctx, "promote_poll", s.promotePollInterval); err != nil {
+				return err
 			}
+			continue
 		}
 
 		// Promote topics confirmed at zero lag
@@ -1011,6 +1033,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		s.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		batches++
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
@@ -1018,6 +1041,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
+				promoteErrors++
 				retryCount[topic.MirrorTopicName]++
 				s.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
 					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
@@ -1048,10 +1072,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		}
 
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", s.promotePollInterval)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(s.promotePollInterval):
+		if err := tracing.Wait(ctx, "promote_poll", s.promotePollInterval); err != nil {
+			return err
 		}
 	}
 }
@@ -1085,6 +1107,7 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	// switch itself is done.
 	if config.SwitchoverYAML == "" {
 		s.reporter.Detail("No switchover artifact in plan — nothing to switch")
+		tracing.MarkSkipped(ctx, "no_switchover_in_plan")
 		return nil
 	}
 

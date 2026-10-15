@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -623,7 +624,9 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 //
 // baselineGeneration is the Deployment's metadata.generation captured before the
 // apply, via GetGatewayDeploymentGeneration.
-func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_pods")
+	defer func() { tracing.End(span, err) }()
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
@@ -810,7 +813,9 @@ func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gateway
 
 // waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
 // Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
+func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_ready")
+	defer func() { tracing.End(span, err) }()
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)

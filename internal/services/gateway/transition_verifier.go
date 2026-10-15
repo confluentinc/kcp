@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Reporter is the minimal user-facing output surface TransitionVerifier
@@ -73,7 +76,10 @@ func (v *TransitionVerifier) DeploymentBaseline(ctx context.Context, namespace, 
 // fresh config revision id when the cluster supports one (a fresh id guarantees
 // the spec changes so metadata.generation always advances — same rationale as
 // the whole-CR server-side apply this replaced).
-func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName string, rp RoutePatch, step string) (ApplyResult, error) {
+func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName string, rp RoutePatch, step string) (_ ApplyResult, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.patch_cr",
+		stepAttr(step), attribute.Bool("kcp.gateway.config_id_injected", v.Capability.InjectsConfigID()))
+	defer func() { tracing.End(span, err) }()
 	var configID string
 	if v.Capability.InjectsConfigID() {
 		var err error
@@ -130,11 +136,13 @@ func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, c
 // "unfence"). An operator rejection is returned as-is: GatewayRejectedError
 // already carries the operator's own reason and message, and callers can
 // errors.As it.
-func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crName, step string) error {
+func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crName, step string) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_accepted", stepAttr(step))
+	defer func() { tracing.End(span, err) }()
 	v.Reporter.Detail("Waiting for gateway reconcile...")
 	slog.Debug("waiting for gateway acceptance", "step", step, "gateway", crName, "rolloutTimeout", v.RolloutTimeout)
 
-	err := v.Service.WaitForGatewayAccepted(ctx, namespace, crName, 2*time.Second, v.RolloutTimeout)
+	err = v.Service.WaitForGatewayAccepted(ctx, namespace, crName, 2*time.Second, v.RolloutTimeout)
 	if err == nil {
 		return nil
 	}
@@ -150,13 +158,15 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 
 // WaitForConfigApplied blocks until every ready gateway pod reports the
 // applied configId.
-func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) error {
+func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_config_applied", stepAttr(step))
+	defer func() { tracing.End(span, err) }()
 	v.Reporter.Detail("Waiting for every gateway pod to apply the new config...")
 	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
 		"port", port, "hotReloadTimeout", v.HotReloadTimeoutOrDefault(),
 		"rollTimeout", v.RolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
 
-	err := v.Service.WaitForGatewayConfigID(ctx, namespace, crName, ConfigWaitOptions{
+	err = v.Service.WaitForGatewayConfigID(ctx, namespace, crName, ConfigWaitOptions{
 		ConfigID:                     applied.ConfigID,
 		Port:                         port,
 		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
@@ -187,7 +197,14 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 // cluster supports. An empty applied.ConfigID means the cluster cannot
 // report a config revision, so this falls back to the Deployment rollout
 // wait.
-func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) error {
+func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.verify_transition", stepAttr(step))
+	defer func() { tracing.End(span, err) }()
+	mechanism := "rollout"
+	if applied.ConfigID != "" {
+		mechanism = "config_id"
+	}
+	span.SetAttributes(attribute.String("kcp.gateway.mechanism", mechanism))
 	if applied.ConfigID != "" {
 		return v.WaitForConfigApplied(ctx, namespace, crName, port, applied, step)
 	}
@@ -262,10 +279,12 @@ func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessPro
 // a later one omits it. A JSON Patch naming only spec.configId declares no
 // manager and no spec, so it can't create that hazard either, which is what
 // makes this safe to run at any point in a migration, including a resume.
-func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) error {
+func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) (err error) {
 	if !v.Capability.InjectsConfigID() {
 		return nil
 	}
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.verify_hot_reload")
+	defer func() { tracing.End(span, err) }()
 
 	v.Reporter.Detail("Checking the gateway applies config revisions in place...")
 
@@ -300,7 +319,9 @@ func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, name
 // Returns the resolved Capability so callers can layer their own
 // package-specific bookkeeping (persisting it, warning on a changed mode,
 // reporting a mode-specific message) on top.
-func (v *TransitionVerifier) ResolveCapability(ctx context.Context, namespace, crName string, port int, fencedCRYAML, switchedCRYAML []byte) (Capability, error) {
+func (v *TransitionVerifier) ResolveCapability(ctx context.Context, namespace, crName string, port int, fencedCRYAML, switchedCRYAML []byte) (_ Capability, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.resolve_capability")
+	defer func() { tracing.End(span, err) }()
 	capability, err := v.Service.DetectCapability(ctx, namespace, crName, port, fencedCRYAML, switchedCRYAML)
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
@@ -312,5 +333,10 @@ func (v *TransitionVerifier) ResolveCapability(ctx context.Context, namespace, c
 	slog.Debug("resolved gateway verification capability",
 		"mode", capability.Mode, "crdSupportsConfigId", capability.CRDSupportsConfigID,
 		"hotReloadEnabled", capability.HotReloadEnabled)
+	span.SetAttributes(
+		attribute.String("kcp.gateway.mode", string(capability.Mode)),
+		attribute.Bool("kcp.gateway.hot_reload", capability.HotReloadEnabled),
+		attribute.Bool("kcp.gateway.crd_supports_config_id", capability.CRDSupportsConfigID),
+	)
 	return capability, nil
 }

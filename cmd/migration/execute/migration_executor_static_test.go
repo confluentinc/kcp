@@ -2,10 +2,7 @@ package execute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,7 +17,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 )
 
 // This file exercises the static-mode branch the way
@@ -73,15 +69,15 @@ func staticResult(topics []string) *migplan.Result {
 // runDynamicBranchWithConfig does for the dynamic branch: a fresh config from
 // the manifest and staticResult standing in for the live reconcile.
 // editGateway, when non-nil, stands in for a CLI policy override.
-func runStaticBranchWithConfig(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), runReportPath string, deps executorDependencies) error {
+func runStaticBranchWithConfig(t *testing.T, f fixture, topics []string, editGateway func(*manifest.GatewayMigration), deps executorDependencies) error {
 	t.Helper()
-	_, err := runStaticBranchWithResult(t, f, staticResult(topics), editGateway, runReportPath, deps)
+	_, err := runStaticBranchWithResult(t, f, staticResult(topics), editGateway, deps)
 	return err
 }
 
 // runStaticBranchWithResult is runStaticBranchWithConfig with the stand-in
 // reconcile result supplied by the caller, returning the branch's stdout.
-func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, editGateway func(*manifest.GatewayMigration), runReportPath string, deps executorDependencies) (string, error) {
+func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, editGateway func(*manifest.GatewayMigration), deps executorDependencies) (string, error) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	if editGateway != nil {
@@ -92,13 +88,13 @@ func runStaticBranchWithResult(t *testing.T, f fixture, res *migplan.Result, edi
 	var out strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
-	err := runStaticBranch(cmd, g, &config, res, deps, runReportPath)
+	err := runStaticBranch(cmd, g, &config, res, deps)
 	return out.String(), err
 }
 
 func TestExecute_StaticMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	f := newFixture(t, nil)
-	require.NoError(t, runStaticBranchWithConfig(t, f, []string{"t1.order"}, nil, "", stubDeps(nil, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, f, []string{"t1.order"}, nil, stubDeps(nil, nil)))
 }
 
 // PromoteBatchSize reaches MigrationActions.SetPromoteBatchSize: with a cap of
@@ -110,13 +106,13 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 	t.Run("policy caps the batch", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
 		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
-		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, editGateway, "", stubDeps(nil, rec)))
+		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, editGateway, stubDeps(nil, rec)))
 		assert.Equal(t, 1, rec.maxBatch(), "promoteBatchSize 1 must cap every promote batch at one topic")
 	})
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
 		rec := &recordingClusterLinkService{}
-		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, nil, "", stubDeps(nil, rec)))
+		require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), topics, nil, stubDeps(nil, rec)))
 		assert.Equal(t, len(topics), rec.maxBatch(),
 			"with no cap both topics promote in one call — proving the policy, not chance, capped the run above")
 	})
@@ -127,7 +123,7 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *testing.T) {
 	rec := &recordingGatewayService{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
-	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubDeps(rec, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, stubDeps(rec, nil)))
 	assert.Equal(t, 9999, rec.port(), "gatewayConfigPort must reach the static capability probe")
 }
 
@@ -151,7 +147,7 @@ func (r *readinessRecordingGateway) WaitForGatewayReady(_ context.Context, _, _ 
 func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 	rec := &readinessRecordingGateway{}
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.RolloutTimeout = 7 * time.Minute }
-	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, "", stubDeps(rec, nil)))
+	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, stubDeps(rec, nil)))
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -159,30 +155,6 @@ func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 	for _, got := range rec.timeouts {
 		assert.Equal(t, 7*time.Minute, got, "rolloutTimeout must bound every gateway readiness wait")
 	}
-}
-
-// A run-report path wires the recorder into the orchestrator: the report on
-// disk names every stage of the completed run.
-func TestExecute_StaticMode_WritesRunReport(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run-report.json")
-	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, nil, path, stubDeps(nil, nil)))
-
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err, "the run report must be written")
-	var report migration.RunReport
-	require.NoError(t, json.Unmarshal(raw, &report))
-
-	assert.Equal(t, migration.StateOffsetSyncRestored, report.FinalState)
-	assert.Equal(t, migration.RunOutcomeCompleted, report.Outcome)
-	var events []string
-	for _, s := range report.Stages {
-		events = append(events, s.Event)
-	}
-	assert.Equal(t, []string{
-		migration.EventInitialize, migration.EventWaitForLags, migration.EventFence,
-		migration.EventPauseOffsetSync, migration.EventVerifyFence, migration.EventPromote, migration.EventSwitch,
-		migration.EventRestoreOffsetSync,
-	}, events)
 }
 
 // alterRecordingClusterLink records the value of every consumer.offset.sync.enable
@@ -225,7 +197,7 @@ func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 	rec := &alterRecordingClusterLink{}
 	res := staticResult([]string{"t1.order"})
 	res.RestoreOffsetSync = true
-	_, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, "", stubDeps(nil, rec))
+	_, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, stubDeps(nil, rec))
 	require.NoError(t, err)
 
 	rec.mu.Lock()
@@ -238,7 +210,7 @@ func TestExecute_StaticMode_RestoresOffsetSyncAfterSuccess(t *testing.T) {
 // the plan, nothing after the FSM sets offset sync back.
 func TestExecute_StaticMode_RestoresOnlyWhenThePlanOwesIt(t *testing.T) {
 	rec := &alterRecordingClusterLink{}
-	_, err := runStaticBranchWithResult(t, pausingFixture(t), staticResult([]string{"t1.order"}), nil, "", stubDeps(nil, rec))
+	_, err := runStaticBranchWithResult(t, pausingFixture(t), staticResult([]string{"t1.order"}), nil, stubDeps(nil, rec))
 	require.NoError(t, err)
 
 	rec.mu.Lock()
@@ -253,7 +225,7 @@ func TestExecute_StaticMode_RestoreFailureFailsTheRun(t *testing.T) {
 	rec := &alterRecordingClusterLink{failValue: "true"}
 	res := staticResult([]string{"t1.order"})
 	res.RestoreOffsetSync = true
-	out, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, "", stubDeps(nil, rec))
+	out, err := runStaticBranchWithResult(t, pausingFixture(t), res, nil, stubDeps(nil, rec))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "restoring consumer offset sync")
