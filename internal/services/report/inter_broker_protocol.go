@@ -16,7 +16,7 @@ import (
 //
 // Returns "Yes" (IBP >= 2.8), "No" (below 2.8), or "" when it can't be determined
 // (no configuration, no property, or an unparseable value). "" means the plan asks
-// for it, but only where it matters (the 2.4-2.9 Kafka band).
+// for it, but only where it matters (the 2.4–2.9 Kafka band).
 func resolveInterBrokerProtocol(configs []kafka.DescribeConfigurationRevisionOutput, cluster types.DiscoveredCluster) string {
 	prov := cluster.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.CurrentBrokerSoftwareInfo == nil || prov.CurrentBrokerSoftwareInfo.ConfigurationArn == nil {

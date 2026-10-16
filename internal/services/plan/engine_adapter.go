@@ -137,10 +137,16 @@ const (
 	engineAuthSASLPlain = "API keys (SASL/PLAIN)"
 	engineAuthMTLS      = "TLS client certificates (mTLS)"
 	engineAuthUnauth    = "None / plaintext"
+	engineAuthKerberos  = "Kerberos (GSSAPI)"
 
 	// engineSRGlue is the engine's Schema Registry value for AWS Glue (mirrors the
 	// schema_registry question's "glue" option).
 	engineSRGlue = "AWS Glue Schema Registry"
+
+	// engineSRNone is the schema_registry "none" value, and engineSchemaStrategyMigrate the
+	// schema_strategy "migrate" value (both mirror their questions' engine values).
+	engineSRNone                = "None"
+	engineSchemaStrategyMigrate = "Migrate my existing schemas"
 
 	// Engine source-platform strings (mirror the source_platform question's engine
 	// values). buildProfile maps these onto the engine SourceType axis.
@@ -162,6 +168,57 @@ func resolveSourceType(platform string) (engine.SourceType, string, string) {
 	default:
 		return engine.SourceMSK, enginePlatformMSK, "AWS"
 	}
+}
+
+// scanPlatformOf names the platform a cluster's scan detected: an OSK-tagged
+// cluster is Apache Kafka (an OSK scan can't tell Confluent Platform apart from
+// it — that's what a declared confluent-platform refines); everything else is
+// Amazon MSK.
+func scanPlatformOf(c report.ProcessedCluster) string {
+	if c.SourceType == types.SourceTypeOSK {
+		return enginePlatformOSK
+	}
+	return enginePlatformMSK
+}
+
+// platformToken maps a source_platform engine string back to its plan-inputs.yaml
+// token, for error messages that quote the customer's own spelling.
+func platformToken(platform string) string {
+	switch platform {
+	case enginePlatformOSK:
+		return "apache-kafka"
+	case enginePlatformCP:
+		return "confluent-platform"
+	default:
+		return "msk"
+	}
+}
+
+// sourceResolution is one cluster's resolved source platform plus where it came
+// from, for validating declared options against it and reporting exactly which
+// layer supplied it.
+type sourceResolution struct {
+	platform string // engine string ("Amazon MSK" | "Apache Kafka" | "Confluent Platform"); "" = unknown
+	from     string // "cluster source_platform" | "all_clusters.source_platform" | "scan"
+}
+
+// resolveClusterSource resolves one cluster's source the same way buildProfile
+// does — its own declared source_platform wins, else all_clusters.source_platform,
+// else (with a real scan) the scan's detected platform — but, unlike buildProfile,
+// never assumes MSK when nothing is declared and there is no scan (scanless):
+// that leaves the source genuinely unknown, so ValidateDeclaredSources can skip
+// the option check for the cluster rather than validate against a guess.
+func resolveClusterSource(key string, declared DeclaredInputs, c report.ProcessedCluster, scanless bool) sourceResolution {
+	if v := declared.Clusters[key].Inputs.SourcePlatform; v != "" {
+		return sourceResolution{platform: v, from: "cluster source_platform"}
+	}
+	if v := declared.Defaults.SourcePlatform; v != "" {
+		return sourceResolution{platform: v, from: "all_clusters.source_platform"}
+	}
+	if scanless {
+		return sourceResolution{}
+	}
+	return sourceResolution{platform: scanPlatformOf(c), from: "scan"}
 }
 
 // buildProfile maps one scanned cluster plus the customer-declared IntakeInputs onto
@@ -191,6 +248,8 @@ func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, sca
 		SourceCloud:        sourceCloud,
 		TargetCloud:        in.TargetCloud, // engine defaults to source cloud (AWS for MSK) when ""
 		Scanless:           scanless,       // lets source_platform render so a scanless user can pick OSK/CP
+
+		SourcePlatformDeclared: in.SourcePlatform != "",
 	}
 
 	// Source cluster type. Serverless is an MSK-only concept: Serverless is IAM-only,
@@ -259,13 +318,16 @@ func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, sca
 
 	// Inter-broker protocol relative to the 2.8 Cluster Linking floor: derived from
 	// the scanned MSK configuration when available, else supplied by the customer
-	// (only asked on the 2.4-2.9 band, where it changes the migration mechanism).
+	// (only asked on the 2.4–2.9 band, where it changes the migration mechanism).
 	if c.SourceInterBrokerProtocol != "" {
 		p.InterBrokerProtocol = c.SourceInterBrokerProtocol
 	}
 	if in.OvInterBrokerProtocol != "" {
 		p.InterBrokerProtocol = in.OvInterBrokerProtocol
 	}
+	// Answered when overridden, when the scan carried no IBP (a supplied answer), or
+	// always in scanless mode. Independent of the Kafka-version flag.
+	p.IBPAnswered = scanless || in.OvInterBrokerProtocol != "" || c.SourceInterBrokerProtocol == ""
 
 	// Tiered storage. MSK reads it from the cluster config (Provisioned only); an
 	// OSK/CP source has no such config, so it is derived from the topic summary's
@@ -349,10 +411,12 @@ func buildProfile(c report.ProcessedCluster, in IntakeInputs, srKind string, sca
 	if in.SourceSRType != "" {
 		p.SourceSRType = in.SourceSRType
 	}
-	// Glue is the only Schema Registry kind the scan fully knows; a Confluent kind
-	// still needs its edition answered, and an undetected registry is answered
-	// outright — so the SR type reads as an answer unless it was scanned as Glue.
-	p.SchemaAnswered = scanless || in.SourceSRType != "" || srKind != "glue"
+	// SchemaAnswered covers the registry type: Glue is fully scanned; a Confluent
+	// kind is scanned but its edition only counts as an answer once declared; an
+	// undetected registry is answered outright.
+	p.SchemaAnswered = scanless || in.SourceSRType != "" || srKind == ""
+	// The registry's presence is a scan finding whenever the scan detected one.
+	p.SchemaDetectedByScan = !scanless && srKind != ""
 	p.SourceSROutboundReachableToCC = in.SourceSROutboundReachableToCC
 	// Custom topic settings — derived from the scanned per-topic configs (RF, cleanup
 	// policy, retention, max message size). nil when no topics were scanned, so the
@@ -391,6 +455,8 @@ func translateSourceAuths(kcpTokens []string) []string {
 			out = append(out, engineAuthMTLS)
 		case SourceAuthUnauth:
 			out = append(out, engineAuthUnauth)
+		case SourceAuthKerberos:
+			out = append(out, engineAuthKerberos)
 		}
 	}
 	return out
@@ -414,6 +480,8 @@ func engineAuthToKCP(engineAuths []string) []string {
 			out = append(out, SourceAuthMTLS)
 		case engineAuthUnauth:
 			out = append(out, SourceAuthUnauth)
+		case engineAuthKerberos:
+			out = append(out, SourceAuthKerberos)
 		}
 	}
 	return out
@@ -429,7 +497,7 @@ func bucketKafkaVersion(v string) string {
 	case versionAtLeast(v, "3.0"):
 		return "3.0 or newer"
 	case versionAtLeast(v, "2.4"):
-		return "2.4-2.9"
+		return "2.4–2.9"
 	default:
 		return "Older than 2.4"
 	}

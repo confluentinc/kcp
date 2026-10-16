@@ -144,7 +144,7 @@ type ClusterTypeResult struct {
 }
 
 func clusterTypeRules(p Profile, sizing SizingResult, tc string) (rules []ruleEval, hardFired []ruleEval) {
-	mtlsNonAws := tc != "" && tc != "AWS" && (authHas(p, authMTLS) || targetHasMtls(p))
+	mtlsOnGCP := tc == "GCP" && (authHas(p, authMTLS) || targetHasMtls(p))
 
 	// A declared Enterprise-ceiling breach forces Dedicated — meaningful only on
 	// Band 2, which is the band whose card asks the Enterprise ceilings.
@@ -153,15 +153,15 @@ func clusterTypeRules(p Profile, sizing SizingResult, tc string) (rules []ruleEv
 	rules = []ruleEval{
 		{
 			ID:            "band4_exceeds_enterprise_cap",
-			Customer:      "a workload above what our Enterprise clusters hold",
-			Encouragement: "Dedicated clusters scale well past the limits we publish for Enterprise.",
+			Customer:      "a workload at a scale that benefits from custom sizing",
+			Encouragement: "Workloads at this scale benefit from custom sizing, so we'd plan the right cluster with you rather than size it automatically.",
 			Fired:         sizing.Band == bandXL,
 		},
 		{
-			ID:            "mtls_on_non_aws_target",
-			Customer:      "mTLS authentication on your " + tc + " target",
-			Encouragement: "Dedicated supports mTLS on your target cloud.",
-			Fired:         mtlsNonAws,
+			ID:            "mtls_on_gcp_target",
+			Customer:      "mTLS authentication on your Google Cloud target",
+			Encouragement: "Dedicated supports mTLS on Google Cloud.",
+			Fired:         mtlsOnGCP,
 		},
 		{
 			// No encouragement: this one withholds the plan and renders a bespoke
@@ -195,7 +195,7 @@ func clusterType(p Profile, sizing SizingResult, tc string, extraForced *forcedD
 
 	privateReq := requiresPrivate(p)
 	crossedToPrivate := false
-	crossedForSize, crossedForMtls, crossedForThroughput := false, false, false
+	crossedForSize, crossedForMtls, crossedForThroughput, crossedForEgress := false, false, false, false
 	// Read only on Band 1, where the Standard-ceiling card is the one shown.
 	exceedsStandardCeiling := sizing.Band <= sharedTierMaxBand && exceedsStandardLimits(p)
 
@@ -204,7 +204,8 @@ func clusterType(p Profile, sizing SizingResult, tc string, extraForced *forcedD
 	case dedicated:
 		tier = TierDedicated
 	case !privateReq:
-		if sizing.Band <= sharedTierMaxBand && !mtlsNeeded(p) && !exceedsStandardCeiling {
+		egressForced := egressForcesPrivate(p, tc)
+		if sizing.Band <= sharedTierMaxBand && !mtlsNeeded(p) && !exceedsStandardCeiling && !egressForced {
 			tier = smallTier(p)
 		} else {
 			tier = TierEnterprise
@@ -212,6 +213,7 @@ func clusterType(p Profile, sizing SizingResult, tc string, extraForced *forcedD
 			crossedForSize = sizing.Band > sharedTierMaxBand
 			crossedForMtls = mtlsNeeded(p)
 			crossedForThroughput = exceedsStandardCeiling
+			crossedForEgress = egressForced
 		}
 	default:
 		tier = TierEnterprise
@@ -259,9 +261,16 @@ func clusterType(p Profile, sizing SizingResult, tc string, extraForced *forcedD
 			crossCauses = append(crossCauses, "mTLS authentication needs an Enterprise cluster or above")
 			crossDrivers = append(crossDrivers, srcOr(p.AuthAnswered, "mTLS in use"))
 		}
+		if crossedForEgress {
+			crossCauses = append(crossCauses, "Confluent Cloud also needs an outbound private connection")
+		}
 		crossDrivers = append(crossDrivers, ans("public networking acceptable"))
 		crossWhy := strings.Join(crossCauses, ", and ") + ". Enterprise clusters run on private networking"
 		tierReason = basis(crossDrivers...) + "we recommend an Enterprise cluster with private networking: " + crossWhy + "."
+		if crossedForEgress && !crossedForSize && !crossedForMtls && !crossedForThroughput {
+			tierReason = egressPrivateLead + egressPrivateReason
+			crossWhy = "Confluent Cloud also needs an outbound private connection, which needs an Enterprise cluster with an Egress PrivateLink Endpoint"
+		}
 		assessReason = "Your answers point to Enterprise with private networking: public is acceptable to you, but " + crossWhy + "."
 		tierWhy = "Needed because " + strings.Join(crossCauses, ", and ") + "."
 	case tier == TierEnterprise:

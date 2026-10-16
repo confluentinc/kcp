@@ -492,11 +492,19 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		}
 
 		if jumpClusterInstanceType == "" {
-			jumpClusterInstanceType = strings.TrimPrefix(aws.ToString(cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.InstanceType), "kafka.")
+			instanceType, err := defaultJumpClusterInstanceType(cluster)
+			if err != nil {
+				return nil, err
+			}
+			jumpClusterInstanceType = instanceType
 		}
 
 		if jumpClusterBrokerStorage == 0 {
-			jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+			storage, err := defaultJumpClusterBrokerStorage(cluster)
+			if err != nil {
+				return nil, err
+			}
+			jumpClusterBrokerStorage = storage
 		}
 
 		opts.MigrationWizardRequest.TargetBootstrapEndpoint = targetBootstrapEndpoint
@@ -531,11 +539,19 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 			}
 
 			if jumpClusterInstanceType == "" {
-				jumpClusterInstanceType = strings.TrimPrefix(aws.ToString(cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.InstanceType), "kafka.")
+				instanceType, err := defaultJumpClusterInstanceType(cluster)
+				if err != nil {
+					return nil, err
+				}
+				jumpClusterInstanceType = instanceType
 			}
 
 			if jumpClusterBrokerStorage == 0 {
-				jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+				storage, err := defaultJumpClusterBrokerStorage(cluster)
+				if err != nil {
+					return nil, err
+				}
+				jumpClusterBrokerStorage = storage
 			}
 		}
 
@@ -553,6 +569,27 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	return opts, nil
+}
+
+// defaultJumpClusterInstanceType reads the jump cluster instance type from the scanned
+// broker group, so a scan without broker info is an error instead of a nil dereference.
+func defaultJumpClusterInstanceType(cluster *types.DiscoveredCluster) (string, error) {
+	p := cluster.AWSClientInformation.MskClusterConfig.Provisioned
+	if p == nil || p.BrokerNodeGroupInfo == nil || p.BrokerNodeGroupInfo.InstanceType == nil {
+		return "", fmt.Errorf("the scan has no broker instance type for cluster %s, so --jump-cluster-instance-type can't be defaulted: pass --jump-cluster-instance-type", cluster.Arn)
+	}
+	return strings.TrimPrefix(aws.ToString(p.BrokerNodeGroupInfo.InstanceType), "kafka."), nil
+}
+
+// defaultJumpClusterBrokerStorage reads the jump cluster broker storage from the scanned
+// broker group, so a scan without broker storage info is an error instead of a nil dereference.
+func defaultJumpClusterBrokerStorage(cluster *types.DiscoveredCluster) (int, error) {
+	p := cluster.AWSClientInformation.MskClusterConfig.Provisioned
+	if p == nil || p.BrokerNodeGroupInfo == nil || p.BrokerNodeGroupInfo.StorageInfo == nil ||
+		p.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo == nil || p.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize == nil {
+		return 0, fmt.Errorf("the scan has no broker storage information for cluster %s, so --jump-cluster-broker-storage can't be defaulted: pass --jump-cluster-broker-storage", cluster.Arn)
+	}
+	return int(*p.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize), nil
 }
 
 func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {

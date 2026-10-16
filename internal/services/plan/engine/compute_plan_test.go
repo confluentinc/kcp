@@ -90,9 +90,9 @@ func TestComputePlan_HandoffTriggers(t *testing.T) {
 	}
 	// Every route to Dedicated is withheld and not self-serve.
 	routes := []func(*Profile){
-		func(p *Profile) { p.PartitionBand = "Over 96,000" },                                 // band cap
-		func(p *Profile) { p.TargetCloud = "Azure"; p.SourceAuthTypes = []string{authMTLS} }, // mTLS off AWS
-		func(p *Profile) { p.TargetCloud = "GCP"; p.CCEgressRequired = "Yes" },               // GCP outbound
+		func(p *Profile) { p.PartitionBand = "Over 96,000" },                               // band cap
+		func(p *Profile) { p.TargetCloud = "GCP"; p.SourceAuthTypes = []string{authMTLS} }, // mTLS on GCP
+		func(p *Profile) { p.TargetCloud = "GCP"; p.CCEgressRequired = "Yes" },             // GCP outbound
 	}
 	for i, r := range routes {
 		plan := ComputePlan(priv(r))
@@ -134,7 +134,7 @@ func TestComputePlan_ServerlessJumpClusterEndToEnd(t *testing.T) {
 	}
 }
 
-func TestComputePlan_MtlsTargetForcesDedicatedNonAWS(t *testing.T) {
+func TestComputePlan_MtlsTargetForcesDedicatedOnGCP(t *testing.T) {
 	plan := ComputePlan(cpBase(func(p *Profile) {
 		p.TargetCloud = "GCP"
 		p.TargetIdentityModel = []string{"mTLS"}
@@ -292,5 +292,168 @@ func TestComputePlan_SizingSingleSignalCopy(t *testing.T) {
 	withTput := ComputePlan(cpBase(func(p *Profile) { p.PeakIngressMbps = f(200) })).Sizing.Reason
 	if !strings.Contains(withTput, "the most demanding signal") {
 		t.Errorf("measured-throughput sizing should say 'the most demanding signal': %q", withTput)
+	}
+}
+
+// onPremBase is an on-prem/other Apache Kafka or Confluent Platform source,
+// otherwise the same shape as cpBase.
+func onPremBase(sourceType SourceType, mut func(*Profile)) Profile {
+	return cpBase(func(p *Profile) {
+		p.SourceType = sourceType
+		p.SourcePlatform = "Apache Kafka"
+		if sourceType == SourceConfluentPlatform {
+			p.SourcePlatform = "Confluent Platform"
+		}
+		p.SourceCloud = "On-prem or other"
+		p.RequiresPrivateField = "Yes"
+		if mut != nil {
+			mut(p)
+		}
+	})
+}
+
+// TestComputePlan_OnPremPrivateClusterLinkSpecialist covers C4: an on-prem (or
+// "other") Apache Kafka / Confluent Platform source migrating data to a private
+// Confluent Cloud target over a cluster link has no self-serve private path, so a
+// specialist designs it — and the migration link never gets an Egress PrivateLink
+// Endpoint it can't actually use from outside a cloud network.
+func TestComputePlan_OnPremPrivateClusterLinkSpecialist(t *testing.T) {
+	const trigger = "onprem_private_cluster_link"
+
+	// Confluent Platform, on-prem, private, data migration over a cluster link:
+	// fires, with the CP-specific copy, and no Egress PrivateLink Endpoint.
+	cp := ComputePlan(onPremBase(SourceConfluentPlatform, nil))
+	if !haHas(cp.HumanAssist, trigger) {
+		t.Fatalf("CP on-prem private: trigger did not fire, triggers=%+v", cp.HumanAssist.Triggers)
+	}
+	if !strings.Contains(cp.HumanAssist.Reason, "source-initiated cluster link") {
+		t.Errorf("CP on-prem private reason = %q, want the Confluent Platform copy", cp.HumanAssist.Reason)
+	}
+	if strings.Contains(cp.Networking.Value, "Egress PrivateLink Endpoint") {
+		t.Errorf("on-prem source should not get an Egress PrivateLink Endpoint, got %q", cp.Networking.Value)
+	}
+
+	// Apache Kafka, on-prem, private: fires, with the Apache Kafka-specific copy.
+	ak := ComputePlan(onPremBase(SourceApacheKafka, nil))
+	if !haHas(ak.HumanAssist, trigger) {
+		t.Fatalf("AK on-prem private: trigger did not fire, triggers=%+v", ak.HumanAssist.Triggers)
+	}
+	if !strings.Contains(ak.HumanAssist.Reason, "Replicator running in your network") {
+		t.Errorf("AK on-prem private reason = %q, want the Apache Kafka copy", ak.HumanAssist.Reason)
+	}
+
+	// Public on-prem source: the link works over the internet, so it doesn't fire.
+	// A small (Band 1) workload keeps the public-acceptable answer from crossing to
+	// private on size alone.
+	pub := ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) {
+		p.RequiresPrivateField = "No"
+		p.PartitionBand = "Under 2,500"
+	}))
+	if haHas(pub.HumanAssist, trigger) {
+		t.Errorf("CP on-prem public should not fire: %+v", pub.HumanAssist.Triggers)
+	}
+
+	// Same source, but in AWS (not on-prem): the standard Egress PrivateLink
+	// Endpoint path still applies, so it doesn't fire and the endpoint is kept.
+	aws := ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) {
+		p.SourceCloud = "AWS"
+	}))
+	if haHas(aws.HumanAssist, trigger) {
+		t.Errorf("CP on AWS private should not fire: %+v", aws.HumanAssist.Triggers)
+	}
+	if !strings.Contains(aws.Networking.Value, "Egress PrivateLink Endpoint") {
+		t.Errorf("CP on AWS private should keep the Egress PrivateLink Endpoint, got %q", aws.Networking.Value)
+	}
+
+	// Starting fresh on the same private on-prem source: the alternative promises a
+	// designed private link, not a self-serve mechanism.
+	for _, st := range []SourceType{SourceConfluentPlatform, SourceApacheKafka} {
+		sf := ComputePlan(onPremBase(st, func(p *Profile) { p.NeedsDataMigration = "No" }))
+		if sf.Switchover.Alternative == nil || !strings.Contains(sf.Switchover.Alternative.Reason, "we'd design the private link with you") {
+			t.Errorf("%s on-prem private start fresh alternative = %+v, want the designed-private-link copy", st, sf.Switchover.Alternative)
+		}
+	}
+
+	// Starting fresh: no data moves over a cluster link, so it doesn't fire.
+	fresh := ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) {
+		p.NeedsDataMigration = "No"
+	}))
+	if haHas(fresh.HumanAssist, trigger) {
+		t.Errorf("on-prem private start-fresh should not fire: %+v", fresh.HumanAssist.Triggers)
+	}
+
+	// Below the Cluster Linking floor: data moves over Replicator instead of a
+	// cluster link, so it doesn't fire.
+	belowFloor := ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) {
+		p.KafkaVersion = "Older than 2.4"
+	}))
+	if haHas(belowFloor.HumanAssist, trigger) {
+		t.Errorf("on-prem private below the Cluster Linking floor should not fire: %+v", belowFloor.HumanAssist.Triggers)
+	}
+}
+
+// TestComputePlan_OnPremPrivateClusterLinkEitherScope checks the handoff fires when
+// either the infra-wide answer or this cluster's own answer resolves to a cluster
+// link.
+func TestComputePlan_OnPremPrivateClusterLinkEitherScope(t *testing.T) {
+	const trigger = "onprem_private_cluster_link"
+	for name, mut := range map[string]func(*Profile){
+		"infra-wide Yes, own No": func(p *Profile) { p.AnyAppNeedsDataMigration = "Yes"; p.NeedsDataMigration = "No" },
+		"infra-wide No, own Yes": func(p *Profile) { p.AnyAppNeedsDataMigration = "No"; p.NeedsDataMigration = "Yes" },
+	} {
+		if cp := ComputePlan(onPremBase(SourceConfluentPlatform, mut)); !haHas(cp.HumanAssist, trigger) {
+			t.Errorf("%s: trigger did not fire, triggers=%+v", name, cp.HumanAssist.Triggers)
+		}
+	}
+	both := ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) { p.AnyAppNeedsDataMigration = "No"; p.NeedsDataMigration = "No" }))
+	if haHas(both.HumanAssist, trigger) {
+		t.Errorf("both No should not fire: %+v", both.HumanAssist.Triggers)
+	}
+}
+
+// The on-prem Confluent Platform handoff names only the target cloud's private
+// link (the resolved target: AWS when none is set), and an open data-migration answer
+// leads with the conditional promise before the facts.
+func TestComputePlan_OnPremHandoffCopy(t *testing.T) {
+	reason := func(target, needsData string) string {
+		return ComputePlan(onPremBase(SourceConfluentPlatform, func(p *Profile) {
+			p.TargetCloud, p.NeedsDataMigration, p.AnyAppNeedsDataMigration = target, needsData, needsData
+		})).HumanAssist.Reason
+	}
+	links := []string{"Direct Connect", "ExpressRoute", "Cloud Interconnect"}
+	for target, want := range map[string]string{"AWS": links[0], "Azure": links[1], "GCP": links[2]} {
+		got := reason(target, "Yes")
+		for _, l := range links {
+			if has := strings.Contains(got, l); has != (l == want) {
+				t.Errorf("target %s: contains %q = %v in %q", target, l, has, got)
+			}
+		}
+	}
+	// An on-prem source with no target cloud defaults to AWS, so it names Direct Connect.
+	if got := reason("", "Yes"); !strings.Contains(got, "Direct Connect link") || strings.Contains(got, "ExpressRoute") {
+		t.Errorf("unset target should resolve to AWS and name Direct Connect only: %q", got)
+	}
+
+	const lead = "If you move existing data, we'll design the private path with you."
+	if got := reason("AWS", ""); !strings.HasPrefix(got, lead) || !strings.Contains(got, "source-initiated cluster link") {
+		t.Errorf("open answer should lead with the promise then the facts: %q", got)
+	}
+	if got := reason("AWS", "Yes"); strings.Contains(got, lead) || !strings.HasSuffix(got, "Confluent Server brokers. We'll confirm your version and connectivity with you and design the link together.") {
+		t.Errorf("a settled Yes should drop the lead and close with the confirm-and-design promise: %q", got)
+	}
+	// An open answer leads with the promise and does not also promise to design the link.
+	if got := reason("AWS", ""); strings.Contains(got, "design the link together") || !strings.HasSuffix(got, "Confluent Server brokers.") {
+		t.Errorf("an open answer should end at the facts, with no second design promise: %q", got)
+	}
+	ak := ComputePlan(onPremBase(SourceApacheKafka, func(p *Profile) { p.NeedsDataMigration, p.AnyAppNeedsDataMigration = "", "" })).HumanAssist.Reason
+	if !strings.HasPrefix(ak, lead) || !strings.Contains(ak, "Replicator running in your network") {
+		t.Errorf("Apache Kafka open answer: %q", ak)
+	}
+}
+
+// Replicator citations point at the Replicator failover page.
+func TestSrcReplicatorCitation(t *testing.T) {
+	if want := "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/replicator-failover.html"; srcReplicator != want {
+		t.Errorf("srcReplicator = %q, want %q", srcReplicator, want)
 	}
 }

@@ -2,7 +2,6 @@ package plan
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -13,13 +12,29 @@ import (
 // docMigrationInfra is the KCP command reference for `create-asset migration-infra`
 // (the migration-type matrix and flags).
 const docMigrationInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"
-const docTargetInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/"
+const docLinkConfigUpdate = "https://docs.confluent.io/confluent-cli/current/command-reference/kafka/link/configuration/confluent_kafka_link_configuration_update.html"
 const docMigration = "https://confluentinc.github.io/kcp/latest/command-reference/migration/"
+const docTargetInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/"
+const docPrivateLinkAttachment = "https://docs.confluent.io/cloud/current/networking/aws-platt.html"
+const docCPClusterLinkCommands = "https://docs.confluent.io/platform/current/multi-dc-deployments/cluster-linking/commands.html"
+const docMirrorTopics = "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/mirror-topics-cc.html"
 const docMigrateTopics = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-topics/"
 const docMigrateSchemas = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-schemas/"
+
+// Replicator connector offset sentences, worded as the engine's Connectors reason says them.
+const (
+	replicatorSinkOffsets  = "At cutover, let each old sink connector reach zero lag, stop it, and note the time in UTC, a few seconds before it stopped, to allow for producer clock skew. Once Replicator has caught up, print each partition's offset for that time with `kafka-consumer-groups --bootstrap-server <confluent-cloud-bootstrap> --command-config <client.properties> --group <any-unused-group-name> --topic <topic> --reset-offsets --to-datetime <yyyy-MM-ddTHH:mm:ss.SSS, in UTC> --dry-run`, then create the connector with those offsets; see [Create connectors with offsets](" + docConnectorOffsets + ")."
+	selfManagedSinkOffsets = "At cutover, let each old sink connector reach zero lag, stop it, and note the time in UTC, a few seconds before it stopped, to allow for producer clock skew. Once Replicator has caught up, set the new sink's consumer group to that time, then create the sink connector: `kafka-consumer-groups --bootstrap-server <confluent-cloud-bootstrap> --command-config <client.properties> --group connect-<connector-name> --topic <topic> --reset-offsets --to-datetime <yyyy-MM-ddTHH:mm:ss.SSS, in UTC> --execute`. Replicator keeps each record's timestamp, so the sink resumes where the old one stopped; a few records around that time may be delivered twice."
+	sourceConnectorOffsets = "Source connectors don't carry offsets over, so check where each one should start before you apply it."
+	// sourceConnectorOffsetsAfterSinks follows a sentence that already ends "before you apply it".
+	sourceConnectorOffsetsAfterSinks = "Source connectors don't carry offsets over, so check where each one should start."
+	utilityVersion                   = "This mode needs Kafka Connect on Apache Kafka 3.6 or Confluent Platform 7.6 or later, which has the offsets REST API."
+)
+
+const docConnectorOffsets = "https://docs.confluent.io/cloud/current/connectors/offsets.html"
 const docMigrateConnectors = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-connectors/"
 const docCreateCluster = "https://docs.confluent.io/cloud/current/clusters/create-cluster.html"
-const docReplicator = "https://docs.confluent.io/cloud/current/get-started/tutorials/copy-data-cloud.html"
+const docReplicator = "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/replicator-failover.html"
 const docConnectMigrationUtility = "https://docs.confluent.io/cloud/current/connectors/migrate-self-managed-connectors.html"
 
 // RenderEnginePlanMarkdown renders the engine-driven plan as Markdown. A withheld
@@ -62,11 +77,11 @@ func RenderEnginePlanMarkdown(ep *EnginePlan) string {
 	if scanless {
 		// A questionnaire-only plan is a valid mode; frame the scan as an upgrade for
 		// sharper sizing and ready-to-run commands, not a prerequisite you skipped.
-		// `kcp discover` is MSK-only, so a non-MSK plan leads with `kcp scan`; an MSK
-		// plan keeps discover-first (its wording is unchanged).
-		scanTool := "run `kcp discover` (MSK) or `kcp scan`"
+		// `kcp discover` is MSK-only, so a declared non-MSK source names only
+		// `kcp scan clusters`; otherwise the source is open or MSK and both are named.
+		scanTool := "run `kcp discover` (MSK) or `kcp scan clusters`"
 		if anyNonMSKSource(ep) {
-			scanTool = "run `kcp scan` (or `kcp discover` for MSK)"
+			scanTool = "run `kcp scan clusters`"
 		}
 		md.AddAlert(markdown.AlertNote, "This plan was generated from your answers alone (no scan), which is a complete way to plan. For sharper sizing and ready-to-run commands, "+scanTool+" to produce a state file, then re-run this with `--state-file <file>`.")
 	}
@@ -111,8 +126,9 @@ func renderSummary(md *markdown.Markdown, ep *EnginePlan) {
 			region = "—"
 		}
 		name := fmt.Sprintf("[%s](#%s)", cp.ClusterID, headingAnchor(clusterHeadingTitle(cp)))
-		infra := planGroupState(cp.Plan.Withheld, cp.Contingent, infraVerdicts)
-		app := planGroupState(cp.Plan.Withheld, cp.Contingent, appVerdicts)
+		hold := openRequiredUnheld(cp)
+		infra := planGroupState(cp.Plan.Withheld, cp.Contingent, infraVerdicts, hold)
+		app := planGroupState(cp.Plan.Withheld, cp.Contingent, appVerdicts, hold)
 		if cp.Plan.Withheld {
 			// A withheld cluster routes to one specialist conversation, not an
 			// independent infrastructure half plus application half (the section below is
@@ -130,10 +146,11 @@ func renderSummary(md *markdown.Markdown, ep *EnginePlan) {
 	// caveat applies to every plan, so state it once here and shorten the per-cluster
 	// pointers rather than repeating the full remediation under each cluster.
 	if fleetSizingIsLowerBound(ep) {
-		caveat := "No throughput metrics were scanned, so all sizing below is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit."
+		metricsCmd := fleetMetricsCommand(ep)
+		caveat := "No throughput metrics were scanned, so all sizing below is a lower bound. Run " + metricsCmd + " to size from real ingress/egress before you commit."
 		if ep.Header.StateFilePath == "" {
 			// No scan ran at all: "were scanned" would imply a scan that came up empty.
-			caveat = "No throughput metrics are available (no scan), so all sizing below is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit."
+			caveat = "No throughput metrics are available (no scan), so all sizing below is a lower bound. Run " + metricsCmd + " to size from real ingress/egress before you commit."
 		}
 		md.AddParagraph(caveat)
 	}
@@ -185,14 +202,15 @@ var (
 // planGroupState reports a plan half's readiness as a display label, sourced from
 // the canonical state vocabulary (stateLabel): "Needs a specialist" when the whole
 // plan is withheld, "Needs answers" when any verdict in the group is held pending a
-// required answer, otherwise "Ready".
-func planGroupState(withheld bool, contingent map[string][]string, verdicts []string) string {
-	return stateLabel(planGroupStateCode(withheld, contingent, verdicts))
+// required answer, otherwise "Ready". hold keeps a half from reading "Ready" while the
+// cluster still has an open required question that no verdict is waiting on.
+func planGroupState(withheld bool, contingent map[string][]string, verdicts []string, hold bool) string {
+	return stateLabel(planGroupStateCode(withheld, contingent, verdicts, hold))
 }
 
 // planGroupStateCode is the canonical state code for a plan half (for plan.json),
 // so the machine record and the plan.md badge derive from one place.
-func planGroupStateCode(withheld bool, contingent map[string][]string, verdicts []string) string {
+func planGroupStateCode(withheld bool, contingent map[string][]string, verdicts []string, hold bool) string {
 	if withheld {
 		return StateNeedsSpecialist
 	}
@@ -201,7 +219,29 @@ func planGroupStateCode(withheld bool, contingent map[string][]string, verdicts 
 			return StateNeedsAnswers
 		}
 	}
+	if hold {
+		return StateNeedsAnswers
+	}
 	return StateReady
+}
+
+// openRequiredUnheld reports whether the cluster has an open required question that
+// no verdict is waiting on (for example source_platform, which sets the whole source
+// axis rather than gating one recommendation). Every half of the plan rests on it, so
+// none can read "Ready" until it is answered.
+func openRequiredUnheld(cp ClusterPlan) bool {
+	waitedOn := map[string]bool{}
+	for _, keys := range cp.Contingent {
+		for _, k := range keys {
+			waitedOn[k] = true
+		}
+	}
+	for _, q := range cp.Questions {
+		if q.Status == statusOpenRequired && !waitedOn[q.Key] {
+			return true
+		}
+	}
+	return false
 }
 
 // renderSectionStatus writes a plan half's readiness line under its heading, so
@@ -275,7 +315,7 @@ func headingAnchor(title string) string {
 func rerunCommand(ep *EnginePlan) string {
 	cmd := "kcp report plan"
 	if ep.Header.StateFilePath != "" {
-		cmd += " --state-file " + filepath.Base(ep.Header.StateFilePath)
+		cmd += " --state-file " + ep.Header.StateFilePath
 	}
 	return cmd + " --plan-inputs plan-inputs.yaml"
 }
@@ -500,9 +540,14 @@ func renderCluster(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, 
 			kind = "Serverless"
 		}
 		auths := "not detected"
-		if len(cp.SourceAuths) > 0 {
-			friendly := make([]string, len(cp.SourceAuths))
-			for i, a := range cp.SourceAuths {
+		// The effective auth (answers folded in), so a source_auth override shows here.
+		shown := cp.effectiveSourceAuths
+		if len(shown) == 0 {
+			shown = cp.SourceAuths
+		}
+		if len(shown) > 0 {
+			friendly := make([]string, len(shown))
+			for i, a := range shown {
 				friendly[i] = friendlyAuthLabel(a)
 			}
 			auths = strings.Join(friendly, ", ")
@@ -543,9 +588,9 @@ func renderCluster(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, 
 		// the multi-application case, so the shape is consistent and multi-app is a
 		// natural extension. Both halves deep-link to this cluster's Q&A subsection.
 		frag := qaAnchor(cp)
-		renderInfraRecommendation(md, p, cp.Contingent, frag, caveats)
+		renderInfraRecommendation(md, p, cp.Contingent, frag, caveats, openRequiredUnheld(cp))
 		md.AddHeading("Application plan", 3)
-		renderAppRecommendation(md, p, cp.Contingent, frag, caveats)
+		renderAppRecommendation(md, p, cp.Contingent, frag, caveats, openRequiredUnheld(cp))
 		// Shared, per-cluster: one cluster link serves every application, so the
 		// migration infrastructure is its own peer section after both plans, not
 		// nested under either.
@@ -554,14 +599,14 @@ func renderCluster(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, 
 		// One infrastructure plan shared across applications, then one application
 		// plan per declared application, then the shared migration infrastructure.
 		frag := qaAnchor(cp)
-		renderInfraRecommendation(md, p, cp.Contingent, frag, caveats)
+		renderInfraRecommendation(md, p, cp.Contingent, frag, caveats, openRequiredUnheld(cp))
 		for _, ap := range cp.Apps {
 			md.AddHeading("Application plan: "+ap.Name, 3)
 			if ap.Plan.Withheld {
 				md.AddAlert(markdown.AlertWarning, "This application is routed to a Confluent migration specialist instead of an automated plan. [Talk to a person](#talk-to-a-person) to size it with a specialist.")
 				continue
 			}
-			renderAppRecommendation(md, ap.Plan, ap.Contingent, frag, caveats)
+			renderAppRecommendation(md, ap.Plan, ap.Contingent, frag, caveats, openRequiredUnheld(cp))
 		}
 		renderMigrationInfra(md, cp, stateFilePath)
 	}
@@ -637,6 +682,8 @@ func friendlyAuthLabel(token string) string {
 		return "mTLS"
 	case SourceAuthUnauth:
 		return "unauthenticated"
+	case SourceAuthKerberos:
+		return "Kerberos"
 	}
 	return token
 }
@@ -795,13 +842,20 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 	// cluster. Say so up front so a reader doesn't run them as-is.
 	if stateFilePath == "" {
 		// `kcp discover` is MSK-only. For a non-MSK source the source type is already
-		// known (apache-kafka), so lead with `kcp scan` and name the resolved type; MSK
+		// known (apache-kafka), so lead with `kcp scan clusters` and name the resolved type; MSK
 		// keeps the original discover-first wording and the msk|apache-kafka placeholder.
-		if cp.SourcePlatform != "" {
-			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID — to run against your cluster: run `kcp scan` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type apache-kafka` is set for your source and the cluster ID is a placeholder to fill in.")
-		} else {
-			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID and source type — to run against your cluster: run `kcp discover` (MSK) or `kcp scan` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type <msk|apache-kafka>` and the cluster ID are placeholders to fill in.")
+		switch {
+		case cp.SourcePlatform != "":
+			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID — to run against your cluster: run `kcp scan clusters` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type apache-kafka` is set for your source and the cluster ID is a placeholder to fill in.")
+		case cp.sourceDeclaredMSK:
+			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID — to run against your cluster: run `kcp discover` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type msk` is set for your source and the cluster ID is a placeholder to fill in.")
+		default:
+			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID and source type — to run against your cluster: run `kcp discover` (MSK) or `kcp scan clusters` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type <msk|apache-kafka>` and the cluster ID are placeholders to fill in.")
 		}
+	}
+
+	if mechanismSettled(cp) && (cp.Plan.Switchover.StartFresh || cp.Plan.Switchover.Replicator || mi.Type >= 1 || mi.SpecialistClusterLinkable) {
+		beforeYouStart(md, cp, stateFilePath)
 	}
 
 	n := 0
@@ -825,9 +879,11 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		targetClusterStep(md, cp, stateFilePath, step)
 		topicsStep(md, cp, stateFilePath, migrateTopicsModeNew, step)
 		perAppDataOps(md, cp, stateFilePath, step)
-		md.AddParagraph(step("cut over.") + " Point your producers and consumers at the new cluster and let the old one age out over its retention window.")
+		md.AddParagraph(step("cut over.") + " Move your producers to the new cluster first, let your consumers finish reading the old cluster (lag zero), then move them, starting from the earliest offset. The old cluster then ages out over its retention window.")
 		clientCutoverChanges(md, cp)
+		schemaCutoverNote(md, cp)
 		md.AddParagraph("**Backing out:** your old cluster keeps running and serving your applications over its retention window, so nothing is committed by standing up the new one. To roll back, leave your clients pointed at the old cluster (or point them back to it).")
+		decommissionStep(md, cp, step)
 		pendingDataOpsNote(md, cp)
 
 	case sw.Replicator:
@@ -838,7 +894,14 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		// claiming the tier reason.
 		replicatorReason := "Cluster Linking needs an Enterprise or Dedicated cluster"
 		if cp.Plan.ClusterType.Value != engine.TierStandard {
-			replicatorReason = "your source is below the Cluster Linking floor (Kafka 2.4 / Confluent Platform 5.4 / inter-broker protocol 2.8)"
+			floorType := engine.SourceMSK
+			switch cp.SourcePlatform {
+			case enginePlatformOSK:
+				floorType = engine.SourceApacheKafka
+			case enginePlatformCP:
+				floorType = engine.SourceConfluentPlatform
+			}
+			replicatorReason = "your source is below the Cluster Linking floor (" + engine.ClusterLinkingFloor(floorType) + ")"
 		}
 		md.AddParagraph("Your data moves with Confluent Replicator, because " + replicatorReason + ". Create the cluster and its structure, run Replicator, then cut over.")
 		targetClusterStep(md, cp, stateFilePath, step)
@@ -846,8 +909,13 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		perAppDataOps(md, cp, stateFilePath, step)
 		md.AddParagraph(step("copy your data with Confluent Replicator.") + " Run Confluent Replicator on a Kafka Connect worker in your own account to copy data from your source into the new cluster ([docs](" + docReplicator + ")). It reads your source with your existing credentials and writes into Confluent Cloud with the target credentials (the client authentication) you set up in Step 1, and it needs a Confluent Platform Enterprise license.")
 		md.AddParagraph(step("cut over.") + " Once Replicator has caught up, move your clients to Confluent Cloud. Consumer offsets don't carry over on their own: translate them with the Confluent timestamp interceptor, added to every consumer before you start (Java clients only) ([docs](" + docReplicator + ")). Non-Java consumers have no automatic offset-translation path here — they resume according to each consumer's `auto.offset.reset` (reprocessing from earliest, or skipping to latest), so plan their cutover accordingly.")
+		if replicatorKeepsSelfManagedSinks(cp) {
+			md.AddParagraph(selfManagedSinkOffsets)
+		}
 		clientCutoverChanges(md, cp)
+		schemaCutoverNote(md, cp)
 		md.AddParagraph("**Backing out:** your source keeps taking writes and serving your applications until you move the clients, so nothing is committed before cutover. To roll back, leave your clients pointed at the still-running source (or point them back to it) instead of completing the move.")
+		decommissionStep(md, cp, step)
 		pendingDataOpsNote(md, cp)
 
 	case mi.Type >= 1:
@@ -856,14 +924,31 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		// include a producer stop, so it leads the section rather than trailing it.
 		gatewayCutover := sw.GatewayMediated
 		if gatewayCutover {
-			md.AddAlert(markdown.AlertNote, "These are the plain Cluster Linking cutover steps. The near-zero-downtime, Gateway-mediated cutover your Data migration recommendation calls for is specialist-assisted (it needs Confluent for Kubernetes and a Gateway license). [Talk to a person](#talk-to-a-person) to set it up.")
+			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway, and deploy it and route your clients through it, before you run the cutover step below. The Gateway also needs the backend secrets for its credential swap in your secret store before the cutover.")
 		}
 		targetClusterStep(md, cp, stateFilePath, step)
-		linkStep(md, cp, stateFilePath, step)
-		credentialsStep(md, cp, step)
+		// The source credentials (and any listener the link signs in with) must be in
+		// place before the link is applied, so that step comes first; a jump cluster
+		// also needs its PrivateLink endpoint before the link step takes its ID.
+		refs := linkRefs{}
+		next := n + 1
+		if len(sw.SourceCredentialHandling) > 0 {
+			refs.credentials = next
+			next++
+		}
+		if mi.JumpCluster {
+			refs.privateLink = next
+			next++
+		}
+		credentialsStep(md, cp, step, next)
+		if mi.JumpCluster {
+			jumpPrivateLinkStep(md, next, step)
+		}
+		linkStep(md, cp, stateFilePath, step, refs)
 		topicsStep(md, cp, stateFilePath, migrateTopicsModeMirror, step)
 		perAppDataOps(md, cp, stateFilePath, step)
 		clusterLinkCutoverStep(md, cp, step)
+		decommissionStep(md, cp, step)
 		pendingDataOpsNote(md, cp)
 
 	case mechanismSettled(cp) && mi.SpecialistClusterLinkable:
@@ -876,9 +961,13 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		md.AddParagraph("Your data moves over a Cluster Link. The cutover below is the standard Cluster Linking flow; the one piece we design with you is the link's setup.")
 		md.AddAlert(markdown.AlertNote, "**"+mi.Label+".** "+mi.Rationale+" See the [migration-infra docs]("+docMigrationInfra+"), or [Talk to a person](#talk-to-a-person) to wire up the migration link; the steps below are otherwise the standard flow.")
 		targetClusterStep(md, cp, stateFilePath, step)
+		// The topic steps below name the link (`<your-link-name>`), so a step has to create
+		// it first; kcp generates no link here, so a specialist sets it up.
+		md.AddParagraph(step("set up the cluster link with a specialist.") + " A specialist sets up the cluster link between your source and the new cluster ([Talk to a person](#talk-to-a-person)). Use the link's name for `<your-link-name>` in the steps below.")
 		topicsStep(md, cp, stateFilePath, migrateTopicsModeMirror, step)
 		perAppDataOps(md, cp, stateFilePath, step)
 		clusterLinkCutoverStep(md, cp, step)
+		decommissionStep(md, cp, step)
 		pendingDataOpsNote(md, cp)
 
 	default:
@@ -895,11 +984,92 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 	}
 }
 
-// accessControlNote recommends mapping the source's authorization rules to Confluent
-// Cloud, set up separately from data movement. The scan collects ACLs but no verdict
-// maps them, so this is a lightweight render-side recommendation. Wording follows the
-// source auth: IAM has AWS IAM policies (not Kafka ACLs), unauthenticated sources have
-// no authorization at all, and SCRAM/mTLS/other carry Kafka ACLs.
+// beforeYouStart lists the scans the steps below read from the state file and that
+// it doesn't hold yet, so a reader runs them first instead of hitting a missing-data
+// error mid-migration. It names only what this plan's steps use: topics when the
+// state has none, the source Schema Registry when a schema migration runs, and the
+// connector runtime(s) when connectors are rebuilt. Nothing is printed when the
+// state already covers it all.
+func beforeYouStart(md *markdown.Markdown, cp ClusterPlan, stateFilePath string) {
+	state := "kcp-state.json"
+	if stateFilePath != "" {
+		state = stateFilePath
+	}
+	var items []string
+
+	// Topics: migrate-topics reads them from the state file. A scan-based run that
+	// captured none (topic discovery skipped) needs a topic scan; a scanless run has
+	// no state file at all, which the reference note above already explains.
+	if stateFilePath != "" && !cp.topicsScanned && !isContingent(nodeTopics, cp.Contingent) {
+		if cp.SourcePlatform != "" {
+			items = append(items, "Topics: `kcp scan clusters --source-type apache-kafka --state-file "+state+" --credentials-file apache-kafka-credentials.yaml`")
+		} else {
+			items = append(items, "Topics: `kcp scan clusters --source-type msk --state-file "+state+" --credentials-file msk-credentials.yaml`, or re-run `kcp discover` without `--skip-topics`")
+		}
+	}
+
+	var schemaKinds = map[engine.SchemaKind]bool{}
+	var src ConnectorSource
+	for _, av := range appViews(cp) {
+		if !isContingent(nodeSchema, av.contingent) && schemaNeedsMigration(av.plan) {
+			schemaKinds[av.plan.Schema.Kind] = true
+		}
+		if !isContingent(nodeConnectors, av.contingent) && connectorsNeedRebuild(av.plan) {
+			src.MSKConnect = src.MSKConnect || av.connectorSrc.MSKConnect
+			src.SelfManaged = src.SelfManaged || av.connectorSrc.SelfManaged
+		}
+	}
+
+	// Schemas: migrate-schemas reads the source registry from the state file.
+	if len(schemaKinds) > 0 && !cp.schemaRegistryScanned {
+		if schemaKinds[engine.SchemaKindGlueBulk] {
+			reg, region := "<glue-registry-name>", "<glue-region>"
+			if cp.SchemaSource != nil && cp.SchemaSource.GlueRegistry != "" {
+				reg = cp.SchemaSource.GlueRegistry
+			}
+			if cp.SchemaSource != nil && cp.SchemaSource.GlueRegion != "" {
+				region = cp.SchemaSource.GlueRegion
+			}
+			items = append(items, "Schemas: `kcp scan schema-registry --state-file "+state+" --sr-type glue --registry-name "+reg+" --region "+region+"`")
+		}
+		if schemaKinds[engine.SchemaKindLinking] {
+			url := "<source-sr-url>"
+			if cp.SchemaSource != nil && cp.SchemaSource.ConfluentURL != "" {
+				url = cp.SchemaSource.ConfluentURL
+			}
+			items = append(items, "Schemas: `kcp scan schema-registry --state-file "+state+" --sr-type confluent --url "+url+" --use-unauthenticated` (or `--use-basic-auth` / `--use-mtls` with its credentials)")
+		}
+	}
+
+	// Connectors: migrate-connectors reads the connector configs from the state file.
+	clusterID := cp.Arn
+	if clusterID == "" {
+		clusterID = cp.ClusterID
+	}
+	if src.MSKConnect {
+		arn := cp.Arn
+		if arn == "" {
+			arn = "<your-msk-cluster-arn>"
+		}
+		items = append(items, "MSK Connect connectors: `kcp scan msk-connectors --state-file "+state+" --cluster-arn "+arn+"`")
+	}
+	if src.SelfManaged {
+		items = append(items, "Self-managed Kafka Connect connectors: `kcp scan self-managed-connectors --state-file "+state+" --cluster-id "+clusterID+" --connect-rest-url <your-connect-rest-url> --use-unauthenticated` (or `--use-basic-auth` / `--use-tls` with its credentials)")
+	}
+
+	if len(items) == 0 {
+		return
+	}
+	md.AddParagraph("**Before you start.** The steps below read these from your state file. Run any scan you haven't already, so the state file has them:")
+	md.AddList(items)
+}
+
+// accessControlNote points at how to recreate the source's authorization rules,
+// set up separately from data movement. The Authentication recommendation above
+// (see renderInfraRecommendation) already carries the specifics — which command
+// to run and what it does — via authDecision's access-control notes, so this
+// only adds the timing and, for a source with no authorization to carry over,
+// the guidance those notes don't cover.
 func accessControlNote(md *markdown.Markdown, cp ClusterPlan) {
 	// Start-fresh has no cutover/mirror, so frame the timing against pointing clients
 	// at the new cluster rather than a data cutover (5a).
@@ -912,26 +1082,17 @@ func accessControlNote(md *markdown.Markdown, cp ClusterPlan) {
 	var body string
 	switch {
 	case sourceAuthHas(cp, SourceAuthIAM):
-		// Pure IAM has only AWS IAM policies (no Kafka ACLs); a cluster running both IAM and
-		// SASL/SCRAM has two authorization systems to carry over.
-		authNoun := "AWS IAM policies"
-		if sourceAuthHas(cp, SourceAuthSCRAM) {
-			authNoun = "AWS IAM policies and the Kafka ACLs your SASL/SCRAM principals use"
+		cmd := "`kcp create-asset migrate-acls iam`"
+		if sourceAuthHasACLBearing(cp) {
+			cmd += " and `kcp create-asset migrate-acls kafka`"
 		}
-		// "role-based access control (RBAC)" is glossed in the Step 3 credentials note, which
-		// only the cluster-link paths render; spell it out here when that step is absent
-		// (Replicator / start-fresh), so the acronym is always introduced once per plan.
-		rbac := "RBAC"
-		if cp.MigrationInfra.Kind != "cluster_link" {
-			rbac = "role-based access control (RBAC)"
-		}
-		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Map your " + authNoun + " to Confluent Cloud " + rbac + " role bindings (or Confluent Cloud ACLs) " + when + ", granting each application and service account only the access it needs." + tail
+		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Recreate them with " + cmd + ". The Authentication recommendation above covers what it reads. Do this " + when + "." + tail
 	case sourceAuthUnauthOnly(cp):
 		// Unauthenticated sources have no authorization to carry over, but the new cluster
 		// still shouldn't run open.
 		body = "**Access control (set up separately).** Your source has no authorization to carry over — still, don't run the new cluster open. Grant each application and service account least-privilege access with Confluent Cloud role-based access control (RBAC) role bindings (or Confluent Cloud ACLs) " + when + "." + tail
 	default:
-		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Map your source ACLs to Confluent Cloud role-based access control (RBAC) role bindings (or Confluent Cloud ACLs) " + when + ", granting each application and service account only the access it needs." + tail
+		body = "**Access control (set up separately).** Your source's authorization rules don't carry over. Recreate them with `kcp create-asset migrate-acls kafka`. The Authentication recommendation above covers what it reads. Do this " + when + "." + tail
 	}
 	md.AddParagraph(body)
 }
@@ -941,6 +1102,19 @@ func accessControlNote(md *markdown.Markdown, cp ClusterPlan) {
 func sourceAuthHas(cp ClusterPlan, token string) bool {
 	for _, a := range cp.effectiveSourceAuths {
 		if a == token {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceAuthHasACLBearing reports whether the effective source auth includes a
+// method whose Kafka ACLs need recreating with `migrate-acls kafka` (SASL/SCRAM,
+// mTLS, SASL/PLAIN or Kerberos), as opposed to AWS IAM or plaintext.
+func sourceAuthHasACLBearing(cp ClusterPlan) bool {
+	for _, a := range cp.effectiveSourceAuths {
+		switch a {
+		case SourceAuthSCRAM, SourceAuthMTLS, SourceAuthSASLPlain, SourceAuthKerberos:
 			return true
 		}
 	}
@@ -963,16 +1137,123 @@ func sourceAuthUnauthOnly(cp ClusterPlan) bool {
 
 // clusterLinkCutoverStep renders the shared final Cluster Linking cutover step and
 // its backing-out note, used by both the auto-mapped and the specialist-wired
-// cluster-link paths so they read identically.
+// cluster-link paths so they read identically. A Gateway-mediated cutover is driven
+// by `kcp migration`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
+// has no such tool and is walked through by hand.
 func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
-	md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](" + docMigration + ")). Cluster Linking can carry your consumer offsets across as it mirrors — no timestamp interceptor needed — but offset sync is off by default, so enable `consumer.offset.sync.enable` on the cluster link before you cut over. Run it in three stages:")
-	md.AddOrderedList([]string{
-		"`kcp migration init` — set up the cutover.",
-		"`kcp migration lag-check` — confirm the mirror has caught up to the source (lag is zero).",
-		"`kcp migration execute` — promote the mirror topics and move your clients to Confluent Cloud.",
-	})
+	sw := cp.Plan.Switchover
+	if sw.GatewayMediated {
+		md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut over through the Confluent Gateway with `kcp migration` ([docs](" + docMigration + ")). How consumer offsets come across depends on the route type in your `GatewayMigration` manifest. For a static route, enable consumer offset sync on the cluster link before you cut over: set `consumer.offset.sync.enable=true` and list the consumer groups to migrate in `consumer.offset.group.filters` (it defaults to none, and its value is JSON such as `" + engine.OffsetSyncFiltersExample + "`), for example by putting both in a properties file and running `confluent kafka link configuration update <your-link-name> --config <your-link-config-file>` ([docs](" + docLinkConfigUpdate + ")). For a topic-based (dynamic) route, keep consumer offset sync disabled on the link: `kcp migration` refuses the run if it is enabled. Then:")
+		items := []string{
+			gatewaySecretsItem(cp),
+		}
+		if gatewayServesMTLS(cp) {
+			items = append(items, gatewayMTLSSourceACLs)
+		}
+		const routeClients = "point each client at the Gateway instead of the source. The Gateway keeps forwarding to your source until `execute` switches it."
+		if sourceAuthHas(cp, SourceAuthSCRAM) && !gatewayServesMTLS(cp) {
+			// SCRAM credentials are registered through the deployed Gateway, before clients route through it.
+			items = append(items,
+				"Deploy the Confluent Gateway with Confluent for Kubernetes.",
+				scramRegistrationItem(cp),
+				"Route your clients through the Gateway: "+routeClients,
+			)
+		} else {
+			items = append(items, "Deploy the Confluent Gateway with Confluent for Kubernetes and route your clients through it: "+routeClients)
+		}
+		items = append(items,
+			"Write the `GatewayMigration` manifest that describes the migration (source, cluster link, Gateway, and topics) ([docs]("+docMigration+")).",
+			"`kcp migration lag-check --migration-yaml <your-gateway-migration.yaml>` — confirm the mirror has caught up to the source (lag is zero).",
+			"`kcp migration execute --migration-yaml <your-gateway-migration.yaml>` — every run reads the manifest and the live state of the Gateway and cluster link, validates them, and resumes from wherever the live state says work remains (add `--dry-run` to validate only and change nothing), then fences the Gateway, promotes the mirror topics, and switches the Gateway to route to Confluent Cloud.",
+		)
+		md.AddOrderedList(items)
+		clientCutoverChanges(md, cp)
+		schemaCutoverNote(md, cp)
+		selfManagedSinksAfterPromote(md, cp)
+		md.AddParagraph("**Backing out:** before `execute`, you can back out by leaving clients on the source. Once `execute` promotes the mirror topics, rolling back needs a new cluster link in the other direction.")
+		return
+	}
+	md.AddParagraph(step("run the cutover.") + " " + engine.ClCutoverStepsMarkdown(sw.CutoverStyle, cp.MigrationInfra.JumpCluster, "confluent kafka link configuration update <your-link-name> --config <your-link-config-file>", docLinkConfigUpdate, jumpFirstHopSyncCommand(cp.MigrationInfra.Type), docCPClusterLinkCommands))
 	clientCutoverChanges(md, cp)
-	md.AddParagraph("**Backing out:** until you run `execute`, nothing is committed: the mirror isn't promoted until lag is zero, and your source keeps taking writes until you cut clients over. To roll back, point your clients at the still-running source instead of running `execute`.")
+	schemaCutoverNote(md, cp)
+	selfManagedSinksAfterPromote(md, cp)
+	if sw.CutoverStyle != "" && !engine.IsAllAtOnceStyle(sw.CutoverStyle) {
+		md.AddParagraph("**Backing out:** until you promote a service's mirror topics, nothing is committed for that service: your source keeps taking writes until you stop its producers and cut over. To roll back a service, restart its producers against the still-running source instead of promoting the mirror.")
+		return
+	}
+	md.AddParagraph("**Backing out:** until you promote the mirror topics, nothing is committed: your source keeps taking writes until you stop your producers and cut over. To roll back, restart your producers against the still-running source instead of promoting the mirror.")
+}
+
+// selfManagedSinksAfterPromote closes the cutover with the self-managed sink connectors,
+// which start only once their topics are promoted.
+func selfManagedSinksAfterPromote(md *markdown.Markdown, cp ClusterPlan) {
+	if linkKeepsSelfManagedConnectors(cp) {
+		if cp.Plan.Switchover.GatewayMediated {
+			md.AddParagraph("Once `kcp migration execute` promotes the mirror topics, create your self-managed sink connectors on your Connect cluster. On a static route, each resumes from the offsets synced for its consumer group (`connect-<connector-name>`).")
+			return
+		}
+		md.AddParagraph("Once the mirror topics are promoted, create your self-managed sink connectors on your Connect cluster. Each resumes from the offsets synced for its consumer group (`connect-<connector-name>`).")
+	}
+}
+
+// gatewayServesMTLS reports whether a Gateway plan has clients that use mTLS. The
+// Gateway terminates TLS, so identity passthrough can't carry a certificate to
+// Confluent Cloud: it swaps (`auth: swap`) to the API key it signs in with, and
+// Confluent Cloud sees that key rather than each client's certificate.
+func gatewayServesMTLS(cp ClusterPlan) bool {
+	return cp.Plan.Switchover.GatewayMediated && sourceAuthHas(cp, SourceAuthMTLS)
+}
+
+const gatewayMTLSSourceACLs = "On the source, clients now arrive as the Gateway's certificate, so grant that certificate's principal ACLs that cover every client."
+
+// scramMechanismForRegistration names the SCRAM mechanism for the registration command:
+// the one the scan recorded for the source, or the choice to make when it recorded none.
+func scramMechanismForRegistration(cp ClusterPlan) string {
+	if cp.scanScramMechanism != "" {
+		return cp.scanScramMechanism
+	}
+	return "<SCRAM-SHA-256|SCRAM-SHA-512, whichever your source uses>"
+}
+
+// gatewaySecretsItem is the "load the Gateway's secrets" step of a Gateway cutover.
+// The source route is a passthrough, so the Gateway holds no source credentials of
+// its own for non-mTLS clients; only mTLS clients reach the source as the Gateway's
+// certificate. A SCRAM swap is the exception: clients' SCRAM credentials are registered
+// through the Gateway, which keeps them in the secret store. SASL/PLAIN clients are
+// checked by the Gateway itself, against the route's JAAS file.
+func gatewaySecretsItem(cp ClusterPlan) string {
+	const store = "Load the Gateway's secrets into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault): "
+	const scramStore = "Load the Gateway's secrets into your secret store: "
+	if gatewayServesMTLS(cp) {
+		return store + "its TLS material, the certificate it presents to your source cluster, and one API key per client certificate CN, which is how it swaps each client certificate (`auth: swap`) at cutover. Set ACLs on Confluent Cloud for each key's service account."
+	}
+	if sourceAuthHas(cp, SourceAuthSCRAM) {
+		return scramStore + "the credentials it uses to sign in to Confluent Cloud on each client's behalf, which is how it swaps credentials (`auth: swap`) at cutover, and a SCRAM admin credential it uses to register client SCRAM users. Store the SCRAM credentials in HashiCorp Vault, AWS Secrets Manager, or CyberArk Conjur (Azure Key Vault doesn't support SCRAM), and give the Gateway write access to that store. The SCRAM admin user that does the registration needs its own swap entry in the secret store, mapping it to a Confluent Cloud API key, or provisioning fails. Give each client its own credential."
+	}
+	if sourceAuthHas(cp, SourceAuthUnauth) {
+		return store + "the API key it signs in to Confluent Cloud with, which is how it maps your clients (`auth: swap`) at cutover. " + engine.GatewayAnonymousACLSentence
+	}
+	if sourceAuthHas(cp, SourceAuthSASLPlain) {
+		return store + "the credentials it uses to sign in to Confluent Cloud on each client's behalf, which is how it swaps credentials (`auth: swap`) at cutover. The Gateway checks each client's SASL/PLAIN login itself, so add every client's username and password to the route's JAAS file before you route clients through it. Give each client its own credential."
+	}
+	return store + "the credentials it uses to sign in to Confluent Cloud on each client's behalf, which is how it swaps credentials (`auth: swap`) at cutover. Give each client its own credential."
+}
+
+// scramRegistrationItem registers each client's SCRAM credentials through the deployed
+// Gateway, so it follows the deploy and precedes `kcp migration execute`.
+func scramRegistrationItem(cp ClusterPlan) string {
+	return "Register each client's SCRAM credentials through the Gateway's registration route (`scram-registration-route`, port 9599) with `kafka-configs --bootstrap-server <gateway-host>:9599 --command-config <admin.properties> --alter --add-config '" + scramMechanismForRegistration(cp) + "=[password=<password>]' --entity-type users --entity-name <client-user>`, and the Gateway stores them in the secret store for you. SCRAM passwords can't contain `[` or `]`, which conflict with the `kafka-configs` bracket syntax."
+}
+
+// jumpFirstHopSyncCommand is the Confluent Platform command, run against the jump
+// cluster, that enables consumer offset sync on its link from the source. The link name
+// is the one kcp's jump-cluster setup gives it: your link name plus a per-type suffix.
+func jumpFirstHopSyncCommand(miType int) string {
+	suffix := "-msk-cp"
+	if miType == 4 {
+		suffix = "-source-cp"
+	}
+	return "kafka-configs --bootstrap-server <jump-cluster-broker>:9092 --alter --cluster-link <your-link-name>" + suffix + " --add-config-file <your-link-config-file>"
 }
 
 // clientCutoverChanges enumerates the concrete config changes each client app needs
@@ -990,12 +1271,94 @@ func clientCutoverChanges(md *markdown.Markdown, cp ClusterPlan) {
 	if strings.Contains(auth, "preserved") {
 		credsClause = "keeping the credentials it already uses"
 	}
-	change := "What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **" + auth + "** " + credsClause
+	bootstrap := "point it at the new Confluent Cloud **bootstrap endpoint**"
+	if cp.Plan.Switchover.GatewayMediated {
+		// Clients already point at the Gateway; the cutover moves where it routes.
+		bootstrap = "point it at the **Confluent Gateway** (once, before `execute`; the Gateway then routes it to Confluent Cloud, so the bootstrap address does not change again)"
+	}
+	security := "switch its security config to **" + auth + "** " + credsClause
+	if cp.Plan.Switchover.GatewayMediated {
+		// The Gateway swaps credentials (`auth: swap`), so clients keep their source
+		// credentials and need no security change.
+		security = "leave its security config as it is: it keeps its source credentials, and the Gateway swaps them for Confluent Cloud credentials (`auth: swap`)"
+		switch {
+		case gatewayServesMTLS(cp):
+			security = "leave its security config as it is: it keeps its client certificate to the Gateway, and the Gateway swaps each client's certificate for that client's own API key (`auth: swap`), so Confluent Cloud sees that key's service account, not the certificate"
+		case sourceAuthHas(cp, SourceAuthUnauth):
+			security = "leave its security config as it is: it keeps connecting without credentials, and the Gateway signs it in to Confluent Cloud with the one mapped API key (`auth: swap`)"
+		}
+	}
+	change := "What changes for each client app at cutover: " + bootstrap + "; " + security
 	// A schemaless plan has no Schema Registry to repoint, so omit that clause.
 	if cp.Plan.Schema.Kind != engine.SchemaKindSchemaless {
 		change += "; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**"
 	}
 	md.AddParagraph(change + ".")
+}
+
+// schemaCutoverNote closes out a schema migration at cutover. A Glue migration needs
+// clients moved to Confluent serializers. Schema Linking (the
+// schema exporter) and Replicator both leave the Confluent Cloud Schema Registry in
+// IMPORT mode while they copy, so producers can't register new schemas until the copy
+// is stopped and the registry is set back to READWRITE.
+func schemaCutoverNote(md *markdown.Markdown, cp ClusterPlan) {
+	var linking, replicator, glue bool
+	for _, av := range appViews(cp) {
+		if isContingent(nodeSchema, av.contingent) {
+			continue
+		}
+		switch av.plan.Schema.Kind {
+		case engine.SchemaKindGlueBulk:
+			glue = true
+		case engine.SchemaKindLinking:
+			linking = true
+		case engine.SchemaKindReplicator:
+			replicator = true
+		}
+	}
+	const tail = " and set the Confluent Cloud Schema Registry back to READWRITE, so producers can register new schemas."
+	if linking {
+		md.AddParagraph("At cutover, stop the schema exporter" + tail)
+	}
+	if replicator {
+		md.AddParagraph("At cutover, stop Replicator" + tail)
+	}
+	if glue {
+		note := "At cutover, switch your clients from the AWS Glue Schema Registry serializers to Confluent Schema Registry serializers."
+		// A start-fresh plan mirrors no messages, so there is no Glue-format history to read.
+		if !cp.Plan.Switchover.StartFresh {
+			note += " Messages already mirrored keep their Glue format, so consumers that read that history still need the Glue deserializer."
+		}
+		md.AddParagraph(note)
+	}
+}
+
+// decommissionStep is the final step of a self-serve plan: tear down what the
+// migration stood up, then retire the source. A plan whose link is wired up with a
+// specialist (the default case) gets no step: it has no settled mechanism to tear down.
+func decommissionStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
+	sw, mi := cp.Plan.Switchover, cp.MigrationInfra
+	var body string
+	switch {
+	case sw.StartFresh:
+		body = "retire your source cluster once your consumers have finished reading it."
+	case sw.Replicator:
+		body = "stop Replicator and its Connect worker, then retire your source cluster."
+	case mi.Type >= 1 && mi.JumpCluster:
+		body = "delete both cluster links, the jump cluster, and its PrivateLink endpoint, then retire your source cluster."
+	case mi.Type >= 1 || mi.SpecialistClusterLinkable:
+		parts := "the cluster link"
+		switch net := cp.Plan.Networking; {
+		case net.HasEgressEndpoint && net.EgressForConnectors:
+			parts += " and the Egress PrivateLink Endpoint (keep it if your connectors still use it)"
+		case net.HasEgressEndpoint:
+			parts += " and the Egress PrivateLink Endpoint"
+		}
+		body = "delete " + parts + ", then retire your source cluster."
+	default:
+		return
+	}
+	md.AddParagraph(step("decommission.") + " " + strings.ToUpper(body[:1]) + body[1:])
 }
 
 // mechanismSettled reports whether the migration mechanism (start fresh /
@@ -1015,7 +1378,7 @@ func mechanismSettled(cp ClusterPlan) bool {
 
 // anyNonMSKSource reports whether any cluster is a non-MSK source (Apache Kafka /
 // Confluent Platform), for source-aware fleet-level copy. `kcp discover` is MSK-only,
-// so a plan with a non-MSK source leads with `kcp scan`.
+// so a plan with a non-MSK source leads with `kcp scan clusters`.
 func anyNonMSKSource(ep *EnginePlan) bool {
 	for i := range ep.Clusters {
 		if ep.Clusters[i].SourcePlatform != "" {
@@ -1039,9 +1402,26 @@ func privateNetworkNoun(targetCloud string) string {
 	}
 }
 
+// targetInfraUnsupported explains why `kcp create-asset target-infra` can't provision
+// this plan's target cluster, or "" when it can. target-infra builds AWS networking
+// only (a VPC-attached PrivateLink, which it requires for Enterprise), so it can't
+// stand up an Azure or GCP cluster, nor an AWS cluster whose recommended networking
+// is PNI. Emitting its command there would build different networking from the one
+// the plan recommends.
+func targetInfraUnsupported(cp ClusterPlan) string {
+	switch cp.targetCloud {
+	case "Azure", "GCP":
+		return "builds AWS networking only, so it can't provision a cluster on " + cp.targetCloud
+	}
+	if strings.HasPrefix(cp.Plan.Networking.Value, "PNI") {
+		return "builds PrivateLink networking, not PNI, so it can't provision the networking this plan recommends"
+	}
+	return ""
+}
+
 // targetClusterStep provisions the target cluster: a target-infra command for
-// Enterprise/Dedicated, or Console guidance for Standard/Basic (which target-infra
-// does not create).
+// Enterprise/Dedicated clusters it can build, or Console guidance for Standard/Basic
+// (which target-infra does not create) and for networking target-infra doesn't build.
 func targetClusterStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step func(string) string) {
 	ct := string(cp.Plan.ClusterType.Value)
 	net := cp.Plan.Networking.Value
@@ -1050,30 +1430,61 @@ func targetClusterStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath stri
 		md.AddParagraph(step("create the target cluster.") + " Create " + article(ct) + " **" + ct + "** cluster with **" + net + "** networking in the [Confluent Cloud Console](" + docCreateCluster + "). (`kcp create-asset target-infra` provisions Enterprise and Dedicated clusters only.) Set up **" + auth + "** client authentication on it, and note its **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps.")
 		return
 	}
+	if why := targetInfraUnsupported(cp); why != "" {
+		note := "Set up **" + net + "** networking on it and **" + auth + "** client authentication, and note its **environment ID**, **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps."
+		note += linkEgressNote(cp)
+		md.AddParagraph(step("create the target cluster.") + " Create " + article(ct) + " **" + ct + "** cluster with **" + net + "** networking in the [Confluent Cloud Console](" + docCreateCluster + "), or [Talk to a person](#talk-to-a-person) to set it up with a specialist. `kcp create-asset target-infra` isn't used here: it " + why + ". " + note)
+		if cp.targetCloud != "Azure" && cp.targetCloud != "GCP" {
+			// PNI plan on AWS: target-infra builds PrivateLink, so offer it only as the
+			// explicit alternative to the PNI this plan recommends.
+			md.AddParagraph("If you would rather use PrivateLink than PNI, `kcp create-asset target-infra` ([docs](" + docTargetInfra + ")) builds the environment, the cluster, and PrivateLink networking:")
+			md.AddCodeBlock(targetInfraCommand(cp, stateFilePath), "bash")
+		}
+		return
+	}
 	md.AddParagraph(step("create the target cluster.") + " Provision " + article(ct) + " **" + ct + "** cluster in Confluent Cloud. `kcp create-asset target-infra` ([docs](" + docTargetInfra + ")) generates the environment, the cluster, and its private networking, or set it up in the [Confluent Cloud Console](" + docCreateCluster + "):")
 	md.AddCodeBlock(targetInfraCommand(cp, stateFilePath), "bash")
 	note := "Note the new cluster's **environment ID**, **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps. `--needs-private-link` (with your " + privateNetworkNoun(cp.targetCloud) + " subnet CIDRs) provisions the private networking."
-	// Only mention the migration link's Egress PrivateLink Endpoint when a Cluster
-	// Linking link step actually follows and the plan carries that egress endpoint;
-	// on Replicator/start-fresh paths there is no link step to forward-reference.
-	if cp.MigrationInfra.Kind == "cluster_link" && cp.Plan.Networking.HasEgressEndpoint {
-		if cp.Plan.Networking.EgressForConnectors {
-			// The endpoint was added for the runtime cc_egress need (see the Networking
-			// "Why"), and the same one carries the migration link — reconcile the two
-			// rationales so the single endpoint isn't justified two different ways.
-			note += " The Egress PrivateLink Endpoint your Confluent-managed connectors use (from the Networking plan above) also carries the migration link, wired up in the link step below."
-		} else {
-			note += " The migration link's Egress PrivateLink Endpoint is added in the link step below."
-		}
+	if cp.SourcePlatform != "" {
+		note += " `--aws-region` and `--vpc-id` name the AWS region and VPC for that networking: your source isn't an MSK cluster, so there is no scanned MSK cluster to read them from."
 	}
+	note += linkEgressNote(cp)
 	note += " Set up **" + auth + "** client authentication on the cluster separately."
 	md.AddParagraph(note)
 }
 
+// linkEgressNote forward-references the migration link's Egress PrivateLink Endpoint,
+// only when a Cluster Linking link step actually follows and the plan carries that
+// egress endpoint; on Replicator/start-fresh paths there is no link step to
+// reference. Returns "" otherwise, or a sentence with a leading space.
+func linkEgressNote(cp ClusterPlan) string {
+	if cp.MigrationInfra.Kind != "cluster_link" || !cp.Plan.Networking.HasEgressEndpoint {
+		return ""
+	}
+	if cp.Plan.Networking.EgressForConnectors {
+		// The endpoint was added for the runtime cc_egress need (see the Networking
+		// "Why"), and the same one carries the migration link — reconcile the two
+		// rationales so the single endpoint isn't justified two different ways.
+		return " The Egress PrivateLink Endpoint your Confluent-managed connectors use (from the Networking plan above) also carries the migration link, wired up in the link step below."
+	}
+	return " The migration link's Egress PrivateLink Endpoint is added in the link step below."
+}
+
 // linkStep prints the migration-infra command that builds the Cluster Link.
-func linkStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step func(string) string) {
+// linkRefs are the step numbers the link step points back at: the source-credentials
+// step and (for a jump cluster) the PrivateLink endpoint step. Zero means no such step.
+type linkRefs struct {
+	credentials int
+	privateLink int
+}
+
+func linkStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step func(string) string, refs linkRefs) {
 	mi := cp.MigrationInfra
-	md.AddParagraph(step("build the migration link.") + fmt.Sprintf(" Your data migration runs over the recommended link (**%s**, [`--type %d`](%s)). %s Fill in the placeholders (the cluster you created plus a link name), then `terraform apply`:", mi.Label, mi.Type, docMigrationInfra, firstSentence(mi.Rationale)))
+	title := "build the migration link."
+	if mi.JumpCluster {
+		title = "set up the jump cluster and its cluster links."
+	}
+	md.AddParagraph(step(title) + fmt.Sprintf(" Your data migration runs over the recommended link (**%s**, [`--type %d`](%s)). %s Fill in the placeholders (the cluster you created plus a link name), then `terraform apply`:", mi.Label, mi.Type, docMigrationInfra, firstSentence(mi.Rationale)))
 	md.AddCodeBlock(migrationInfraCommand(cp, stateFilePath), "bash")
 	// The example link name stays MSK-flavored for MSK sources (SourcePlatform is
 	// empty there) and generic for Apache Kafka / Confluent Platform sources.
@@ -1094,12 +1505,29 @@ func linkStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step 
 		if mi.Type == 2 {
 			placeholders = append(placeholders, "`<your-source-subnet-id>`, `<your-source-security-group-id>`: a subnet and security group in that VPC for the host that provisions the link.")
 		}
-		if (mi.Type == 1 || mi.Type == 2 || mi.Type == 4) && !sourceHasSCRAM(cp) {
-			placeholders = append(placeholders, "`<SCRAM-SHA-256|SCRAM-SHA-512>`: the mechanism of the SASL/SCRAM listener you add to your source for the link (see the source-credentials step above).")
+		if (mi.Type == 1 || mi.Type == 2 || mi.Type == 4) && !scramMechanismKnown(cp) {
+			if sourceHasSCRAM(cp) {
+				mechanism := "the mechanism your source's SASL/SCRAM listener uses"
+				// Only a scanned run can say its scan recorded none; a scanless plan has no scan.
+				if stateFilePath != "" {
+					mechanism += " (your scan didn't record one)"
+				}
+				placeholders = append(placeholders, "`<SCRAM-SHA-256|SCRAM-SHA-512>`: "+mechanism+".")
+			} else {
+				listener := "the mechanism of the SASL/SCRAM listener you add to your source for the link"
+				if refs.credentials > 0 {
+					listener += fmt.Sprintf(" (see Step %d above)", refs.credentials)
+				}
+				placeholders = append(placeholders, "`<SCRAM-SHA-256|SCRAM-SHA-512>`: "+listener+".")
+			}
 		}
 	}
 	if mi.JumpCluster {
-		placeholders = append(placeholders, "the jump-cluster inputs (`<cc-bootstrap-endpoint>`, `<your-vpce-id>`, and the subnet CIDRs): your cluster's bootstrap endpoint, an existing PrivateLink endpoint, and VPC subnets for the jump cluster ([docs]("+docMigrationInfra+")).")
+		inputs := "the PrivateLink (access point) bootstrap endpoint (not the PNI one), an existing PrivateLink endpoint, and VPC subnets for the jump cluster"
+		if refs.privateLink > 0 {
+			inputs = fmt.Sprintf("the PrivateLink (access point) bootstrap endpoint (not the PNI one) and the VPC endpoint from Step %d, and VPC subnets for the jump cluster", refs.privateLink)
+		}
+		placeholders = append(placeholders, "the jump-cluster inputs (`<cc-bootstrap-endpoint>`, `<your-vpce-id>`, and the subnet CIDRs): "+inputs+" ([docs]("+docMigrationInfra+")).")
 		if cp.SourcePlatform != "" {
 			placeholders = append(placeholders, "`<instance-type>`, `<gb>`: the EC2 instance type and broker storage for the jump cluster (no source broker config to default them from off MSK).")
 		}
@@ -1120,8 +1548,10 @@ func linkStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step 
 	}
 }
 
-// credentialsStep lists what the link needs to sign in to the source, per method.
-func credentialsStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
+// credentialsStep lists what the link needs to sign in to the source, per method. It
+// runs before the link step, so the notes' reference to the migration-link step is
+// swapped for that step's number (linkStepNum).
+func credentialsStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string, linkStepNum int) {
 	handling := cp.Plan.Switchover.SourceCredentialHandling
 	if len(handling) == 0 {
 		return
@@ -1129,9 +1559,20 @@ func credentialsStep(md *markdown.Markdown, cp ClusterPlan, step func(string) st
 	md.AddParagraph(step("prepare your source credentials.") + " What the link needs to sign in to your source, by method:")
 	notes := make([]string, len(handling))
 	for i, h := range handling {
-		notes[i] = "**" + h.Method + "**: " + h.Note
+		note := strings.ReplaceAll(h.Note, engine.MigrationLinkStepRef, fmt.Sprintf("Step %d, the migration link", linkStepNum))
+		notes[i] = "**" + h.Method + "**: " + note
 	}
 	md.AddList(notes)
+}
+
+// jumpPrivateLinkStep sets up the PrivateLink the jump cluster uses to reach Confluent
+// Cloud. The link step takes its VPC endpoint ID (`--existing-private-link-vpce-id`) and
+// the PrivateLink bootstrap endpoint (`--target-bootstrap-endpoint`); the target-cluster
+// step builds PNI only, so nothing else creates them. kcp create-asset target-infra is
+// not used: it can't wire PrivateLink onto an existing cluster and doesn't output the
+// bootstrap endpoint. linkStepNum is the number of the link step that follows.
+func jumpPrivateLinkStep(md *markdown.Markdown, linkStepNum int, step func(string) string) {
+	md.AddParagraph(step("set up a PrivateLink endpoint for the jump cluster.") + " Create an ingress PrivateLink Gateway and a PrivateLink Access Point for your Confluent Cloud environment, with a VPC endpoint in the jump cluster's VPC, then use that endpoint's bootstrap address for the jump cluster's link ([docs](" + docPrivateLinkAttachment + ")). " + fmt.Sprintf("Note the **VPC endpoint ID** (`vpce-…`) for `<your-vpce-id>` and the PrivateLink **bootstrap endpoint** for `<cc-bootstrap-endpoint>` in Step %d.", linkStepNum))
 }
 
 // topicsStep recreates the source topics on the target. Shown only once the
@@ -1140,6 +1581,15 @@ func credentialsStep(md *markdown.Markdown, cp ClusterPlan, step func(string) st
 // forwards data) or "new" (empty topics for Replicator/start-fresh).
 func topicsStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath, mode string, step func(string) string) {
 	if isContingent(nodeTopics, cp.Contingent) {
+		return
+	}
+	if cp.IsServerless && mode == migrateTopicsModeMirror {
+		// MSK Serverless has no Kafka Admin API scan, so migrate-topics finds no topics to mirror.
+		md.AddParagraph(step("create your mirror topics on the target.") + " `kcp create-asset migrate-topics` can't list topics on MSK Serverless, so it would create none. Create the mirror topics by hand with `confluent kafka mirror create <topic> --link <your-link-name>` for each topic, or enable auto-create mirror topics on the Confluent Cloud link ([docs](" + docMirrorTopics + ")).")
+		return
+	}
+	if cp.IsServerless && mode == migrateTopicsModeNew {
+		md.AddParagraph(step("create your topics on the target.") + " `kcp create-asset migrate-topics` can't list topics on MSK Serverless, so it would create none. Create each topic on Confluent Cloud yourself with `confluent kafka topic create <topic> --partitions <n>`, using your source topics' partition counts and configs.")
 		return
 	}
 	how := "as plain topics on the new cluster (no data yet)"
@@ -1351,7 +1801,7 @@ func connectorsStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string,
 	}
 	if len(rebuild) > 0 {
 		cmds := migrateConnectorsCommands(cp, src, stateFilePath)
-		lead := " Recreate the source connectors as Confluent Cloud fully-managed connectors; the Connectors recommendation above covers the approach."
+		lead := " Recreate your connectors as Confluent Cloud fully-managed connectors; the Connectors recommendation above covers the approach."
 		if len(cmds) > 0 {
 			lead += " Run `kcp create-asset migrate-connectors` ([docs](" + docMigrateConnectors + ")):"
 		} else {
@@ -1361,22 +1811,124 @@ func connectorsStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string,
 		for _, cmd := range cmds {
 			md.AddCodeBlock(cmd, "bash")
 		}
-		// Sequencing: the connector definitions are created before cutover, so spell out
-		// when to start them and to stop the source-side ones — otherwise a sink can
-		// double-deliver and a source connector can write into a read-only mirror topic.
+		// Sequencing: generate the definitions before cutover. Where a cluster link moves the
+		// data, apply them only once the mirror topics are promoted. The generated Terraform
+		// has no paused state, so applying a connector starts it; applying early double-delivers
+		// from a sink or writes into a read-only mirror topic.
 		sw := cp.Plan.Switchover
-		startCue := "start the Confluent-managed connectors once you cut your clients over"
-		if !sw.StartFresh && !sw.Replicator {
-			startCue = "start the Confluent-managed connectors only after `kcp migration execute` promotes the mirror topics"
+		byLink := !sw.StartFresh && !sw.Replicator
+		applyCue := "once you cut your clients over"
+		if byLink {
+			if sw.GatewayMediated {
+				applyCue = "only after `kcp migration execute` promotes the mirror topics"
+			} else {
+				applyCue = "only after you promote the mirror topics"
+			}
 		}
-		md.AddParagraph("Create these Confluent-managed connector definitions now, but leave them **stopped**. At cutover, stop the source-side connectors, then " + startCue + " — so you don't double-deliver from a sink or write into a read-only mirror topic.")
+		cutoverStop := "At cutover, stop the source-side connectors first, so you don't double-deliver from a sink or write into a read-only mirror topic."
+		switch {
+		case sw.StartFresh:
+			// Old sinks must keep draining the old cluster, so they stop last.
+			cutoverStop = "At cutover, stop your source connectors first, then stop each sink connector only after its consumer lag on the old cluster reaches zero, so it finishes delivering what is already there."
+		case sw.Replicator:
+			cutoverStop = "At cutover, stop the source-side connectors first, so you don't double-deliver from a sink."
+		}
+		md.AddParagraph("Generate these Confluent-managed connector definitions now, but apply them " + applyCue + ", so they don't start early: the generated Terraform starts a connector as soon as you apply it. " + cutoverStop)
+		// Only self-managed Kafka Connect gets the Connect Migration Utility: its
+		// stop_create_latest_offset mode needs a Connect REST endpoint (worker URLs), which
+		// MSK Connect doesn't expose. MSK Connect connectors use the generated definitions.
+		if src.MSKConnect {
+			sinks := ""
+			if sw.Replicator {
+				sinks = replicatorSinkOffsets + " Add an offsets block to each sink connector's generated definition before you apply it. "
+			}
+			if byLink {
+				sinks = "Confluent-managed sink connectors read with their own consumer group, so create each one with the offsets of its MSK Connect consumer group (`connect-<connector-name>`); see [Create connectors with offsets](" + docConnectorOffsets + "). Add an offsets block to each sink connector's generated definition before you apply it. "
+			}
+			if sinks != "" {
+				md.AddParagraph(sinks + sourceConnectorOffsetsAfterSinks)
+			} else {
+				md.AddParagraph(sourceConnectorOffsets)
+			}
+		}
+		if src.SelfManaged {
+			creation := "the utility or generated definitions, not both."
+			if src.MSKConnect {
+				creation = "the utility for self-managed Connect, the generated definitions for MSK Connect, not both for the same connector."
+			}
+			var utility string
+			if byLink {
+				utility = "For connectors on self-managed Kafka Connect, use the Connect Migration Utility with `stop_create_latest_offset` so a connector resumes from its last offsets instead of re-reading or re-snapshotting ([docs](" + docConnectMigrationUtility + ")). " + utilityVersion + " "
+				utility += "Run the utility only after you promote the mirror topics, since it creates the Confluent-managed connectors right away. "
+			} else {
+				// Replicator changes offsets and start-fresh topics are empty, so sinks cannot reuse their old offsets.
+				utility = "Use the Connect Migration Utility with `stop_create_latest_offset` for source connectors only ([docs](" + docConnectMigrationUtility + ")). " + utilityVersion + " Create sink connectors without carried-over offsets, since the topics on Confluent Cloud have new offsets. "
+				if sw.Replicator {
+					utility = "Use the Connect Migration Utility with `stop_create_latest_offset` for source connectors only ([docs](" + docConnectMigrationUtility + ")). " + utilityVersion + " "
+					if !src.MSKConnect {
+						// The utility carries source offsets, and the sinks are created from generated definitions.
+						utility += replicatorSinkOffsets + " Add an offsets block to each sink connector's generated definition before you apply it. "
+					}
+				}
+			}
+			md.AddParagraph(utility + "Use one creation path per connector: " + creation)
+		}
 	}
 	// Keeping connectors self-managed still means recreating each one on a Connect
 	// cluster you run against Confluent Cloud; migrate-connectors doesn't do that, so
 	// point to the Connect Migration Utility rather than leaving the work step-less.
 	if len(keepSelf) > 0 {
-		md.AddParagraph(step("port your connectors to a self-managed Connect cluster"+appScope(keepSelf, len(views))+".") + " Stand up your own Kafka Connect cluster against Confluent Cloud and recreate each connector there. Confluent's Connect Migration Utility copies each connector's configuration across, so you're not retyping them ([docs](" + docConnectMigrationUtility + ")).")
+		offsets := ""
+		recreate := "recreate each connector there."
+		if cp.Plan.Switchover.Replicator {
+			offsets = " " + sourceConnectorOffsets
+			recreate = "recreate each source connector there. Create each sink connector only after you reset its offsets at cutover (below)."
+		} else if sw := cp.Plan.Switchover; !sw.StartFresh {
+			recreate = "recreate each source connector there. " + selfManagedLinkSinks
+			if sw.GatewayMediated {
+				recreate = "recreate each source connector there. " + selfManagedGatewaySinks
+			}
+		}
+		md.AddParagraph(step("port your connectors to a self-managed Connect cluster"+appScope(keepSelf, len(views))+".") + " Stand up your own Kafka Connect cluster against Confluent Cloud and " + recreate + " The connectors stay self-managed, so `migrate-connectors` and the Connect Migration Utility, which create Confluent-managed connectors, don't apply." + offsets)
 	}
+}
+
+// selfManagedLinkSinks is the sink-connector instruction for self-managed Connect on a
+// Cluster Linking plan: the sinks start only once their topics are writable.
+const selfManagedLinkSinks = "Stop each old sink connector with its service, before you promote its topics, so its last offsets sync. Create sink connectors only after you promote their topics, and list each sink's consumer group (connect-<connector-name>) in consumer.offset.group.filters so it resumes from its synced offsets."
+
+// selfManagedGatewaySinks is the same instruction for a Gateway plan, whose route type
+// (static or dynamic, set in the GatewayMigration manifest) decides whether offset sync is on:
+// a dynamic route keeps it disabled on the link, so its sink groups stay out of the filters.
+const selfManagedGatewaySinks = "Create sink connectors only after you promote their topics. On a static route, stop each old sink connector with its service, before you promote its topics, so its last offsets sync, and list each sink's consumer group (connect-<connector-name>) in consumer.offset.group.filters so it resumes from its synced offsets. On a dynamic route, consumer offset sync stays disabled on the link, so don't list the sink groups in consumer.offset.group.filters."
+
+// linkKeepsSelfManagedConnectors reports whether any settled app keeps its connectors
+// self-managed on a Cluster Linking plan, so the cutover step is followed by the sinks.
+func linkKeepsSelfManagedConnectors(cp ClusterPlan) bool {
+	sw := cp.Plan.Switchover
+	if sw.StartFresh || sw.Replicator {
+		return false
+	}
+	for _, av := range appViews(cp) {
+		if !isContingent(nodeConnectors, av.contingent) && connectorsKeepSelfManaged(av.plan) {
+			return true
+		}
+	}
+	return false
+}
+
+// replicatorKeepsSelfManagedSinks reports whether any settled app keeps its connectors
+// self-managed on a Replicator plan, so the cutover step carries the sink offset reset.
+func replicatorKeepsSelfManagedSinks(cp ClusterPlan) bool {
+	if !cp.Plan.Switchover.Replicator {
+		return false
+	}
+	for _, av := range appViews(cp) {
+		if !isContingent(nodeConnectors, av.contingent) && connectorsKeepSelfManaged(av.plan) {
+			return true
+		}
+	}
+	return false
 }
 
 // schemaNeedsMigration reports whether a settled Schema verdict maps to a
@@ -1436,9 +1988,9 @@ func namedList(names []string) string {
 // renderInfraRecommendation renders the infrastructure verdicts (cluster type,
 // sizing, networking, auth) — the shared half of the plan that every application
 // on the cluster builds on.
-func renderInfraRecommendation(md *markdown.Markdown, p engine.PlanResult, c map[string][]string, qaFragment string, caveats map[string][]string) {
+func renderInfraRecommendation(md *markdown.Markdown, p engine.PlanResult, c map[string][]string, qaFragment string, caveats map[string][]string, hold bool) {
 	md.AddHeading("Infrastructure plan", 3)
-	renderSectionStatus(md, planGroupState(p.Withheld, c, infraVerdicts), qaFragment)
+	renderSectionStatus(md, planGroupState(p.Withheld, c, infraVerdicts, hold), qaFragment)
 	netAltV, netAltR := "", ""
 	if a := p.Networking.Alternative; a != nil {
 		netAltV, netAltR = a.Value, a.Reason
@@ -1552,6 +2104,42 @@ func hasObservation(obs []Observation, title string) bool {
 	return false
 }
 
+// fleetMetricsCommand names the metrics-collection command for the fleet: the
+// source-specific one when every cluster shares a source kind, else the generic one
+// naming both (a mixed fleet, or a questionnaire run that never named its source).
+func fleetMetricsCommand(ep *EnginePlan) string {
+	nonMSK, msk := 0, 0
+	for _, cp := range ep.Clusters {
+		if cp.SourcePlatform != "" {
+			nonMSK++
+		} else {
+			msk++
+		}
+	}
+	p := engine.Profile{StateFile: ep.Header.StateFilePath, Scanless: ep.Header.StateFilePath == ""}
+	switch {
+	case nonMSK > 0 && msk == 0:
+		p.SourceType = engine.SourceApacheKafka
+	case msk > 0 && nonMSK == 0 && (!p.Scanless || allDeclaredMSK(ep)):
+		// Amazon MSK, scanned or named by an answer: the discover command.
+		p.Scanless = false
+	default:
+		p.Scanless = true // mixed fleet (or unnamed source): name both
+	}
+	return engine.MetricsScanCommand(p)
+}
+
+// allDeclaredMSK reports whether every cluster's source was answered as Amazon MSK
+// (a scanless run that named its source).
+func allDeclaredMSK(ep *EnginePlan) bool {
+	for _, cp := range ep.Clusters {
+		if !cp.sourceDeclaredMSK {
+			return false
+		}
+	}
+	return len(ep.Clusters) > 0
+}
+
 // fleetSizingIsLowerBound reports whether every planned (non-withheld) cluster
 // lacks scanned throughput metrics, so the sizing lower-bound caveat applies
 // fleet-wide and is stated once at the top rather than under every cluster.
@@ -1584,14 +2172,27 @@ func withAlternative(reason, altValue, altReason string) string {
 	if altValue == "" {
 		return reason
 	}
-	return reason + " An alternative is " + altValue + ": " + altReason
+	return reason + " An alternative is " + altPhrase(altValue) + ". " + altReason
+}
+
+// altPhrase reads an alternative's label after "An alternative is": a label that is
+// an imperative ("Mirror your data across first") becomes an infinitive ("to mirror
+// your data across first"); a name ("PrivateLink", "Confluent Replicator") is
+// unchanged.
+func altPhrase(v string) string {
+	first, rest, _ := strings.Cut(v, " ")
+	switch first {
+	case "Mirror", "Use", "Run", "Add", "Move", "Start", "Keep", "Copy", "Create", "Migrate":
+		return "to " + strings.ToLower(first[:1]) + first[1:] + " " + rest
+	}
+	return v
 }
 
 // renderAppRecommendation renders one application's migration verdicts (data
 // migration, schema, connectors, topics, historical) — the per-app half of the
 // plan, on top of the shared infrastructure above.
-func renderAppRecommendation(md *markdown.Markdown, p engine.PlanResult, c map[string][]string, qaFragment string, caveats map[string][]string) {
-	renderSectionStatus(md, planGroupState(p.Withheld, c, appVerdicts), qaFragment)
+func renderAppRecommendation(md *markdown.Markdown, p engine.PlanResult, c map[string][]string, qaFragment string, caveats map[string][]string, hold bool) {
+	renderSectionStatus(md, planGroupState(p.Withheld, c, appVerdicts, hold), qaFragment)
 	dmAltV, dmAltR := "", ""
 	if a := p.Switchover.Alternative; a != nil {
 		dmAltV, dmAltR = a.Value, a.Reason

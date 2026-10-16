@@ -43,8 +43,16 @@ func clusterObservations(c report.ProcessedCluster, p engine.Profile) []Observat
 			"Historical data sits " + where + ". Backfilling it during cutover takes time proportional to the tiered volume."})
 	}
 	if len(c.ClusterMetrics.Aggregates) == 0 {
+		pniNote := ""
+		if engine.TargetCloudOf(p) == "AWS" {
+			pniNote = " (PNI is not available on Dedicated)"
+		}
+		metricsCmd := engine.MetricsScanCommand(p)
+		if c.Region != "" {
+			metricsCmd = strings.ReplaceAll(metricsCmd, "<your-region>", c.Region)
+		}
 		obs = append(obs, Observation{"warn", "No throughput metrics scanned",
-			"Sizing is based on the partition count alone and is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit: a higher measured throughput can raise the recommended cluster type, and a move to Dedicated changes the private-networking design (PNI is not available on Dedicated)."})
+			"Sizing is based on the partition count alone and is a lower bound. Run " + metricsCmd + " to size from real ingress/egress before you commit: a higher measured throughput can raise the recommended cluster type, and a move to Dedicated changes the private-networking design" + pniNote + "."})
 	}
 
 	// Topic-name signals.

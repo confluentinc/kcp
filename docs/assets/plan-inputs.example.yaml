@@ -66,7 +66,7 @@ clusters:
     target_cloud: aws
 
     # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
-    #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+    #   (A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
     #   api-keys → API keys (SASL/PLAIN)
     #   oauth → OAuth
     #   mtls → mTLS

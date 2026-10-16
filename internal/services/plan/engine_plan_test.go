@@ -254,11 +254,11 @@ func TestFleetDefaults_OptionalMultiNotRequired(t *testing.T) {
 	}
 }
 
-// A multi-valued fleet answer set in different orders on different clusters is the
+// A multi-valued answer set in different orders on all_clusters and on a cluster is the
 // same answer — it stays in defaults, not written per-cluster (order-insensitive).
 func TestFleetDefaults_MultiOrderInsensitive(t *testing.T) {
 	fixed := func() time.Time { return time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC) }
-	in := "clusters:\n  alpha:\n    target_auth: [api-keys, oauth]\n  beta:\n    target_auth: [oauth, api-keys]\n"
+	in := "all_clusters:\n  target_auth: [api-keys, oauth]\nclusters:\n  alpha:\n    target_auth: [oauth, api-keys]\n"
 	d, _, err := ParseDeclaredInputs([]byte(in))
 	if err != nil {
 		t.Fatal(err)
@@ -577,6 +577,46 @@ func TestBuildEnginePlan_OneCluster(t *testing.T) {
 	}
 }
 
+// The plan header must name the real per-cluster source (the resolved
+// profile.SourcePlatform: the declared source_platform answer if given, else the
+// scanned source kind), not just the scan kind alone — a scanless Confluent
+// Platform plan previously said "Amazon MSK" (the scanless placeholder's scan
+// kind), and a scanned Confluent Platform source (which scans as OSK) previously
+// said "Apache Kafka".
+func TestHeaderSource_NamesResolvedSourcePlatform(t *testing.T) {
+	fixed := func() time.Time { return time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC) }
+
+	cp := BuildEnginePlan(ScanlessState(), declFor(ScanlessClusterName, IntakeInputs{SourcePlatform: "Confluent Platform"}), "", fixed)
+	if cp.Header.Source != "Confluent Platform" {
+		t.Errorf("scanless Confluent Platform header = %q, want %q", cp.Header.Source, "Confluent Platform")
+	}
+
+	ak := BuildEnginePlan(ScanlessState(), declFor(ScanlessClusterName, IntakeInputs{SourcePlatform: "Apache Kafka"}), "", fixed)
+	if ak.Header.Source != "Apache Kafka" {
+		t.Errorf("scanless Apache Kafka header = %q, want %q", ak.Header.Source, "Apache Kafka")
+	}
+
+	// Mixed fleet: one cluster declares Confluent Platform, the other stays MSK
+	// (undeclared) — the header must list both distinct platforms.
+	state := report.ProcessedState{Sources: []report.ProcessedSource{{
+		MSKData: &report.ProcessedMSKSource{Regions: []report.ProcessedRegion{{
+			Name: "us-east-1",
+			Clusters: []report.ProcessedCluster{
+				provisionedCluster("msk-cluster", "us-east-1", 5000),
+				provisionedCluster("cp-cluster", "us-east-1", 5000),
+			},
+		}}},
+	}}}
+	declared := DeclaredInputs{Clusters: map[string]DeclaredCluster{
+		"msk-cluster": {Inputs: IntakeInputs{}},
+		"cp-cluster":  {Inputs: IntakeInputs{SourcePlatform: "Confluent Platform"}},
+	}}
+	mixed := BuildEnginePlan(state, declared, "kcp-state.json", fixed)
+	if mixed.Header.Source != "Amazon MSK, Confluent Platform" {
+		t.Errorf("mixed header = %q, want %q", mixed.Header.Source, "Amazon MSK, Confluent Platform")
+	}
+}
+
 // ValidateDeclaredClusters flags declared cluster keys that match no scanned
 // cluster (a misspelled cluster name), and passes correctly spelled ones.
 func TestValidateDeclaredClusters(t *testing.T) {
@@ -587,16 +627,29 @@ func TestValidateDeclaredClusters(t *testing.T) {
 	}}}
 
 	// A correctly spelled key produces no error.
-	if errs := ValidateDeclaredClusters(declFor("orders", IntakeInputs{}), state); len(errs) != 0 {
+	if errs := ValidateDeclaredClusters(declFor("orders", IntakeInputs{}), state, false); len(errs) != 0 {
 		t.Errorf("valid cluster key should not error, got %v", errs)
 	}
 	// A misspelled key is reported by name.
-	errs := ValidateDeclaredClusters(declFor("orderz", IntakeInputs{}), state)
-	if len(errs) != 1 || !strings.Contains(errs[0], `"orderz"`) || !strings.Contains(errs[0], "not in the scan") {
+	errs := ValidateDeclaredClusters(declFor("orderz", IntakeInputs{}), state, false)
+	if len(errs) != 1 || !strings.Contains(errs[0], `"orderz"`) || !strings.Contains(errs[0], "not in the scan") || !strings.Contains(errs[0], "valid names: orders") {
 		t.Errorf("misspelled cluster key should be reported, got %v", errs)
 	}
 	// No declared clusters, no errors.
-	if errs := ValidateDeclaredClusters(DeclaredInputs{}, state); len(errs) != 0 {
+	if errs := ValidateDeclaredClusters(DeclaredInputs{}, state, false); len(errs) != 0 {
 		t.Errorf("empty declared inputs should not error, got %v", errs)
+	}
+}
+
+// A scanless run plans one synthetic cluster, so a cluster key other than
+// "your-cluster" would be silently dropped; it must be reported instead.
+func TestValidateDeclaredClusters_Scanless(t *testing.T) {
+	state := ScanlessState()
+	if errs := ValidateDeclaredClusters(declFor(ScanlessClusterName, IntakeInputs{}), state, true); len(errs) != 0 {
+		t.Errorf("your-cluster should be valid scanless, got %v", errs)
+	}
+	errs := ValidateDeclaredClusters(declFor("orders", IntakeInputs{}), state, true)
+	if len(errs) != 1 || !strings.Contains(errs[0], `"orders"`) || !strings.Contains(errs[0], `"your-cluster"`) || !strings.Contains(errs[0], "--state-file") {
+		t.Errorf("unknown scanless cluster key should be reported, got %v", errs)
 	}
 }

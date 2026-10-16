@@ -48,7 +48,7 @@ var privateLinkTradeoffs = map[string]methodTradeoff{
 		Fit:  "Any workload that needs private networking on Azure",
 	},
 	"GCP": {
-		Pros: []string{"Uses Private Service Connect (PSC), the native private connection on Google Cloud", "Works even when your IP ranges overlap", "Scales to the full 32 eCKU on an Enterprise cluster"},
+		Pros: []string{"Uses Private Service Connect, the native private connection on Google Cloud", "Works even when your IP ranges overlap", "Scales to the full 32 eCKU on an Enterprise cluster"},
 		Cons: []string{"Adds a Google Cloud-managed endpoint in the traffic path", "Needs a separate endpoint for outbound traffic"},
 		Fit:  "Any workload that needs private networking on Google Cloud",
 	},
@@ -68,6 +68,10 @@ type NetworkingResult struct {
 	// reads it to gate the "the endpoint is added in the link step below" note; a
 	// typed flag rather than matching the display Value. Not serialized.
 	HasEgressEndpoint bool `json:"-"`
+	// GCPPrivateLink is set when the GCP outbound branch carries the migration cluster
+	// link from a private source (alone or alongside connector egress). Human assist
+	// reads it to raise the link handoff rather than a Dedicated cause. Not serialized.
+	GCPPrivateLink bool `json:"-"`
 	// EgressForConnectors is set when the Egress PrivateLink Endpoint was added for the
 	// runtime cc_egress_required need (managed connectors/consumers reaching into the
 	// customer network), as opposed to purely for the migration link. Render reads it so
@@ -94,6 +98,25 @@ type NetworkingResult struct {
 }
 
 func strptr(s string) *string { return &s }
+
+// egressPrivateReason explains why a public-OK customer still lands on Enterprise
+// with an Egress PrivateLink Endpoint. It follows kcp's "Based on your answer (...),"
+// lead and continues lower-case.
+// egressPrivateLead credits both drivers of the public-OK plus outbound-connection
+// plan: the public-OK answer and the outbound-connection answer.
+const egressPrivateLead = "Based on your answers (private networking not required, outbound private connection needed), "
+
+const egressPrivateReason = "public endpoints are fine for your clients, but Confluent Cloud also needs an outbound private connection, which needs an Enterprise cluster with an Egress PrivateLink Endpoint."
+
+// egressForcesPrivate reports whether a public-OK plan still has to go private
+// because Confluent-managed connectors/consumers must reach into the customer
+// network. "Public endpoints OK" covers client ingress only; an outbound private
+// connection from Confluent Cloud needs Enterprise with an Egress PrivateLink
+// Endpoint on AWS and Azure. GCP is different: its outbound private connection is
+// Dedicated-only and handled as a specialist handoff in networkingDecision.
+func egressForcesPrivate(p Profile, tc string) bool {
+	return !requiresPrivate(p) && p.CCEgressRequired == "Yes" && (tc == "AWS" || tc == "Azure")
+}
 
 // attachTradeoffs fills pros/cons/fit from the method the value names.
 func attachTradeoffs(net *NetworkingResult, cloud string) *NetworkingResult {
@@ -128,16 +151,23 @@ func withEgress(p Profile, net *NetworkingResult, tc string) *NetworkingResult {
 	if p.CCEgressRequired != "Yes" {
 		return net
 	}
+	// When the egress need itself forced the plan private, the Reason already leads
+	// with it (egressPrivateReason), so the follow-on sentence would repeat it.
+	forced := egressForcesPrivate(p, tc)
 	switch {
 	case strings.HasPrefix(net.Value, "PNI"):
 		net.Value = "PNI + Egress PrivateLink Endpoint"
-		net.Reason += " Your Confluent-managed connectors and consumers also need to connect into your network, so we add an Egress PrivateLink Endpoint alongside PNI."
+		if !forced {
+			net.Reason += " Your Confluent-managed connectors and consumers also need to connect into your network, so we add an Egress PrivateLink Endpoint alongside PNI."
+		}
 		if net.Why != "" {
 			net.Why += " The Egress PrivateLink Endpoint lets Confluent-managed connectors and consumers connect into your private network."
 		}
 	case tc == "Azure":
 		net.Value = "PrivateLink + Egress PrivateLink Endpoint"
-		net.Reason += " Your Confluent-managed connectors and consumers also need to connect into your network, so we add an Egress PrivateLink Endpoint alongside PrivateLink."
+		if !forced {
+			net.Reason += " Your Confluent-managed connectors and consumers also need to connect into your network, so we add an Egress PrivateLink Endpoint alongside PrivateLink."
+		}
 		if net.Why != "" {
 			net.Why += " The Egress PrivateLink Endpoint lets Confluent-managed connectors and consumers connect into your private network."
 		}
@@ -151,6 +181,35 @@ func withEgress(p Profile, net *NetworkingResult, tc string) *NetworkingResult {
 	return net
 }
 
+// sourceCloudName is the cloud the source runs in: the declared source cloud, or AWS for
+// MSK, which always runs there. Empty when unknown.
+func sourceCloudName(p Profile) string {
+	if p.SourceCloud != "" {
+		return p.SourceCloud
+	}
+	if p.isMSK() {
+		return "AWS"
+	}
+	return ""
+}
+
+// crossCloudLink reports whether the source and target clouds are both known and
+// differ. An Egress PrivateLink Endpoint only connects within its own cloud, so a
+// private link across clouds is handed to a specialist. An unknown source cloud is
+// not treated as cross-cloud.
+func crossCloudLink(p Profile, tc string) bool {
+	src := sourceCloudName(p)
+	switch src {
+	case "AWS", "Azure", "GCP":
+		return tc != "" && src != tc
+	}
+	return false
+}
+
+func crossCloudLinkSentence(p Profile, tc string) string {
+	return "Your source runs on " + cloudDisplay(sourceCloudName(p)) + " and the new cluster runs on " + cloudDisplay(tc) + ", so a private cluster link would cross clouds, which an Egress PrivateLink Endpoint can't carry. A specialist sets up that link."
+}
+
 // withMigrationEgress adds the Egress PrivateLink Endpoint the migration cluster
 // link needs to reach a privately-reached source, when any application pulls data
 // over the link. This is distinct from withEgress (the runtime cc_egress_required
@@ -160,20 +219,89 @@ func withEgress(p Profile, net *NetworkingResult, tc string) *NetworkingResult {
 // only on the assembled call (ctx.ApplyMigrationEgress); the guard against an
 // existing "Egress PrivateLink" keeps it from stacking on withEgress.
 func withMigrationEgress(p Profile, net *NetworkingResult, tc string, tier Tier, apply bool) *NetworkingResult {
-	if !apply || !clusterLinkNeedsPrivateEgress(p, tier, p.AnyAppNeedsDataMigration) || strings.Contains(net.Value, "Egress PrivateLink") {
+	if !apply || !clusterLinkNeedsPrivateEgress(p, tier, p.AnyAppNeedsDataMigration) {
 		return net
 	}
+	// A jump cluster runs the link outbound from the customer's own account through
+	// its own PrivateLink VPC endpoint, so Confluent Cloud needs no egress endpoint.
+	// This is checked before the existing-egress guard below so a connector egress
+	// endpoint doesn't hide the jump cluster's PrivateLink note.
+	if resolveMechanism(p, tier, p.AnyAppNeedsDataMigration).Mechanism == "jump-cluster" {
+		// The jump cluster's own link to Confluent Cloud rides a PrivateLink connection
+		// (migration-infra types 4/5 take an existing PrivateLink VPC endpoint), AWS only.
+		if tc == "AWS" {
+			net.Reason += " " + jumpClusterPrivateLinkNote
+			if net.Why != "" {
+				net.Why += " " + jumpClusterPrivateLinkWhy
+			}
+			// The cluster's own networking (PNI) doesn't carry that connection, so the
+			// plan also names the PrivateLink endpoint the jump cluster uses.
+			if strings.HasPrefix(net.Value, "PNI") && !strings.Contains(net.Value, jumpClusterNetworkingSuffix) {
+				net.Value += jumpClusterNetworkingSuffix
+			}
+		}
+		return net
+	}
+	if strings.Contains(net.Value, "Egress PrivateLink") {
+		// Connector egress already added the endpoint. Keep both reasons: the same
+		// endpoint carries the migration link.
+		if strings.HasPrefix(net.Value, "PNI") || (tc == "Azure" && tier == TierEnterprise) {
+			carriesLink := "and PrivateLink is inbound only, so the link reaches your source cluster"
+			if strings.HasPrefix(net.Value, "PNI") {
+				carriesLink = "reaching out to your source cluster, and PNI doesn't carry Cluster Linking traffic"
+			}
+			// The endpoint carries the link only when source and target share a cloud; a
+			// cross-cloud link is handed to a specialist, so the plan doesn't claim it.
+			if crossCloudLink(p, tc) {
+				net.Reason += " " + crossCloudLinkSentence(p, tc)
+				if net.Why != "" {
+					net.Why += " " + crossCloudLinkSentence(p, tc)
+				}
+			} else {
+				net.Reason += " The same endpoint carries your migration: Confluent Cloud pulls your data over the cluster link, " + carriesLink + "."
+				if net.Why != "" {
+					net.Why += " The same endpoint lets the migration cluster link reach your source cluster."
+				}
+			}
+			if p.SourceCloud == "Azure" && tc == "Azure" {
+				net.Reason += azureBrokersNote
+			}
+		}
+		return net
+	}
+	cross := crossCloudLink(p, tc)
 	if strings.HasPrefix(net.Value, "PNI") {
-		net.Value = "PNI + Egress PrivateLink Endpoint"
-		net.Reason += " Confluent Cloud pulls your data over the cluster link, reaching out to your source cluster. PNI doesn't carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI."
-		if net.Why != "" {
-			net.Why += " The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, which PNI doesn't carry."
+		if cross {
+			// A cross-cloud link goes to a specialist, so no egress endpoint is added
+			// for it (the connector-egress case returned above).
+			net.Reason += " " + crossCloudLinkSentence(p, tc)
+			if net.Why != "" {
+				net.Why += " " + crossCloudLinkSentence(p, tc)
+			}
+		} else {
+			net.Value = "PNI + Egress PrivateLink Endpoint"
+			net.Reason += " Confluent Cloud pulls your data over the cluster link, reaching out to your source cluster. PNI doesn't carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI."
+			if net.Why != "" {
+				net.Why += " The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, which PNI doesn't carry."
+			}
 		}
 	} else if tc == "Azure" && tier == TierEnterprise {
-		net.Value = "PrivateLink + Egress PrivateLink Endpoint"
-		net.Reason += " Confluent Cloud pulls your data over the cluster link, and PrivateLink is inbound only, so the link needs an Egress PrivateLink Endpoint alongside PrivateLink to reach your source cluster."
+		if cross {
+			net.Reason += " " + crossCloudLinkSentence(p, tc)
+		} else {
+			net.Value = "PrivateLink + Egress PrivateLink Endpoint"
+			net.Reason += " Confluent Cloud pulls your data over the cluster link, and PrivateLink is inbound only, so the link needs an Egress PrivateLink Endpoint alongside PrivateLink to reach your source cluster."
+		}
+		// An Azure source is reached one broker at a time.
+		if p.SourceCloud == "Azure" {
+			net.Reason += azureBrokersNote
+		}
 		if net.Why != "" {
-			net.Why += " The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, since PrivateLink is inbound only."
+			if cross {
+				net.Why += " " + crossCloudLinkSentence(p, tc)
+			} else {
+				net.Why += " The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, since PrivateLink is inbound only."
+			}
 		}
 	}
 	if strings.Contains(net.Value, "Egress PrivateLink Endpoint") {
@@ -181,6 +309,20 @@ func withMigrationEgress(p Profile, net *NetworkingResult, tc string, tier Tier,
 	}
 	return net
 }
+
+// azureBrokersNote is added when the migration link reaches an Azure source.
+const azureBrokersNote = " To reach your Azure brokers, each broker needs its own load balancer and Private Link Service, with a Confluent access point and a DNS record for each."
+
+// jumpClusterPrivateLinkNote is added to the AWS networking reason when the plan
+// runs a jump cluster.
+const jumpClusterPrivateLinkNote = "Your AWS IAM source needs a jump cluster, a temporary Kafka cluster in your AWS account, and it needs a PrivateLink connection from your AWS account to your Confluent Cloud cluster."
+
+// jumpClusterPrivateLinkWhy is the same note for the networking Why.
+const jumpClusterPrivateLinkWhy = "Your AWS IAM source needs a jump cluster in your AWS account, and it needs a PrivateLink connection to your Confluent Cloud cluster."
+
+// jumpClusterNetworkingSuffix is appended to a PNI networking value when the plan
+// runs a jump cluster, whose link to Confluent Cloud rides a PrivateLink endpoint.
+const jumpClusterNetworkingSuffix = " + PrivateLink for the jump cluster"
 
 // netCtx is the context networkingDecision needs: the target cloud, the sized
 // band, the (settled or tentative) tier, and whether cluster type crossed a
@@ -201,18 +343,40 @@ type netCtx struct {
 
 // addOnPremHybridNote appends a hybrid-connectivity caveat when the source runs
 // on-premises and the target uses a private networking method. An on-prem client
-// can't reach a private Confluent Cloud endpoint directly — it needs Cloud
-// Interconnect / VPN into the cloud network that holds the endpoint. Cloud sources
+// can't reach a private Confluent Cloud endpoint directly — it needs the target
+// cloud's private link (Direct Connect, ExpressRoute, or Cloud Interconnect) or a
+// VPN into the cloud network that holds the endpoint. Cloud sources
 // already sit in a VPC/VNet, so the note is on-prem-only.
 func addOnPremHybridNote(p Profile, net *NetworkingResult) {
 	if p.SourceCloud != "On-prem or other" || strings.HasPrefix(net.Value, "Public") {
 		return
 	}
-	note := " Your clients run on-premises, so reaching this private Confluent Cloud endpoint needs hybrid connectivity — Cloud Interconnect or a VPN into the cloud network that holds the endpoint — which is a networking project to plan alongside the migration."
+	link := privateLinkName(targetCloud(p))
+	note := " Your clients run on-premises, so reaching this private Confluent Cloud endpoint needs hybrid connectivity — " + link + " or a VPN into the cloud network that holds the endpoint — which is a networking project to plan alongside the migration."
 	net.Reason += note
 	if net.Why != "" {
-		net.Why += " On-prem clients reach it over Cloud Interconnect or VPN."
+		net.Why += " On-prem clients reach it over " + link + " or VPN."
 	}
+}
+
+// gcpLinkCause names the GCP private-source cluster-link need. Human assist
+// carries it as its own handoff trigger rather than a Dedicated escalation.
+const gcpLinkCause = "your answer that your data moves over a cluster link from a private source into Google Cloud"
+
+// gcpLinkWhy is the customer-facing handoff for that case.
+const gcpLinkWhy = "Cluster Linking from a private source into Google Cloud isn't supported over Private Service Connect, so we'll design the migration path with you."
+
+// gcpPrivateLinkHandoff reports whether a GCP target pulls data over a cluster
+// link from a private source, by either the infra-wide or the cluster's own
+// data-migration answer.
+func gcpPrivateLinkHandoff(p Profile, tier Tier) bool {
+	// An explicit "Yes" only: with the data-migration answer still pending, the
+	// switchover verdict is held, so the plan must not assert a link problem yet.
+	// The infra-wide answer is only asked on the private path; on the public path
+	// the cluster's own answer decides.
+	return targetCloud(p) == "GCP" &&
+		((WillBePrivate(p) && p.AnyAppNeedsDataMigration == "Yes" && clusterLinkNeedsPrivateEgress(p, tier, p.AnyAppNeedsDataMigration)) ||
+			(p.NeedsDataMigration == "Yes" && clusterLinkNeedsPrivateEgress(p, tier, p.NeedsDataMigration)))
 }
 
 func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
@@ -227,18 +391,33 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	}
 	dedicated := tier == TierDedicated
 
-	// GCP needs an OUTBOUND private connection when a data migration pulls over a
-	// Cluster Link, or managed connectors/consumers must reach into the customer
-	// network. GCP's egress PSC is Dedicated-only, so either need forces Dedicated
-	// — computed here so it also suppresses the public early-return.
+	// GCP needs an OUTBOUND private connection when managed connectors/consumers
+	// must reach into the customer network (cc_egress_required). GCP's egress PSC is
+	// Dedicated-only and connectors-only, so that need forces Dedicated and a
+	// specialist. "Public endpoints OK" covers client ingress only; an outbound
+	// private need is a separate requirement, so it applies on a public-OK plan too.
 	//
-	// cc_egress_required is a private-path-only refinement: it must never push a
-	// public-OK workload onto private/Dedicated, so it only counts once the plan is
-	// already private (a real requirement, or a size-driven cross). The migration-link
-	// egress driver is a separate condition and stands on its own.
-	ccEgressOnPrivate := p.CCEgressRequired == "Yes" && (requiresPrivate(p) || ctx.CrossedToPrivate)
-	gcpOutboundNeeded := tc == "GCP" &&
-		(ccEgressOnPrivate || clusterLinkNeedsPrivateEgress(p, tier, p.AnyAppNeedsDataMigration))
+	// A migration cluster link that must reach a private source is different: egress
+	// PSC is not a link path, and Cluster Linking from an external private cluster
+	// into Google Cloud isn't supported. That case also stays withheld/specialist,
+	// but never presents an egress endpoint for the link.
+	ccEgressOnGCP := tc == "GCP" && p.CCEgressRequired == "Yes"
+	// Infra verdicts read the infra-wide data-migration answer whenever it was asked,
+	// which is whenever the plan will be private (willBePrivate). Only on a plan that
+	// stays public is it never asked, so its default is an assumption, not an answer:
+	// there the cluster's own answer decides and only an explicit "Yes" counts.
+	// CrossedToPrivate is not the test: on the second pass, once an outbound need has
+	// moved the tier to Dedicated, the settled cluster type no longer reports a
+	// crossing though the question was asked.
+	linkDataAnswer := p.AnyAppNeedsDataMigration
+	if !willBePrivate(p) {
+		linkDataAnswer = "No"
+		if p.NeedsDataMigration == "Yes" {
+			linkDataAnswer = "Yes"
+		}
+	}
+	gcpLinkNeedsPrivate := tc == "GCP" && clusterLinkNeedsPrivateEgress(p, tier, linkDataAnswer)
+	gcpOutboundNeeded := ccEgressOnGCP || gcpLinkNeedsPrivate
 
 	// The "Based on your answer (private networking required)," lead, credited only
 	// when the public/private fork was actually answered (defaulted-private claims no
@@ -248,9 +427,29 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	if privateAnsweredField(p) {
 		privLead = basis(ans("private networking required"))
 	}
+	// A public-acceptable workload that crossed to private never credits "private
+	// networking required", which the customer did not say. The cross has three
+	// causes with different provenance: a scanned size band (scan), or a customer
+	// answer (mTLS, or a declared Standard-limit breach). Lead with the honest
+	// source rather than always crediting the scan.
+	if !requiresPrivate(p) && ctx.CrossedToPrivate {
+		switch {
+		case mtlsNeeded(p):
+			privLead = basis(ans("mTLS authentication"))
+		case exceedsStandardLimits(p):
+			privLead = basis(ans("workload exceeds Standard limits"))
+		case tc == "Azure" || tc == "GCP":
+			// A size-only cross has no answer to credit, and the private-path reason there
+			// states no basis.
+			privLead = ""
+		default:
+			privLead = basis(srcOr(p.PartitionsAnswered, "workload needs private networking"))
+		}
+	}
 
 	// Public path. Basic/Standard/Dedicated can serve a public endpoint; Enterprise cannot.
-	if !requiresPrivate(p) && !ctx.CrossedToPrivate && !gcpOutboundNeeded {
+	egressForced := egressForcesPrivate(p, tc)
+	if !requiresPrivate(p) && !ctx.CrossedToPrivate && !gcpOutboundNeeded && !egressForced {
 		return *attachTradeoffs(&NetworkingResult{
 			Value:           "Public endpoint",
 			Reason:          basis(ans("private networking not required")) + "a public endpoint is the simplest way in. Moving to private networking later means moving to a different cluster type.",
@@ -263,53 +462,72 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	// Non-AWS clouds: endpoint methods only (no PNI off AWS).
 	if tc == "Azure" || tc == "GCP" {
 		if gcpOutboundNeeded {
-			gcpOutboundCause := "your need for an outbound private connection on GCP"
-			if !ccEgressOnPrivate {
-				// The outbound need here is the migration link reaching your source, not a
-				// runtime cc_egress requirement (which the customer did not ask for), so name
-				// the real driver. Opened in the shared "your answer that …" specialist shape
-				// (the other triggers use it) since the driver is the data-migration answer.
-				gcpOutboundCause = "your answer that your data moves over the migration link's outbound private connection into your source on GCP"
+			if !ccEgressOnGCP {
+				// Link-only: Dedicated wouldn't make a private-source cluster link into
+				// Google Cloud work, so this is a handoff on its own trigger, not a Dedicated move.
+				return *attachTradeoffs(&NetworkingResult{
+					Value:          "Private Service Connect",
+					Reason:         gcpLinkWhy,
+					Why:            gcpLinkWhy,
+					Action:         strptr("Set up Private Service Connect"),
+					GCPPrivateLink: true,
+				}, tc)
 			}
 			publicInbound := !requiresPrivate(p) && !ctx.CrossedToPrivate
 			reason := "On GCP an outbound private connection is only available on a Dedicated cluster, so we recommend Dedicated and plan it with you."
+			why := "Needed because outbound private connections on GCP require a Dedicated cluster."
+			encouragement := "Dedicated supports outbound private connections on GCP."
 			if publicInbound {
 				reason = "Your clients can reach Confluent Cloud over a public endpoint, but you also need an outbound private connection into your network. " + reason
+			}
+			if gcpLinkNeedsPrivate {
+				reason += " " + gcpLinkWhy
 			}
 			return *attachTradeoffs(&NetworkingResult{
 				Value:                        "Private Service Connect (moves to Dedicated)",
 				Reason:                       reason,
-				Why:                          "Needed because outbound private connections on GCP require a Dedicated cluster.",
+				Why:                          why,
 				Action:                       strptr("Set up Private Service Connect"),
 				ForcesDedicated:              true,
-				ForcesDedicatedReason:        gcpOutboundCause,
-				ForcesDedicatedEncouragement: "Dedicated supports outbound private connections on GCP.",
+				ForcesDedicatedReason:        "your need for an outbound private connection on GCP",
+				ForcesDedicatedEncouragement: encouragement,
+				GCPPrivateLink:               gcpLinkNeedsPrivate,
 			}, tc)
 		}
 		if tc == "GCP" {
-			gcpReason := "On GCP, we recommend Private Service Connect (PSC) for your private connection, which fits an Enterprise cluster."
+			gcpReason := "On GCP, we recommend Private Service Connect for your private connection, which fits an Enterprise cluster."
 			if privLead != "" {
 				gcpReason = privLead + lowerFirst(gcpReason)
 			}
-			return *attachTradeoffs(&NetworkingResult{
-				Value:  "Private Service Connect (PSC)",
+			gcpNet := attachTradeoffs(&NetworkingResult{
+				Value:  "Private Service Connect",
 				Reason: gcpReason,
-				How:    "Private Service Connect (PSC) is the private connection on GCP (PNI is available on AWS only). It supports up to 32 eCKU.",
-				Why:    "Private Service Connect (PSC) scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you.",
-				Action: strptr("Set up Private Service Connect (PSC)"),
+				How:    "Private Service Connect is the private connection on GCP (PNI is available on AWS only). It supports up to 32 eCKU.",
+				Why:    "Private Service Connect scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you.",
+				Action: strptr("Set up Private Service Connect"),
 			}, tc)
+			if ctx.CrossedToPrivate {
+				appendPublicFallbackReason(p, gcpNet, tc)
+			}
+			return *gcpNet
 		}
 		azureReason := "On " + tc + ", we recommend PrivateLink for your private connection, which fits an Enterprise cluster."
-		if privLead != "" {
+		if egressForced {
+			azureReason = egressPrivateLead + egressPrivateReason + " On " + tc + ", we use PrivateLink for the cluster's private networking, which fits an Enterprise cluster."
+		} else if privLead != "" {
 			azureReason = privLead + lowerFirst(azureReason)
 		}
-		return *withMigrationEgress(p, attachTradeoffs(withEgress(p, &NetworkingResult{
+		azureNet := attachTradeoffs(withEgress(p, &NetworkingResult{
 			Value:  "PrivateLink",
 			Reason: azureReason,
 			How:    "PrivateLink is the private connection on " + tc + " (PNI is available on AWS only). It supports up to 32 eCKU.",
 			Why:    "PrivateLink scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you.",
 			Action: strptr("Set up PrivateLink"),
-		}, tc), tc), tc, tier, ctx.ApplyMigrationEgress)
+		}, tc), tc)
+		if ctx.CrossedToPrivate {
+			appendPublicFallbackReason(p, azureNet, tc)
+		}
+		return *withMigrationEgress(p, azureNet, tc, tier, ctx.ApplyMigrationEgress)
 	}
 
 	// ── AWS, private source ──
@@ -333,29 +551,19 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	pniScalesTail := "It scales to the full " + itoa(pniCapECKU) + " eCKU (elastic Confluent Unit for Kafka), so it grows with you."
 	// privLead is set above (credited only on an answered public/private fork; a
 	// defaulted-private plan leaves it empty and opens with a capitalized "On AWS …").
-	// The crossed-to-private path refines it to the honest cross cause.
-	if !requiresPrivate(p) && ctx.CrossedToPrivate {
-		// The cross to private has three causes with different provenance: a scanned
-		// size band (scan), or a customer answer (mTLS, or a declared Standard-limit
-		// breach). Lead with the honest source rather than always crediting the scan.
-		switch {
-		case mtlsNeeded(p):
-			privLead = basis(ans("mTLS authentication"))
-		case exceedsStandardLimits(p):
-			privLead = basis(ans("workload exceeds Standard limits"))
-		default:
-			privLead = basis(srcOr(p.PartitionsAnswered, "workload needs private networking"))
-		}
-	}
 	// With a "Based on …," lead the clause continues lower-case; with no lead
 	// (private defaulted) it opens the sentence, so it takes a capital.
 	pniOpen := "on AWS, we recommend PNI (Private Network Interface) for your private connection. "
 	if privLead == "" {
 		pniOpen = "On AWS, we recommend PNI (Private Network Interface) for your private connection. "
 	}
+	pniReason := privLead + pniOpen + pniScalesTail
+	if egressForced {
+		pniReason = egressPrivateLead + egressPrivateReason + " On AWS, we use PNI (Private Network Interface) for the cluster's private networking. " + pniScalesTail
+	}
 	net := attachTradeoffs(withEgress(p, &NetworkingResult{
 		Value:  "PNI",
-		Reason: privLead + pniOpen + pniScalesTail,
+		Reason: pniReason,
 		How: "PNI is Confluent Cloud's recommended private connection on AWS: Confluent Cloud attaches interfaces directly into your VPC, so traffic never crosses the public internet, and it scales to the full " +
 			itoa(pniCapECKU) + " eCKU, the top of the Enterprise tier.",
 		Why:    pniScalesWhy,
@@ -368,7 +576,7 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 	// workload — so there's no public swap to offer, regardless of the size band. Only a
 	// pure size-band cross leaves Standard as a possible public fallback.
 	if ctx.CrossedToPrivate {
-		appendPublicFallbackReason(p, net)
+		appendPublicFallbackReason(p, net, tc)
 	}
 
 	// Already on PrivateLink: keep it as a real alternative, with tradeoffs.
@@ -388,12 +596,21 @@ func networkingDecision(p Profile, ctx netCtx) NetworkingResult {
 // rules Standard out entirely (Standard can't authenticate mTLS and can't hold a
 // declared over-limit workload); only a pure size-band cross leaves Standard as a
 // public swap the customer could take instead, so it also records the fallback tier.
-func appendPublicFallbackReason(p Profile, net *NetworkingResult) {
+func appendPublicFallbackReason(p Profile, net *NetworkingResult, tc string) {
 	switch {
+	case mtlsNeeded(p) && tc == "GCP":
+		net.Reason += " You told us public networking is acceptable, but mTLS authentication needs an Enterprise cluster, which runs on private networking. Staying public with mTLS would mean a Dedicated cluster, which we plan with you rather than automatically."
 	case mtlsNeeded(p):
-		net.Reason += " You told us public networking is acceptable, but mTLS authentication needs an Enterprise cluster, which runs on private networking, so there is no public option here."
+		// Enterprise carries mTLS on AWS and Azure, and Standard cannot, so there is no public swap to offer.
+		net.Reason += " You told us public networking is acceptable, but mTLS authentication needs an Enterprise cluster, which runs on private networking."
 	case exceedsStandardLimits(p):
 		net.Reason += " You told us public networking is acceptable, but your workload is above what a Standard cluster holds, and Standard is the largest public self-serve tier, so staying public is not an option at this size."
+	case egressForcesPrivate(p, tc):
+		// The Reason already leads with the outbound private connection, which no
+		// public Standard cluster provides, so there is no public swap to offer.
+	case tc != "AWS":
+		// Azure and Google Cloud say nothing about a pure size-band cross, and offer no
+		// public swap: only the mTLS and over-limit causes above add a sentence there.
 	default:
 		fit := tierFit(p, TierStandard)
 		if fit != "no" {
