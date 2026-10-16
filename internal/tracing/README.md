@@ -145,6 +145,8 @@ kcp migration execute                       root span, one per command
 ├─ migration.build_services                 client setup
 └─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, the run's settings
    │                                        (lag threshold, batch size, detection window, workers), plan counts
+   ├─ migration.started                     ends as it starts, with migration.run's opening attributes: reaches the
+   │                                        backend at once, so a run can be listed while migration.run is still open
    ├─ step.<event> …                        kcp.step.from / kcp.step.to; kcp.step.skipped + kcp.step.skip_reason on pass-throughs
    └─ migration.rollback                    only when a failure rolls back; kcp.rollback.path
       └─ step.abort_fence                   when the rollback goes through the state machine

@@ -31,6 +31,14 @@ func End(span trace.Span, err error) {
 	span.End()
 }
 
+// Mark records a point in time: a span named name, a child of the span in ctx,
+// that ends as soon as it starts. Spans are exported only when they end, so a
+// mark reaches the backend while its parent is still running.
+func Mark(ctx context.Context, scope, name string, attrs ...attribute.KeyValue) {
+	_, span := Start(ctx, scope, name, attrs...)
+	span.End()
+}
+
 // SetAttributes annotates the span current in ctx.
 func SetAttributes(ctx context.Context, attrs ...attribute.KeyValue) {
 	trace.SpanFromContext(ctx).SetAttributes(attrs...)

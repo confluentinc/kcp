@@ -203,14 +203,16 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run",
+	runAttrs := []attribute.KeyValue{
 		attribute.String("kcp.migration.id", o.config.MigrationId),
 		attribute.String("kcp.strategy", "aao"),
 		attribute.Int64("kcp.lag_threshold", lagThreshold),
 		attribute.Int("kcp.promote_batch_size", o.actions.promoteBatchSize),
 		attribute.Int64("kcp.detect_unrouted_producers_ms", o.config.DetectUnroutedProducersDuration.Milliseconds()),
-	)
+	}
+	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
+	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
 
 	params := ExecutionParams{
 		LagThreshold:    lagThreshold,
