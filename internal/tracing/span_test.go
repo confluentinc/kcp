@@ -34,6 +34,22 @@ func TestStartEnd_RecordsErrorStatus(t *testing.T) {
 	assert.Equal(t, int64(3), v.AsInt64())
 }
 
+func TestMark_EndsAtOnceAsAChildOfTheCurrentSpan(t *testing.T) {
+	rec := tracingtest.Install(t)
+	ctx, run := tracing.Start(context.Background(), "test", "migration.run")
+	tracing.Mark(ctx, "test", "migration.started", attribute.String("kcp.strategy", "aao"))
+
+	ended := tracingtest.Spans(rec)
+	require.Len(t, ended, 1, "the mark has ended, so it is exported, while its parent is still open")
+	mark := ended[0]
+	assert.Equal(t, "migration.started", mark.Name())
+	assert.Equal(t, run.SpanContext().SpanID(), mark.Parent().SpanID())
+	strategy, ok := tracingtest.Attr(mark, "kcp.strategy")
+	require.True(t, ok)
+	assert.Equal(t, "aao", strategy.AsString())
+	tracing.End(run, nil)
+}
+
 func TestMarkSkippedAndSetAttributes_AnnotateTheCurrentSpan(t *testing.T) {
 	rec := tracingtest.Install(t)
 	ctx, s := tracing.Start(context.Background(), "test", "step.fence")

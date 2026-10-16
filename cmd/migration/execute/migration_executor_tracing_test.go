@@ -36,6 +36,20 @@ func requireUnderRoot(t *testing.T, spans []sdktrace.ReadOnlySpan, root trace.Sp
 	return run
 }
 
+// requireStarted asserts run has a migration.started child carrying run's
+// strategy and migration id, so a run can be listed while it is still going.
+func requireStarted(t *testing.T, spans []sdktrace.ReadOnlySpan, run sdktrace.ReadOnlySpan) {
+	t.Helper()
+	started := tracingtest.Find(t, spans, "migration.started")
+	assert.Equal(t, run.SpanContext().SpanID(), started.Parent().SpanID(), "migration.started is a child of migration.run")
+	for _, key := range []string{"kcp.strategy", "kcp.migration.id"} {
+		want, _ := tracingtest.Attr(run, key)
+		got, ok := tracingtest.Attr(started, key)
+		require.True(t, ok, "migration.started carries %s", key)
+		assert.Equal(t, want, got, key)
+	}
+}
+
 func TestExecute_StaticMode_TracesUnderTheCommandSpan(t *testing.T) {
 	rec := tracingtest.Install(t)
 	f := newFixture(t, nil)
@@ -48,6 +62,7 @@ func TestExecute_StaticMode_TracesUnderTheCommandSpan(t *testing.T) {
 
 	spans := tracingtest.Spans(rec)
 	run := requireUnderRoot(t, spans, root)
+	requireStarted(t, spans, run)
 	assert.Len(t, tracingtest.StepNames(tracingtest.Children(spans, run)), 8)
 	tracingtest.AssertNoValues(t, spans, "t1.order")
 }
@@ -64,6 +79,7 @@ func TestExecute_DynamicMode_TracesUnderTheCommandSpan(t *testing.T) {
 
 	spans := tracingtest.Spans(rec)
 	run := requireUnderRoot(t, spans, root)
+	requireStarted(t, spans, run)
 	strategy, _ := tracingtest.Attr(run, "kcp.strategy")
 	assert.Equal(t, "tbm", strategy.AsString())
 }
@@ -81,6 +97,7 @@ func TestExecute_ConvertMode_TracesUnderTheCommandSpan(t *testing.T) {
 
 	spans := tracingtest.Spans(rec)
 	run := requireUnderRoot(t, spans, root)
+	requireStarted(t, spans, run)
 	strategy, _ := tracingtest.Attr(run, "kcp.strategy")
 	assert.Equal(t, "d2s", strategy.AsString())
 	tracingtest.AssertNoValues(t, spans, "orders-app", "orders")
