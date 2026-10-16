@@ -102,13 +102,15 @@ func NewD2SOrchestrator(config *migration.MigrationConfig, actions *D2SActions) 
 // Execute runs the whole conversion from uninitialized. res is the reconcile result the caller computed live
 // for this manifest; policy is the conversion's effective policies.
 func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, policy Policy) (err error) {
-	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run",
+	runAttrs := []attribute.KeyValue{
 		attribute.String("kcp.migration.id", o.config.MigrationId),
 		attribute.String("kcp.strategy", "d2s"),
 		attribute.Int("kcp.workers", policy.Workers),
 		attribute.Int64("kcp.detect_unrouted_commits_ms", policy.DetectUnroutedCommitsDuration.Milliseconds()),
-	)
+	}
+	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
+	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
 	if err := o.actions.deps.validate(); err != nil {
 		return err
 	}
