@@ -100,3 +100,29 @@ func TestSetup_WarnsWhenResourceAttributesAreIgnored(t *testing.T) {
 	require.NotNil(t, active, "a malformed entry doesn't stop tracing")
 	assert.Contains(t, logs.String(), "OTEL_RESOURCE_ATTRIBUTES entries were ignored")
 }
+
+func TestSetup_OTLP_InstallsALogHandler(t *testing.T) {
+	resetGlobal(t)
+	t.Setenv(EnvEnabled, "true")
+	t.Setenv(EnvTraceFile, filepath.Join(t.TempDir(), "t.jsonl"))
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1") // nothing listens; nothing is sent before Shutdown
+
+	Setup(context.Background())
+	t.Cleanup(func() { Shutdown(nil) })
+
+	require.NotNil(t, active)
+	assert.NotNil(t, LogHandler(), "OTLP spans bring OTLP logs")
+}
+
+func TestSetup_FileOnly_NoLogHandler(t *testing.T) {
+	resetGlobal(t)
+	t.Setenv(EnvEnabled, "true")
+	t.Setenv(EnvTraceFile, filepath.Join(t.TempDir(), "t.jsonl"))
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
+	Setup(context.Background())
+	t.Cleanup(func() { Shutdown(nil) })
+
+	require.NotNil(t, active)
+	assert.Nil(t, LogHandler(), "the trace file gets no logs")
+}
