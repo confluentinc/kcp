@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -47,6 +48,9 @@ type connectAuth struct {
 	Type     string `json:"type"` // unauthenticated (default) | basic
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// SecretArn is a Secrets Manager secret {"username","password"} that replaces username and
+	// password for type basic. Mutually exclusive with password.
+	SecretArn string `json:"secret_arn"`
 }
 
 // schemaRegistry describes one registry for the scan-schema-registry step.
@@ -92,6 +96,10 @@ type event struct {
 	// unauthenticated_tls | unauthenticated_plaintext). Default: whatever discover selected.
 	AuthMethod string `json:"auth_method"`
 
+	// SASLSecretArn is a Secrets Manager secret {"username","password"} applied to the target
+	// cluster's sasl_scram (or sasl_plain, per auth_method) entry before scan-clusters.
+	SASLSecretArn string `json:"sasl_secret_arn"`
+
 	LogTailBytes int `json:"log_tail_bytes"` // per step, default 6000
 }
 
@@ -123,6 +131,8 @@ type handler struct {
 	kcpPath string // path to the bundled kcp binary
 	tmpRoot string // parent of the per-invocation working dir
 	logger  *slog.Logger
+
+	secretsClient secretsClientFunc // nil = client from the process (execution role) credentials
 }
 
 // validate checks the event and returns the steps to run, in execution order.
@@ -136,6 +146,14 @@ func (ev event) validate() ([]string, error) {
 	}
 	if ev.AccessKeyID == "" || ev.SecretAccessKey == "" {
 		return nil, errors.New("aws_access_key_id and aws_secret_access_key are required")
+	}
+	if ev.SASLSecretArn != "" {
+		if _, err := parseSecretArn(ev.SASLSecretArn); err != nil {
+			return nil, fmt.Errorf("sasl_secret_arn: %w", err)
+		}
+		if ev.AuthMethod != "" && ev.AuthMethod != "sasl_scram" && ev.AuthMethod != "sasl_plain" {
+			return nil, errors.New("sasl_secret_arn requires auth_method sasl_scram or sasl_plain (or empty)")
+		}
 	}
 	for _, s := range ev.Steps {
 		if !slices.Contains(allSteps, s) {
@@ -151,6 +169,9 @@ func (ev event) validate() ([]string, error) {
 	}
 	if err := checkNoUserinfo(ev.ConnectRestURL); err != nil {
 		return nil, fmt.Errorf("connect_rest_url: %w", err)
+	}
+	if err := ev.ConnectAuth.validate(); err != nil {
+		return nil, fmt.Errorf("connect_auth: %w", err)
 	}
 	for i, sr := range ev.SchemaRegistries {
 		if err := sr.validate(); err != nil {
@@ -185,6 +206,22 @@ func checkNoUserinfo(raw string) error {
 	return nil
 }
 
+func (a connectAuth) validate() error {
+	if a.SecretArn == "" {
+		return nil
+	}
+	if a.Password != "" {
+		return errors.New("secret_arn and password are mutually exclusive")
+	}
+	if a.Type != "basic" {
+		return errors.New("secret_arn requires type basic")
+	}
+	if _, err := parseSecretArn(a.SecretArn); err != nil {
+		return fmt.Errorf("secret_arn: %w", err)
+	}
+	return nil
+}
+
 func (sr schemaRegistry) validate() error {
 	if sr.UseMTLS || sr.TLSCACert != "" {
 		return errors.New("mTLS and custom CA are not supported yet")
@@ -199,6 +236,9 @@ func (sr schemaRegistry) validate() error {
 		}
 		if sr.Auth.Type != "" && sr.Auth.Type != "unauthenticated" && sr.Auth.Type != "basic" {
 			return errors.New("unknown auth type " + sr.Auth.Type)
+		}
+		if err := sr.Auth.validate(); err != nil {
+			return fmt.Errorf("auth: %w", err)
 		}
 	case "glue":
 		if sr.RegistryName == "" {
@@ -269,6 +309,13 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	}
 	scrub := newScrubber(ev)
 
+	// Read Secrets Manager secrets with the function role before any step runs, and register the
+	// values with the scrubber. A failed read fails only the step that needs the secret.
+	secrets := h.readSecrets(ctx, ev.secretArns(steps))
+	for _, sc := range secrets {
+		scrub.add(sc.password)
+	}
+
 	// Only the payload credentials are visible to kcp; the function role's are dropped.
 	env := []string{
 		"HOME=" + dir,
@@ -281,6 +328,17 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	}
 
 	var target string
+	failStep := func(name, msg string) {
+		r.Steps = append(r.Steps, stepResult{Step: name, Target: target, ExitCode: 1, LogTail: msg})
+	}
+	// authCreds returns the basic-auth username/password, from the secret when secret_arn is set.
+	authCreds := func(a connectAuth) (string, string, error) {
+		if a.SecretArn == "" {
+			return a.Username, a.Password, nil
+		}
+		sc := secrets[a.SecretArn]
+		return sc.username, sc.password, sc.err
+	}
 	run := func(name string, args, shown, extraEnv []string, needState, needCreds bool) {
 		sr := stepResult{Step: name, Target: target, Args: shown}
 		switch {
@@ -289,7 +347,22 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 		case needCreds && !fileExists(credsPath):
 			sr.ExitCode, sr.LogTail = -1, "skipped: no msk-credentials.yaml (run discover or pass credentials_yaml)"
 		default:
-			if name == stepScanClusters && ev.AuthMethod != "" {
+			if name == stepScanClusters && ev.SASLSecretArn != "" {
+				sc := secrets[ev.SASLSecretArn]
+				method := cmp.Or(ev.AuthMethod, "sasl_scram")
+				err := sc.err
+				if err == nil {
+					err = applySASLSecret(credsPath, ev.ClusterArn, method, sc.username, sc.password)
+				}
+				if err == nil {
+					err = forceAuth(credsPath, ev.ClusterArn, method)
+				}
+				if err != nil {
+					sr.ExitCode, sr.LogTail = 1, "sasl_secret_arn: "+err.Error()
+					r.Steps = append(r.Steps, sr)
+					return
+				}
+			} else if name == stepScanClusters && ev.AuthMethod != "" {
 				if err := forceAuth(credsPath, ev.ClusterArn, ev.AuthMethod); err != nil {
 					// Never fall back to whatever auth discover picked (possibly plaintext).
 					sr.ExitCode, sr.LogTail = 1, "auth_method: "+err.Error()
@@ -376,9 +449,14 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 				"--connect-rest-url", ev.ConnectRestURL, "--cluster-id", ev.ClusterArn}
 			var extraEnv []string
 			if ev.ConnectAuth.Type == "basic" {
+				user, pass, err := authCreds(ev.ConnectAuth)
+				if err != nil {
+					failStep(s, "connect_auth.secret_arn: "+err.Error())
+					continue
+				}
 				// The password goes via the env var kcp binds to --password, not argv.
-				a = append(a, "--use-basic-auth", "--username", ev.ConnectAuth.Username)
-				extraEnv = []string{"PASSWORD=" + ev.ConnectAuth.Password}
+				a = append(a, "--use-basic-auth", "--username", user)
+				extraEnv = []string{"PASSWORD=" + pass}
 			} else {
 				a = append(a, "--use-unauthenticated")
 			}
@@ -400,8 +478,14 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 				} else {
 					a = append(a, "--url", sr.URL)
 					if sr.Auth.Type == "basic" {
-						a = append(a, "--use-basic-auth", "--username", sr.Auth.Username)
-						extraEnv = []string{"PASSWORD=" + sr.Auth.Password}
+						target = sr.URL
+						user, pass, err := authCreds(sr.Auth)
+						if err != nil {
+							failStep(s, "schema_registries.auth.secret_arn: "+err.Error())
+							continue
+						}
+						a = append(a, "--use-basic-auth", "--username", user)
+						extraEnv = []string{"PASSWORD=" + pass}
 					} else {
 						a = append(a, "--use-unauthenticated")
 					}
@@ -467,6 +551,36 @@ func newScrubber(ev event) scrubber {
 		add(v)
 	}
 	return sc
+}
+
+// secretArns lists the distinct secret ARNs needed by the steps that will run.
+func (ev event) secretArns(steps []string) []string {
+	var out []string
+	add := func(a string) {
+		if a != "" && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	if slices.Contains(steps, stepScanClusters) {
+		add(ev.SASLSecretArn)
+	}
+	if slices.Contains(steps, stepScanSelfManagedConnect) && ev.ConnectRestURL != "" && ev.ConnectAuth.Type == "basic" {
+		add(ev.ConnectAuth.SecretArn)
+	}
+	if slices.Contains(steps, stepScanSchemaRegistry) {
+		for _, sr := range ev.SchemaRegistries {
+			if sr.Type == "confluent" && sr.Auth.Type == "basic" {
+				add(sr.Auth.SecretArn)
+			}
+		}
+	}
+	return out
+}
+
+func (sc *scrubber) add(v string) {
+	if v != "" {
+		sc.secrets = append(sc.secrets, v)
+	}
 }
 
 func (sc scrubber) apply(s string) string {

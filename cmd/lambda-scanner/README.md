@@ -26,6 +26,7 @@ make build-lambda-scanner VERSION=v1.2.3   # dist/kcp-lambda-scanner-linux-arm64
   "connector_metrics_granularity": "1d",
   "connect_rest_url": "http://connect:8083",
   "connect_auth": {"type": "basic", "username": "...", "password": "..."},
+  "sasl_secret_arn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:AmazonMSK_demo-AbCdEf",
   "connect_insecure_skip_tls_verify": false,
   "schema_registries": [
     {"type": "confluent", "url": "https://sr:8081", "auth": {"type": "basic", "username": "...", "password": "..."}, "insecure_skip_tls_verify": false},
@@ -48,6 +49,9 @@ make build-lambda-scanner VERSION=v1.2.3   # dist/kcp-lambda-scanner-linux-arm64
   with the payload AWS credentials. mTLS and custom CA (`use_mtls`, `tls_ca_cert`) are rejected: not
   supported yet (same file-path limitation as Kafka TLS). If requested with an empty list it is
   reported as skipped; each result carries a `target` naming the registry.
+- `sasl_secret_arn`, `connect_auth.secret_arn` and `schema_registries[].auth.secret_arn` take a
+  Secrets Manager ARN instead of a password; see [Credentials from Secrets Manager](#credentials-from-secrets-manager).
+  `secret_arn` and `password` are mutually exclusive, and `secret_arn` requires `type: basic`.
 - Validation: `credentials_yaml` must be valid YAML (otherwise rejected with a generic error that
   does not quote the input), and `connect_rest_url` and `schema_registries[].url` must not contain
   userinfo (`https://user:pass@host`); use the auth fields instead.
@@ -74,9 +78,84 @@ Invalid events (bad JSON, validation errors) are reported as a Lambda function e
 
 - Execution role: only `AWSLambdaENIManagementAccess` (VPC ENI management). It has no data access;
   the scan uses the caller's credentials from the payload, and the function role's credentials are
-  never passed to kcp.
+  never passed to kcp. The only use of the role's own credentials is reading Secrets Manager secrets
+  named by `secret_arn` fields (see above).
 - Caller credentials in the payload: the same permissions as the kcp `discover` / `scan` commands
   being run.
+
+## Credentials from Secrets Manager
+
+Pass a secret ARN instead of a password so the caller never handles the secret value. Each secret
+is JSON in the MSK SCRAM format, `{"username": "...", "password": "..."}`, and both keys are required.
+
+- `sasl_secret_arn`: applied to the `cluster_arn` entry in `msk-credentials.yaml` before
+  `scan-clusters`: it sets the username and password on `sasl_scram` (or on `sasl_plain` when
+  `auth_method` is `sasl_plain`). If `auth_method` is empty it is set to `sasl_scram`. If the read
+  fails, the `scan-clusters` step fails (the invoke continues with the other steps).
+- `connect_auth.secret_arn` and `schema_registries[].auth.secret_arn` (type `basic`): replace the
+  username and password.
+
+The Lambda reads each distinct ARN once per invoke (30 s timeout) with its own execution role
+credentials, in the region of the ARN. Those credentials are never passed to kcp. Passwords are
+added to the log scrubber before any step runs; secret values are never returned or logged.
+Errors may include the ARN and the AWS error code and message. Inline passwords remain supported,
+but `secret_arn` is recommended.
+
+### Permissions
+
+The execution role has only `AWSLambdaENIManagementAccess` as a permission boundary, so identity-based
+grants do not work. Access comes from the secret's resource policy, plus (for customer-managed KMS
+keys, which MSK SCRAM secrets require) a `kms:Decrypt` statement in the key policy. Append these to
+the existing policies: MSK secrets already have a `kafka.amazonaws.com` statement, and
+`put-resource-policy` replaces the whole policy.
+
+Secret resource policy, form (a): the role session ARN. Lambda's session name is the function name.
+No wildcard, but it works only if the role and function names are fixed across runs.
+
+```json
+{
+  "Sid": "AllowScanner",
+  "Effect": "Allow",
+  "Principal": {"AWS": "arn:aws:sts::123456789012:assumed-role/<scanner-role>/<function-name>"},
+  "Action": "secretsmanager:GetSecretValue",
+  "Resource": "*"
+}
+```
+
+Form (b): any principal matching a role-name prefix. Works with per-run names, but anyone in the
+account who can create a role matching the prefix can read the secret. Keep the prefix specific
+and restrict `iam:CreateRole` on it.
+
+```json
+{
+  "Sid": "AllowScanner",
+  "Effect": "Allow",
+  "Principal": "*",
+  "Action": "secretsmanager:GetSecretValue",
+  "Resource": "*",
+  "Condition": {"ArnLike": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role-prefix>*"}}
+}
+```
+
+KMS key policy statement (same principal as the secret statement; shown with form b):
+
+```json
+{
+  "Sid": "AllowScannerDecryptViaSecretsManager",
+  "Effect": "Allow",
+  "Principal": "*",
+  "Action": "kms:Decrypt",
+  "Resource": "*",
+  "Condition": {
+    "ArnLike": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role-prefix>*"},
+    "StringEquals": {"kms:ViaService": "secretsmanager.us-east-1.amazonaws.com"}
+  }
+}
+```
+
+Two forms do not work because the permission boundary applies: a policy naming the role ARN
+(`arn:aws:iam::<account>:role/<scanner-role>`) as `Principal`, or the account root with an
+`aws:PrincipalArn` condition.
 
 ## Deploy, invoke, clean up
 

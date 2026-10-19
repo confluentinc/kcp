@@ -69,6 +69,50 @@ func forceAuth(path, clusterArn, method string) error {
 	return nil
 }
 
+// applySASLSecret sets username/password on the sasl_scram or sasl_plain entry of the cluster
+// identified by clusterArn, creating the entry if discover did not emit it.
+func applySASLSecret(path, clusterArn, method, username, password string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read credentials file: %w", err)
+	}
+	var creds types.Credentials
+	if err := yaml.Unmarshal(data, &creds); err != nil {
+		// yaml errors quote source lines, which can contain secrets; do not wrap them.
+		return errors.New("credentials file is not valid YAML")
+	}
+	var cluster *types.ClusterAuth
+	for i := range creds.Regions {
+		for j := range creds.Regions[i].Clusters {
+			if creds.Regions[i].Clusters[j].Arn == clusterArn {
+				cluster = &creds.Regions[i].Clusters[j]
+			}
+		}
+	}
+	if cluster == nil {
+		return fmt.Errorf("cluster %q not found in credentials file", clusterArn)
+	}
+	am := &cluster.AuthMethod
+	switch method {
+	case "sasl_scram":
+		if am.SASLScram == nil {
+			am.SASLScram = &types.SASLScramConfig{}
+		}
+		am.SASLScram.Username, am.SASLScram.Password = username, password
+	case "sasl_plain":
+		if am.SASLPlain == nil {
+			am.SASLPlain = &types.SASLPlainConfig{}
+		}
+		am.SASLPlain.Username, am.SASLPlain.Password = username, password
+	default:
+		return fmt.Errorf("method %q does not take a username and password", method)
+	}
+	if err := creds.WriteToFile(path); err != nil {
+		return fmt.Errorf("failed to write credentials file: %w", err)
+	}
+	return nil
+}
+
 // redactCredentials blanks every secret field of an msk-credentials.yaml document.
 func redactCredentials(data []byte) ([]byte, error) {
 	var creds types.Credentials
