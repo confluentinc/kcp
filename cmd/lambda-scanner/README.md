@@ -37,6 +37,7 @@ make build-lambda-scanner VERSION=v1.2.3   # dist/kcp-lambda-scanner-linux-arm64
 }
 ```
 
+- Inline passwords (`credentials_yaml` SASL passwords, `connect_auth.password`, schema registry `auth.password`) are meant for callers that own the credentials; otherwise use `secret_arn`.
 - `cluster_arn`, `region`, `aws_access_key_id` and `aws_secret_access_key` are required; `region`
   must match the region in `cluster_arn`. `steps` defaults to all; steps always run in the order
   above. Unknown steps are rejected.
@@ -103,8 +104,9 @@ but `secret_arn` is recommended.
 
 ### Permissions
 
-The execution role has only `AWSLambdaENIManagementAccess` as a permission boundary, so identity-based
-grants do not work. Access comes from the secret's resource policy, plus (for customer-managed KMS
+If the execution role's own policies and permission boundary allow `secretsmanager:GetSecretValue` on the secret and `kms:Decrypt` through Secrets Manager (`kms:ViaService`), no resource-policy grant is needed; the statements below are for roles whose boundary does not allow this, such as `AWSLambdaENIManagementAccess`.
+
+For such roles identity-based grants do not work. Access comes from the secret's resource policy, plus (for customer-managed KMS
 keys, which MSK SCRAM secrets require) a `kms:Decrypt` statement in the key policy. Append these to
 the existing policies: MSK secrets already have a `kafka.amazonaws.com` statement, and
 `put-resource-policy` replaces the whole policy.
@@ -175,7 +177,9 @@ aws lambda create-function --function-name kcp-scanner --runtime provided.al2023
 # While the function is Pending, invoke returns ResourceConflictException: retry until Active.
 aws lambda wait function-active-v2 --function-name kcp-scanner
 aws lambda invoke --function-name kcp-scanner --cli-binary-format raw-in-base64-out \
-  --payload fileb://event.json out.json
+  --cli-read-timeout 960 --payload fileb://event.json out.json
+# --cli-read-timeout must exceed the 900 s function timeout; the CLI default (60 s) would drop
+# the connection on a long scan while the function keeps running.
 
 aws lambda delete-function --function-name kcp-scanner
 ```

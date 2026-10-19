@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
@@ -35,7 +36,7 @@ echo "$*" >> '` + rec + `'
 echo "2025-01-01 WARN something odd" >> kcp.log
 if [ "$1" = "discover" ]; then
   echo '{"schema_version":"x"}' > kcp-state.json
-  printf 'regions:\n- name: us-east-1\n  clusters: []\n' > msk-credentials.yaml
+  printf 'regions:\n- name: us-east-1\n  clusters:\n  - name: demo\n    arn: ` + testArn + `\n' > msk-credentials.yaml
 fi
 if [ "$1 $2" = "` + failStep + `" ]; then echo boom; exit 3; fi
 echo "ran $1"
@@ -570,4 +571,86 @@ func TestFitResponseMarshalError(t *testing.T) {
 	require.NoError(t, json.Unmarshal(fitResponse(result{State: json.RawMessage(`{bad`)}), &got))
 	assert.Contains(t, got.Error, "failed to marshal response")
 	assert.NotContains(t, got.Error, "too large")
+}
+
+func TestValidateRejectsSchemelessURLUserinfo(t *testing.T) {
+	base := event{ClusterArn: testArn, AccessKeyID: "AKIA", SecretAccessKey: "sek", Region: "us-east-1"}
+
+	ev := base
+	ev.ConnectRestURL = "alice:pw@connect:8083"
+	_, err := ev.validate()
+	require.ErrorContains(t, err, "connect_rest_url: must not contain credentials")
+	assert.NotContains(t, err.Error(), "pw")
+
+	ev = base
+	ev.SchemaRegistries = []schemaRegistry{{Type: "confluent", URL: "alice:pw@sr:8081"}}
+	_, err = ev.validate()
+	require.ErrorContains(t, err, "schema_registries[0]: url: must not contain credentials")
+
+	ev = base
+	ev.ConnectRestURL = "connect:8083"
+	_, err = ev.validate()
+	require.NoError(t, err)
+
+	ev = base
+	ev.ConnectRestURL = "http://bad host:pw@x/%zz"
+	_, err = ev.validate()
+	require.ErrorContains(t, err, "not a valid URL")
+	assert.NotContains(t, err.Error(), "pw")
+}
+
+func TestHandleDeadlineInterruptedStepIsFailure(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	require.NoError(t, os.WriteFile(h.kcpPath, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	res := h.handle(ctx, event{
+		ClusterArn: testArn, AccessKeyID: "AKIA", SecretAccessKey: "sek", Region: "us-east-1",
+		Steps: []string{"scan-msk-connectors"}, State: json.RawMessage(`{}`),
+	})
+	require.Len(t, res.Steps, 1)
+	assert.NotEqual(t, -1, res.Steps[0].ExitCode)
+	assert.NotEqual(t, 0, res.Steps[0].ExitCode)
+	assert.Contains(t, res.Error, "deadline")
+}
+
+func TestHandleScanClustersOnlySeesRequestedCluster(t *testing.T) {
+	h, root := newTestHandler(t, "")
+	script := `#!/bin/sh
+for a in "$@"; do last="$a"; done
+cp "$last" '` + filepath.Join(root, "creds-seen.yaml") + `'
+`
+	require.NoError(t, os.WriteFile(h.kcpPath, []byte(script), 0o755))
+	other := "arn:aws:kafka:us-east-1:123456789012:cluster/other/def-2"
+	creds := &types.Credentials{Regions: []types.RegionAuth{{Name: "us-east-1", Clusters: []types.ClusterAuth{
+		{Name: "other", Arn: other}, {Name: "demo", Arn: testArn},
+	}}}}
+	y, err := creds.ToYaml()
+	require.NoError(t, err)
+
+	res := h.handle(context.Background(), event{
+		ClusterArn: testArn, AccessKeyID: "AKIA", SecretAccessKey: "sek", Region: "us-east-1",
+		Steps: []string{"scan-clusters", "discover"}, State: json.RawMessage(`{}`), CredentialsYAML: string(y),
+	})
+	require.Equal(t, 0, res.Steps[len(res.Steps)-1].ExitCode, res.Error)
+
+	var seen types.Credentials
+	b, err := os.ReadFile(filepath.Join(root, "creds-seen.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(b, &seen))
+	require.Len(t, seen.Regions, 1)
+	require.Len(t, seen.Regions[0].Clusters, 1)
+	assert.Equal(t, testArn, seen.Regions[0].Clusters[0].Arn)
+}
+
+func TestScrubberLongestFirst(t *testing.T) {
+	var sc scrubber
+	sc.add("shared")
+	sc.add("shared-registry-password")
+	sc.add("shared")
+	sc.add("")
+	out := sc.apply("x shared-registry-password y shared z")
+	assert.NotContains(t, out, "registry")
+	assert.NotContains(t, out, "password")
+	assert.NotContains(t, out, "shared")
 }

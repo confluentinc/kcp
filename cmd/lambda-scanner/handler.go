@@ -196,6 +196,11 @@ func checkNoUserinfo(raw string) error {
 	if raw == "" {
 		return nil
 	}
+	// Same normalisation as kcp scan self-managed-connectors: without it, "alice:pw@host:8083"
+	// parses with "alice" as the scheme and the userinfo check is bypassed.
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return errors.New("is not a valid URL")
@@ -294,6 +299,7 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	defer func() { _ = os.RemoveAll(dir) }()
 	statePath := filepath.Join(dir, "kcp-state.json")
 	credsPath := filepath.Join(dir, "msk-credentials.yaml")
+	scanCredsPath := filepath.Join(dir, "msk-credentials.scan.yaml")
 	haveInputState := len(ev.State) > 0 && string(ev.State) != "null"
 	if haveInputState {
 		if err := os.WriteFile(statePath, ev.State, 0o600); err != nil {
@@ -370,6 +376,14 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 					return
 				}
 			}
+			if name == stepScanClusters {
+				// MSKSource.Scan walks every cluster in the file; hand kcp only the requested one.
+				if err := filterCredentials(credsPath, scanCredsPath, ev.ClusterArn); err != nil {
+					sr.ExitCode, sr.LogTail = 1, "credentials: "+err.Error()
+					r.Steps = append(r.Steps, sr)
+					return
+				}
+			}
 			logPath := filepath.Join(dir, "kcp.log")
 			var off int64
 			if fi, err := os.Stat(logPath); err == nil {
@@ -391,6 +405,13 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 				var ee *exec.ExitError
 				if errors.As(err, &ee) {
 					sr.ExitCode = ee.ExitCode()
+				}
+				// -1 means "skipped"; a signal-killed (e.g. deadline-interrupted) step failed.
+				if sr.ExitCode == -1 {
+					sr.ExitCode = 1
+				}
+				if ctx.Err() != nil {
+					r.addError("Lambda deadline reached during " + name)
 				}
 				sr.LogTail += "\n" + err.Error()
 			}
@@ -432,7 +453,7 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 				abort = "skipped: discover failed and no input state was supplied"
 			}
 		case stepScanClusters:
-			a := []string{"scan", "clusters", "--source-type", "msk", "--state-file", statePath, "--credentials-file", credsPath}
+			a := []string{"scan", "clusters", "--source-type", "msk", "--state-file", statePath, "--credentials-file", scanCredsPath}
 			run(s, a, a, nil, true, true)
 		case stepScanMSKConnectors:
 			a := []string{"scan", "msk-connectors", "--state-file", statePath, "--cluster-arn", ev.ClusterArn}
@@ -584,7 +605,14 @@ func (sc *scrubber) add(v string) {
 }
 
 func (sc scrubber) apply(s string) string {
-	for _, v := range sc.secrets {
+	// Longest first, so a secret that contains another is not left as a fragment.
+	secrets := slices.Clone(sc.secrets)
+	slices.SortFunc(secrets, func(a, b string) int { return cmp.Or(len(b)-len(a), strings.Compare(a, b)) })
+	secrets = slices.Compact(secrets)
+	for _, v := range secrets {
+		if v == "" {
+			continue
+		}
 		s = strings.ReplaceAll(s, v, redacted)
 	}
 	return s

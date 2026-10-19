@@ -170,3 +170,33 @@ func credentialSecrets(data []byte) []string {
 	}
 	return out
 }
+
+// filterCredentials writes to dst a copy of the credentials at src that keeps the region entry of
+// clusterArn but only that cluster.
+func filterCredentials(src, dst, clusterArn string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read credentials file: %w", err)
+	}
+	var creds types.Credentials
+	if err := yaml.Unmarshal(data, &creds); err != nil {
+		return errors.New("credentials file is not valid YAML")
+	}
+	var out types.Credentials
+	for _, rg := range creds.Regions {
+		for _, c := range rg.Clusters {
+			if c.Arn == clusterArn {
+				rg.Clusters = []types.ClusterAuth{c}
+				out.Regions = append(out.Regions, rg)
+				break
+			}
+		}
+	}
+	if len(out.Regions) == 0 {
+		return fmt.Errorf("cluster %q not found in credentials file", clusterArn)
+	}
+	if err := out.WriteToFile(dst); err != nil {
+		return fmt.Errorf("failed to write credentials file: %w", err)
+	}
+	return nil
+}
