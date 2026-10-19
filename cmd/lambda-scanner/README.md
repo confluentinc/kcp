@@ -109,35 +109,29 @@ keys, which MSK SCRAM secrets require) a `kms:Decrypt` statement in the key poli
 the existing policies: MSK secrets already have a `kafka.amazonaws.com` statement, and
 `put-resource-policy` replaces the whole policy.
 
-Secret resource policy, form (a): the role session ARN. Lambda's session name is the function name.
-No wildcard, but it works only if the role and function names are fixed across runs.
+Recommended: `Principal: "*"` restricted to **one fixed role ARN** with `ArnEquals` (no wildcard), so
+use the same scanner role name on every run. `aws:PrincipalArn` grants are not limited by the
+permission boundary, survive the role being deleted and recreated with the same name, and fixed
+values keep the policy non-public for Secrets Manager's public-policy check and for key-policy
+public-access checks (wildcards in the condition can be reported as public).
+
+Secret resource policy statement:
 
 ```json
 {
-  "Sid": "AllowScanner",
-  "Effect": "Allow",
-  "Principal": {"AWS": "arn:aws:sts::123456789012:assumed-role/<scanner-role>/<function-name>"},
-  "Action": "secretsmanager:GetSecretValue",
-  "Resource": "*"
-}
-```
-
-Form (b): any principal matching a role-name prefix. Works with per-run names, but anyone in the
-account who can create a role matching the prefix can read the secret. Keep the prefix specific
-and restrict `iam:CreateRole` on it.
-
-```json
-{
-  "Sid": "AllowScanner",
+  "Sid": "AllowScannerRead",
   "Effect": "Allow",
   "Principal": "*",
   "Action": "secretsmanager:GetSecretValue",
   "Resource": "*",
-  "Condition": {"ArnLike": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role-prefix>*"}}
+  "Condition": {
+    "ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role>"},
+    "StringEquals": {"aws:PrincipalAccount": "123456789012"}
+  }
 }
 ```
 
-KMS key policy statement (same principal as the secret statement; shown with form b):
+KMS key policy statement:
 
 ```json
 {
@@ -147,15 +141,27 @@ KMS key policy statement (same principal as the secret statement; shown with for
   "Action": "kms:Decrypt",
   "Resource": "*",
   "Condition": {
-    "ArnLike": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role-prefix>*"},
-    "StringEquals": {"kms:ViaService": "secretsmanager.us-east-1.amazonaws.com"}
+    "ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/<scanner-role>"},
+    "StringEquals": {
+      "kms:CallerAccount": "123456789012",
+      "kms:ViaService": "secretsmanager.us-east-1.amazonaws.com",
+      "kms:EncryptionContext:SecretARN": "arn:aws:secretsmanager:us-east-1:123456789012:secret:<secret-name>"
+    }
   }
 }
 ```
 
-Two forms do not work because the permission boundary applies: a policy naming the role ARN
-(`arn:aws:iam::<account>:role/<scanner-role>`) as `Principal`, or the account root with an
-`aws:PrincipalArn` condition.
+Notes:
+
+- Anyone in the account allowed to create a role with that name can use the grant, so restrict
+  `iam:CreateRole` on it, and remove the statements when scans are no longer needed. If the VPC has
+  a Secrets Manager interface endpoint, an `aws:SourceVpce` condition narrows it further.
+- Alternative: `Principal: {"AWS": "arn:aws:sts::123456789012:assumed-role/<scanner-role>/<function-name>"}`
+  (Lambda's session name is the function name), which needs fixed role and function names. AWS
+  prefers role principals over session principals, and KMS requires key-policy principals to exist
+  when the policy is set.
+- These do not work, because the permission boundary applies: the role ARN as `Principal`, or the
+  account root as `Principal` with an `aws:PrincipalArn` condition.
 
 ## Deploy, invoke, clean up
 
