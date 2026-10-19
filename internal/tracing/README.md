@@ -14,7 +14,8 @@ These notes are for contributors; they are not published with the user docs.
 |---|---|
 | `KCP_TRACING_ENABLED` | Master switch. Tracing is on only when this parses as true (`true`, `1`, `TRUE`, …). |
 | `KCP_TRACE_FILE` | Append spans to this file (OTLP/JSON lines). |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT` | Also send spans over OTLP/HTTP to this endpoint. Headers, timeouts and TLS come from the standard `OTEL_EXPORTER_OTLP_*` variables. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT` | Also send spans over OTLP/HTTP to this endpoint, and kcp's logs too (below). Headers, timeouts and TLS come from the standard `OTEL_EXPORTER_OTLP_*` variables. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Sends the logs somewhere other than the spans. Logs go only when spans go over OTLP. |
 | `OTEL_EXPORTER_OTLP_(TRACES_)PROTOCOL` | Only `http/protobuf` is supported. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Added to every span's resource — use `run=<label>` to label runs (below). Leave `OTEL_SERVICE_NAME` unset: it replaces `service.name=kcp`, which the dashboard selects on. |
 
@@ -30,6 +31,13 @@ The file and OTLP are independent: set either or both. The rules, applied once a
 | OTLP endpoint malformed, or another protocol | No OTLP, with a warning. |
 | On, but no usable destination | Spans appended to `./kcp-traces.jsonl`. |
 | …and that file can't be opened either | Off, with a warning. |
+
+With spans going over OTLP, kcp's log records (Info and above, the same lines as `kcp.log` less its Debug) go to the
+same endpoint as OTLP logs, with the same resource as the spans: `OTEL_RESOURCE_ATTRIBUTES` labels a run's logs and its
+trace alike. The trace file gets no logs. kcp logs without a context, so each record carries the trace id of the
+command's root span: every line of a run opens that run's trace, though not the span that was open when it was written.
+In `grafana/otel-lgtm`, Loki indexes only `service_name`; the other resource attributes, `trace_id` and `span_id` are
+structured metadata, so `{service_name="kcp"} | run="perf-1"` finds a run's lines.
 
 Tracing never fails a command or changes its exit code. A collector that is unreachable mid-run produces warnings; the
 spans it would have received are lost (the file, if configured, still has them).
