@@ -93,7 +93,6 @@ func TestStaticPreconditionsFenceKcpDidNotWrite(t *testing.T) {
 			}
 			if check == nil {
 				t.Fatalf("no %q result in %+v", staticFenceCheck, res)
-				return
 			}
 			if check.OK == tc.refused {
 				t.Fatalf("%q OK = %v, want %v: %+v", staticFenceCheck, check.OK, !tc.refused, *check)

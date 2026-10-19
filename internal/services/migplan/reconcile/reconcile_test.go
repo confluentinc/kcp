@@ -793,7 +793,6 @@ func TestReconcileDynamic_RefusesOffsetSyncPause(t *testing.T) {
 			}
 			if found == nil {
 				t.Fatalf("no %q precondition in %+v", "offset-sync pause not requested", p.Report.Preconditions)
-				return
 			}
 			if found.OK == pause {
 				t.Fatalf("precondition OK = %v with pause=%v: %+v", found.OK, pause, *found)
