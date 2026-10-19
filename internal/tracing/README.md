@@ -32,12 +32,13 @@ The file and OTLP are independent: set either or both. The rules, applied once a
 | On, but no usable destination | Spans appended to `./kcp-traces.jsonl`. |
 | …and that file can't be opened either | Off, with a warning. |
 
-With spans going over OTLP, kcp's log records (Info and above, the same lines as `kcp.log` less its Debug) go to the
-same endpoint as OTLP logs, with the same resource as the spans: `OTEL_RESOURCE_ATTRIBUTES` labels a run's logs and its
-trace alike. The trace file gets no logs. kcp logs without a context, so each record carries the trace id of the
-command's root span: every line of a run opens that run's trace, though not the span that was open when it was written.
-In `grafana/otel-lgtm`, Loki indexes only `service_name`; the other resource attributes, `trace_id` and `span_id` are
-structured metadata, so `{service_name="kcp"} | run="perf-1"` finds a run's lines.
+With spans going over OTLP, kcp's log records (every line `kcp.log` gets, Debug and above, including the migration
+reporters' narrative) go to the same endpoint as OTLP logs, with the same resource as the spans:
+`OTEL_RESOURCE_ATTRIBUTES` labels a run's logs and its trace alike. The trace file gets no logs. kcp logs without a
+context, so each record carries the trace id of the command's root span: every line of a run opens that run's trace,
+though not the span that was open when it was written. In `grafana/otel-lgtm`, Loki indexes only `service_name`; the
+other resource attributes, `trace_id` and `span_id` are structured metadata, so `{service_name="kcp"} | run="perf-1"`
+finds a run's lines.
 
 Tracing never fails a command or changes its exit code. A collector that is unreachable mid-run produces warnings; the
 spans it would have received are lost (the file, if configured, still has them).

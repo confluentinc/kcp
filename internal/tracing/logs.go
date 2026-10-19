@@ -28,29 +28,20 @@ func newLogProvider(ctx context.Context, res *resource.Resource) (*sdklog.Logger
 
 // LogHandler returns the slog handler that sends records over OTLP, or nil
 // when OTLP export is off. Add it to the fan-out beside the file and console
-// handlers.
+// handlers. It takes every level kcp.log takes, Debug and above.
 func LogHandler() slog.Handler {
 	if active == nil || active.logs == nil {
 		return nil
 	}
-	return &otelHandler{
-		Handler: otelslog.NewHandler(scope, otelslog.WithLoggerProvider(active.logs)),
-		min:     slog.LevelInfo,
-	}
+	return &otelHandler{Handler: otelslog.NewHandler(scope, otelslog.WithLoggerProvider(active.logs))}
 }
 
-// otelHandler wraps the OTel bridge with two things it lacks:
-//   - an Info floor: the file keeps Debug, the log store does not need it;
-//   - the command's root span: kcp logs through slog.Info and friends, which
-//     carry no context, so a record would have no trace id. It gets the root
-//     span's, which ties every line of an invocation to its trace.
+// otelHandler gives each record the command's root span: kcp logs through
+// slog.Info and friends, which carry no context, so a record would have no
+// trace id. It gets the root span's, which ties every line of an invocation
+// to its trace.
 type otelHandler struct {
 	slog.Handler
-	min slog.Level
-}
-
-func (h *otelHandler) Enabled(ctx context.Context, l slog.Level) bool {
-	return l >= h.min && h.Handler.Enabled(ctx, l)
 }
 
 func (h *otelHandler) Handle(ctx context.Context, r slog.Record) error {
@@ -61,9 +52,9 @@ func (h *otelHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *otelHandler) WithAttrs(a []slog.Attr) slog.Handler {
-	return &otelHandler{Handler: h.Handler.WithAttrs(a), min: h.min}
+	return &otelHandler{Handler: h.Handler.WithAttrs(a)}
 }
 
 func (h *otelHandler) WithGroup(n string) slog.Handler {
-	return &otelHandler{Handler: h.Handler.WithGroup(n), min: h.min}
+	return &otelHandler{Handler: h.Handler.WithGroup(n)}
 }

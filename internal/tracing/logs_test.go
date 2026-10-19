@@ -27,7 +27,7 @@ func (r *recorder) Export(_ context.Context, recs []sdklog.Record) error {
 func (r *recorder) Shutdown(context.Context) error   { return nil }
 func (r *recorder) ForceFlush(context.Context) error { return nil }
 
-func TestLogHandlerCarriesRootTraceIDAndSkipsDebug(t *testing.T) {
+func TestLogHandlerCarriesRootTraceIDAndKeepsDebug(t *testing.T) {
 	rec := &recorder{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(rec)))
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(tracetest.NewInMemoryExporter())))
@@ -38,14 +38,17 @@ func TestLogHandlerCarriesRootTraceIDAndSkipsDebug(t *testing.T) {
 	t.Cleanup(func() { active = prev })
 
 	logger := slog.New(LogHandler())
-	logger.Debug("dropped")
-	logger.Info("kept", "k", "v")
+	logger.Debug("debug line")
+	logger.Info("info line", "k", "v")
 
-	if len(rec.recs) != 1 {
-		t.Fatalf("got %d records, want 1 (Debug is below the floor)", len(rec.recs))
+	// kcp.log keeps Debug and above; the OTLP logs carry the same lines.
+	if len(rec.recs) != 2 {
+		t.Fatalf("got %d records, want 2 (Debug and Info)", len(rec.recs))
 	}
-	if got, want := rec.recs[0].TraceID(), root.SpanContext().TraceID(); got != want {
-		t.Errorf("trace id = %s, want the root span's %s", got, want)
+	for _, r := range rec.recs {
+		if got, want := r.TraceID(), root.SpanContext().TraceID(); got != want {
+			t.Errorf("%q: trace id = %s, want the root span's %s", r.Body().AsString(), got, want)
+		}
 	}
 }
 
