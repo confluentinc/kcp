@@ -12,19 +12,24 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// shutdownTimeout bounds the final flush, so an unreachable collector can't
-// hold kcp's exit.
+// shutdownTimeout bounds each final flush (logs, then traces), so an
+// unreachable collector can't hold kcp's exit for more than twice this.
 const shutdownTimeout = 5 * time.Second
 
 type session struct {
 	provider *sdktrace.TracerProvider
+	logs     *sdklog.LoggerProvider // nil unless OTLP export is on
 	root     trace.Span
+	// warn is the logger as it was before LogHandler joined it: export
+	// failures go here, so a failed log export doesn't queue a log to export.
+	warn *slog.Logger
 }
 
 // active is the process's tracing session; nil when tracing is off.
@@ -45,7 +50,11 @@ func Setup(ctx context.Context) {
 	if !c.enabled {
 		return
 	}
-	tp, err := newProvider(ctx, c)
+	res, err := newResource(ctx)
+	var tp *sdktrace.TracerProvider
+	if err == nil {
+		tp, err = newProvider(ctx, c, res)
+	}
 	if err != nil {
 		slog.Warn("⚠️ tracing could not start; continuing without it", "error", err)
 		if c.file != nil {
@@ -53,15 +62,24 @@ func Setup(ctx context.Context) {
 		}
 		return
 	}
+	warn := slog.Default()
 	otel.SetTracerProvider(tp)
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		slog.Warn("⚠️ trace export failed", "error", err)
+		warn.Warn("⚠️ telemetry export failed", "error", err)
 	}))
-	active = &session{provider: tp}
+	active = &session{provider: tp, warn: warn}
+	if c.otlp {
+		if lp, err := newLogProvider(ctx, res); err != nil {
+			slog.Warn("⚠️ log export could not start; continuing without it", "error", err)
+		} else {
+			active.logs = lp
+		}
+	}
 	slog.Info("✅ tracing enabled", "file", c.filePath, "otlp", c.otlp)
 }
 
-func newProvider(ctx context.Context, c config) (*sdktrace.TracerProvider, error) {
+// newResource describes the process: spans and log records share it.
+func newResource(ctx context.Context) (*resource.Resource, error) {
 	res, err := resource.New(ctx,
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(
@@ -79,6 +97,10 @@ func newProvider(ctx context.Context, c config) (*sdktrace.TracerProvider, error
 	case err != nil:
 		return nil, err
 	}
+	return res, nil
+}
+
+func newProvider(ctx context.Context, c config, res *resource.Resource) (*sdktrace.TracerProvider, error) {
 	opts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		// Explicit, so an OTEL_TRACES_SAMPLER in the environment can't drop spans.
@@ -127,9 +149,18 @@ func Shutdown(cmdErr error) {
 	if s.root != nil {
 		End(s.root, cmdErr)
 	}
+	// Logs first, while their provider can still take the final records;
+	// each flush gets its own budget, so a slow one can't starve the other.
+	if s.logs != nil {
+		flush(s.warn, "logs", s.logs.Shutdown)
+	}
+	flush(s.warn, "traces", s.provider.Shutdown)
+}
+
+func flush(warn *slog.Logger, what string, shutdown func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := s.provider.Shutdown(ctx); err != nil {
-		slog.Warn("⚠️ failed to flush traces", "error", err)
+	if err := shutdown(ctx); err != nil {
+		warn.Warn("⚠️ failed to flush "+what, "error", err)
 	}
 }
