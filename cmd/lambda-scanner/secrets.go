@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -49,34 +50,71 @@ func parseSecretArn(arn string) (string, error) {
 	return p[3], nil
 }
 
-// readSecrets reads each distinct ARN once. Errors and values stay in the returned map; the
-// caller fails the steps that need a secret whose read failed.
+// regionClient is a lazily built client for one region, shared by all ARNs in that region so the
+// AWS config is loaded once per region.
+type regionClient struct {
+	once   sync.Once
+	client secretsAPI
+	err    error
+}
+
+// readSecrets reads each distinct ARN once, in parallel, sharing one secretReadTimeout across all
+// reads so unreachable ARNs cannot add up. Errors and values stay in the returned map; the caller
+// fails the steps that need a secret whose read failed.
 func (h *handler) readSecrets(ctx context.Context, arns []string) map[string]secretCreds {
 	out := map[string]secretCreds{}
 	newClient := h.secretsClient
 	if newClient == nil {
 		newClient = defaultSecretsClient
 	}
+	ctx, cancel := context.WithTimeout(ctx, secretReadTimeout)
+	defer cancel()
+
+	clients := map[string]*regionClient{}
+	regions := map[string]string{} // arn -> region
 	for _, arn := range arns {
-		if _, done := out[arn]; done {
+		if _, done := regions[arn]; done {
 			continue
 		}
-		out[arn] = readSecret(ctx, newClient, arn)
+		region, err := parseSecretArn(arn)
+		if err != nil {
+			out[arn] = secretCreds{err: err}
+			regions[arn] = ""
+			continue
+		}
+		regions[arn] = region
+		if clients[region] == nil {
+			clients[region] = &regionClient{}
+		}
 	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for arn, region := range regions {
+		if region == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rc := clients[region]
+			rc.once.Do(func() { rc.client, rc.err = newClient(ctx, region) })
+			var sc secretCreds
+			if rc.err != nil {
+				sc = secretCreds{err: fmt.Errorf("failed to read secret %s: %s", arn, awsErrText(rc.err))}
+			} else {
+				sc = readSecret(ctx, rc.client, arn)
+			}
+			mu.Lock()
+			out[arn] = sc
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
 	return out
 }
 
-func readSecret(ctx context.Context, newClient secretsClientFunc, arn string) secretCreds {
-	region, err := parseSecretArn(arn)
-	if err != nil {
-		return secretCreds{err: err}
-	}
-	ctx, cancel := context.WithTimeout(ctx, secretReadTimeout)
-	defer cancel()
-	client, err := newClient(ctx, region)
-	if err != nil {
-		return secretCreds{err: fmt.Errorf("failed to read secret %s: %s", arn, awsErrText(err))}
-	}
+func readSecret(ctx context.Context, client secretsAPI, arn string) secretCreds {
 	res, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: &arn})
 	if err != nil {
 		return secretCreds{err: fmt.Errorf("failed to read secret %s: %s", arn, awsErrText(err))}

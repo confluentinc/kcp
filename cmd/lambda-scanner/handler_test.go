@@ -602,7 +602,7 @@ func TestValidateRejectsSchemelessURLUserinfo(t *testing.T) {
 func TestHandleDeadlineInterruptedStepIsFailure(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	require.NoError(t, os.WriteFile(h.kcpPath, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	res := h.handle(ctx, event{
 		ClusterArn: testArn, AccessKeyID: "AKIA", SecretAccessKey: "sek", Region: "us-east-1",
@@ -653,4 +653,75 @@ func TestScrubberLongestFirst(t *testing.T) {
 	assert.NotContains(t, out, "registry")
 	assert.NotContains(t, out, "password")
 	assert.NotContains(t, out, "shared")
+}
+
+func TestValidateAuthMethodAndGranularity(t *testing.T) {
+	ev := baseEvent()
+	ev.AuthMethod = "sasl_scarm"
+	_, err := ev.validate()
+	require.ErrorContains(t, err, "unknown auth_method")
+
+	ev = baseEvent()
+	ev.ConnectorMetricsGranularity = "2h"
+	_, err = ev.validate()
+	require.ErrorContains(t, err, "connector_metrics_granularity")
+
+	for _, g := range []string{"", "none", "60s", "5m", "1h", "1d"} {
+		ev = baseEvent()
+		ev.ConnectorMetricsGranularity = g
+		_, err = ev.validate()
+		require.NoError(t, err, g)
+	}
+	for _, m := range authMethods {
+		ev = baseEvent()
+		ev.AuthMethod = m
+		_, err = ev.validate()
+		require.NoError(t, err, m)
+	}
+}
+
+func TestStateGzipB64RoundTrip(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	gz, err := gzipBase64([]byte(`{"a":1}`))
+	require.NoError(t, err)
+	ev := baseEvent()
+	ev.State, ev.StateGzipB64, ev.Steps = nil, gz, []string{"scan-msk-connectors"}
+	res := h.handle(context.Background(), ev)
+	require.Empty(t, res.Error)
+	assert.JSONEq(t, `{"a":1}`, string(res.State))
+
+	// mutually exclusive with state; bad input is rejected
+	ev.State = json.RawMessage(`{}`)
+	assert.True(t, h.handle(context.Background(), ev).fatal)
+	ev.State, ev.StateGzipB64 = nil, "!!!"
+	assert.True(t, h.handle(context.Background(), ev).fatal)
+}
+
+func TestWarnLinesResetsOnRotation(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "kcp.log")
+	require.NoError(t, os.WriteFile(p, []byte("2025 WARN fresh\n"), 0o600))
+	got := warnLines(p, 1<<20, 10, scrubber{})
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "fresh")
+}
+
+func TestSchemaRegistrySkipsRemainingAfterDeadline(t *testing.T) {
+	h, root := newTestHandler(t, "")
+	script := "#!/bin/sh\necho \"$*\" >> '" + filepath.Join(root, "calls.txt") + "'\nexec sleep 10\n"
+	require.NoError(t, os.WriteFile(h.kcpPath, []byte(script), 0o755))
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	ev := srEvent(
+		schemaRegistry{Type: "confluent", URL: "https://sr1:8081"},
+		schemaRegistry{Type: "confluent", URL: "https://sr2:8081"},
+		schemaRegistry{Type: "glue", RegistryName: "g"},
+	)
+	res := h.handle(ctx, ev)
+	require.Len(t, res.Steps, 3)
+	assert.Equal(t, 1, res.Steps[0].ExitCode)
+	assert.Equal(t, -1, res.Steps[1].ExitCode)
+	assert.Equal(t, "https://sr2:8081", res.Steps[1].Target)
+	assert.Equal(t, -1, res.Steps[2].ExitCode)
+	assert.Len(t, readCalls(t, root), 1)
+	assert.Equal(t, 1, strings.Count(res.Error, "deadline reached during"))
 }

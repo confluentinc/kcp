@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.46.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.4
+	github.com/aws/smithy-go v1.28.5
 	github.com/charmbracelet/bubbletea v1.2.4
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/confluentinc/confluent-kafka-go/v2 v2.12.0
@@ -148,7 +149,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0 // indirect
-	github.com/aws/smithy-go v1.28.5
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect

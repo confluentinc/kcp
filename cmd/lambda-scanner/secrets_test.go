@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -27,10 +28,13 @@ type fakeSecrets struct {
 	values map[string]string
 	errs   map[string]error
 	calls  map[string]int
+	mu     sync.Mutex
 }
 
 func (f *fakeSecrets) GetSecretValue(_ context.Context, in *secretsmanager.GetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+	f.mu.Lock()
 	f.calls[*in.SecretId]++
+	f.mu.Unlock()
 	if err := f.errs[*in.SecretId]; err != nil {
 		return nil, err
 	}
@@ -54,6 +58,7 @@ for a in "$@"; do last="$a"; done
 if [ "$1 $2" = "scan clusters" ]; then cp "$last" '` + filepath.Join(root, "creds-seen.yaml") + `'; cat "$last"; fi
 /usr/bin/env > '` + filepath.Join(root, "env.txt") + `'
 echo "PASSWORD is $PASSWORD"
+echo "USERNAME is $USERNAME"
 `
 	require.NoError(t, os.WriteFile(h.kcpPath, []byte(script), 0o755))
 }
@@ -193,14 +198,17 @@ func TestConnectAndSRSecretArn(t *testing.T) {
 	assert.Equal(t, 1, f.calls[connectSecretArn])
 
 	calls := readCalls(t, root)
-	assert.Contains(t, calls[0], "--use-basic-auth --username cu")
-	assert.Contains(t, calls[1], "--use-basic-auth --username su")
+	// Secret-sourced usernames go via env (kcp binds --username to USERNAME), not argv.
+	assert.NotContains(t, calls[0], "--username")
+	assert.NotContains(t, calls[1], "--username")
 	out, err := json.Marshal(res)
 	require.NoError(t, err)
 	for _, v := range []string{"connect-pw", "sr-pw"} {
 		assert.NotContains(t, string(out), v)
 	}
 	assert.Contains(t, res.Steps[0].LogTail, "PASSWORD is ***")
+	assert.Contains(t, res.Steps[0].LogTail, "USERNAME is ***")
+	assert.NotContains(t, res.Steps[0].LogTail, "cu")
 }
 
 func TestConnectSecretReadFailure(t *testing.T) {
@@ -248,4 +256,65 @@ func TestSecretArnValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestSecretUsernameNotInResult(t *testing.T) {
+	h, root := newTestHandler(t, "")
+	credsEchoScript(t, h, root)
+	useFakeSecrets(h, map[string]string{connectSecretArn: `{"username":"uniq-user-77","password":"uniq-pw-88"}`}, nil)
+	ev := baseEvent()
+	ev.Steps = []string{"scan-self-managed-connectors"}
+	ev.ConnectRestURL = "http://connect:8083"
+	ev.ConnectAuth = connectAuth{Type: "basic", SecretArn: connectSecretArn}
+	res := h.handle(context.Background(), ev)
+	require.Equal(t, 0, res.Steps[0].ExitCode, res.Steps[0].LogTail)
+	out, err := json.Marshal(res)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "uniq-user-77")
+	assert.NotContains(t, string(out), "uniq-pw-88")
+	env, err := os.ReadFile(filepath.Join(root, "env.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(env), "USERNAME=uniq-user-77")
+}
+
+func TestSASLSecretDoesNotChangeReturnedCredentials(t *testing.T) {
+	for _, method := range []string{"", "sasl_plain"} {
+		h, _ := newTestHandler(t, "")
+		useFakeSecrets(h, map[string]string{saslSecretArn: `{"username":"scanner","password":"pw-from-sm"}`}, nil)
+		ev := baseEvent()
+		ev.SASLSecretArn, ev.AuthMethod = saslSecretArn, method
+		res := h.handle(context.Background(), ev)
+		require.Equal(t, 0, res.Steps[1].ExitCode, res.Steps[1].LogTail)
+		var got types.Credentials
+		require.NoError(t, yaml.Unmarshal([]byte(res.CredentialsYAML), &got))
+		am := got.Regions[0].Clusters[0].AuthMethod
+		assert.Nil(t, am.SASLScram, method)
+		assert.Nil(t, am.SASLPlain, method)
+	}
+}
+
+func TestReadSecretsClientPerRegion(t *testing.T) {
+	h := &handler{}
+	f := &fakeSecrets{
+		values: map[string]string{
+			saslSecretArn: `{"username":"a","password":"b"}`,
+			srSecretArn:   `{"username":"c","password":"d"}`,
+			"arn:aws:secretsmanager:eu-west-1:123456789012:secret:other": `{"username":"e","password":"f"}`,
+		},
+		calls: map[string]int{},
+	}
+	var mu sync.Mutex
+	made := map[string]int{}
+	h.secretsClient = func(_ context.Context, region string) (secretsAPI, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		made[region]++
+		return f, nil
+	}
+	out := h.readSecrets(context.Background(), []string{saslSecretArn, srSecretArn, "arn:aws:secretsmanager:eu-west-1:123456789012:secret:other"})
+	assert.Equal(t, map[string]int{"us-east-1": 1, "eu-west-1": 1}, made)
+	for _, sc := range out {
+		assert.NoError(t, sc.err)
+	}
+	assert.Len(t, out, 3)
 }

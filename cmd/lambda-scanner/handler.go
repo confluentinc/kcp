@@ -41,6 +41,15 @@ const (
 	maxWarnLineLen      = 600
 )
 
+// authMethods are the values accepted for auth_method (the auth_method keys of msk-credentials.yaml).
+var authMethods = []string{"iam", "sasl_scram", "sasl_plain", "tls", "unauthenticated_tls", "unauthenticated_plaintext"}
+
+// metricsGranularities are the values kcp scan msk-connectors accepts for --metrics-granularity.
+var metricsGranularities = []string{"60s", "5m", "1h", "1d"}
+
+// maxStateInflated bounds the decompressed size of state_gzip_b64 (a 6 MB payload can expand a lot).
+const maxStateInflated = 100 << 20
+
 // allSteps is the fixed execution order, regardless of the order in the event.
 var allSteps = []string{stepDiscover, stepScanClusters, stepScanMSKConnectors, stepScanSelfManagedConnect, stepScanSchemaRegistry}
 
@@ -77,6 +86,7 @@ type event struct {
 	Steps      []string `json:"steps"` // default: all applicable
 
 	State           json.RawMessage `json:"state"`            // input state (required if discover is not a step)
+	StateGzipB64    string          `json:"state_gzip_b64"`   // alternative to state: gzip + base64 of the state JSON
 	CredentialsYAML string          `json:"credentials_yaml"` // msk-credentials.yaml (required if discover is not a step)
 
 	AccessKeyID     string `json:"aws_access_key_id"`
@@ -146,6 +156,16 @@ func (ev event) validate() ([]string, error) {
 	}
 	if ev.AccessKeyID == "" || ev.SecretAccessKey == "" {
 		return nil, errors.New("aws_access_key_id and aws_secret_access_key are required")
+	}
+	if ev.AuthMethod != "" && !slices.Contains(authMethods, ev.AuthMethod) {
+		return nil, errors.New("unknown auth_method " + ev.AuthMethod)
+	}
+	if ev.ConnectorMetricsGranularity != "" && ev.ConnectorMetricsGranularity != "none" &&
+		!slices.Contains(metricsGranularities, ev.ConnectorMetricsGranularity) {
+		return nil, errors.New("unknown connector_metrics_granularity " + ev.ConnectorMetricsGranularity)
+	}
+	if len(ev.State) > 0 && string(ev.State) != "null" && ev.StateGzipB64 != "" {
+		return nil, errors.New("state and state_gzip_b64 are mutually exclusive")
 	}
 	if ev.SASLSecretArn != "" {
 		if _, err := parseSecretArn(ev.SASLSecretArn); err != nil {
@@ -300,9 +320,14 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	statePath := filepath.Join(dir, "kcp-state.json")
 	credsPath := filepath.Join(dir, "msk-credentials.yaml")
 	scanCredsPath := filepath.Join(dir, "msk-credentials.scan.yaml")
-	haveInputState := len(ev.State) > 0 && string(ev.State) != "null"
+	inputState, err := ev.inputState()
+	if err != nil {
+		r.Error, r.fatal = err.Error(), true
+		return r
+	}
+	haveInputState := len(inputState) > 0
 	if haveInputState {
-		if err := os.WriteFile(statePath, ev.State, 0o600); err != nil {
+		if err := os.WriteFile(statePath, inputState, 0o600); err != nil {
 			r.Error, r.fatal = "failed to write state: "+err.Error(), true
 			return r
 		}
@@ -319,6 +344,7 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	// values with the scrubber. A failed read fails only the step that needs the secret.
 	secrets := h.readSecrets(ctx, ev.secretArns(steps))
 	for _, sc := range secrets {
+		scrub.add(sc.username)
 		scrub.add(sc.password)
 	}
 
@@ -337,13 +363,18 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	failStep := func(name, msg string) {
 		r.Steps = append(r.Steps, stepResult{Step: name, Target: target, ExitCode: 1, LogTail: msg})
 	}
-	// authCreds returns the basic-auth username/password, from the secret when secret_arn is set.
-	authCreds := func(a connectAuth) (string, string, error) {
+	// basicAuth returns the kcp args and env for basic auth. Inline credentials: username on argv,
+	// password in env. From a secret: both in env (kcp binds --username and --password to
+	// USERNAME and PASSWORD), so neither appears in the returned args.
+	basicAuth := func(a connectAuth) ([]string, []string, error) {
 		if a.SecretArn == "" {
-			return a.Username, a.Password, nil
+			return []string{"--use-basic-auth", "--username", a.Username}, []string{"PASSWORD=" + a.Password}, nil
 		}
 		sc := secrets[a.SecretArn]
-		return sc.username, sc.password, sc.err
+		if sc.err != nil {
+			return nil, nil, sc.err
+		}
+		return []string{"--use-basic-auth"}, []string{"USERNAME=" + sc.username, "PASSWORD=" + sc.password}, nil
 	}
 	run := func(name string, args, shown, extraEnv []string, needState, needCreds bool) {
 		sr := stepResult{Step: name, Target: target, Args: shown}
@@ -353,15 +384,25 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 		case needCreds && !fileExists(credsPath):
 			sr.ExitCode, sr.LogTail = -1, "skipped: no msk-credentials.yaml (run discover or pass credentials_yaml)"
 		default:
+			if name == stepScanClusters {
+				// MSKSource.Scan walks every cluster in the file; hand kcp only the requested one.
+				// The auth override and secret values go into this copy only, never into credsPath
+				// (which is what is returned as credentials_yaml).
+				if err := filterCredentials(credsPath, scanCredsPath, ev.ClusterArn); err != nil {
+					sr.ExitCode, sr.LogTail = 1, "credentials: "+err.Error()
+					r.Steps = append(r.Steps, sr)
+					return
+				}
+			}
 			if name == stepScanClusters && ev.SASLSecretArn != "" {
 				sc := secrets[ev.SASLSecretArn]
 				method := cmp.Or(ev.AuthMethod, "sasl_scram")
 				err := sc.err
 				if err == nil {
-					err = applySASLSecret(credsPath, ev.ClusterArn, method, sc.username, sc.password)
+					err = applySASLSecret(scanCredsPath, ev.ClusterArn, method, sc.username, sc.password)
 				}
 				if err == nil {
-					err = forceAuth(credsPath, ev.ClusterArn, method)
+					err = forceAuth(scanCredsPath, ev.ClusterArn, method)
 				}
 				if err != nil {
 					sr.ExitCode, sr.LogTail = 1, "sasl_secret_arn: "+err.Error()
@@ -369,17 +410,9 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 					return
 				}
 			} else if name == stepScanClusters && ev.AuthMethod != "" {
-				if err := forceAuth(credsPath, ev.ClusterArn, ev.AuthMethod); err != nil {
+				if err := forceAuth(scanCredsPath, ev.ClusterArn, ev.AuthMethod); err != nil {
 					// Never fall back to whatever auth discover picked (possibly plaintext).
 					sr.ExitCode, sr.LogTail = 1, "auth_method: "+err.Error()
-					r.Steps = append(r.Steps, sr)
-					return
-				}
-			}
-			if name == stepScanClusters {
-				// MSKSource.Scan walks every cluster in the file; hand kcp only the requested one.
-				if err := filterCredentials(credsPath, scanCredsPath, ev.ClusterArn); err != nil {
-					sr.ExitCode, sr.LogTail = 1, "credentials: "+err.Error()
 					r.Steps = append(r.Steps, sr)
 					return
 				}
@@ -470,14 +503,14 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 				"--connect-rest-url", ev.ConnectRestURL, "--cluster-id", ev.ClusterArn}
 			var extraEnv []string
 			if ev.ConnectAuth.Type == "basic" {
-				user, pass, err := authCreds(ev.ConnectAuth)
+				basicArgs, basicEnv, err := basicAuth(ev.ConnectAuth)
 				if err != nil {
 					failStep(s, "connect_auth.secret_arn: "+err.Error())
 					continue
 				}
 				// The password goes via the env var kcp binds to --password, not argv.
-				a = append(a, "--use-basic-auth", "--username", user)
-				extraEnv = []string{"PASSWORD=" + pass}
+				a = append(a, basicArgs...)
+				extraEnv = basicEnv
 			} else {
 				a = append(a, "--use-unauthenticated")
 			}
@@ -487,6 +520,17 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 			run(s, a, a, extraEnv, true, false)
 		case stepScanSchemaRegistry:
 			for _, sr := range ev.SchemaRegistries {
+				if ctx.Err() != nil {
+					target = sr.URL
+					if sr.Type == "glue" {
+						target = "glue:" + sr.RegistryName
+					}
+					r.Steps = append(r.Steps, stepResult{Step: s, Target: target, ExitCode: -1, LogTail: "skipped: Lambda deadline reached"})
+					if !strings.Contains(r.Error, "deadline") {
+						r.addError("Lambda deadline reached; remaining steps skipped")
+					}
+					continue
+				}
 				a := []string{"scan", "schema-registry", "--state-file", statePath, "--sr-type", sr.Type}
 				var extraEnv []string
 				if sr.Type == "glue" {
@@ -500,13 +544,13 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 					a = append(a, "--url", sr.URL)
 					if sr.Auth.Type == "basic" {
 						target = sr.URL
-						user, pass, err := authCreds(sr.Auth)
+						basicArgs, basicEnv, err := basicAuth(sr.Auth)
 						if err != nil {
 							failStep(s, "schema_registries.auth.secret_arn: "+err.Error())
 							continue
 						}
-						a = append(a, "--use-basic-auth", "--username", user)
-						extraEnv = []string{"PASSWORD=" + pass}
+						a = append(a, basicArgs...)
+						extraEnv = basicEnv
 					} else {
 						a = append(a, "--use-unauthenticated")
 					}
@@ -545,7 +589,9 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 		if err != nil {
 			r.addError("credentials_yaml withheld: " + err.Error())
 		} else {
-			r.CredentialsYAML = scrub.apply(string(red))
+			// Not scrubbed: redactCredentials already blanked every secret field, and a raw
+			// substring replace could corrupt the document (e.g. a password equal to "true").
+			r.CredentialsYAML = string(red)
 		}
 	}
 	r.DurationMs = time.Since(start).Milliseconds()
@@ -618,6 +664,35 @@ func (sc scrubber) apply(s string) string {
 	return s
 }
 
+// inputState returns the state JSON from state or state_gzip_b64, or nil if neither is set.
+func (ev event) inputState() ([]byte, error) {
+	if ev.StateGzipB64 == "" {
+		if len(ev.State) == 0 || string(ev.State) == "null" {
+			return nil, nil
+		}
+		return ev.State, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(ev.StateGzipB64)
+	if err != nil {
+		return nil, errors.New("state_gzip_b64 is not valid base64")
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, errors.New("state_gzip_b64 is not valid gzip")
+	}
+	b, err := io.ReadAll(io.LimitReader(zr, maxStateInflated+1))
+	if err != nil {
+		return nil, errors.New("state_gzip_b64 is not valid gzip")
+	}
+	if len(b) > maxStateInflated {
+		return nil, errors.New("state_gzip_b64 is too large when decompressed")
+	}
+	if !json.Valid(b) {
+		return nil, errors.New("state_gzip_b64 does not contain valid JSON")
+	}
+	return b, nil
+}
+
 func gzipBase64(b []byte) (string, error) {
 	var gz bytes.Buffer
 	w, err := gzip.NewWriterLevel(&gz, gzip.BestCompression)
@@ -645,6 +720,10 @@ func warnLines(path string, off int64, max int, scrub scrubber) []string {
 		return nil
 	}
 	defer func() { _ = f.Close() }()
+	// kcp.log is rotated (lumberjack): a file smaller than the saved offset is a new one.
+	if fi, err := f.Stat(); err == nil && fi.Size() < off {
+		off = 0
+	}
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return nil
 	}

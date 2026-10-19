@@ -58,11 +58,17 @@ make build-lambda-scanner VERSION=v1.2.3   # dist/kcp-lambda-scanner-linux-arm64
   userinfo (`https://user:pass@host`); use the auth fields instead.
 - If `discover` fails and no `state` was supplied, the remaining steps are skipped.
 - `log_tail_bytes` is capped at 64 KiB.
-- `connector_metrics_granularity`: default `1d`, `none` skips metrics.
-- `auth_method` (`iam`, `sasl_scram`, `sasl_plain`, `tls`, `unauthenticated_tls`,
+- `connector_metrics_granularity`: `60s`, `5m`, `1h` or `1d` (default `1d`); `none` skips metrics.
+  Other values are rejected before any step runs.
+- `state_gzip_b64` is accepted as an input too (gzip + base64 of the state JSON), mutually
+  exclusive with `state`. Pass back whichever form the previous response carried. The whole request
+  payload must fit Lambda's 6 MB synchronous limit, so use `state_gzip_b64` for large state.
+- `auth_method` (validated; `iam`, `sasl_scram`, `sasl_plain`, `tls`, `unauthenticated_tls`,
   `unauthenticated_plaintext`) rewrites `use:` in `msk-credentials.yaml` so only that method is used
   by `scan-clusters`. Without it kcp may pick unauthenticated plaintext and return no ACLs. If the
-  rewrite fails, the step fails instead of falling back to the discovered auth.
+  rewrite fails, the step fails instead of falling back to the discovered auth. The override
+  applies only to the copy of the credentials handed to kcp; the returned `credentials_yaml` is
+  left as discovered or supplied.
 
 ## Response
 
@@ -96,9 +102,13 @@ is JSON in the MSK SCRAM format, `{"username": "...", "password": "..."}`, and b
 - `connect_auth.secret_arn` and `schema_registries[].auth.secret_arn` (type `basic`): replace the
   username and password.
 
-The Lambda reads each distinct ARN once per invoke (30 s timeout) with its own execution role
-credentials, in the region of the ARN. Those credentials are never passed to kcp. Passwords are
-added to the log scrubber before any step runs; secret values are never returned or logged.
+The Lambda reads each distinct ARN once per invoke, in parallel, with its own execution role
+credentials, in the region of the ARN (one client per region). All reads share a single 30 s
+timeout. Those credentials are never passed to kcp. Secret-sourced usernames and passwords are
+passed to kcp through its environment (`USERNAME`, `PASSWORD`), never on the command line, and are
+added to the log scrubber before any step runs; secret values (username and password) are never
+returned or logged. For `sasl_secret_arn` they are written only to the filtered credentials copy
+that kcp reads. Inline usernames are passed with `--username` and appear in `args`.
 Errors may include the ARN and the AWS error code and message. Inline passwords remain supported,
 but `secret_arn` is recommended.
 
@@ -199,8 +209,9 @@ after the function is deleted.
   and `client_key` in the credentials file are file paths that the payload cannot supply
   (follow-up: a `files` map written under the working directory).
 - MSK Serverless: ACLs are not available via the Kafka Admin API, so kcp skips them with a WARN.
-- The scan stops about 30 seconds before the Lambda deadline and returns the state gathered so far,
-  with an error note. Stale `/tmp/kcp-*` dirs from a killed sandbox are removed on start.
+- The scan stops about 30 seconds before the Lambda deadline and returns the state from the steps that
+  completed, with an error note. kcp is killed at that point and writes state only at the end of a
+  step, so the interrupted step's results are lost. Stale `/tmp/kcp-*` dirs from a killed sandbox are removed on start.
 
 ## Security
 
