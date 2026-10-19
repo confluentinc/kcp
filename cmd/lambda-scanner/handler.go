@@ -319,7 +319,13 @@ func (h *handler) handle(ctx context.Context, ev event) result {
 	defer func() { _ = os.RemoveAll(dir) }()
 	statePath := filepath.Join(dir, "kcp-state.json")
 	credsPath := filepath.Join(dir, "msk-credentials.yaml")
-	scanCredsPath := filepath.Join(dir, "msk-credentials.scan.yaml")
+	// kcp warns unless the MSK credentials file is named msk-credentials.yaml, so the per-scan copy
+	// keeps that name in a subdirectory.
+	scanCredsPath := filepath.Join(dir, "scan", "msk-credentials.yaml")
+	if err := os.MkdirAll(filepath.Dir(scanCredsPath), 0o700); err != nil {
+		r.Error, r.fatal = "failed to create scan directory: "+err.Error(), true
+		return r
+	}
 	inputState, err := ev.inputState()
 	if err != nil {
 		r.Error, r.fatal = err.Error(), true
