@@ -1456,6 +1456,7 @@ func TestUpsertTargetedClusters(t *testing.T) {
 		}
 		if clusterA == nil {
 			t.Fatal("targeted cluster A missing")
+			return
 		}
 		if len(clusterA.KafkaAdminClientInformation.Acls) != 1 {
 			t.Errorf("scan ACLs not preserved on targeted cluster: got %d, want 1", len(clusterA.KafkaAdminClientInformation.Acls))
