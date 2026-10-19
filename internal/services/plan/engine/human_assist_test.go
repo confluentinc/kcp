@@ -69,6 +69,7 @@ func TestHumanAssist_Triggers(t *testing.T) {
 	}
 	if t2 == nil {
 		t.Fatalf("exceeds_enterprise_limits trigger missing: %+v", over.Triggers)
+		return
 	}
 	if containsAnyFold(t2.Why, "megabytes/sec", "requests/sec") {
 		t.Errorf("banner must not name a specific ceiling: %q", t2.Why)
