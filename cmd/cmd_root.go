@@ -132,6 +132,11 @@ var RootCmd = &cobra.Command{
 		// kcp.log. The root span covers the rest of the command; main ends it.
 		tracing.Setup(cmd.Context())
 		cmd.SetContext(tracing.StartRoot(cmd.Context(), cmd.CommandPath()))
+
+		// With OTLP export on, logs go there too, carrying the root span's trace id.
+		if h := tracing.LogHandler(); h != nil {
+			slog.SetDefault(slog.New(NewFanOutHandler(fileHandler, consoleHandler, h)))
+		}
 	},
 }
 
