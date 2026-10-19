@@ -17,7 +17,7 @@ LD_FLAGS := -X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 # Build
 # ==============================================================================
 
-.PHONY: build-frontend build build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all
+.PHONY: build-frontend build build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-lambda-scanner
 
 build-frontend: ## Build the frontend application
 	@echo "Building frontend..."
@@ -43,6 +43,19 @@ build-windows: ## Build for Windows amd64
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 
 build-all: build-frontend build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows ## Build for all platforms
+
+LAMBDA_ZIP := dist/kcp-lambda-scanner-linux-arm64.zip
+LAMBDA_BUILD_DIR := dist/lambda-scanner
+
+build-lambda-scanner: build-frontend ## Build the Lambda scanner zip (bootstrap + kcp, linux/arm64) in dist/
+	@rm -rf $(LAMBDA_BUILD_DIR) $(LAMBDA_ZIP)
+	@mkdir -p $(LAMBDA_BUILD_DIR)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LD_FLAGS)" -o $(LAMBDA_BUILD_DIR)/kcp $(MAIN_PATH)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(LAMBDA_BUILD_DIR)/bootstrap ./cmd/lambda-scanner
+	@cd $(LAMBDA_BUILD_DIR) && zip -q -9 ../$(notdir $(LAMBDA_ZIP)) bootstrap kcp
+	@rm -rf $(LAMBDA_BUILD_DIR)
+	@echo "built $(LAMBDA_ZIP) ($$(du -h $(LAMBDA_ZIP) | cut -f1))"
+	@if command -v shasum >/dev/null 2>&1; then shasum -a 256 $(LAMBDA_ZIP); else sha256sum $(LAMBDA_ZIP); fi
 
 # ==============================================================================
 # Install
