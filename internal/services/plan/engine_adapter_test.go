@@ -146,12 +146,82 @@ func TestBucketKafkaVersion(t *testing.T) {
 	cases := map[string]string{
 		"":      "", // no scanned version -> empty, so the plan asks (kafka_version)
 		"3.5.1": "3.0 or newer",
-		"2.6.2": "2.4-2.9",
+		"2.6.2": "2.4–2.9",
 		"2.3.0": "Older than 2.4",
 	}
 	for in, want := range cases {
 		if got := bucketKafkaVersion(in); got != want {
 			t.Errorf("bucketKafkaVersion(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestEngineAuthToKCP_RoundTripsKerberos(t *testing.T) {
+	kcp := []string{SourceAuthKerberos, SourceAuthUnauth}
+	got := engineAuthToKCP(translateSourceAuths(kcp))
+	if len(got) != 2 || got[0] != SourceAuthKerberos || got[1] != SourceAuthUnauth {
+		t.Errorf("round trip = %v, want %v", got, kcp)
+	}
+}
+
+func TestBuildProfile_IBPAnswered(t *testing.T) {
+	scanned := report.ProcessedCluster{Name: "c", SourceInterBrokerProtocol: "3.5"}
+	unscanned := report.ProcessedCluster{Name: "c"}
+	tests := []struct {
+		name     string
+		c        report.ProcessedCluster
+		in       IntakeInputs
+		scanless bool
+		want     bool
+	}{
+		{"scanned, no override", scanned, IntakeInputs{}, false, false},
+		{"scanned, overridden", scanned, IntakeInputs{OvInterBrokerProtocol: "2.8 or newer"}, false, true},
+		{"scan carried no IBP", unscanned, IntakeInputs{}, false, true},
+		{"scanless", scanned, IntakeInputs{}, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildProfile(tt.c, tt.in, "", tt.scanless).IBPAnswered; got != tt.want {
+				t.Errorf("IBPAnswered = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildProfile_SchemaDetectedByScan(t *testing.T) {
+	c := report.ProcessedCluster{Name: "c"}
+	tests := []struct {
+		name     string
+		srKind   string
+		scanless bool
+		want     bool
+	}{
+		{"registry detected by the scan", "confluent", false, true},
+		{"no registry detected", "", false, false},
+		{"scanless never reads a scan finding", "confluent", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildProfile(c, IntakeInputs{}, tt.srKind, tt.scanless).SchemaDetectedByScan; got != tt.want {
+				t.Errorf("SchemaDetectedByScan = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFriendlyAuthLabel(t *testing.T) {
+	want := map[string]string{
+		SourceAuthKerberos:  "Kerberos",
+		SourceAuthIAM:       "AWS IAM",
+		SourceAuthSCRAM:     "SASL/SCRAM",
+		SourceAuthSASLPlain: "SASL/PLAIN",
+		SourceAuthMTLS:      "mTLS",
+		SourceAuthUnauth:    "unauthenticated",
+		"other":             "other",
+	}
+	for tok, label := range want {
+		if got := friendlyAuthLabel(tok); got != label {
+			t.Errorf("friendlyAuthLabel(%q) = %q, want %q", tok, got, label)
 		}
 	}
 }

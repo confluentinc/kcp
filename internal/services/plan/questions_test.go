@@ -2,6 +2,7 @@ package plan
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/plan/engine"
@@ -104,15 +105,26 @@ func TestQuestions_ConditionalReveal(t *testing.T) {
 func TestQuestions_PublicRemovesPrivateFollowups(t *testing.T) {
 	p := engine.Profile{MSKClusterType: engine.MSKProvisioned, SourcePlatform: "Amazon MSK", PartitionsExact: fp(1000), PublicEndpointsOK: "Yes"}
 	qs := resolveQuestions(p, IntakeInputs{PublicEndpointsOK: "Yes"})
-	if find(qs, "connects_today") != nil || find(qs, "cc_egress_required") != nil {
+	if find(qs, "connects_today") != nil {
 		t.Errorf("private-only follow-ups should not apply on a public plan")
+	}
+	// The egress need is asked on the public path too: it changes the plan (Enterprise
+	// with an Egress PrivateLink Endpoint, or Dedicated on GCP).
+	if find(qs, "cc_egress_required") == nil {
+		t.Errorf("cc_egress_required should apply on a public plan")
 	}
 }
 
-func TestQuestions_ServerlessDropsDowntime(t *testing.T) {
-	p := engine.Profile{MSKClusterType: engine.MSKServerless, SourcePlatform: "Amazon MSK"}
-	if find(resolveQuestions(p, IntakeInputs{}), "downtime_tolerance") != nil {
-		t.Errorf("downtime_tolerance should not apply on Serverless")
+// A Serverless source reads downtime tolerance only when its data moves over the
+// jump-cluster link (a private plan); a public plan lands on Standard and Replicator.
+func TestQuestions_ServerlessDowntimeFollowsPrivatePath(t *testing.T) {
+	pub := engine.Profile{MSKClusterType: engine.MSKServerless, SourcePlatform: "Amazon MSK", PublicEndpointsOK: "Yes"}
+	if find(resolveQuestions(pub, IntakeInputs{PublicEndpointsOK: "Yes"}), "downtime_tolerance") != nil {
+		t.Errorf("downtime_tolerance should not apply on a public Serverless plan")
+	}
+	priv := engine.Profile{MSKClusterType: engine.MSKServerless, SourcePlatform: "Amazon MSK", PublicEndpointsOK: "No"}
+	if find(resolveQuestions(priv, IntakeInputs{PublicEndpointsOK: "No"}), "downtime_tolerance") == nil {
+		t.Errorf("downtime_tolerance should apply on a private Serverless plan")
 	}
 }
 
@@ -179,5 +191,172 @@ clusters:
 	// An undeclared cluster still gets the fleet defaults.
 	if got := d.For("cluster-unknown"); got.PublicEndpointsOK != "No" {
 		t.Errorf("undeclared cluster should get defaults: %+v", got)
+	}
+}
+
+// Kerberos (GSSAPI) is offered as a source-auth option only for a self-managed
+// Apache Kafka / Confluent Platform source — MSK has no Kerberos support.
+func TestQuestions_KerberosOSKOnly(t *testing.T) {
+	msk := engine.Profile{MSKClusterType: engine.MSKProvisioned, SourcePlatform: "Amazon MSK", PartitionsExact: fp(1000)}
+	if q := find(resolveQuestions(msk, IntakeInputs{}), "source_auth"); q == nil || containsStr(q.Tokens, "kerberos") {
+		t.Errorf("MSK source_auth tokens = %+v, must not offer kerberos", q)
+	}
+
+	osk := engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", PartitionsExact: fp(1000)}
+	if q := find(resolveQuestions(osk, IntakeInputs{}), "source_auth"); q == nil || !containsStr(q.Tokens, "kerberos") {
+		t.Errorf("OSK source_auth tokens = %+v, want kerberos offered", q)
+	}
+}
+
+// An Apache Kafka / Confluent Platform scan can't be Amazon MSK, so "msk" is not
+// offered as a source_platform option there; a scanless run still offers it.
+func TestSourcePlatform_MSKOptionHiddenOnOSKScan(t *testing.T) {
+	var q question
+	for _, c := range catalog {
+		if c.Key == "source_platform" {
+			q = c
+		}
+	}
+	osk := engine.Profile{SourceType: engine.SourceApacheKafka}
+	for _, tok := range q.visibleTokens(osk) {
+		if tok == "msk" {
+			t.Errorf("OSK scan must not offer msk, got %v", q.visibleTokens(osk))
+		}
+	}
+	scanless := engine.Profile{Scanless: true}
+	if got := q.visibleTokens(scanless); len(got) != 3 {
+		t.Errorf("scanless should offer all platforms, got %v", got)
+	}
+}
+
+// In a fleet whose clusters' sources differ, source_platform is not asked at the
+// all_clusters level (a fleet-wide answer would fail validation for the other type).
+func TestAllQuestionsUnion_SourcePlatformOnlyWhenEveryClusterAsksIt(t *testing.T) {
+	sp := ResolvedQuestion{Key: "source_platform", Required: true, Status: "open_required"}
+	other := ResolvedQuestion{Key: "use_case_breadth"}
+	mixed := &EnginePlan{Clusters: []ClusterPlan{
+		{Key: "msk", Questions: []ResolvedQuestion{other}},
+		{Key: "osk", Questions: []ResolvedQuestion{sp, other}},
+	}}
+	for _, q := range allQuestionsUnion(mixed) {
+		if q.Key == "source_platform" {
+			t.Errorf("mixed fleet must not list source_platform under all_clusters")
+		}
+	}
+	uniform := &EnginePlan{Clusters: []ClusterPlan{
+		{Key: "a", Questions: []ResolvedQuestion{sp, other}},
+		{Key: "b", Questions: []ResolvedQuestion{sp, other}},
+	}}
+	found := false
+	for _, q := range allQuestionsUnion(uniform) {
+		found = found || q.Key == "source_platform"
+	}
+	if !found {
+		t.Errorf("uniform fleet should keep source_platform under all_clusters")
+	}
+}
+
+// The target_cloud default follows the resolved source cloud, like the engine's own
+// fallback, so the default shown (and written back) never disagrees with the plan.
+func TestTargetCloudDefaultFollowsSourceCloud(t *testing.T) {
+	cases := []struct {
+		name string
+		p    engine.Profile
+		want string
+	}{
+		{"msk", engine.Profile{SourcePlatform: "Amazon MSK", SourceCloud: "AWS"}, "aws"},
+		{"ak-azure", engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", SourceCloud: "Azure"}, "azure"},
+		{"cp-gcp", engine.Profile{SourceType: engine.SourceConfluentPlatform, SourcePlatform: "Confluent Platform", SourceCloud: "GCP"}, "gcp"},
+		{"on-prem", engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", SourceCloud: "On-prem or other"}, "aws"},
+		{"unknown", engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka"}, "aws"},
+	}
+	for _, c := range cases {
+		q := findResolved(resolveQuestions(c.p, IntakeInputs{}), "target_cloud")
+		if q == nil || q.Value != c.want {
+			t.Errorf("%s: target_cloud default = %+v, want %q", c.name, q, c.want)
+		}
+	}
+	// A declared answer wins over the default.
+	q := findResolved(resolveQuestions(engine.Profile{SourcePlatform: "Amazon MSK", SourceCloud: "AWS"}, IntakeInputs{TargetCloud: "Azure"}), "target_cloud")
+	if q == nil || q.Value != "azure" || q.defaultVal != "aws" {
+		t.Errorf("declared target_cloud = %+v, want value azure with default aws", q)
+	}
+}
+
+// A single-choice question takes one value: a list used to be coerced to its first
+// element, silently dropping the rest, so it is a hard error. A multi question still
+// takes a list, and a one-element list is fine.
+func TestParseDeclaredInputs_SingleValueExpected(t *testing.T) {
+	_, warns, err := ParseDeclaredInputs([]byte("clusters:\n  c:\n    target_cloud: [aws, gcp]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "target_cloud: expects a single value, got a list [aws, gcp]") {
+		t.Errorf("target_cloud list: got %v", warns)
+	}
+	_, warns, _ = ParseDeclaredInputs([]byte("clusters:\n  c:\n    target_cloud: [azure]\n    target_auth: [api-keys, oauth]\n"))
+	if len(warns) != 0 {
+		t.Errorf("one-element list and a multi question should be accepted, got %v", warns)
+	}
+}
+
+// connects_today refines an explicit private-networking requirement on an AWS
+// target. It is skipped for an on-prem source and for a public-OK plan that only
+// crosses to private by size.
+func TestQuestions_ConnectsTodayOnlyForExplicitPrivateOnCloudSource(t *testing.T) {
+	asked := func(p engine.Profile, in IntakeInputs) bool {
+		return find(resolveQuestions(p, in), "connects_today") != nil
+	}
+	priv := engine.Profile{MSKClusterType: engine.MSKProvisioned, SourcePlatform: "Amazon MSK", PublicEndpointsOK: "No"}
+	if !asked(priv, IntakeInputs{PublicEndpointsOK: "No"}) {
+		t.Errorf("connects_today should be asked when private networking is required")
+	}
+	onprem := engine.Profile{SourceType: engine.SourceApacheKafka, SourcePlatform: "Apache Kafka", SourceCloud: "On-prem or other", PublicEndpointsOK: "No"}
+	if asked(onprem, IntakeInputs{PublicEndpointsOK: "No", SourceCloud: "On-prem or other"}) {
+		t.Errorf("connects_today should not be asked for an on-prem source")
+	}
+	crossed := engine.Profile{MSKClusterType: engine.MSKProvisioned, SourcePlatform: "Amazon MSK", PublicEndpointsOK: "Yes", ExceedsStandardLimits: "Yes"}
+	if asked(crossed, IntakeInputs{PublicEndpointsOK: "Yes", ExceedsStandardLimits: "Yes"}) {
+		t.Errorf("connects_today should not be asked for a public-OK plan that crosses to private by size")
+	}
+}
+
+// schema_strategy does not offer "migrate" when the source has no Schema Registry.
+func TestSchemaStrategy_MigrateHiddenWithoutRegistry(t *testing.T) {
+	q, ok := questionByKey("schema_strategy")
+	if !ok {
+		t.Fatal("schema_strategy question missing")
+	}
+	has := func(p engine.Profile) bool {
+		for _, o := range q.visibleOpts(p) {
+			if o.Token == "migrate" {
+				return true
+			}
+		}
+		return false
+	}
+	if has(engine.Profile{SourceSRType: engineSRNone}) {
+		t.Error("migrate should be hidden when schema_registry is none")
+	}
+	if !has(engine.Profile{SourceSRType: engineSRGlue}) {
+		t.Error("migrate should be offered when a registry exists")
+	}
+}
+
+// A start-fresh plan copies no history, so tiered_storage is not asked.
+func TestTieredStorage_HiddenOnStartFresh(t *testing.T) {
+	var q question
+	for _, c := range allQuestions() {
+		if c.Key == "tiered_storage" {
+			q = c
+		}
+	}
+	p := engine.Profile{SourcePlatform: "Amazon MSK", MSKClusterType: engine.MSKProvisioned}
+	if rq := resolveOne(q, p, IntakeInputs{}); rq.Status != "open_required" {
+		t.Errorf("migrating data: status = %q, want open_required", rq.Status)
+	}
+	p.NeedsDataMigration = "No"
+	if q.Applies(p) {
+		t.Error("start fresh: tiered_storage should not apply")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/plan/engine"
 	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // enginePlanSchemaVersion identifies the new engine-driven plan JSON shape,
@@ -81,11 +82,33 @@ type ClusterPlan struct {
 	ConnectorSource *ConnectorSource    `json:"connector_source,omitempty"`
 	Apps            []AppPlan           `json:"apps,omitempty"`
 
+	// unusedOwn / unusedDefaults are the answers this cluster declares itself, and
+	// inherits from all_clusters, whose question doesn't apply to this plan right now
+	// (for example connects_today on a public-networking plan). They have no effect on
+	// the plan, but plan-inputs.yaml writes them back so the answer isn't lost if the
+	// plan later needs it. Not serialized.
+	unusedOwn      []unusedAnswer
+	unusedDefaults []unusedAnswer
+
+	// topicsScanned / schemaRegistryScanned record whether the state file already holds
+	// the cluster's topics and any source Schema Registry, so the "Before you start"
+	// block only lists the scans the migration steps still need. Not serialized.
+	topicsScanned bool
+	// sourceDeclaredMSK is true when source_platform: msk was declared, so a scanless
+	// plan can fill --source-type msk instead of leaving a placeholder.
+	sourceDeclaredMSK     bool
+	schemaRegistryScanned bool
+
 	// effectiveSourceAuths is the source auth after answers are folded in (kcp tokens:
-	// iam/scram/mtls/unauth), for render-side source-auth branching. SourceAuths is
-	// scan-only and stays empty in questionnaire mode, so the renderer reads this.
-	// Not serialized (unexported) — plan.json's source_auths contract is unchanged.
+	// iam/scram/mtls/unauth), for render-side source-auth branching. SourceAuths holds
+	// the same effective value once a plan is built (the scan value otherwise).
+	// Not serialized (unexported).
 	effectiveSourceAuths []string
+
+	// scanScramMechanism is the SASL/SCRAM mechanism the scan recorded for an Apache
+	// Kafka source (empty when none), so the migration-infra command only names the
+	// mechanism when the state file can't supply it. Not serialized.
+	scanScramMechanism string
 
 	// targetCloud is the effective target cloud ("AWS"|"Azure"|"GCP"|""), for
 	// render-side cloud vocabulary (VPC vs VNet) and on-prem hybrid-connectivity copy.
@@ -195,11 +218,14 @@ type EnginePlan struct {
 }
 
 // ValidateDeclaredClusters returns one message per declared cluster key that
-// matches no cluster in the scan (a misspelled cluster name). Answers under such a
-// key never reach any plan, so the caller treats these as fatal input errors. It is
-// validated against the full scan so an active --cluster-id/--region filter can't
-// make an out-of-scope but correctly spelled key look like a typo.
-func ValidateDeclaredClusters(declared DeclaredInputs, state report.ProcessedState) []string {
+// matches no cluster in the scan (a misspelled cluster name), listing the valid
+// names. Answers under such a key never reach any plan, so the caller treats these
+// as fatal input errors. It is validated against the full scan so an active
+// --cluster-id/--region filter can't make an out-of-scope but correctly spelled
+// key look like a typo. With no scan (scanless) the only cluster is the synthetic
+// questionnaire one, so any other key would be silently dropped; it is reported
+// the same way, with the scanless explanation.
+func ValidateDeclaredClusters(declared DeclaredInputs, state report.ProcessedState, scanless bool) []string {
 	keys := computeClusterKeys(collectClusters(state))
 	valid := make(map[string]bool, len(keys))
 	for _, k := range keys {
@@ -210,18 +236,244 @@ func ValidateDeclaredClusters(declared DeclaredInputs, state report.ProcessedSta
 		declaredKeys = append(declaredKeys, k)
 	}
 	sort.Strings(declaredKeys)
+	validList := strings.Join(keys, ", ")
 	var errs []string
 	for _, k := range declaredKeys {
-		if !valid[k] {
-			errs = append(errs, fmt.Sprintf("references cluster %q, which is not in the scan", k))
+		if valid[k] {
+			continue
+		}
+		if scanless {
+			errs = append(errs, fmt.Sprintf("references cluster %q, but a run without --state-file plans a single cluster named %q. Rename it to %q, or pass --state-file to plan several clusters", k, ScanlessClusterName, ScanlessClusterName))
+			continue
+		}
+		errs = append(errs, fmt.Sprintf("references cluster %q, which is not in the scan (valid names: %s)", k, validList))
+	}
+	return errs
+}
+
+// ValidateDeclaredSources returns one message per cluster for two mistakes a
+// hand-written plan-inputs.yaml can make about a cluster's source:
+//
+//  1. A declared option offered only for some sources (an opt with a non-nil
+//     Applies, e.g. source_auth: iam, offered only for Amazon MSK) declared on a
+//     cluster whose resolved source doesn't offer it.
+//  2. A declared source_platform that contradicts what the scan detected (an MSK
+//     scan declared apache-kafka/confluent-platform, or an OSK scan declared msk).
+//     A declared confluent-platform on an OSK scan is NOT a contradiction: an OSK
+//     scan can't tell Confluent Platform apart from Apache Kafka, so the
+//     declaration is a refinement, not a conflict.
+//
+// The source resolves the same way buildProfile resolves it (the cluster's own
+// source_platform, else all_clusters.source_platform, else the scan), except a
+// scanless run with nothing declared leaves it genuinely unknown, and (1) is
+// skipped for that cluster rather than checked against an assumed source.
+func ValidateDeclaredSources(declared DeclaredInputs, state report.ProcessedState, scanless bool) []string {
+	clusters := collectClusters(state)
+	keys := computeClusterKeys(clusters)
+	srKind := detectSchemaRegistryKind(state)
+	factMisfit := map[string]int{} // source-fact key declared in all_clusters → clusters it doesn't apply to
+	factReason := map[string]string{}
+	var errs []string
+	for i, c := range clusters {
+		key := keys[i]
+		res := resolveClusterSource(key, declared, c, scanless)
+		if msg := declaredSourceContradiction(key, res, c, scanless); msg != "" {
+			errs = append(errs, msg)
+		}
+		in := declared.For(key)
+		factProfile := buildProfile(c, in, srKind, scanless)
+		// Migrating schemas out of a source that has none contradicts itself, and would
+		// leave the Schema verdict pending forever while the plan reads as ready.
+		if factProfile.SourceSRType == engineSRNone && factProfile.SchemaStrategy == engineSchemaStrategyMigrate {
+			errs = append(errs, fmt.Sprintf("cluster %q: schema_strategy migrate needs a source Schema Registry, but schema_registry is none. Set schema_registry to your registry type, or set schema_strategy to fresh or schemaless.", key))
+		}
+		if res.platform == "" {
+			continue // source unknown: nothing to validate declared options against
+		}
+		sourceType, _, _ := resolveSourceType(res.platform)
+		profile := engine.Profile{SourceType: sourceType, SourcePlatform: res.platform}
+		for _, q := range allQuestions() {
+			if !sourceFactKeys[q.Key] || q.Applies == nil || q.Applies(factProfile) {
+				continue
+			}
+			// Start fresh only hides tiered_storage; a declared value is harmless there.
+			if q.Key == "tiered_storage" && !engine.IsServerless(factProfile) {
+				continue
+			}
+			if declaredInapplicableFact(q, declared.Clusters[key].Inputs) {
+				errs = append(errs, fmt.Sprintf("cluster %q: %s does not apply to this cluster (%s). Remove it.",
+					key, q.Key, sourceFactReason(q, res)))
+			}
+			if declaredInapplicableFact(q, declared.Defaults) {
+				factMisfit[q.Key]++
+				factReason[q.Key] = sourceFactReason(q, res)
+			}
+		}
+		// MSK Serverless is IAM-only, so any other declared source_auth contradicts the
+		// cluster; rejected like a source-hidden option rather than ignored.
+		if engine.IsServerless(factProfile) {
+			var other []string
+			for _, eng := range in.OvSourceAuth {
+				if eng != engineAuthAWSIAM {
+					other = append(other, eng)
+				}
+			}
+			if len(other) > 0 {
+				if q, ok := questionByKey("source_auth"); ok {
+					errs = append(errs, fmt.Sprintf("cluster %q: source_auth %s does not apply to this cluster (MSK Serverless is IAM-only). Remove it or set it to iam.",
+						key, strings.Join(mapEngineTokens(q, other), ", ")))
+				}
+			}
+		}
+		for _, q := range allQuestions() {
+			for _, eng := range q.engineValues(in) {
+				o, ok := q.optFor(eng)
+				if !ok || o.Applies == nil || o.Applies(profile) {
+					continue
+				}
+				errs = append(errs, fmt.Sprintf(
+					"cluster %q: %s %q is only offered for %s, but this cluster's source is %s (from %s). Remove it or change the source.",
+					key, q.Key, o.Token, sourcesPhrase(allowedSourcesFor(o.Applies)), res.platform, res.from))
+			}
+		}
+	}
+	// An all_clusters source fact is fine while some cluster consumes it (a mixed
+	// fleet sets it for the clusters it applies to); it is an error only when no
+	// cluster does, since the answer would then never reach any plan.
+	for _, k := range sortedStringKeys(factMisfit) {
+		if factMisfit[k] == len(clusters) {
+			errs = append(errs, fmt.Sprintf("all_clusters: %s does not apply to any cluster (%s). Remove it.", k, factReason[k]))
 		}
 	}
 	return errs
 }
 
+// sourceFactKeys are the declared facts about the source itself whose question
+// applies only to some sources or cluster types (MSK Connect is MSK-only, tiered
+// storage is absent on MSK Serverless, ...). Declaring one where it doesn't apply is
+// a mistake, so it is rejected the same way as a source-hidden option, instead of
+// being used by one run and silently dropped on rewrite.
+var sourceFactKeys = map[string]bool{
+	"source_cloud":        true,
+	"source_cluster_type": true,
+	"msk_connect_present": true,
+	"tiered_storage":      true,
+}
+
+// declaredInapplicableFact reports whether in declares a value for a source-fact
+// question that doesn't apply to the cluster, and so is an error. A "No" for
+// msk_connect_present is exempt: it is what kcp writes for (and what is true of)
+// any non-MSK source, so it is kept as an unused answer rather than rejected. An
+// explicit "Yes" still errors.
+func declaredInapplicableFact(q question, in IntakeInputs) bool {
+	vals := q.engineValues(in)
+	if q.Key == "msk_connect_present" && len(vals) == 1 && vals[0] == "No" {
+		return false
+	}
+	return len(vals) > 0
+}
+
+// sourceFactReason says why a source-fact question doesn't apply to a cluster.
+func sourceFactReason(q question, res sourceResolution) string {
+	if q.Key == "tiered_storage" {
+		return "MSK Serverless has no tiered storage"
+	}
+	return fmt.Sprintf("it is only asked for %s, but this cluster's source is %s (from %s)",
+		sourcesPhrase(allowedSourcesFor(q.Applies)), res.platform, res.from)
+}
+
+func sortedStringKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unusedAnswer is a declared answer whose question doesn't apply to a cluster's plan.
+type unusedAnswer struct {
+	Key   string
+	Value string // token(s), comma-joined for a multi question
+	Multi bool
+}
+
+// unusedAnswers lists the answers declared in `in` whose question is absent from
+// the cluster's resolved questions (it doesn't apply to this plan). The two Schema
+// Registry keys share one field, so one is unused only when neither is asked.
+func unusedAnswers(in IntakeInputs, resolved []ResolvedQuestion) []unusedAnswer {
+	var out []unusedAnswer
+	for _, q := range allQuestions() {
+		vals := q.engineValues(in)
+		if len(vals) == 0 || findResolved(resolved, q.Key) != nil {
+			continue
+		}
+		if (q.Key == "schema_registry" && findResolved(resolved, "schema_registry_edition") != nil) ||
+			(q.Key == "schema_registry_edition" && findResolved(resolved, "schema_registry") != nil) {
+			continue
+		}
+		toks := mapEngineTokens(q, vals)
+		if len(toks) == 0 {
+			continue
+		}
+		out = append(out, unusedAnswer{Key: q.Key, Value: joinList(toks), Multi: q.Multi})
+	}
+	return out
+}
+
+// declaredSourceContradiction reports a declared source_platform that conflicts
+// with what the scan itself detected for the cluster — never checked in scanless
+// mode (there is no scan to conflict with) or when nothing was declared (res.from
+// == "scan"). A declared confluent-platform on an OSK (Apache Kafka) scan is
+// exempt: the scan can't distinguish Confluent Platform from Apache Kafka, so
+// that declaration only refines it.
+func declaredSourceContradiction(key string, res sourceResolution, c report.ProcessedCluster, scanless bool) string {
+	if scanless || res.platform == "" || res.from == "scan" {
+		return ""
+	}
+	scanPlatform := scanPlatformOf(c)
+	contradicts := (scanPlatform == enginePlatformMSK && res.platform != enginePlatformMSK) ||
+		(scanPlatform == enginePlatformOSK && res.platform == enginePlatformMSK)
+	if !contradicts {
+		return ""
+	}
+	return fmt.Sprintf(
+		"cluster %q: %s declares source_platform %q, but the scan detected %s for this cluster. Remove it or change the source.",
+		key, res.from, platformToken(res.platform), scanPlatform)
+}
+
+// knownSourcePlatforms lists every source platform an option's Applies might
+// distinguish. allowedSourcesFor evaluates Applies against each directly, so the
+// error text never hardcodes which platforms a given gate (e.g. engine.IsMSK vs
+// engine.IsOSKorCP) allows.
+var knownSourcePlatforms = []string{enginePlatformMSK, enginePlatformOSK, enginePlatformCP}
+
+// allowedSourcesFor returns the source platforms (in knownSourcePlatforms order)
+// for which applies evaluates true.
+func allowedSourcesFor(applies func(p engine.Profile) bool) []string {
+	var out []string
+	for _, platform := range knownSourcePlatforms {
+		sourceType, _, _ := resolveSourceType(platform)
+		if applies(engine.Profile{SourceType: sourceType, SourcePlatform: platform}) {
+			out = append(out, platform)
+		}
+	}
+	return out
+}
+
+// sourcesPhrase renders an allowed-sources list as a natural phrase, e.g. "an
+// Amazon MSK source" or "an Apache Kafka or Confluent Platform source" — with the
+// grammatically correct indefinite article for whichever platform comes first.
+func sourcesPhrase(platforms []string) string {
+	if len(platforms) == 0 {
+		return "no source"
+	}
+	return article(platforms[0]) + " " + strings.Join(platforms, " or ") + " source"
+}
+
 // BuildEnginePlan produces the engine-driven plan from processed state and the
 // customer-declared inputs. Each cluster is mapped through buildProfile and run
-// through engine.ComputePlan. Inputs are layered: fleet-wide `defaults:` are
+// through engine.ComputePlan. Inputs are layered: fleet-wide `all_clusters:` are
 // overlaid with each cluster's own answers (declared.For(key)).
 func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, stateFilePath string, now func() time.Time) *EnginePlan {
 	if now == nil {
@@ -260,6 +512,10 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 	// No state file means a pure questionnaire: every scan-derivable fact is really
 	// an answer, so provenance leads must read "your answer", not "your scan".
 	scanless := stateFilePath == ""
+	// Collected across the loop below so the header can name the real per-cluster
+	// source (the resolved profile.SourcePlatform: the declared answer if given,
+	// else the scanned source kind) instead of just the scan kind.
+	var platforms []string
 	for i, c := range clusters {
 		key := keys[i]
 		in := declared.For(key)
@@ -280,6 +536,8 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		anyMoves := anyAppMovesData(in, appInputs)
 
 		profile := buildProfile(c, in, srKind, scanless)
+		profile.StateFile = stateFilePath
+		platforms = append(platforms, profile.SourcePlatform)
 		if len(appNames) > 0 {
 			profile.NeedsDataMigration = anyMoves
 			profile.AnyAppNeedsDataMigration = anyMoves
@@ -301,6 +559,8 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		}
 
 		clusterPlanResult := engine.ComputePlan(profile)
+		unusedOwn := unusedAnswers(clusterOwn, clusterQuestions)
+		unusedDefaults := unusedAnswers(declared.Defaults, clusterQuestions)
 		clusterContingent, clusterInert := computeContingent(c, in, srKind, scanless, clusterPlanResult, clusterQuestions)
 		downgradeInert(clusterQuestions, clusterInert)
 		cp := ClusterPlan{
@@ -315,20 +575,40 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 			// Reflect the effective profile, not the raw scan: a source_cluster_type
 			// override (e.g. no-scan mode, or correcting a mis-scan) can make the plan
 			// serverless, and this flag must agree with the switchover path it drives.
-			IsServerless:    engine.IsServerless(profile),
-			TopicCount:      topicCount(c),
-			BrokerCount:     brokerCount(c),
-			PartitionCount:  userPartitionsOf(c),
-			SourceAuths:     sourceAuthsDetected(c),
-			ScanFacts:       scanFacts,
-			Questions:       clusterQuestions,
-			Observations:    clusterObservations(c, profile),
-			Plan:            clusterPlanResult,
-			Contingent:      clusterContingent,
-			SchemaSource:    schemaSrc,
-			ConnectorSource: connectorSourceFromProfile(profile),
+			IsServerless:          engine.IsServerless(profile),
+			TopicCount:            topicCount(c),
+			BrokerCount:           brokerCount(c),
+			PartitionCount:        userPartitionsOf(c),
+			SourceAuths:           sourceAuthsDetected(c),
+			ScanFacts:             scanFacts,
+			Questions:             clusterQuestions,
+			unusedOwn:             unusedOwn,
+			unusedDefaults:        unusedDefaults,
+			Observations:          clusterObservations(c, profile),
+			Plan:                  clusterPlanResult,
+			Contingent:            clusterContingent,
+			sourceDeclaredMSK:     in.SourcePlatform == enginePlatformMSK,
+			scanScramMechanism:    scannedScramMechanism(c),
+			topicsScanned:         c.KafkaAdminClientInformation.Topics != nil,
+			schemaRegistryScanned: state.SchemaRegistries != nil && (len(state.SchemaRegistries.ConfluentSchemaRegistry) > 0 || len(state.SchemaRegistries.AWSGlue) > 0),
+			SchemaSource:          schemaSrc,
+			ConnectorSource:       connectorSourceFromProfile(profile),
 		}
 		cp.effectiveSourceAuths = engineAuthToKCP(profile.SourceAuthTypes)
+		// Through the Gateway the client's mTLS is swapped for an API key, so the hint
+		// that says we keep it as-is would contradict the plan.
+		if gatewayServesMTLS(cp) {
+			for i := range cp.Questions {
+				if cp.Questions[i].Key == "target_auth" {
+					cp.Questions[i].Hint = targetAuthHintGatewayMTLS
+				}
+			}
+		}
+		// plan.json's source_auths follows the effective auth too, so a source_auth
+		// override is reflected there (the scan value stands when nothing is effective).
+		if len(cp.effectiveSourceAuths) > 0 {
+			cp.SourceAuths = append([]string(nil), cp.effectiveSourceAuths...)
+		}
 		// Store the EFFECTIVE target cloud (after the source-cloud fallback), not the raw
 		// answer — so the render's cloud vocabulary (VPC/VNet/VPC network) is right for an
 		// OSK/CP source on Azure/GCP with no explicit target. MSK resolves to AWS as before.
@@ -336,8 +616,9 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		cp.State = clusterState(cp)
 		// Per-half states, mirroring the plan.md summary columns so a consumer can
 		// reproduce the Infrastructure/Application badges from plan.json.
-		cp.InfraState = planGroupStateCode(cp.Plan.Withheld, cp.Contingent, infraVerdicts)
-		cp.AppState = planGroupStateCode(cp.Plan.Withheld, cp.Contingent, appVerdicts)
+		hold := openRequiredUnheld(cp)
+		cp.InfraState = planGroupStateCode(cp.Plan.Withheld, cp.Contingent, infraVerdicts, hold)
+		cp.AppState = planGroupStateCode(cp.Plan.Withheld, cp.Contingent, appVerdicts, hold)
 		// A withheld cluster shows no verdicts (plan.md and plan.json both redact
 		// them), so its contingent map, which references those hidden verdicts, is
 		// dropped too.
@@ -346,6 +627,7 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		}
 		for i, name := range appNames {
 			ap := buildProfile(c, appInputs[i], srKind, scanless)
+			ap.StateFile = stateFilePath
 			ap.AnyAppNeedsDataMigration = anyMoves
 			appQs := appScopedQuestions(resolveQuestions(ap, appInputs[i]))
 			appOwn := declared.Clusters[key].Apps[name]
@@ -366,8 +648,38 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		}
 		ep.Clusters = append(ep.Clusters, cp)
 	}
+	ep.Header.Source = headerSourceFromPlatforms(platforms, ep.Header.Source)
 	ep.Summary = summarize(ep)
 	return ep
+}
+
+// headerSourceFromPlatforms names the plan header by each cluster's resolved
+// source_platform (the declared source_platform answer if given, else the scanned
+// source kind — see buildProfile), rather than the scan kind alone: a scanless
+// Confluent Platform source should say "Confluent Platform", not "Amazon MSK", and
+// a scanned Confluent Platform source (which scans as OSK) should say "Confluent
+// Platform", not "Apache Kafka". All clusters resolving to the same platform name
+// it; a fleet mixing platforms lists each distinct one. No clusters at all falls
+// back to the scan-kind label already computed.
+func headerSourceFromPlatforms(platforms []string, fallback string) string {
+	seen := map[string]bool{}
+	var distinct []string
+	for _, p := range platforms {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		distinct = append(distinct, p)
+	}
+	switch len(distinct) {
+	case 0:
+		return fallback
+	case 1:
+		return distinct[0]
+	default:
+		sort.Strings(distinct)
+		return strings.Join(distinct, ", ")
+	}
 }
 
 // nonMSKPlatform returns the source platform display name for a non-MSK profile
@@ -495,10 +807,19 @@ func annotateAnswerSource(qs []ResolvedQuestion, levels []answerLevel, scanless 
 		if !ok {
 			continue
 		}
+		sourced := false
 		for _, lv := range levels {
-			if len(q.engineValues(lv.in)) > 0 {
+			ev := q.engineValues(lv.in)
+			if len(ev) == 0 {
+				continue
+			}
+			if lv.name == sourceAllClusters && !qs[i].fleetSet {
+				qs[i].fleetSet = true
+				qs[i].fleetVal = joinList(mapEngineTokens(q, ev))
+			}
+			if !sourced {
 				qs[i].Source = lv.name
-				break
+				sourced = true
 			}
 		}
 		if qs[i].Source == "" && qs[i].Value != "" {
@@ -759,7 +1080,9 @@ func computeContingent(c report.ProcessedCluster, in IntakeInputs, srKind string
 		// scan-derivable input the scan didn't capture is genuinely needed even when a
 		// missing dependent answer leaves it momentarily unconsumed — only INTAKE
 		// questions are downgraded when provably inert.
-		if !moved && !q.requiredWhenMissing {
+		// source_platform is exempt: it changes the RBAC note, the cluster header, and the
+		// on-prem copy, none of which the recommendation fingerprint captures.
+		if !moved && !q.requiredWhenMissing && rq.Key != "source_platform" {
 			inert[rq.Key] = true
 		}
 	}
@@ -832,4 +1155,15 @@ func RenderEnginePlanJSON(ep *EnginePlan) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// scannedScramMechanism returns the SASL/SCRAM mechanism the scan recorded for the
+// cluster (SCRAM-SHA-256 or SCRAM-SHA-512), or "" when it recorded none or a
+// different SASL mechanism (e.g. PLAIN), which the migration link can't use.
+func scannedScramMechanism(c report.ProcessedCluster) string {
+	m := types.NormalizeSaslMechanism(c.KafkaAdminClientInformation.SaslMechanism)
+	if m == "SCRAM-SHA-256" || m == "SCRAM-SHA-512" {
+		return m
+	}
+	return ""
 }
