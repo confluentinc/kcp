@@ -51,7 +51,7 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `011..085`: rollback when a resume fails before its own fence step
+in `006..085`: a rejected switch must not let a re-run report completed `006..010` (static only), rollback when a resume fails before its own fence step
 `011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
 and through a rollback `026..030` (dynamic only), unrouted-producer detection
