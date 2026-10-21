@@ -782,6 +782,42 @@ func TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_Returns
 	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
+// A repeated rejection keeps its old lastTransitionTime and must not hang the wait.
+func TestWaitForGatewayAccepted_RepeatedRejectionWithOldTimestamp_IsRejected(t *testing.T) {
+	shortenRejectionSettleWindow(t, 20*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef no-such-secret not found", time.Now().Add(-2*time.Hour)),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+
+	var rejected *GatewayRejectedError
+	require.ErrorAs(t, err, &rejected)
+	assert.Contains(t, rejected.Message, "no-such-secret")
+}
+
+// The same leftover condition must not fail a spec the operator goes on to accept.
+func TestWaitForGatewayAccepted_OldConditionThenAccepted_ReturnsNil(t *testing.T) {
+	shortenRejectionSettleWindow(t, 200*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef no-such-secret not found", time.Now().Add(-2*time.Hour)),
+	))
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		obj, _ := cs.Resource(gatewayGVRForTest).Namespace(ns).Get(context.Background(), gw, metav1.GetOptions{})
+		_ = unstructured.SetNestedField(obj.Object, int64(4), "status", "observedGeneration")
+		_, _ = cs.Resource(gatewayGVRForTest).Namespace(ns).Update(context.Background(), obj, metav1.UpdateOptions{})
+	}()
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+
+	require.NoError(t, err)
+}
+
 func TestIsFatalGatewayConditionReason(t *testing.T) {
 	tests := []struct {
 		reason string
