@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -731,20 +732,55 @@ func runExecutePlan(t *testing.T, f fixture, res *migplan.Result, deps executorD
 	return out.String(), err
 }
 
-// A nothing-to-do result runs no state machine in either mode: no downstream
-// service is even built, and the run reports completion with nothing to do.
+// Serves a fixed Gateway CR to the nothing-to-do confirmation.
+type storedGateway struct {
+	stubGatewayServiceImpl
+	cr string
+}
+
+func (s storedGateway) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
+	return []byte(s.cr), nil
+}
+
+const (
+	gatewayCRHead     = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\n"
+	acceptedGatewayCR = gatewayCRHead + "metadata:\n  generation: 3\nstatus:\n  observedGeneration: 3\n"
+	rejectedGatewayCR = gatewayCRHead + "metadata:\n  generation: 4\nstatus:\n  observedGeneration: 3\n  conditions:\n" +
+		"  - type: platform.confluent.io/cluster-ready\n    status: \"False\"\n    reason: ApplyFailed\n" +
+		"    message: secretRef no-such-secret not found\n    lastTransitionTime: \"2020-01-01T00:00:00Z\"\n"
+)
+
+// Nothing to do builds only the gateway service, to confirm the operator took in the stored spec.
 func TestExecutePlan_NothingToDo_RunsNoStateMachine(t *testing.T) {
 	for _, mode := range []string{"static", "dynamic"} {
 		t.Run(mode, func(t *testing.T) {
 			var builds serviceBuilds
 			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
 
-			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(nil, nil), &builds))
+			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(storedGateway{cr: acceptedGatewayCR}, nil), &builds))
 
 			require.NoError(t, err)
-			assert.Zero(t, builds.total(), "no service may be built when there is nothing to do")
+			assert.Equal(t, serviceBuilds{gateway: 1}, builds, "only the gateway service may be built when there is nothing to do")
 			assert.Contains(t, out, "Migration completed: msk-prod-to-cc-batch-1")
 			assert.Contains(t, out, "nothing to do")
+		})
+	}
+}
+
+// Nothing left to migrate is not completion while the operator refuses the stored spec.
+func TestExecutePlan_NothingToDo_FailsWhenTheOperatorRejectedTheSpec(t *testing.T) {
+	for _, mode := range []string{"static", "dynamic"} {
+		t.Run(mode, func(t *testing.T) {
+			var builds serviceBuilds
+			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
+
+			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(storedGateway{cr: rejectedGatewayCR}, nil), &builds))
+
+			var rejected *gateway.GatewayRejectedError
+			require.ErrorAs(t, err, &rejected)
+			assert.Contains(t, rejected.Message, "secretRef no-such-secret not found")
+			assert.NotContains(t, out, "Migration completed")
+			assert.Equal(t, serviceBuilds{gateway: 1}, builds)
 		})
 	}
 }
@@ -822,12 +858,25 @@ func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
 	var builds serviceBuilds
 	res := &migplan.Result{Route: "migration-route", Mode: "convert", NothingToDo: true}
 
-	out, err := runExecutePlan(t, convertFixture(t), res, countingDeps(stubDeps(nil, nil), &builds))
+	out, err := runExecutePlan(t, convertFixture(t), res, countingDeps(stubDeps(storedGateway{cr: acceptedGatewayCR}, nil), &builds))
 
 	require.NoError(t, err)
-	assert.Zero(t, builds.total())
+	assert.Equal(t, serviceBuilds{gateway: 1}, builds, "only the gateway service may be built when there is nothing to do")
 	assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1 — nothing to do: the route is already static on its target domain")
 	assert.NotContains(t, out, "Migration completed")
+}
+
+// A conversion whose static spec the operator refused is not complete.
+func TestExecutePlan_ConversionNothingToDo_FailsWhenTheOperatorRejectedTheSpec(t *testing.T) {
+	var builds serviceBuilds
+	res := &migplan.Result{Route: "migration-route", Mode: "convert", NothingToDo: true}
+
+	out, err := runExecutePlan(t, convertFixture(t), res, countingDeps(stubDeps(storedGateway{cr: rejectedGatewayCR}, nil), &builds))
+
+	var rejected *gateway.GatewayRejectedError
+	require.ErrorAs(t, err, &rejected)
+	assert.Contains(t, rejected.Message, "secretRef no-such-secret not found")
+	assert.NotContains(t, out, "completed")
 }
 
 // --- declared migration type: typed policies and flag applicability ---

@@ -408,6 +408,7 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 	var (
 		firstFailureAt time.Time
 		pending        *GatewayRejectedError
+		leftoverSince  time.Time
 	)
 
 	for noDeadline || time.Now().Before(deadline) {
@@ -440,6 +441,27 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		if err != nil {
 			return err
 		}
+		// A repeated rejection keeps its old lastTransitionTime, so it reads as stale.
+		if rejection == nil && observed < generation {
+			leftover, err := findGatewayRejection(gw, gatewayName, generation, observed, time.Time{})
+			if err != nil {
+				return err
+			}
+			switch {
+			case leftover == nil:
+				leftoverSince = time.Time{}
+			case leftoverSince.IsZero():
+				leftoverSince = time.Now()
+			case time.Since(leftoverSince) >= gatewayRejectionSettleWindow:
+				slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
+					"reason", leftover.Reason, "message", leftover.Message,
+					"generation", generation, "observedGeneration", observed)
+				return leftover
+			}
+		} else {
+			leftoverSince = time.Time{}
+		}
+
 		switch {
 		case rejection != nil && firstFailureAt.IsZero():
 			firstFailureAt = time.Now()
