@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -217,10 +218,11 @@ func executePlan(
 		return fmt.Errorf("internal error: the reconcile plan's mode %q does not match the declared %s (expected %q)", reconcileResult.Mode, t.SectionKey(), want)
 	}
 
-	// Nothing to do: every topic is already migrated and no offset-sync
-	// restore is owed — or, for a conversion, the route is already static on
-	// its target. No state machine runs and no service is built.
+	// Nothing to do: no state machine runs, but the stored spec must still be live.
 	if reconcileResult.NothingToDo {
+		if err := confirmGatewayAccepted(cmd.Context(), g, deps); err != nil {
+			return err
+		}
 		if t == manifest.MigrationTypeDynamicToStatic {
 			slog.Info("✅ nothing to do: the route is already static on its target domain", "migration_id", config.MigrationId)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Route conversion completed: %s — nothing to do: the route is already static on its target domain\n", config.MigrationId)
@@ -239,6 +241,24 @@ func executePlan(
 	default: // manifest.MigrationTypeStatic
 		return runStaticBranch(cmd, g, config, reconcileResult, deps)
 	}
+}
+
+// Reconcile reads the stored spec, not the operator's verdict on it.
+func confirmGatewayAccepted(ctx context.Context, g *manifest.GatewayMigration, deps executorDependencies) error {
+	namespace, name := g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName
+	svc, err := deps.gateway(g)
+	if err != nil {
+		return fmt.Errorf("failed to build gateway service: %w", err)
+	}
+	stored, err := svc.GetGatewayYAML(ctx, namespace, name)
+	if err != nil {
+		return fmt.Errorf("failed to read gateway %q to confirm the migration landed: %w", name, err)
+	}
+	if err := gateway.CheckAccepted(stored, name); err != nil {
+		return fmt.Errorf("the migration is not complete, the gateway is not running its stored spec: %w\n"+
+			"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", err, namespace, name)
+	}
+	return nil
 }
 
 // planModeFor is the migplan.Result.Mode a plan reconciled for t carries.
