@@ -21,7 +21,7 @@ KCP is a CLI tool for planning and executing Apache Kafka® migrations to Conflu
 >
 > Pin a version with `KCP_VERSION=v0.8.5` or change the target directory with `KCP_INSTALL_DIR="$HOME/.local/bin"`.
 
-Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64) with every [release on GitHub](https://github.com/confluentinc/kcp/releases/latest).
+Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64) with every [release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Each release includes these assets: `kcp_darwin_amd64`, `kcp_darwin_arm64`, `kcp_linux_amd64`, `kcp_linux_arm64`, and `kcp_windows_amd64.exe`.
 
 > [!IMPORTANT]
 > Always install a released binary. Building from the `main` branch produces an unreleased, in-development build — see [CONTRIBUTING](https://github.com/confluentinc/kcp/blob/main/CONTRIBUTING.md) if you intend to build from source.
@@ -40,6 +40,9 @@ To download manually instead of using the install script, the tabs below show th
 
     curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
     chmod +x kcp
+    ./kcp version
+
+    # Optional: put kcp on your PATH so you can run it from any directory
     sudo mv kcp /usr/local/bin/kcp
     kcp version
     ```
@@ -54,6 +57,9 @@ To download manually instead of using the install script, the tabs below show th
 
     curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
     chmod +x kcp
+    ./kcp version
+
+    # Optional: put kcp on your PATH so you can run it from any directory
     sudo mv kcp /usr/local/bin/kcp
     kcp version
     ```
@@ -83,11 +89,11 @@ Each command's per-command AWS IAM permission requirements are documented on its
 > [!NOTE]
 > **Apache Kafka** migrations do not require AWS authentication. Apache Kafka clusters are accessed directly via Kafka Admin API using the credentials you provide in `apache-kafka-credentials.yaml`. See [`kcp scan clusters`](command-reference/scan/clusters.md) for details.
 
-## Workflow
+## High-Level Workflow
 
 The typical migration flow:
 
-1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`.
+1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`. See [Getting started](getting-started.md) for the step-by-step runbook.
 2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
 3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
 4. **Initialize and execute client switchover** — `kcp migration init` followed by `kcp migration execute`.
