@@ -33,6 +33,8 @@ Everything is written to a single state file, `kcp-state.json`, which later comm
 
     Your machine must be able to reach the brokers (and, for the optional scans, the Schema Registry and Kafka Connect REST endpoints). No AWS credentials are needed.
 
+To run `kcp` from a container instead of installing the binary, see [Running kcp in Docker](running-kcp-in-docker.md), which shows how to run these same commands in a container.
+
 Where a command needs a password, this page writes it as an environment variable (`$sr_password`, `$connect_password`). Export the variable first, or substitute the value directly in the command; either works.
 
 ## 1. Discover (MSK only)
