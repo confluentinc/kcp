@@ -67,8 +67,10 @@ func NewScanClustersCmd() *cobra.Command {
 
 Source-specific notes:
 
-- ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
+- ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. Enable exactly one authentication method per cluster in that file before scanning. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
 - ` + "`--source-type apache-kafka`" + ` reads from a hand-authored ` + "`apache-kafka-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [Apache Kafka configuration → Credentials](../../apache-kafka-configuration/credentials.md).
+
+For the step-by-step workflow from discovery to viewing the results, see [Getting started](../../getting-started.md).
 
 Consumer groups:
 

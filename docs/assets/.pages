@@ -1,6 +1,8 @@
 nav:
 
-- Home: README.md
+- Home:
+  - README.md
+  - Getting Started: getting-started.md
 - Source Compatibility: source-compatibility.md
 - command-reference
 - apache-kafka-configuration

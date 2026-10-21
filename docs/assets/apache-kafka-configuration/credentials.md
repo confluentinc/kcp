@@ -29,6 +29,22 @@ clusters:
         mechanism: SHA256
 ```
 
+## SASL over TLS with a private CA
+
+```yaml
+clusters:
+  - id: private-ca-kafka
+    bootstrap_servers:
+      - broker1.example.com:9093
+    auth_method:
+      sasl_scram:
+        use: true
+        username: admin
+        password: changeme
+        mechanism: SHA512
+        ca_cert: /path/to/ca.pem
+```
+
 ## Full example — multiple clusters, mixed auth, metrics
 
 ```yaml
@@ -105,6 +121,7 @@ clusters:
 | `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `create-asset` commands. |
 | `bootstrap_servers` | list of strings  | yes      | Broker `host:port` addresses.                                                                                                                |
 | `auth_method`       | object           | yes      | Authentication method. Choose **exactly one** sub-block (see below).                                                                         |
+| `insecure_skip_tls_verify` | bool      | no       | Disables server certificate verification for this cluster's Kafka connection. Does not affect `jolokia` or `prometheus`, which have their own `tls.insecure_skip_verify`. With `sasl_plain` it only applies when TLS is on (`ca_cert` or `tls: true`). |
 | `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point endpoints to Connect workers rather than brokers. |
 | `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters` or `kcp scan self-managed-connectors`. |
 | `metadata`          | map<string,string> | no     | Free-form labels surfaced in reports and the UI (e.g. `environment`, `location`).                                                            |
@@ -113,10 +130,17 @@ clusters:
 
 | Sub-block                   | Use case                              | Required fields                                                  |
 | --------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
-| `sasl_scram`                | SASL/SCRAM-SHA-256 or SHA-512         | `use: true`, `username`, `password`, `mechanism` (`SHA256`/`SHA512`) |
-| `sasl_plain`                | SASL/PLAIN                            | `use: true`, `username`, `password`                              |
+| `sasl_scram`                | SASL/SCRAM-SHA-256 or SHA-512 over TLS | `use: true`, `username`, `password`, `mechanism` (`SHA256`/`SHA512`); optional `ca_cert` |
+| `sasl_plain`                | SASL/PLAIN, plaintext or over TLS     | `use: true`, `username`, `password`; optional `ca_cert` or `tls: true` |
 | `tls`                       | TLS / mTLS with client certs          | `use: true`, `ca_cert`, `client_cert`, `client_key`              |
+| `unauthenticated_tls`       | TLS with no client authentication     | `use: true`; optional `ca_cert`                                  |
 | `unauthenticated_plaintext` | No auth (test environments only)      | `use: true`                                                      |
+
+!!! note "TLS for SASL blocks"
+
+    `sasl_scram` always connects over TLS. `ca_cert` names the CA to trust; without it, `kcp` uses the system trust store. Set it when the brokers present a certificate from a private CA.
+
+    `sasl_plain` connects in plaintext unless TLS is selected: set `ca_cert` for a private CA, or `tls: true` for a certificate signed by a public CA (system trust store).
 
 !!! note "SCRAM mechanism for Apache Kafka vs MSK"
 
