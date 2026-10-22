@@ -33,20 +33,20 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp scan clusters`                                     | Yes                     | No                                     | Yes                         |
 | `kcp scan msk-connectors`                           | Yes (pass `--metrics-granularity` to also pull per-connector CloudWatch metrics) | Limited (only if MSK Connect connectors target the cluster) | No                          |
 | `kcp scan schema-registry`                              | Yes                     | Yes                                    | Yes                         |
-| `kcp create-asset bastion-host`                         | N/A                     | N/A                                    | N/A                         |
-| `kcp create-asset migrate-acls iam`                     | Yes                     | Limited (manual IAM user/role mapping) | No                          |
-| `kcp create-asset migrate-acls kafka`                   | Yes                     | No                                     | Yes                         |
-| `kcp create-asset migrate-connectors connector-utility` | Yes                     | Yes                                    | Yes                         |
-| `kcp create-asset migrate-connectors msk`               | Yes                     | Yes                                    | Yes                         |
-| `kcp create-asset migrate-connectors self-managed`      | Yes                     | No                                     | Yes                         |
-| `kcp create-asset migrate-schemas`                      | Yes                     | Yes                                    | Yes                         |
-| `kcp create-asset migrate-topics`                       | Yes                     | No                                     | Yes                         |
-| `kcp create-asset migration-infra` - Type 1             | Yes                     | N/A                                    | AWS only                    |
-| `kcp create-asset migration-infra` - Type 2             | Yes                     | N/A                                    | AWS only                    |
-| `kcp create-asset migration-infra` - Type 3             | Yes                     | N/A                                    | AWS only                    |
-| `kcp create-asset migration-infra` - Type 4             | Yes                     | N/A                                    | AWS only                    |
-| `kcp create-asset migration-infra` - Type 5             | Yes                     | Yes                                    | AWS only - Requires IAM JAR |
-| `kcp create-asset target-infra`                         | N/A                     | N/A                                    | N/A                         |
+| `kcp iac bastion-host generate`                         | N/A                     | N/A                                    | N/A                         |
+| `kcp iac acls iam generate`                             | Yes                     | Limited (manual IAM user/role mapping) | No                          |
+| `kcp iac acls kafka generate`                           | Yes                     | No                                     | Yes                         |
+| `kcp iac connectors connector-utility generate`         | Yes                     | Yes                                    | Yes                         |
+| `kcp iac connectors msk generate`                       | Yes                     | Yes                                    | Yes                         |
+| `kcp iac connectors self-managed generate`              | Yes                     | No                                     | Yes                         |
+| `kcp iac schemas generate`                              | Yes                     | Yes                                    | Yes                         |
+| `kcp iac topics generate`                               | Yes                     | No                                     | Yes                         |
+| `kcp iac migration-infra generate` - Type 1             | Yes                     | N/A                                    | AWS only                    |
+| `kcp iac migration-infra generate` - Type 2             | Yes                     | N/A                                    | AWS only                    |
+| `kcp iac migration-infra generate` - Type 3             | Yes                     | N/A                                    | AWS only                    |
+| `kcp iac migration-infra generate` - Type 4             | Yes                     | N/A                                    | AWS only                    |
+| `kcp iac migration-infra generate` - Type 5             | Yes                     | Yes                                    | AWS only - Requires IAM JAR |
+| `kcp iac target-infra generate`                         | N/A                     | N/A                                    | N/A                         |
 | `kcp migration init`                                    | Yes                     | No                                     | Yes                         |
 | `kcp migration lag-check`                               | Yes                     | No                                     | Yes                         |
 | `kcp migration execute`                                 | Yes                     | No                                     | Yes                         |
@@ -76,23 +76,23 @@ For every group KCP records its id, state, coordinator, and **type**. The type i
 
 ## Confluent Cloud destination
 
-The matrix above describes _source_ support. Independently, three `create-asset` commands require a `--cc-type` declaration naming the Confluent Cloud _destination_ — `commercial` (Standard) or `government` (**Confluent Cloud for Government**):
+The matrix above describes _source_ support. Independently, three `kcp iac` commands require a `--cc-type` declaration naming the Confluent Cloud _destination_ — `commercial` (Standard) or `government` (**Confluent Cloud for Government**):
 
-- `kcp create-asset migration-infra`
-- `kcp create-asset migrate-topics`
-- `kcp create-asset migrate-schemas`
+- `kcp iac migration-infra generate`
+- `kcp iac topics generate`
+- `kcp iac schemas generate`
 
 The declaration is **required** on these three commands (there is no default). It is not accepted on any other command.
 
 **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
 
-| Path                                            | `commercial` (Standard) | `government` (Government)              |
-| :---------------------------------------------- | :---------------------- | :-------------------------------------------- |
-| `migration-infra` (all `--type` values)         | Supported       | Refused — relies on Cluster Linking           |
-| `migrate-topics --mode mirror`                  | Supported       | Refused — use `--mode new` instead            |
-| `migrate-topics --mode new`                     | Supported       | Supported                                     |
-| `migrate-schemas --url` (Schema Exporter)       | Supported       | Refused — use `--glue-registry` instead       |
-| `migrate-schemas --glue-registry`               | Supported       | Supported                                     |
+| Path                                             | `commercial` (Standard) | `government` (Government)              |
+| :----------------------------------------------- | :---------------------- | :-------------------------------------------- |
+| `migration-infra generate` (all `--type` values) | Supported       | Refused — relies on Cluster Linking           |
+| `topics generate --mode mirror`                  | Supported       | Refused — use `--mode new` instead            |
+| `topics generate --mode new`                     | Supported       | Supported                                     |
+| `schemas generate --url` (Schema Exporter)       | Supported       | Refused — use `--glue-registry` instead       |
+| `schemas generate --glue-registry`               | Supported       | Supported                                     |
 
 ---
 

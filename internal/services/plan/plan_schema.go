@@ -557,7 +557,7 @@ const (
 // SchemaPath is the recommended migration path:
 //   - `schema_linking` — Schema Linking from source Confluent SR → CC SR
 //     (zero-data-loss mirror; all three eligibility constraints hold).
-//   - `kcp_migrate_schemas_glue` — `kcp create-asset migrate-schemas
+//   - `kcp_migrate_schemas_glue` — `kcp iac schemas generate
 //     --glue-registry` generates Terraform that imports every Glue
 //     schema into CC SR in one apply.
 //   - `defer_to_account_team` — Confluent SR detected but Schema-Linking

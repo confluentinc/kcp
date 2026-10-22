@@ -135,7 +135,7 @@ func otherClusterArn(clusterArn, restype, resourceName, token string) string {
 // policy: two "kafka-cluster:*" statements, one scoped to topicArn and one to
 // groupArn — a realistic shape (kafka-cluster:* is how MSK IAM grants are
 // commonly authored; see the reference generator in
-// cmd/create_asset/migrate_acls/iam_acls) that also exercises the
+// cmd/iac/acls/iam_acls) that also exercises the
 // per-resource-type expansion translateStatements performs for it (fix 3,
 // iam_translate.go doc comment). Returns the role's ARN exactly as AWS
 // assigns it (never reconstructed by hand). Teardown is registered via

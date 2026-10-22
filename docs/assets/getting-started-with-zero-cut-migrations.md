@@ -1,6 +1,6 @@
 # Confluent Cloud Migration: KCP + Gateway Reference Guide
 
-**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
+**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp iac`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
 
 ---
 
@@ -54,12 +54,12 @@ KCP itself needs credentials to the source cluster's cloud provider in the stand
 
 ### 4.2 Migration Infrastructure Types
 
-For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via `kcp create-asset migration-infra`. This covers four connectivity patterns:
+For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via `kcp iac migration-infra generate`. This covers four connectivity patterns:
 
 For non-MSK clusters and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
 
 > [!NOTE]
-> **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `create-asset` paths (`migration-infra` for all types, `migrate-topics --mode mirror`, and `migrate-schemas --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
+> **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `kcp iac` paths (`migration-infra` for all types, `topics generate --mode mirror`, and `schemas generate --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
 
 ---
 
@@ -97,7 +97,7 @@ IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS befo
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
 3. Once all clients are confirmed on SCRAM, they can onboard to the gateway.
 
-For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp create-asset migrate-acls iam` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://confluentinc.github.io/kcp/).
+For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp iac acls iam generate` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://confluentinc.github.io/kcp/).
 
 ### 5.3 SASL/SCRAM: How the Gateway Handles It
 
@@ -178,7 +178,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Gateway HA**: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.
 
-**Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
+**Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp iac target-infra generate` with appropriate sizing gives you the CC estimate.
 
 **Rollback states**:
 

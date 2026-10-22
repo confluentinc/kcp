@@ -212,8 +212,8 @@ func signalSelfManagedConnectFleets(clusters []report.ProcessedCluster) EffortSi
 // Cross-references `discovered_clients[]` against the Glue schemas:
 // count clients whose Topic name matches a Glue schema name directly
 // or via the standard `<topic>-value` / `<topic>-key` subject suffix.
-// Server-side schema export is automated by `kcp create-asset
-// migrate-schemas --glue-registry`; this row scopes the *client-side*
+// Server-side schema export is automated by `kcp iac schemas
+// generate --glue-registry`; this row scopes the *client-side*
 // serializer-swap workstream.
 func signalGlueSerializerMigration(state report.ProcessedState, clusters []report.ProcessedCluster) EffortSignal {
 	sig := EffortSignal{
