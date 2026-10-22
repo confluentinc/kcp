@@ -89,7 +89,7 @@ The typical migration flow:
 
 1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`.
 2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
-3. **Generate migration assets for data migration** — `kcp iac <asset> generate` for `target-infra`, `migration-infra`, `topics`, `schemas`, `acls`, `connectors`.
+3. **Generate migration assets for data migration** — `kcp iac <asset> generate` for `target-infra`, `migration-infra`, `topics`, `schemas`; `kcp iac acls kafka|iam generate`; `kcp iac connectors msk|self-managed|connector-utility generate`.
 4. **Initialize and execute client switchover** — `kcp migration init` followed by `kcp migration execute`.
 
 The [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md) guide walks through the end-to-end migration reference, including how KCP fits with the [Confluent Cloud Gateway](https://docs.confluent.io/cloud/current/cp-component/gateway/overview.html).

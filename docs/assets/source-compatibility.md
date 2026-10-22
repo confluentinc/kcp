@@ -1,6 +1,6 @@
 # Source compatibility
 
-KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not every command supports every source flavour today. This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
+KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not every command supports every source flavour today. `kcp migration resources` additionally accepts **Confluent Platform** as a source; see [Direct API migration](#direct-api-migration). This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
 
 > [!TIP]
 > Looking for _how_ a command works? See the [Command Reference](command-reference/index.md). This page covers _whether_ it works for your source.
@@ -51,9 +51,27 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp migration lag-check`                               | Yes                     | No                                     | Yes                         |
 | `kcp migration execute`                                 | Yes                     | No                                     | Yes                         |
 | `kcp migration list`                                    | Yes                     | No                                     | Yes                         |
+| `kcp migration resources create`                        | Yes                     | No                                     | Yes                         |
+| `kcp migration resources validate`                      | Yes                     | No                                     | Yes                         |
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |
 
 </div>
+
+## Direct API migration
+
+`kcp migration resources create` and `validate` apply a cluster link, topics, and ACLs to the target through its APIs rather than generating Terraform, driven by a `Migration` manifest. Beyond the matrix above:
+
+| Aspect                | Support                                                                                                  |
+| :-------------------- | :------------------------------------------------------------------------------------------------------- |
+| Sources               | MSK, Apache Kafka, Confluent Platform                                                                    |
+| Targets               | Confluent Cloud, Confluent Platform                                                                      |
+| Cluster link          | Destination-initiated, or source-initiated when the source is Confluent Platform                         |
+| Topics                | Mirror topics or new topics                                                                              |
+| Service accounts      | Confluent Cloud targets                                                                                  |
+| ACLs                  | Kafka ACLs and MSK IAM policies, to Confluent Cloud targets only (`spec.acls` is rejected for Confluent Platform targets) |
+| Schemas, connectors   | Not supported; use `kcp iac schemas generate` and `kcp iac connectors ... generate`                      |
+| Jump cluster          | Not supported (migration types 4 and 5), so IAM-only sources such as MSK Serverless cannot use this path       |
+| Target infrastructure | Not supported; use `kcp iac target-infra generate` and `kcp iac migration-infra generate`                |
 
 ## Consumer group discovery
 
