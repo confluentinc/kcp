@@ -20,7 +20,6 @@ func NewIacCmd() *cobra.Command {
 		Long:  "Generate various infrastructure and migration assets including bastion host configurations, data migration tools, and target environment setups.",
 	}
 
-	// Add subcommands
 	iacCmd.AddCommand(
 		utils.NewNounCmd("bastion-host", bastion_host.NewGenerateCmd()),
 		acls.NewAclsCmd(),
