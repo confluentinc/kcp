@@ -84,7 +84,7 @@ func NewGenerateCmd() *cobra.Command {
 	_ = aclsCmd.MarkFlagRequired("state-file")
 	_ = aclsCmd.MarkFlagRequired("cluster-id")
 	_ = aclsCmd.MarkFlagRequired("target-cluster-id")
-	_ = aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
+	_ = aclsCmd.MarkFlagRequired("target-rest-endpoint")
 
 	return aclsCmd
 }
