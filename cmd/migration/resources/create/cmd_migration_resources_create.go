@@ -1,4 +1,4 @@
-package apply
+package create
 
 import (
 	"context"
@@ -280,22 +280,22 @@ func splitResourceArnsForSimulation(resources []string) [][]string {
 // service accounts. It is a package-level var so tests can point it at a stub.
 var ccIAMBaseURL = msa.DefaultBaseURL
 
-func NewMigrateApplyCmd() *cobra.Command {
+func NewMigrationResourcesCreateCmd() *cobra.Command {
 	var file string
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:           "apply",
-		Short:         "Apply a migration manifest (additively reconcile the target)",
+		Use:           "create",
+		Short:         "Create the resources in a migration manifest (additive; existing resources are left untouched)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PreRunE:       func(cmd *cobra.Command, _ []string) error { return utils.BindEnvToFlags(cmd) },
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runApply(cmd, file, dryRun)
+			return runCreate(cmd, file, dryRun)
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to the migration manifest (required)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the changes without applying them")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the changes without making them")
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
 }
@@ -326,7 +326,7 @@ func (f aclSetupFailed) Apply(context.Context, reconcile.Plan) (reconcile.Outcom
 	return reconcile.Outcome{}, f.err
 }
 
-func runApply(cmd *cobra.Command, file string, dryRun bool) error {
+func runCreate(cmd *cobra.Command, file string, dryRun bool) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("reading manifest: %w", err)
@@ -344,7 +344,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 
 	// Phase 1 supports cluster-link, topics, and/or acls sections.
 	if m.Spec.ClusterLink == nil && m.Spec.Topics == nil && m.Spec.ACLs == nil {
-		return fmt.Errorf("nothing to apply: spec.clusterLink, spec.topics and/or spec.acls is required in this phase")
+		return fmt.Errorf("nothing to create: spec.clusterLink, spec.topics and/or spec.acls is required in this phase")
 	}
 
 	// --- source cluster id reader (spec.source → D1) ---

@@ -5,7 +5,7 @@
 // design, explicit principalArns mode — task-7 brief). It complements
 // acls_native_test.go (the native-ACL plane's live suite): the same house
 // pattern applies here — env-gated via loadCloudConfig/requireCloudKeys, a
-// run-unique scoped seed, a real `kcp migrate apply`, assertion of the
+// run-unique scoped seed, a real `kcp migration resources create`, assertion of the
 // command's OWN reported summary, a scoped read-back of concrete facts, and
 // re-apply idempotency — but the "native ACL on MSK" seed is replaced by a
 // real AWS IAM role carrying a "kafka-cluster:*" inline policy, and the
@@ -18,7 +18,7 @@
 // discoverAllRoles (enumeration — internal/migrate/acls' GatherEnumerated/
 // isExcludedIAMRole, backed by iamservice.GetAllRolePolicies) and
 // verifyEffectiveAccess (SimulatePrincipalPolicy — FilterEffective)
-// respectively. Both are now wired through cmd/migrate/apply
+// respectively. Both are now wired through cmd/migration/resources/create
 // (buildACLReconcilers): "not yet implemented" no longer applies to either.
 //
 // Env-gating: loadCloudConfig + requireCloudKeys, the same CC_*/MSK_* gate as
@@ -92,7 +92,7 @@ const iamTrustPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","
 
 // newTestIAMClient builds an AWS IAM client from the default credential chain
 // — the same chain client.NewIAMClient (internal/client/iam.go) uses when the
-// real `kcp migrate apply` run (via cmd/migrate/apply's newIAMFetcher) reads
+// real `kcp migration resources create` run (via cmd/migration/resources/create's newIAMFetcher) reads
 // this role's policies back. This is a SEPARATE client instance built only to
 // seed/tear down the throwaway role; KCP builds its own when it runs.
 func newTestIAMClient(t *testing.T) *iam.Client {
@@ -189,7 +189,7 @@ func seedIAMRole(t *testing.T, iamClient *iam.Client, roleName, topicArn, groupA
 
 // waitForRolePolicyVisible polls GetRolePolicy until the just-written inline
 // policy is readable, bounding IAM's eventual-consistency window before the
-// real `kcp migrate apply` run tries to read it — a read landing inside that
+// real `kcp migration resources create` run tries to read it — a read landing inside that
 // window would silently see zero IAM-derived ACLs (not an error), which would
 // otherwise flake this test rather than fail it loudly.
 func waitForRolePolicyVisible(t *testing.T, iamClient *iam.Client, roleName, policyName string) {
@@ -296,7 +296,7 @@ func opsOf(acls []types.Acls) []string {
 // seeds a real AWS IAM role carrying a "kafka-cluster:*" inline policy scoped
 // to the playground MSK cluster's topic+group resources, points
 // spec.acls.iam at it (explicit principalArns mode — discoverAllRoles/
-// verifyEffectiveAccess are Slice 2), runs the real `kcp migrate apply`, and
+// verifyEffectiveAccess are Slice 2), runs the real `kcp migration resources create`, and
 // asserts the migrated CC ACLs match the policy's grants exactly (after
 // operation-implication dedup, same rule the native plane goes through) plus
 // re-apply idempotency ("0 created, N unchanged") — the same idempotency
@@ -468,7 +468,7 @@ func TestACLsLive_IAMPlane_ExplicitPrincipal(t *testing.T) {
 // access on the SAME playground cluster): spec.acls.include is scoped to
 // "*<token>*", matching this run's unique principal/resource names only
 // (filterACLs matches include globs against Principal OR ResourceName —
-// cmd/migrate/apply's filterACLs). Enumeration itself still sweeps the whole
+// cmd/migration/resources/create's filterACLs). Enumeration itself still sweeps the whole
 // account (that is the feature under test), but only this run's own ACLs
 // can pass the include filter and reach the command's reported counts —
 // which is what lets this test assert an EXACT "acls: 8 created" rather
@@ -623,7 +623,7 @@ func TestACLsLive_IAMPlane_DiscoverAllRoles(t *testing.T) {
 // every drop path (Deny-only survivor, partial resource denial, kafka-cluster:*
 // expansion agreement, etc.). What ONLY a live run can prove is the
 // iam:SimulatePrincipalPolicy ROUND-TRIP itself: that
-// newEffectiveAccessChecker (cmd/migrate/apply/cmd_migrate_apply.go) calls
+// newEffectiveAccessChecker (cmd/migration/resources/create/cmd_migration_resources_create.go) calls
 // the real AWS API, correctly reads back its response shape, and that a role
 // with no SCP/boundary/deny anywhere in this AWS test account keeps its
 // grants — i.e. verifyEffectiveAccess does not spuriously drop a legitimate

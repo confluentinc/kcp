@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewMigrateValidateCmd() *cobra.Command {
+func NewMigrationResourcesValidateCmd() *cobra.Command {
 	var file string
 
 	cmd := &cobra.Command{

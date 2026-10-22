@@ -9,7 +9,7 @@ import (
 
 func runCmd(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	cmd := NewMigrateValidateCmd()
+	cmd := NewMigrationResourcesValidateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)

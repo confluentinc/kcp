@@ -160,12 +160,12 @@ test-env-up-migrate: ## Start the migrate test env (source + dest cp-server, all
 test-env-down-migrate: ## Stop the migrate test env
 	docker compose -f integration-tests/migrate/docker-compose.yml down -v
 
-test-migrate: build ## Run the migrate apply E2E tests (cluster link + topics, all source auth methods)
+test-migrate: build ## Run the `kcp migration resources create` E2E tests (cluster link + topics, all source auth methods)
 	$(MAKE) test-env-up-migrate
 	cd integration-tests/migrate && go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
 
-test-migrate-report: build ## Run the migrate apply E2E tests and write a markdown evidence report to integration-tests/migrate/migrate-report.md (gitignored)
+test-migrate-report: build ## Run the `kcp migration resources create` E2E tests and write a markdown evidence report to integration-tests/migrate/migrate-report.md (gitignored)
 	$(MAKE) test-env-up-migrate
 	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-report.md go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status

@@ -72,7 +72,7 @@ type GatewaySpec struct {
 type GatewayTarget struct {
 	Type string `yaml:"type" json:"type"`
 	// ClusterID is required for BOTH target types here. kind: Migration forbids
-	// it on confluent-platform because kcp migrate always discovers it; this
+	// it on confluent-platform because kcp migration resources always discovers it; this
 	// kind never discovers it, and pinning the id an operator already knows is
 	// the safer default ahead of an irreversible cutover.
 	ClusterID string       `yaml:"clusterId" json:"clusterId"`
@@ -138,7 +138,7 @@ type DefaultPolicies struct {
 
 // envelope is the minimum needed to discriminate one kind from another. It is
 // deliberately NOT strict: the body belongs to whichever kind claims it, and a
-// wrong-kind file must yield "this is a kcp migrate manifest" rather than a
+// wrong-kind file must yield "this is a Migration manifest" rather than a
 // field-by-field unknown-key dump.
 type envelope struct {
 	APIVersion string `yaml:"apiVersion"`
@@ -168,10 +168,10 @@ func ParseKind(data []byte) (string, error) {
 func wrongKindError(got, want string) error {
 	switch got {
 	case KindMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migrate`), but %q was expected — `kcp migration` reads a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration resources`), but %q was expected — `kcp migration init` reads a %s file",
 			KindMigration, want, KindGatewayMigration)
 	case KindGatewayMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migration`), but %q was expected — `kcp migrate` reads a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration init`), but %q was expected — `kcp migration resources` reads a %s file",
 			KindGatewayMigration, want, KindMigration)
 	default:
 		return fmt.Errorf("unsupported kind %q (expected %q)", got, want)

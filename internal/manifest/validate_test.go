@@ -309,7 +309,7 @@ func TestValidate_TargetKafkaCredentialsRejectedForMigrationKind(t *testing.T) {
 	// A baseline kind: Migration manifest sets no kafka credentials and is valid.
 	require.False(t, errorContains(validCC().Validate(), "spec.target.kafka.credentials"))
 
-	// spec.target.kafka.credentials belongs to kind: GatewayMigration; kcp migrate
+	// spec.target.kafka.credentials belongs to kind: GatewayMigration; kcp migration resources
 	// ignores it, so it must be rejected rather than silently dropped at apply.
 	m := validCC()
 	m.Spec.Target.Kafka.Credentials = NewCredentialsPath("./dest-creds.yaml")

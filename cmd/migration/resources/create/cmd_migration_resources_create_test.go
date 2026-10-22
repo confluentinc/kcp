@@ -1,4 +1,4 @@
-package apply
+package create
 
 import (
 	"bytes"
@@ -57,7 +57,7 @@ func startStubTarget(t *testing.T, linkExists bool) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// run executes the apply command with a source whose ClusterID is faked via the
+// run executes the create command with a source whose ClusterID is faked via the
 // newSourceReader package-level seam (see cmd implementation).
 func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err error) {
 	t.Helper()
@@ -78,7 +78,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	old := newSourceReader
 	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -91,7 +91,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	return outBuf.String(), errBuf.String(), err
 }
 
-func TestApply_DryRun_PrintsPlanNoCreate(t *testing.T) {
+func TestCreate_DryRun_PrintsPlanNoCreate(t *testing.T) {
 	srv := startStubTarget(t, false)
 	defer srv.Close()
 	out, _, err := run(t, srv.URL, true)
@@ -100,7 +100,7 @@ func TestApply_DryRun_PrintsPlanNoCreate(t *testing.T) {
 	require.Contains(t, out, "Planned")
 }
 
-func TestApply_CreatesLink(t *testing.T) {
+func TestCreate_CreatesLink(t *testing.T) {
 	srv := startStubTarget(t, false)
 	defer srv.Close()
 	out, _, err := run(t, srv.URL, false)
@@ -108,7 +108,7 @@ func TestApply_CreatesLink(t *testing.T) {
 	require.Contains(t, out, "1 created")
 }
 
-func TestApply_AlreadyPresent(t *testing.T) {
+func TestCreate_AlreadyPresent(t *testing.T) {
 	srv := startStubTarget(t, true)
 	defer srv.Close()
 	out, _, err := run(t, srv.URL, false)
@@ -152,7 +152,7 @@ func startStubLinkEndpoint(t *testing.T, cap *createCapture) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
+func TestCreate_SourceInitiated_CreatesBothSides(t *testing.T) {
 	destCap := &createCapture{clusterID: "dest-1"}
 	srcCap := &createCapture{clusterID: "src-rest-1"}
 	destSrv := startStubLinkEndpoint(t, destCap)
@@ -186,7 +186,7 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -316,7 +316,7 @@ func runManifest(t *testing.T, srvURL, specBody string, src migrate.Source, dryR
 	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return src }
 	t.Cleanup(func() { newSourceReader = old })
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -331,7 +331,7 @@ func runManifest(t *testing.T, srvURL, specBody string, src migrate.Source, dryR
 
 // mode:mirror — the mirrorTopics reconciler is appended AFTER the clusterLink
 // reconciler and runs against the target.
-func TestApply_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
+func TestCreate_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
 	srv := startStubTopicTarget(t)
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
@@ -348,7 +348,7 @@ func TestApply_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
 }
 
 // mode:new — the newTopics reconciler runs with NO clusterLink and does not error.
-func TestApply_TopicsNew_NoClusterLink(t *testing.T) {
+func TestCreate_TopicsNew_NoClusterLink(t *testing.T) {
 	srv := startStubTopicTarget(t)
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
@@ -362,8 +362,8 @@ func TestApply_TopicsNew_NoClusterLink(t *testing.T) {
 	require.Contains(t, out, "1 created")
 }
 
-// Neither clusterLink nor topics → the reworded nothing-to-apply error.
-func TestApply_NothingToApply(t *testing.T) {
+// Neither clusterLink nor topics → the reworded nothing-to-create error.
+func TestCreate_NothingToCreate(t *testing.T) {
 	srv := startStubTopicTarget(t)
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
@@ -376,7 +376,7 @@ func TestApply_NothingToApply(t *testing.T) {
 
 // runWithSourceCreds writes a manifest with the given source.type and a source
 // credentials file with the given body (used for both spec.source and the
-// clusterLink.source), stubs the live read, and runs apply. Returns the error.
+// clusterLink.source), stubs the live read, and runs create. Returns the error.
 func runWithSourceCreds(t *testing.T, sourceType, sourceCredsBody string) error {
 	t.Helper()
 	dir := t.TempDir()
@@ -394,7 +394,7 @@ func runWithSourceCreds(t *testing.T, sourceType, sourceCredsBody string) error 
 	old := newSourceReader
 	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -402,13 +402,13 @@ func runWithSourceCreds(t *testing.T, sourceType, sourceCredsBody string) error 
 	return cmd.Execute()
 }
 
-func TestApply_IAM_RejectedForApacheKafka(t *testing.T) {
+func TestCreate_IAM_RejectedForApacheKafka(t *testing.T) {
 	err := runWithSourceCreds(t, "apache-kafka", "iam: { region: us-east-1 }\n")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "iam auth requires spec.source.type: msk")
 }
 
-func TestApply_IAM_RejectedInLinkCreds(t *testing.T) {
+func TestCreate_IAM_RejectedInLinkCreds(t *testing.T) {
 	// source.type msk so the source-read check passes; the link creds (same file)
 	// must still be rejected because a link cannot speak IAM.
 	err := runWithSourceCreds(t, "msk", "iam: { region: us-east-1 }\n")
@@ -416,13 +416,13 @@ func TestApply_IAM_RejectedInLinkCreds(t *testing.T) {
 	require.Contains(t, err.Error(), "cannot authenticate a cluster link")
 }
 
-func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
+func TestCreate_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
 	lkc := "lkc-abc123"
 	createHit := false
 	mux := http.NewServeMux()
 	// CC has no list endpoint; if apply calls it, that's a bug.
 	mux.HandleFunc("/kafka/v3/clusters", func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("apply must not call GET /kafka/v3/clusters for a CC target")
+		t.Error("create must not call GET /kafka/v3/clusters for a CC target")
 		w.WriteHeader(http.StatusNotFound)
 	})
 	mux.HandleFunc("/kafka/v3/clusters/"+lkc+"/links/src-to-cc", func(w http.ResponseWriter, _ *http.Request) {
@@ -450,7 +450,7 @@ func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
 	old := newSourceReader
 	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
@@ -555,7 +555,7 @@ func startACLCaptureTarget(t *testing.T, clusterID string) *aclCaptureTarget {
 }
 
 // runACLApply writes a CC-target manifest with serviceAccounts.autoCreate and
-// acls.include ["*"], stubs the source ACL read + IAM base URL, and runs apply.
+// acls.include ["*"], stubs the source ACL read + IAM base URL, and runs create.
 func runACLApply(t *testing.T, tgt *aclCaptureTarget, clusterID string, dryRun bool) (stdout, stderr string, err error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -589,7 +589,7 @@ func runACLApply(t *testing.T, tgt *aclCaptureTarget, clusterID string, dryRun b
 		ccIAMBaseURL = oldBase
 	})
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -603,7 +603,7 @@ func runACLApply(t *testing.T, tgt *aclCaptureTarget, clusterID string, dryRun b
 }
 
 // Dry-run: the plan lists the service account + ACL and mutates nothing.
-func TestApply_ACLs_DryRun_PlansNoMutation(t *testing.T) {
+func TestCreate_ACLs_DryRun_PlansNoMutation(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl1")
 	out, errOut, err := runACLApply(t, tgt, "lkc-acl1", true)
 	require.NoError(t, err, "stderr: %s", errOut)
@@ -618,7 +618,7 @@ func TestApply_ACLs_DryRun_PlansNoMutation(t *testing.T) {
 
 // Apply: a service account is created, then an ACL with the principal rewritten
 // to the created User:sa- identity.
-func TestApply_ACLs_Apply_CreatesSAThenRewrittenACL(t *testing.T) {
+func TestCreate_ACLs_Apply_CreatesSAThenRewrittenACL(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl1")
 	out, errOut, err := runACLApply(t, tgt, "lkc-acl1", false)
 	require.NoError(t, err, "stderr: %s", errOut)
@@ -670,7 +670,7 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 		ccIAMBaseURL = oldBase
 	})
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf, logBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -689,9 +689,9 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 
 // unprotectedTopicPolicy: fail on an MSK source must fail closed: world-open
 // detection is not implemented, so the requested hard stop cannot be honored,
-// and apply must refuse rather than silently proceeding. No SA/ACL mutation
+// and create must refuse rather than silently proceeding. No SA/ACL mutation
 // should happen.
-func TestApply_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
+func TestCreate_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-fail")
 	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-fail", manifest.UnprotectedTopicPolicyFail)
 	require.Error(t, err)
@@ -703,8 +703,8 @@ func TestApply_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
 }
 
 // unprotectedTopicPolicy: warn (and the default/unset case) on an MSK source
-// must still emit the unenforced-detection caveat, but proceed with apply.
-func TestApply_ACLs_UnprotectedTopicPolicyWarn_MSK_ProceedsWithWarning(t *testing.T) {
+// must still emit the unenforced-detection caveat, but proceed with create.
+func TestCreate_ACLs_UnprotectedTopicPolicyWarn_MSK_ProceedsWithWarning(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-warn")
 	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-warn", manifest.UnprotectedTopicPolicyWarn)
 	require.NoError(t, err, "logs: %s", logs)
@@ -714,7 +714,7 @@ func TestApply_ACLs_UnprotectedTopicPolicyWarn_MSK_ProceedsWithWarning(t *testin
 	require.Equal(t, int64(1), tgt.aclPosts)
 }
 
-func TestApply_ACLs_UnprotectedTopicPolicyUnset_MSK_ProceedsWithWarning(t *testing.T) {
+func TestCreate_ACLs_UnprotectedTopicPolicyUnset_MSK_ProceedsWithWarning(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-unset")
 	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-unset", "")
 	require.NoError(t, err, "logs: %s", logs)
@@ -789,7 +789,7 @@ func runACLApplyIAMFull(t *testing.T, tgt *aclCaptureTarget, clusterID, iamYAML 
 		ccIAMBaseURL = oldBase
 	})
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var outBuf, errBuf, logBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -825,7 +825,7 @@ func iamFetcherOne(action, resourceArn string) macls.PrincipalPolicyFetcher {
 // (User:AppRole, Write, "payments" — a distinct principal/resource so this
 // test observes pure union, not the dedupe case) must both appear in the
 // planned acls set, and dry-run must mutate nothing.
-func TestApply_ACLs_IAM_UnionDryRun(t *testing.T) {
+func TestCreate_ACLs_IAM_UnionDryRun(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam1")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
@@ -841,7 +841,7 @@ func TestApply_ACLs_IAM_UnionDryRun(t *testing.T) {
 
 // The "effective access not verified" caveat must be emitted at WARN whenever
 // spec.acls.iam is set (explicit-principals mode), regardless of dry-run.
-func TestApply_ACLs_IAM_WarnLabelEmitted(t *testing.T) {
+func TestCreate_ACLs_IAM_WarnLabelEmitted(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam3")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
@@ -883,7 +883,7 @@ func fakeEnumeratedRole(principalArn, principalName, action, resourceArn string)
 // excluded by isExcludedIAMRole/GatherEnumerated — must contribute nothing,
 // even though enumerate() returns it right alongside the workload role. This
 // also confirms discoverAllRoles no longer errors.
-func TestApply_ACLs_IAM_DiscoverAllRoles_EnumeratesAndExcludes(t *testing.T) {
+func TestCreate_ACLs_IAM_DiscoverAllRoles_EnumeratesAndExcludes(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam4")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      discoverAllRoles: true\n"
 
@@ -913,7 +913,7 @@ func TestApply_ACLs_IAM_DiscoverAllRoles_EnumeratesAndExcludes(t *testing.T) {
 // identity policies + permission boundaries, never SCPs, so verify-ON emits
 // its own honest SCP-caveat WARN instead of the verify-OFF "not verified"
 // wording (which would now be inaccurate — verification DID run).
-func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndEmitsSCPCaveat(t *testing.T) {
+func TestCreate_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndEmitsSCPCaveat(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam5")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
 	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"
@@ -939,7 +939,7 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndEmitsSCPCaveat(t *te
 // blanket suppressor. The SCP-caveat WARN still fires (it documents a
 // limitation of verification itself, independent of any single grant's
 // outcome).
-func TestApply_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
+func TestCreate_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam5b")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
 	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"
@@ -966,10 +966,10 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
 // same principal (User:AppRole via testPrincipalArn) — Allow Read on Topic
 // "orders" — via two independent planes. Per the Phase 1B design ("union +
 // dedupe onto the target"), buildACLReconcilers now dedupes the normalized
-// Desired set (dedupeACLs in cmd_migrate_apply.go) before it reaches either
+// Desired set (dedupeACLs in cmd_migration_resources_create.go) before it reaches either
 // distinctPrincipals or the acls reconciler, so this identical tuple must be
 // created exactly once, not once per plane.
-func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DedupedToSingleCreate(t *testing.T) {
+func TestCreate_ACLs_IAM_IdenticalNativeAndIAMTuple_DedupedToSingleCreate(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam2")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	fetcher := iamFetcherOne("kafka-cluster:ReadData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders")
@@ -990,7 +990,7 @@ func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DedupedToSingleCreate(t *test
 // ReadIAMACLs translates every matching statement independently, so without
 // dedupeACLs this within-plane duplicate would double-create exactly like
 // the cross-plane case above.
-func TestApply_ACLs_IAM_TwoStatementsSameOpResource_DedupedToSingleCreate(t *testing.T) {
+func TestCreate_ACLs_IAM_TwoStatementsSameOpResource_DedupedToSingleCreate(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam6")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"
@@ -1023,7 +1023,7 @@ func TestApply_ACLs_IAM_TwoStatementsSameOpResource_DedupedToSingleCreate(t *tes
 // error. buildACLReconcilers must surface this with a WARN rather than
 // quietly proceeding as if the operator asked for nothing (Finding 2(b) /
 // task-7).
-func TestApply_ACLs_IAM_ZeroMatch_WarnsOperator(t *testing.T) {
+func TestCreate_ACLs_IAM_ZeroMatch_WarnsOperator(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam7")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	// Grant is scoped to a DIFFERENT cluster (name "OTHER", uuid "zzz-9") than
@@ -1041,9 +1041,9 @@ func TestApply_ACLs_IAM_ZeroMatch_WarnsOperator(t *testing.T) {
 
 // The zero-match warning must NOT fire when the IAM read legitimately
 // produces ACLs (the "happy path" already covered by
-// TestApply_ACLs_IAM_UnionDryRun) — this is the negative counterpart so the
+// TestCreate_ACLs_IAM_UnionDryRun) — this is the negative counterpart so the
 // new warning can't regress into firing unconditionally.
-func TestApply_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
+func TestCreate_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam8")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
@@ -1053,10 +1053,10 @@ func TestApply_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
 	require.NotContains(t, logs, "matched zero ACLs")
 }
 
-// TestApply_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack is the regression
+// TestCreate_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack is the regression
 // guard for the track-independence bug: buildACLReconcilers does eager live I/O
 // (source native-ACL read, IAM gather, CC numeric-principal map) during track
-// assembly, BEFORE eng.Run. Previously a setup failure there aborted runApply
+// assembly, BEFORE eng.Run. Previously a setup failure there aborted runCreate
 // early (return err), so the independent clusterLink/topics track — which needs
 // none of that — never ran. The engine's cross-track isolation only covers
 // failures INSIDE eng.Run, so the fix models the ACL-setup failure as a track-B
@@ -1065,7 +1065,7 @@ func TestApply_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
 // Here the source ACL read (newSourceACLLister) fails; the assertion that
 // matters is that the clusterLink track STILL creates the link (track A ran),
 // while the command still exits non-zero surfacing the ACL setup error.
-func TestApply_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack(t *testing.T) {
+func TestCreate_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack(t *testing.T) {
 	lkc := "lkc-track"
 	linkCreated := false
 	mux := http.NewServeMux()
@@ -1106,7 +1106,7 @@ func TestApply_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack(t *testing.T) {
 		newSourceACLLister = oldLister
 	})
 
-	cmd := NewMigrateApplyCmd()
+	cmd := NewMigrationResourcesCreateCmd()
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
