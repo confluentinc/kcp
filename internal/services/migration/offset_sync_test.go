@@ -391,6 +391,6 @@ func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 }
 
 func TestOffsetSyncCallTimeout_LeavesRoomForTheRetries(t *testing.T) {
-	assert.GreaterOrEqual(t, offsetSyncCallTimeout, retry.Budget+30*time.Second,
+	assert.GreaterOrEqual(t, offsetSyncCallTimeout, retry.Budget+clusterlink.RequestTimeout,
 		"the timeout must not cut a retried AlterConfigs short")
 }

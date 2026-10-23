@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/stretchr/testify/assert"
@@ -168,4 +169,21 @@ func TestPromoteMirrorTopics_ReadsTheStatusOfTopicsOutsideConfigTopics(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"orders", "users"}, {"users"}}, api.posts, "orders is promoted and is not sent again, although Config.Topics does not list it")
 	assert.ElementsMatch(t, []string{"orders", "users"}, promoted(resp))
+}
+
+func TestPromoteMirrorTopics_IsNotCutOffAtTheRequestTimeout(t *testing.T) {
+	retrytest.Fast(t)
+	setTimeoutsForTest(t, 50*time.Millisecond, 5*time.Second)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		time.Sleep(150 * time.Millisecond) // the cluster takes a while to accept the batch
+		a.accept(topics, w)
+	}
+
+	resp, err := runPromote(t, api, []string{"orders"})
+
+	require.NoError(t, err)
+	assert.Len(t, api.posts, 1, "the promote is sent once")
+	assert.Zero(t, api.gets, "the promote's own answer arrives, so the mirror status is not read")
+	assert.Equal(t, []string{"orders"}, promoted(resp))
 }

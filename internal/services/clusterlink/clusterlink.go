@@ -19,6 +19,21 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// RequestTimeout bounds one REST request, response body included, so a request that hangs fails and is retried
+// (internal/retry) instead of blocking the run.
+const RequestTimeout = 30 * time.Second
+
+// PromoteTimeout bounds one promote request. Confluent Cloud can take a while to accept a large batch, and a
+// promote cut off while the cluster is still accepting it is resent and rejected topic by topic, so it gets
+// longer than RequestTimeout.
+const PromoteTimeout = 2 * time.Minute
+
+// requestTimeout and promoteTimeout are the timeouts the requests use; tests shorten them.
+var (
+	requestTimeout = RequestTimeout
+	promoteTimeout = PromoteTimeout
+)
+
 // httpStatusError is returned by doRequest/doPostRequest when the server
 // responds with a non-success status code. Callers can use errors.As to
 // branch on StatusCode (e.g. to distinguish 404 from 401).
@@ -396,7 +411,7 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 	return merged, nil
 }
 
-// postPromote sends one promote request for topicNames.
+// postPromote sends one promote request for topicNames, bounded by PromoteTimeout.
 func (s *ConfluentCloudService) postPromote(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
 	requestBody := struct {
 		MirrorTopicNames []string `json:"mirror_topic_names"`
@@ -404,7 +419,7 @@ func (s *ConfluentCloudService) postPromote(ctx context.Context, config Config, 
 		MirrorTopicNames: topicNames,
 	}
 	var response PromoteMirrorTopicsResponse
-	if err := s.doPostRequest(ctx, config, linkPath(config)+"/mirrors:promote", requestBody, &response); err != nil {
+	if err := s.doPostRequest(ctx, config, linkPath(config)+"/mirrors:promote", promoteTimeout, requestBody, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil
@@ -543,6 +558,8 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 
 // getOnce is one attempt of doRequest.
 func (s *ConfluentCloudService) getOnce(ctx context.Context, config Config, path string, result interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -575,8 +592,10 @@ func (s *ConfluentCloudService) getOnce(ctx context.Context, config Config, path
 	return nil
 }
 
-// doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API
-func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, requestBody interface{}, result interface{}) error {
+// doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API, bounded by timeout.
+func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, timeout time.Duration, requestBody interface{}, result interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -628,6 +647,8 @@ func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config,
 
 // putOnce is one attempt of doPutRequest.
 func (s *ConfluentCloudService) putOnce(ctx context.Context, config Config, path string, requestBody interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -662,6 +683,8 @@ func (s *ConfluentCloudService) putOnce(ctx context.Context, config Config, path
 // doDeleteRequest performs an authenticated HTTP DELETE. Used by AlterConfigs
 // to reset a single config key to its server-side default.
 func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Config, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -900,6 +923,8 @@ func (s *ConfluentCloudService) GetKafkaClusterID(ctx context.Context, config Co
 // returning *httpStatusError otherwise. (doPostRequest unmarshals a result and
 // only accepts 200/204; create returns 201 with no body we need.)
 func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, config Config, path string, requestBody any) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)

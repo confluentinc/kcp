@@ -3,7 +3,6 @@ package migration
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/retry"
@@ -14,7 +13,7 @@ const offsetSyncEnableKey = "consumer.offset.sync.enable"
 
 // offsetSyncCallTimeout bounds each offset-sync step's AlterConfigs, retries included: the retry budget plus
 // one request's timeout.
-const offsetSyncCallTimeout = retry.Budget + 30*time.Second
+const offsetSyncCallTimeout = retry.Budget + clusterlink.RequestTimeout
 
 // setOffsetSyncBaseline applies one idempotent AlterConfigs SET of
 // consumer.offset.sync.enable to config's declared baseline

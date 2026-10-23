@@ -430,11 +430,13 @@ func genCertMaterial(t *testing.T) (caPEM, certPEM, keyPEM []byte) {
 	return caPEM, certPEM, keyPEM
 }
 
-func TestHTTPClient_RequestsTimeOut(t *testing.T) {
+// Each cluster-link request sets its own timeout (clusterlink.RequestTimeout, PromoteTimeout); a client-wide
+// timeout would cut a promote off at the shorter one.
+func TestHTTPClient_LeavesTheTimeoutToEachRequest(t *testing.T) {
 	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p"}}
 	client, err := c.HTTPClient()
 	require.NoError(t, err)
 	concreteClient, ok := client.(*http.Client)
 	require.True(t, ok)
-	assert.Equal(t, 30*time.Second, concreteClient.Timeout, "a hung request must fail, so it can be retried")
+	assert.Zero(t, concreteClient.Timeout)
 }

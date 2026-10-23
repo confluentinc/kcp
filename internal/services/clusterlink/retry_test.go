@@ -109,8 +109,17 @@ func TestGetClusterLink_DoesNotRetry404(t *testing.T) {
 	assert.Equal(t, int32(1), hits.Load())
 }
 
+// setTimeoutsForTest shortens RequestTimeout and PromoteTimeout for one test.
+func setTimeoutsForTest(t *testing.T, request, promote time.Duration) {
+	t.Helper()
+	oldRequest, oldPromote := requestTimeout, promoteTimeout
+	requestTimeout, promoteTimeout = request, promote
+	t.Cleanup(func() { requestTimeout, promoteTimeout = oldRequest, oldPromote })
+}
+
 func TestListMirrorTopics_RetriesARequestThatTimesOut(t *testing.T) {
 	retrytest.Fast(t)
+	setTimeoutsForTest(t, 50*time.Millisecond, PromoteTimeout)
 	var hits atomic.Int32
 	release := make(chan struct{})
 	defer close(release)
@@ -125,10 +134,11 @@ func TestListMirrorTopics_RetriesARequestThatTimesOut(t *testing.T) {
 		writeMirrors(t, w, map[string]string{"orders": MirrorStatusActive})
 	}))
 	defer server.Close()
-	client := server.Client()
-	client.Timeout = 50 * time.Millisecond
+	// The client carries no timeout: each request bounds itself. The context only stops a hung test.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	_, err := NewConfluentCloudService(client).ListMirrorTopics(context.Background(), testConfig(server.URL))
+	_, err := NewConfluentCloudService(server.Client()).ListMirrorTopics(ctx, testConfig(server.URL))
 
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), hits.Load())
