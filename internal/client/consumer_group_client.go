@@ -83,20 +83,58 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 // and a caller making a safety decision from the listing must not get a partial
 // one. It errors if any broker fails or refuses. It refreshes the broker list
 // first: the client's is from its last metadata read, so a broker added or
-// replaced since would go unasked and its groups would be missing.
-func (c *ConsumerGroupClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
-	if err := c.client.RefreshMetadata(); err != nil {
-		return nil, fmt.Errorf("refreshing the broker list before listing consumer groups: %w", err)
+// replaced since would go unasked and its groups would be missing. A connection error retries the whole listing
+// (internal/retry), after closing the connections of the brokers that failed; a broker's refusal is not retried.
+func (c *ConsumerGroupClient) ListGroupsAllBrokers(ctx context.Context) ([]types.ConsumerGroupListing, error) {
+	var out []types.ConsumerGroupListing
+	var failed []*sarama.Broker
+	err := retry.Do(ctx, "kafka.list_groups", func(context.Context) error {
+		if err := c.client.RefreshMetadata(); err != nil {
+			return fmt.Errorf("refreshing the broker list before listing consumer groups: %w", err)
+		}
+		results := c.listGroupsPerBroker()
+		failed = failed[:0]
+		for _, r := range results {
+			if r.err != nil {
+				failed = append(failed, r.broker)
+			}
+		}
+		var err error
+		out, err = mergeListings(results, true)
+		return err
+	}, retry.WithBeforeRetry(func() { closeBrokers(failed) }))
+	return out, err
+}
+
+// onBroker runs op, which asks one broker and returns it, with retry.Do. Before each retry it closes the broker
+// the failed attempt asked, so the next attempt opens a fresh connection: sarama fails every request on a
+// connection that broke until the broker is closed.
+func onBroker(ctx context.Context, operation string, op func() (*sarama.Broker, error)) error {
+	var asked *sarama.Broker
+	return retry.Do(ctx, operation, func(context.Context) error {
+		var err error
+		asked, err = op()
+		return err
+	}, retry.WithBeforeRetry(func() { closeBrokers([]*sarama.Broker{asked}) }))
+}
+
+// closeBrokers closes each broker's connection so the next request on it reconnects. A close's own error is not
+// a result: a broker that never connected, or is already closed, answers ErrNotConnected.
+func closeBrokers(brokers []*sarama.Broker) {
+	for _, b := range brokers {
+		if b != nil {
+			_ = b.Close()
+		}
 	}
-	return mergeListings(c.listGroupsPerBroker(), true)
 }
 
 // brokerListing is one broker's answer to ListGroups: a response, or the error
 // that stopped it.
 type brokerListing struct {
-	addr string
-	resp *sarama.ListGroupsResponse
-	err  error
+	broker *sarama.Broker
+	addr   string
+	resp   *sarama.ListGroupsResponse
+	err    error
 }
 
 // listGroupsPerBroker asks every known broker for the groups it coordinates.
@@ -104,7 +142,7 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 	var out []brokerListing
 	for _, b := range c.client.Brokers() {
 		if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-			out = append(out, brokerListing{addr: b.Addr(), err: fmt.Errorf("connecting: %w", err)})
+			out = append(out, brokerListing{broker: b, addr: b.Addr(), err: fmt.Errorf("connecting: %w", err)})
 			continue
 		}
 		resp, err := b.ListGroups(&sarama.ListGroupsRequest{Version: 5})
@@ -112,7 +150,7 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 			slog.Debug("⏭️ broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
 			resp, err = b.ListGroups(&sarama.ListGroupsRequest{Version: 4})
 		}
-		out = append(out, brokerListing{addr: b.Addr(), resp: resp, err: err})
+		out = append(out, brokerListing{broker: b, addr: b.Addr(), resp: resp, err: err})
 	}
 	return out
 }
@@ -493,8 +531,17 @@ type groupDescriber interface {
 // DESCRIBE does not: on open-source Kafka it shows every group but not their offsets, and on MSK IAM it
 // neither implies nor is needed for a complete listing, so a "cluster DESCRIBE" probe can pass while the
 // listing is empty.
-func (c *ConsumerGroupClient) CanDescribeAnyGroup() (bool, error) {
-	return canDescribeAnyGroup(c.admin, fmt.Sprintf("__kcp_probe_group_%x", time.Now().UnixNano()))
+//
+// A connection error is retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanDescribeAnyGroup(ctx context.Context) (bool, error) {
+	group := fmt.Sprintf("__kcp_probe_group_%x", time.Now().UnixNano())
+	var ok bool
+	err := retry.Do(ctx, "kafka.probe_describe_group", func(context.Context) error {
+		var err error
+		ok, err = canDescribeAnyGroup(c.admin, group)
+		return err
+	}, retry.WithBeforeRetry(func() { c.resetCoordinator(group) }))
+	return ok, err
 }
 
 // canDescribeAnyGroup asks DescribeGroups about group, which must not exist. The denial can arrive as the
@@ -536,21 +583,31 @@ type metadataFetcher interface {
 // describe the name is told UNKNOWN_TOPIC_OR_PARTITION, one that may not is told TOPIC_AUTHORIZATION_FAILED.
 // The group probe cannot see this: a credential that may describe every group can still be unable to
 // describe some topics.
-func (c *ConsumerGroupClient) CanDescribeAnyTopic() (bool, error) {
-	return c.canDescribeAnyTopicNamed(fmt.Sprintf("__kcp_probe_topic_%x", time.Now().UnixNano()))
+//
+// A connection error is retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanDescribeAnyTopic(ctx context.Context) (bool, error) {
+	topic := fmt.Sprintf("__kcp_probe_topic_%x", time.Now().UnixNano())
+	var ok bool
+	err := onBroker(ctx, "kafka.probe_describe_topic", func() (*sarama.Broker, error) {
+		b, allowed, err := c.canDescribeAnyTopicNamed(topic)
+		ok = allowed
+		return b, err
+	})
+	return ok, err
 }
 
-// canDescribeAnyTopicNamed asks one broker directly. It deliberately does not go through the client's
-// metadata refresh, whose sarama default allows auto-creating a missing topic.
-func (c *ConsumerGroupClient) canDescribeAnyTopicNamed(topic string) (bool, error) {
+// canDescribeAnyTopicNamed asks one broker directly, and returns it. It deliberately does not go through the
+// client's metadata refresh, whose sarama default allows auto-creating a missing topic.
+func (c *ConsumerGroupClient) canDescribeAnyTopicNamed(topic string) (*sarama.Broker, bool, error) {
 	b := c.client.LeastLoadedBroker()
 	if b == nil {
-		return false, fmt.Errorf("no broker available to probe topic describe access")
+		return nil, false, fmt.Errorf("no broker available to probe topic describe access")
 	}
 	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-		return false, fmt.Errorf("connecting to %s to probe topic describe access: %w", b.Addr(), err)
+		return b, false, fmt.Errorf("connecting to %s to probe topic describe access: %w", b.Addr(), err)
 	}
-	return canDescribeAnyTopic(b, topic)
+	ok, err := canDescribeAnyTopic(b, topic)
+	return b, ok, err
 }
 
 // canDescribeAnyTopic requests metadata for exactly topic, which must not exist, with auto-creation off.
@@ -605,10 +662,17 @@ func commitProbeNames() (group, topic string) {
 // written and no group is created (verified live on cp-server with StandardAuthorizer before this was built).
 // UNKNOWN_TOPIC_OR_PARTITION means allowed; GROUP_AUTHORIZATION_FAILED or TOPIC_AUTHORIZATION_FAILED means
 // denied, as does a coordinator lookup the broker refuses for the group. Any other answer is an error: a probe
-// that could not be asked is neither allowed nor denied.
-func (c *ConsumerGroupClient) CanCommitAnyOffsets() (bool, error) {
+// that could not be asked is neither allowed nor denied. A connection error is retried (internal/retry) on a
+// fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanCommitAnyOffsets(ctx context.Context) (bool, error) {
 	group, topic := commitProbeNames()
-	return c.canCommitAnyOffsetsNamed(group, topic)
+	var ok bool
+	err := retry.Do(ctx, "kafka.probe_commit", func(context.Context) error {
+		var err error
+		ok, err = c.canCommitAnyOffsetsNamed(group, topic)
+		return err
+	}, retry.WithBeforeRetry(func() { c.resetCoordinator(group) }))
+	return ok, err
 }
 
 func (c *ConsumerGroupClient) canCommitAnyOffsetsNamed(group, topic string) (bool, error) {
@@ -647,19 +711,26 @@ func canCommitAnyOffsets(s offsetCommitSender, group, topic string) (bool, error
 // PartitionCounts returns the partition count of each named topic that exists on the cluster. A topic the
 // broker says does not exist is left out of the map, not an error: a conversion reads a missing count as
 // "no copy on this cluster". Like the topic probe it asks one broker directly with auto-creation off,
-// because the client's own metadata refresh defaults to creating a missing topic.
-func (c *ConsumerGroupClient) PartitionCounts(topics []string) (map[string]int, error) {
+// because the client's own metadata refresh defaults to creating a missing topic. A connection error is
+// retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) PartitionCounts(ctx context.Context, topics []string) (map[string]int, error) {
 	if len(topics) == 0 {
 		return map[string]int{}, nil
 	}
-	b := c.client.LeastLoadedBroker()
-	if b == nil {
-		return nil, fmt.Errorf("no broker available to read partition counts")
-	}
-	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-		return nil, fmt.Errorf("connecting to %s to read partition counts: %w", b.Addr(), err)
-	}
-	return partitionCounts(b, topics)
+	var counts map[string]int
+	err := onBroker(ctx, "kafka.partition_counts", func() (*sarama.Broker, error) {
+		b := c.client.LeastLoadedBroker()
+		if b == nil {
+			return nil, fmt.Errorf("no broker available to read partition counts")
+		}
+		if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
+			return b, fmt.Errorf("connecting to %s to read partition counts: %w", b.Addr(), err)
+		}
+		var err error
+		counts, err = partitionCounts(b, topics)
+		return b, err
+	})
+	return counts, err
 }
 
 // partitionCounts requests metadata for exactly topics, with auto-creation off. Any per-topic error other

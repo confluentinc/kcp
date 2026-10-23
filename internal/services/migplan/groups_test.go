@@ -21,15 +21,15 @@ type fakeStrictClient struct {
 	canCommit     bool
 }
 
-func (f *fakeStrictClient) CanDescribeAnyGroup() (bool, error) {
+func (f *fakeStrictClient) CanDescribeAnyGroup(context.Context) (bool, error) {
 	return f.canDescribe, f.err
 }
 
-func (f *fakeStrictClient) CanDescribeAnyTopic() (bool, error) {
+func (f *fakeStrictClient) CanDescribeAnyTopic(context.Context) (bool, error) {
 	return f.canTopics, f.err
 }
 
-func (f *fakeStrictClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
+func (f *fakeStrictClient) ListGroupsAllBrokers(context.Context) ([]types.ConsumerGroupListing, error) {
 	return f.groups, f.err
 }
 
@@ -140,7 +140,7 @@ func TestGroupFacts(t *testing.T) {
 	}
 }
 
-func (f *fakeStrictClient) PartitionCounts(topics []string) (map[string]int, error) {
+func (f *fakeStrictClient) PartitionCounts(_ context.Context, topics []string) (map[string]int, error) {
 	f.partitionsFor = topics
 	return f.partitions, f.err
 }
@@ -160,7 +160,7 @@ func TestKafkaGroupLister_PartitionCountsUsesTheClient(t *testing.T) {
 	}
 }
 
-func (f *fakeStrictClient) CanCommitAnyOffsets() (bool, error) {
+func (f *fakeStrictClient) CanCommitAnyOffsets(context.Context) (bool, error) {
 	return f.canCommit, f.err
 }
 

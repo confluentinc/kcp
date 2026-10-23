@@ -166,7 +166,7 @@ func TestListGroupsAllBrokers_PreKafka38BrokerIsListedOverV4(t *testing.T) {
 		}
 	})
 
-	got, err := c.ListGroupsAllBrokers()
+	got, err := c.ListGroupsAllBrokers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "g1", got[0].GroupID)
@@ -200,7 +200,7 @@ func TestListGroupsAllBrokers_AsksABrokerThatJoinedAfterTheLastMetadata(t *testi
 			SetBroker(mb1.Addr(), mb1.BrokerID()).SetBroker(mb2.Addr(), mb2.BrokerID()).SetController(mb1.BrokerID()),
 	})
 
-	got, err := c.ListGroupsAllBrokers()
+	got, err := c.ListGroupsAllBrokers(context.Background())
 
 	require.NoError(t, err)
 	var ids []string
@@ -551,7 +551,7 @@ func TestCanDescribeAnyTopic_ThroughARealClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClientAgainstMockBroker(t, tc.metadataMax, tc.handlers)
 
-			got, err := c.canDescribeAnyTopicNamed(probe)
+			_, got, err := c.canDescribeAnyTopicNamed(probe)
 
 			if tc.wantErr {
 				require.Error(t, err)
@@ -1060,4 +1060,70 @@ func TestCanCommitAnyOffsets_ThroughARealClient(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListGroupsAllBrokers_RecoversWhenABrokerResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	ln := testsupport.NewCutListener(t)
+	c, mb := newClientAndMockBrokerOn(t, ln, 9, func(*sarama.MockBroker) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{"ListGroupsRequest": sarama.NewMockListGroupsResponse(t).AddGroup("g1", "consumer")}
+	})
+	_, err := c.ListGroupsAllBrokers(context.Background())
+	require.NoError(t, err)
+
+	ln.Cut()
+
+	got, err := c.ListGroupsAllBrokers(context.Background())
+	require.NoError(t, err, "the strict listing must reach every broker again on fresh connections")
+	require.Len(t, got, 1)
+	assert.Equal(t, "g1", got[0].GroupID)
+	var listings int
+	for _, rr := range mb.History() {
+		if _, ok := rr.Request.(*sarama.ListGroupsRequest); ok {
+			listings++
+		}
+	}
+	assert.Equal(t, 2, listings)
+}
+
+func TestListGroupsAllBrokers_DoesNotRetryARefusal(t *testing.T) {
+	retrytest.Fast(t)
+	c, mb := newClientAndMockBroker(t, 9, func(*sarama.MockBroker) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{
+			// ListGroups capped at v4 so the canned response's version matches the request's.
+			"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+				{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
+				{ApiKey: 3, MinVersion: 0, MaxVersion: 9},  // Metadata
+				{ApiKey: 16, MinVersion: 0, MaxVersion: 4}, // ListGroups
+			}),
+			"ListGroupsRequest": sarama.NewMockWrapper(&sarama.ListGroupsResponse{Version: 4, Err: sarama.ErrClusterAuthorizationFailed}),
+		}
+	})
+
+	_, err := c.ListGroupsAllBrokers(context.Background())
+
+	require.ErrorIs(t, err, sarama.ErrClusterAuthorizationFailed)
+	var listings int
+	for _, rr := range mb.History() {
+		if _, ok := rr.Request.(*sarama.ListGroupsRequest); ok {
+			listings++
+		}
+	}
+	assert.Equal(t, 1, listings)
+}
+
+func TestOnBroker_RetriesAResetAndStopsOnSuccess(t *testing.T) {
+	retrytest.Fast(t)
+	calls := 0
+
+	err := onBroker(context.Background(), "kafka.partition_counts", func() (*sarama.Broker, error) {
+		calls++
+		if calls < 3 {
+			return sarama.NewBroker("127.0.0.1:1"), fmt.Errorf("reading partition counts: %w", connReset)
+		}
+		return nil, nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, calls)
 }
