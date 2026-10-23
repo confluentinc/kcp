@@ -1,14 +1,12 @@
 package testsupport
 
 import (
-	"errors"
 	"io"
 	"net"
-	"os"
+	"syscall"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,8 +42,7 @@ func TestCutListener_ResetsAcceptedConnectionsAndKeepsAccepting(t *testing.T) {
 
 	_ = c1.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, err = c1.Read(make([]byte, 1))
-	require.Error(t, err, "a cut connection must fail")
-	assert.False(t, errors.Is(err, os.ErrDeadlineExceeded), "it must fail because of the cut, not the deadline")
+	require.ErrorIs(t, err, syscall.ECONNRESET, "a cut connection must fail with a reset, not a clean close or the deadline")
 
 	c2, err := net.Dial("tcp", l.Addr().String())
 	require.NoError(t, err)
