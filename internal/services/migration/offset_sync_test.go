@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -387,4 +388,9 @@ func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 
 	require.NoError(t, err)
 	rec.assertAltered(t, offsetSyncEnableKey, "false")
+}
+
+func TestOffsetSyncCallTimeout_LeavesRoomForTheRetries(t *testing.T) {
+	assert.GreaterOrEqual(t, offsetSyncCallTimeout, retry.Budget+30*time.Second,
+		"the timeout must not cut a retried AlterConfigs short")
 }

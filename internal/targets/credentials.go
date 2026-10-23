@@ -8,12 +8,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
+
+// restRequestTimeout bounds one REST request, response body included, so a request that hangs fails and is
+// retried (internal/retry) instead of blocking the run.
+const restRequestTimeout = 30 * time.Second
 
 // BasicAuth is HTTP basic auth (CP) — also how CC api_key/api_secret are sent.
 type BasicAuth struct {
@@ -190,7 +195,7 @@ func (c Credentials) HTTPClient() (clusterlink.HTTPClient, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsCfg
-	return &http.Client{Transport: transport}, nil
+	return &http.Client{Transport: transport, Timeout: restRequestTimeout}, nil
 }
 
 // tlsTrust returns the ca_cert path and insecure-skip flag from the active block.

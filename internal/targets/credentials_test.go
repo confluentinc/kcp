@@ -429,3 +429,12 @@ func genCertMaterial(t *testing.T) (caPEM, certPEM, keyPEM []byte) {
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: leafKeyDER})
 	return caPEM, certPEM, keyPEM
 }
+
+func TestHTTPClient_RequestsTimeOut(t *testing.T) {
+	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p"}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	assert.Equal(t, 30*time.Second, concreteClient.Timeout, "a hung request must fail, so it can be retried")
+}

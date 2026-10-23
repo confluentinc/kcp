@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -29,6 +30,9 @@ type httpStatusError struct {
 func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("unexpected status code %d: %s", e.StatusCode, e.Body)
 }
+
+// HTTPStatusCode lets internal/retry read the status without importing this package.
+func (e *httpStatusError) HTTPStatusCode() int { return e.StatusCode }
 
 // linkPath returns the escaped base path for the cluster link resource.
 func linkPath(config Config) string {
@@ -469,10 +473,17 @@ func (s *ConfluentCloudService) CreateTopic(ctx context.Context, config Config, 
 	return nil
 }
 
-// doRequest performs an authenticated HTTP GET request to Confluent Cloud API.
-// Non-2xx responses are returned as *httpStatusError so callers can branch on
-// the status code.
+// doRequest performs an authenticated HTTP GET request to Confluent Cloud API, and again after a connection
+// error, a timeout, or a 429, 502, 503 or 504 (internal/retry). Non-2xx responses are returned as
+// *httpStatusError so callers can branch on the status code.
 func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, path string, result interface{}) error {
+	return retry.Do(ctx, "rest.get", func(ctx context.Context) error {
+		return s.getOnce(ctx, config, path, result)
+	}, retry.WithAttributes(attribute.String("kcp.retry.endpoint", endpointOf(path))))
+}
+
+// getOnce is one attempt of doRequest.
+func (s *ConfluentCloudService) getOnce(ctx context.Context, config Config, path string, result interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -547,10 +558,17 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 	return nil
 }
 
-// doPutRequest performs an authenticated HTTP PUT. Used by AlterConfigs to
-// update a single config key on the CP Kafka REST v3 API. Treats 200 and 204
-// as success.
+// doPutRequest performs an authenticated HTTP PUT, and again after a connection error, a timeout, or a 429,
+// 502, 503 or 504 (internal/retry): AlterConfigs uses it to SET one config key, which is idempotent. Treats 200
+// and 204 as success.
 func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config, path string, requestBody interface{}) error {
+	return retry.Do(ctx, "rest.put", func(ctx context.Context) error {
+		return s.putOnce(ctx, config, path, requestBody)
+	}, retry.WithAttributes(attribute.String("kcp.retry.endpoint", endpointOf(path))))
+}
+
+// putOnce is one attempt of doPutRequest.
+func (s *ConfluentCloudService) putOnce(ctx context.Context, config Config, path string, requestBody interface{}) error {
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -847,4 +865,23 @@ func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, c
 		b, _ := io.ReadAll(res.Body)
 		return &httpStatusError{StatusCode: res.StatusCode, Body: string(b)}
 	}
+}
+
+// endpointOf is path with the cluster, link, topic and mirror names in it replaced by placeholders, so a span
+// attribute can say which endpoint a request hit without carrying a topic name.
+func endpointOf(path string) string {
+	parts := strings.Split(path, "/")
+	for i := 1; i < len(parts); i++ {
+		switch parts[i-1] {
+		case "clusters":
+			parts[i] = "{cluster}"
+		case "links":
+			parts[i] = "{link}"
+		case "topics":
+			parts[i] = "{topic}"
+		case "mirrors":
+			parts[i] = "{mirror}"
+		}
+	}
+	return strings.Join(parts, "/")
 }
