@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/confluentinc/kcp/internal/build_info"
 )
 
 // regionFlagToken matches the inline `--region <value>` flag that
@@ -1366,11 +1368,11 @@ func writeSchema(b *bytes.Buffer, dec *SchemaDecision, inputs PlanInputsResolved
 }
 
 // writeSchemaProvenance emits a citation line whose content depends on
-// the source. Glue-only paths cite the `kcp create-asset migrate-schemas`
+// the source. Glue-only paths cite the `kcp iac schemas generate`
 // docs (the active recommendation); Confluent paths cite the Schema
 // Linking docs (the eligibility floor); dual-source cites both.
 func writeSchemaProvenance(b *bytes.Buffer, dec *SchemaDecision, cfg *PlanConfig) {
-	const glueRef = "https://confluentinc.github.io/kcp/command-reference/create-asset/migrate-schemas/"
+	glueRef := build_info.DocsURL() + "command-reference/iac/schemas/generate/"
 	switch dec.Source {
 	case SchemaSourceGlue:
 		fmt.Fprintf(b, "\n_Mapping provenance: Glue migration command → %s._\n\n", glueRef)
@@ -1468,7 +1470,7 @@ func schemaPathLabel(p SchemaPath) string {
 	case SchemaPathSchemaLinking:
 		return "**Schema Linking** — source SR pushes schema updates to CC SR over TCP; alternative is manual REST export/import"
 	case SchemaPathMigrateGlue:
-		return "**`kcp create-asset migrate-schemas --glue-registry`** — one Terraform apply imports every schema in the Glue registry into CC SR"
+		return "**`kcp iac schemas generate --glue-registry`** — one Terraform apply imports every schema in the Glue registry into CC SR"
 	case SchemaPathDeferToAccount:
 		return "**Defer to your Confluent account team** — REST API export/import is possible but not deterministic; see §Actions Needed for the failing constraint"
 	case SchemaPathSchemaless:
@@ -1478,13 +1480,13 @@ func schemaPathLabel(p SchemaPath) string {
 	}
 }
 
-// writeGluePathCommand emits one canonical `kcp create-asset
-// migrate-schemas` invocation with placeholder substitution hints,
+// writeGluePathCommand emits one canonical `kcp iac schemas
+// generate` invocation with placeholder substitution hints,
 // then lists the detected registries (one apply per registry, run
 // the same command N times with `--glue-registry` varied).
 func writeGluePathCommand(b *bytes.Buffer, glueNames []string) {
 	b.WriteString("\n**Glue path — generates Terraform that imports every schema in a registry into CC SR as a `confluent_schema` resource. Run the command once per registry:**\n\n")
-	b.WriteString("```bash\nkcp create-asset migrate-schemas \\\n  --glue-registry <registry-name> \\\n  --region <aws-region> \\\n  --cc-sr-rest-endpoint <cc-sr-url>\n```\n\n")
+	b.WriteString("```bash\nkcp iac schemas generate \\\n  --glue-registry <registry-name> \\\n  --region <aws-region> \\\n  --cc-sr-rest-endpoint <cc-sr-url>\n```\n\n")
 	b.WriteString("Find each placeholder:\n")
 	b.WriteString("- `<registry-name>` — one of the detected registries below.\n")
 	b.WriteString("- `<aws-region>` — the AWS region the Glue registry lives in (e.g. `us-east-1`).\n")

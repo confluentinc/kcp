@@ -5,6 +5,7 @@ import (
 	i "github.com/confluentinc/kcp/cmd/migration/init"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
 	"github.com/confluentinc/kcp/cmd/migration/list"
+	"github.com/confluentinc/kcp/cmd/migration/resources"
 
 	"github.com/spf13/cobra"
 )
@@ -12,7 +13,7 @@ import (
 func NewMigrationCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
 		Use:   "migration",
-		Short: "Commands for migrating using CPC Gateway.",
+		Short: "Commands for migrating clients using CPC Gateway and Kafka resources directly.",
 		Long: `Execute end-to-end Kafka migrations to Confluent Cloud using the Confluent Platform Connect (CPC) Gateway.
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
@@ -40,6 +41,7 @@ Supporting documentation:
 		execute.NewMigrationExecuteCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
 		list.NewMigrationListCmd(),
+		resources.NewMigrationResourcesCmd(),
 	)
 
 	return migrationCmd

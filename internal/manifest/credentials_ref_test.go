@@ -99,7 +99,7 @@ func TestCredentialsRef_InlineInterpolatesWhenManifestOptsIn(t *testing.T) {
 }
 
 // TestCredentialsRef_ReferencedFileGovernsItself is the scope rule from §10:
-// a manifest opting in must not change how a shared kcp migrate credentials
+// a manifest opting in must not change how a shared kcp migration resources credentials
 // file is read.
 func TestCredentialsRef_ReferencedFileGovernsItself(t *testing.T) {
 	t.Setenv("MSK_PASSWORD", "s3cret")

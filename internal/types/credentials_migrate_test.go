@@ -273,7 +273,7 @@ func TestLoadMigrateClusterCredentials_InterpolatesWhenOptedIn(t *testing.T) {
 }
 
 // TestLoadMigrateClusterCredentials_NoInterpolationByDefault pins that every
-// already-shipped kcp migrate credentials file is read byte-for-byte as before.
+// already-shipped kcp migration resources credentials file is read byte-for-byte as before.
 func TestLoadMigrateClusterCredentials_NoInterpolationByDefault(t *testing.T) {
 	t.Setenv("MSK_PASSWORD", "s3cret")
 	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
