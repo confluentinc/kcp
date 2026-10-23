@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -180,4 +182,21 @@ func TestDo_WithRetryableReplacesTheClassifier(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, calls)
+}
+
+func TestDo_UnderWithoutRetriesCallsOnceAndReturnsTheErrorUnchanged(t *testing.T) {
+	rec := tracingtest.Install(t)
+	c := useFakeClock(t)
+	ctx, span := tracing.Start(WithoutRetries(context.Background()), "test", "step.lag_check")
+	calls := 0
+
+	err := Do(ctx, "rest.get", func(context.Context) error { calls++; return reset })
+	span.End()
+
+	assert.Same(t, reset, err, "the error is returned as fn returned it")
+	assert.Equal(t, 1, calls)
+	assert.Empty(t, c.waits, "no wait")
+	step := tracingtest.Find(t, tracingtest.Spans(rec), "step.lag_check")
+	assert.Empty(t, step.Events(), "no retry.attempt event")
+	assert.Empty(t, step.Attributes(), "no kcp.retry attribute")
 }

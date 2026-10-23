@@ -1,12 +1,18 @@
 package lagcheck
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 )
 
@@ -92,4 +98,27 @@ func TestRenderSparkline_SingleValue(t *testing.T) {
 	got := renderSparkline([]int{100})
 	want := string(sparkBlocks[len(sparkBlocks)-1]) // █
 	assert.Equal(t, want, got)
+}
+
+// TestFetchCmd_MakesOneRequestAndShowsItsError — the view shows a failed refresh as it happened and polls again;
+// it does not retry the request, which would hold up the view and write retry warnings over it.
+func TestFetchCmd_MakesOneRequestAndShowsItsError(t *testing.T) {
+	retrytest.Fast(t)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	cfg := clusterlink.Config{RestEndpoint: server.URL, ClusterID: "lkc-1", LinkName: "link-1", APIKey: "k", APISecret: "s"}
+
+	msg := fetchCmd(clusterlink.NewConfluentCloudService(server.Client()), cfg)()
+
+	res, ok := msg.(fetchResultMsg)
+	require.True(t, ok, "fetchCmd answers with a fetchResultMsg, got %T", msg)
+	require.Error(t, res.err)
+	assert.Contains(t, res.err.Error(), "unexpected status code 503")
+	var gave *retry.GaveUpError
+	assert.False(t, errors.As(res.err, &gave), "the error is the request's own, not a retry's: %v", res.err)
+	assert.Equal(t, int32(1), hits.Load())
 }

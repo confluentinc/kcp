@@ -83,14 +83,28 @@ func WithAttributes(attrs ...attribute.KeyValue) Option {
 	return func(o *options) { o.attrs = append(o.attrs, attrs...) }
 }
 
+// withoutRetriesKey marks a context under which Do calls fn once.
+type withoutRetriesKey struct{}
+
+// WithoutRetries returns a context under which Do calls fn once and returns its error unchanged, recording
+// nothing: for callers that show their own errors and must not be held up or have warnings written over their
+// output, such as a full-screen view.
+func WithoutRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withoutRetriesKey{}, true)
+}
+
 // Do calls fn until it returns nil or an error the classifier (Retryable by default) rejects, the budget runs
 // out, or ctx ends. A rejected error is returned unchanged. Running out of budget returns a *GaveUpError
 // wrapping the last error. When ctx ends, Do returns ctx's error joined with the last error.
 //
 // Each retry adds a retry.attempt event to the span current in ctx, waits inside a wait.retry_backoff span, and
 // logs a warning. A call that needed retries sets kcp.retry.attempts on that span, and kcp.retry.gave_up when
-// it ran out of budget. A call that succeeds first time records nothing.
+// it ran out of budget. A call that succeeds first time records nothing. Under WithoutRetries Do calls fn once
+// and returns its error unchanged.
 func Do(ctx context.Context, operation string, fn func(ctx context.Context) error, opts ...Option) error {
+	if once, _ := ctx.Value(withoutRetriesKey{}).(bool); once {
+		return fn(ctx)
+	}
 	o := options{retryable: Retryable}
 	for _, opt := range opts {
 		opt(&o)
