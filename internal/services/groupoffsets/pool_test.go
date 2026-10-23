@@ -28,7 +28,7 @@ func (r *recorder) setup(do func(item string) error) func() (worker, error) {
 	return func() (worker, error) {
 		r.setups.Add(1)
 		return worker{
-			do: func(item string) error {
+			do: func(_ context.Context, item string) error {
 				r.mu.Lock()
 				r.handled = append(r.handled, item)
 				r.mu.Unlock()
@@ -121,7 +121,7 @@ func TestForEach_ASetupFailureStopsTheRunAndReleasesStartedWorkers(t *testing.T)
 		if calls.Add(1) == 2 {
 			return worker{}, boom
 		}
-		return worker{do: func(string) error { return nil }, release: func() { released.Add(1) }}, nil
+		return worker{do: func(context.Context, string) error { return nil }, release: func() { released.Add(1) }}, nil
 	}
 
 	err := forEach(context.Background(), names(10), 3, setup)
@@ -154,7 +154,7 @@ func TestForEach_RetriesAWorkerWhoseClientCouldNotConnect(t *testing.T) {
 		if setups < 3 {
 			return worker{}, fmt.Errorf("connecting to the source cluster: %w", connReset)
 		}
-		return worker{do: func(item string) error { done = append(done, item); return nil }}, nil
+		return worker{do: func(_ context.Context, item string) error { done = append(done, item); return nil }}, nil
 	})
 
 	require.NoError(t, err)

@@ -295,6 +295,9 @@ func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string,
 	results := make(chan result, len(groups))
 	// failed stops the run once any group fails: the call returns an error
 	// either way, so fetching the rest of a large cluster's groups is wasted.
+	// stop ends the fetches in flight, so they stop retrying too.
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
 	var failed atomic.Bool
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -305,9 +308,13 @@ func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string,
 				if failed.Load() {
 					continue
 				}
-				topics, err := committedTopicsOf(ctx, f, g, resetFor(reset, g))
+				topics, err := committedTopicsOf(runCtx, f, g, resetFor(reset, g))
 				if err != nil {
+					if failed.Load() && ctx.Err() == nil && errors.Is(err, context.Canceled) {
+						continue // stopped by an earlier failure, which is the one to report
+					}
 					failed.Store(true)
+					stop()
 				}
 				results <- result{group: g, topics: topics, err: err}
 			}

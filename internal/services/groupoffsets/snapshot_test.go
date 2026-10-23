@@ -3,13 +3,17 @@ package groupoffsets
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/retry"
 )
 
 // The real client is the fetcher and the committer, with no adapter.
@@ -119,4 +123,42 @@ func TestTakeSnapshot_AFactoryFailureIsAnError(t *testing.T) {
 	boom := errors.New("cannot connect")
 	_, err := TakeSnapshot(context.Background(), func() (GroupOffsetFetcher, func(), error) { return nil, nil, boom }, []string{"a"}, 1)
 	require.ErrorIs(t, err, boom)
+}
+
+// stormFetcher's retrying group retries a connection reset for the whole retry budget; its denied group fails
+// for good once the retrying group's fetch has started.
+type stormFetcher struct {
+	retrying, denied string
+	started          chan struct{}
+	once             sync.Once
+}
+
+func (f *stormFetcher) CommittedOffsets(ctx context.Context, group string) (Offsets, error) {
+	switch group {
+	case f.retrying:
+		return nil, retry.Do(ctx, "kafka.committed_offsets", func(context.Context) error {
+			f.once.Do(func() { close(f.started) })
+			return connReset
+		})
+	case f.denied:
+		<-f.started
+		return nil, fmt.Errorf("denied for %s", group)
+	}
+	return nil, nil
+}
+
+func TestTakeSnapshot_APermanentFailureStopsTheOtherWorkersRetrying(t *testing.T) {
+	// The real retry schedule: without the stop, g1's read retries for the whole 2-minute budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	f := &stormFetcher{retrying: "g1", denied: "g2", started: make(chan struct{})}
+	factory := func() (GroupOffsetFetcher, func(), error) { return f, nil, nil }
+
+	start := time.Now()
+	_, err := TakeSnapshot(ctx, factory, []string{"g1", "g2"}, 2)
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second, "g1's retries must stop once g2 has failed for good")
+	assert.Contains(t, err.Error(), "denied for g2", "the error must be g2's, not g1's stopped retries")
+	assert.NotErrorIs(t, err, context.Canceled)
 }

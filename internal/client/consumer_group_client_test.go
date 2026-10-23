@@ -1127,3 +1127,38 @@ func TestOnBroker_RetriesAResetAndStopsOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, calls)
 }
+
+// stormFetcher fails retrying's fetches with a connection reset on every call and denied's with a permanent
+// error, but only once retrying's first fetch has failed, so that fetch is retrying when denied fails.
+type stormFetcher struct {
+	retrying, denied string
+	started          chan struct{}
+	once             sync.Once
+}
+
+func (f *stormFetcher) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
+	switch group {
+	case f.retrying:
+		f.once.Do(func() { close(f.started) })
+		return nil, connReset
+	case f.denied:
+		<-f.started
+		return nil, fmt.Errorf("denied for %s", group)
+	}
+	return offsetsResponse(nil), nil
+}
+
+func TestCommittedTopics_APermanentFailureStopsTheOtherFetchesRetrying(t *testing.T) {
+	// The real retry schedule: without the stop, g1's fetch retries for the whole 2-minute budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	f := &stormFetcher{retrying: "g1", denied: "g2", started: make(chan struct{})}
+
+	start := time.Now()
+	_, err := committedTopics(ctx, f, []string{"g1", "g2"}, 2, nil)
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second, "g1's retries must stop once g2 has failed for good")
+	assert.Contains(t, err.Error(), "denied for g2", "the error must be g2's, not g1's stopped retries")
+	assert.NotErrorIs(t, err, context.Canceled)
+}

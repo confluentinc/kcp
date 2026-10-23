@@ -42,7 +42,9 @@ func Apply(ctx context.Context, newCommitter CommitterFactory, plan *Plan, worke
 			return worker{}, err
 		}
 		return worker{
-			do:      func(group string) error { return c.CommitGroupOffsets(ctx, group, byGroup[group]) },
+			do: func(ctx context.Context, group string) error {
+				return c.CommitGroupOffsets(ctx, group, byGroup[group])
+			},
 			release: release,
 		}, nil
 	})

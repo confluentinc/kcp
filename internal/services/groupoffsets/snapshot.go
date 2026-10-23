@@ -73,7 +73,7 @@ func TakeSnapshot(ctx context.Context, newFetcher FetcherFactory, groups []strin
 			return worker{}, err
 		}
 		return worker{
-			do: func(group string) error {
+			do: func(ctx context.Context, group string) error {
 				offsets, err := f.CommittedOffsets(ctx, group)
 				if err != nil {
 					return err
