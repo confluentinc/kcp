@@ -94,10 +94,10 @@ func WithoutRetries(ctx context.Context) context.Context {
 }
 
 // Do calls fn until it returns nil or an error the classifier (Retryable by default) rejects, the budget runs
-// out, or ctx ends. When fn fails Do checks ctx first: once ctx has ended, during an attempt or the wait after
-// one, Do returns ctx's error joined with fn's last error, whether or not the classifier would reject it. While
-// ctx is live, a rejected error is returned unchanged, and running out of budget returns a *GaveUpError
-// wrapping the last error.
+// out, or ctx ends. A rejected error is returned unchanged, even once ctx has ended: it is the answer, and no
+// retry was cut short. When ctx ends during an attempt that failed with an error the classifier accepts, or
+// during the wait after one, Do returns ctx's error joined with fn's last error. Running out of budget returns
+// a *GaveUpError wrapping the last error.
 //
 // Each retry adds a retry.attempt event to the span current in ctx, waits inside a wait.retry_backoff span, and
 // logs a warning. A call that needed retries sets kcp.retry.attempts on that span, and kcp.retry.gave_up when
@@ -122,14 +122,14 @@ func Do(ctx context.Context, operation string, fn func(ctx context.Context) erro
 			}
 			return nil
 		}
-		if ctx.Err() != nil {
-			return errors.Join(ctx.Err(), err)
-		}
 		if !o.retryable(err) {
 			if attempt > 1 {
 				tracing.SetAttributes(ctx, attribute.Int("kcp.retry.attempts", attempt))
 			}
 			return err
+		}
+		if ctx.Err() != nil {
+			return errors.Join(ctx.Err(), err)
 		}
 		if attempt == 1 {
 			firstFailure = now()

@@ -30,7 +30,8 @@ var connectionErrors = []error{
 // or timed-out connection, or an HTTP 429, 502, 503 or 504. A Kafka error code, any other HTTP status, a
 // failed login, a TLS error, a closed client, a cancellation and a *GaveUpError are not. sarama's
 // ErrOutOfBrokers is judged by the errors it wraps, so a failed login stays a failure. Do checks its own
-// context before asking, so a caller's deadline is never retried even though a deadline is a timeout.
+// context before retrying an error this accepts, so a caller's deadline is never retried even though a
+// deadline is a timeout.
 func Retryable(err error) bool {
 	if err == nil {
 		return false

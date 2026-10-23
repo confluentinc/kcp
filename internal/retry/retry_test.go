@@ -141,6 +141,16 @@ func TestDo_StopsAtOnceWhenTheContextEnds(t *testing.T) {
 	assert.Len(t, c.waits, 1)
 }
 
+func TestDo_ARejectedErrorIsReturnedUnchangedOnceTheContextHasEnded(t *testing.T) {
+	useFakeClock(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	denied := errors.New("denied")
+
+	err := Do(ctx, "op", func(context.Context) error { cancel(); return denied })
+
+	assert.Same(t, denied, err, "a failure no retry could fix is the answer, whether or not ctx has ended")
+}
+
 func TestDo_ACallersDeadlineIsNotRetried(t *testing.T) {
 	useFakeClock(t)
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
