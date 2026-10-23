@@ -414,7 +414,9 @@ func (s *ConfluentCloudService) postPromote(ctx context.Context, config Config, 
 // are now PENDING_STOPPED or STOPPED were accepted by that request: they are added to merged as accepted. It
 // returns the rest, which are sent again.
 func (s *ConfluentCloudService) notYetPromoted(ctx context.Context, config Config, pending []string, merged *PromoteMirrorTopicsResponse) ([]string, error) {
-	mirrors, err := s.ListMirrorTopics(ctx, config)
+	unfiltered := config
+	unfiltered.Topics = nil // ListMirrorTopics filters by Config.Topics; pending may hold topics outside it
+	mirrors, err := s.ListMirrorTopics(ctx, unfiltered)
 	if err != nil {
 		return nil, fmt.Errorf("reading mirror status after a promote request went unanswered: %w", err)
 	}

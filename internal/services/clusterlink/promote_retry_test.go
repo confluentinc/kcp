@@ -146,3 +146,26 @@ func TestPromoteMirrorTopics_DoesNotRetryA400(t *testing.T) {
 	assert.Len(t, api.posts, 1)
 	assert.Zero(t, api.gets, "a rejected request is not followed by a status read")
 }
+
+func TestPromoteMirrorTopics_ReadsTheStatusOfTopicsOutsideConfigTopics(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive, "users": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		if n == 1 {
+			a.status["orders"] = MirrorStatusPendingStopped
+			resetConnection(t, w)
+			return
+		}
+		a.accept(topics, w)
+	}
+	server := httptest.NewServer(api)
+	t.Cleanup(server.Close)
+	config := testConfig(server.URL)
+	config.Topics = []string{"users"}
+
+	resp, err := NewConfluentCloudService(server.Client()).PromoteMirrorTopics(context.Background(), config, []string{"orders", "users"})
+
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"orders", "users"}, {"users"}}, api.posts, "orders is promoted and is not sent again, although Config.Topics does not list it")
+	assert.ElementsMatch(t, []string{"orders", "users"}, promoted(resp))
+}
