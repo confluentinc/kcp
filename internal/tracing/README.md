@@ -202,7 +202,7 @@ than 2 minutes after the first failure (`internal/retry`). A call that succeeds 
 
 | What | Where |
 |---|---|
-| `retry.attempt` event | On the span current when the call failed, once per failed attempt that is retried: `kcp.retry.operation`, `kcp.retry.attempt`, `kcp.retry.next_wait_ms`, `kcp.retry.error`; plus `kcp.retry.endpoint` on REST calls (names replaced by `{cluster}`, `{link}`, `{topic}`, `{mirror}`) and `kcp.cluster` on `kafka.list_offsets` |
+| `retry.attempt` event | On the span current when the call failed, once per failed attempt that is retried: `kcp.retry.operation`, `kcp.retry.attempt`, `kcp.retry.next_wait_ms`, `kcp.retry.error`; plus `kcp.retry.endpoint` on `rest.get` and `rest.put` (names replaced by `{cluster}`, `{link}`, `{topic}`, `{mirror}`) and `kcp.cluster` on `kafka.list_offsets` |
 | `wait.retry_backoff` span | Each wait between attempts |
 | `kcp.retry.attempts` | On the same span, when the call needed more than one attempt |
 | `kcp.retry.gave_up` | `true` on the same span when the call ran out of budget |
