@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/confluentinc/kcp/internal/testsupport"
+	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 )
 
 // newMockCluster starts a single MockBroker acting as controller and leader
@@ -321,6 +322,8 @@ func TestSarama_ABrokenConnectionStaysBrokenUntilTheBrokerIsClosed(t *testing.T)
 	}
 }
 
+// On this single-broker cluster sarama's own metadata refresh also closes the broker that fails it, so the test
+// guards the end-to-end recovery; ClosesTheResetLeaderSoTheFirstRetryRecovers proves the close.
 func TestGetMany_RecoversWhenTheLeaderResetsItsConnection(t *testing.T) {
 	retrytest.Fast(t)
 	const topic = "cut-topic"
@@ -374,5 +377,66 @@ func TestGetMany_GivesUpAtTheBudgetOnATopicThatIsGone(t *testing.T) {
 	}
 	if !errors.Is(err, sarama.ErrUnknownTopicOrPartition) || !strings.Contains(err.Error(), topic+"/0") {
 		t.Fatalf("err = %v, want it to name %s/0 and UNKNOWN_TOPIC_OR_PARTITION", err, topic)
+	}
+}
+
+// The partition leader sits behind a listener the test cuts, among several healthy brokers that also answer
+// metadata. sarama refreshes metadata through an arbitrary idle broker, so only closing the reset leader before
+// the retry makes the first retry succeed in every run.
+func TestGetMany_ClosesTheResetLeaderSoTheFirstRetryRecovers(t *testing.T) {
+	retrytest.Fast(t)
+	rec := tracingtest.Install(t)
+	const topic = "cut-topic"
+	const healthy = 8
+	ln := testsupport.NewCutListener(t)
+	leader := sarama.NewMockBrokerListener(t, 1, ln)
+	brokers := []*sarama.MockBroker{leader}
+	for i := 0; i < healthy; i++ {
+		brokers = append(brokers, sarama.NewMockBroker(t, int32(i+2)))
+	}
+	for _, b := range brokers {
+		meta := sarama.NewMockMetadataResponse(t).SetController(leader.BrokerID()).SetLeader(topic, 0, leader.BrokerID())
+		for _, o := range brokers {
+			meta.SetBroker(o.Addr(), o.BrokerID())
+		}
+		b.SetHandlerByMap(map[string]sarama.MockResponse{
+			"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+			"MetadataRequest":    meta,
+			"OffsetRequest":      sarama.NewMockOffsetResponse(t).SetOffset(topic, 0, sarama.OffsetNewest, 4242),
+		})
+	}
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	client, err := sarama.NewClient([]string{brokers[1].Addr()}, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client against mock broker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		for _, b := range brokers {
+			b.Close()
+		}
+	})
+	svc := NewOffsetService(client)
+	if _, err := svc.GetMany(t.Context(), []string{topic}); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+
+	ln.Cut()
+
+	got, err := svc.GetMany(t.Context(), []string{topic})
+	if err != nil {
+		t.Fatalf("sweep after the reset: %v", err)
+	}
+	if got[topic][0] != 4242 {
+		t.Fatalf("offset = %d, want 4242", got[topic][0])
+	}
+	sweeps := tracingtest.FindAll(tracingtest.Spans(rec), "offset.get_many")
+	if len(sweeps) != 2 {
+		t.Fatalf("offset.get_many spans = %d, want 2", len(sweeps))
+	}
+	attempts, ok := tracingtest.Attr(sweeps[1], "kcp.retry.attempts")
+	if !ok || attempts.AsInt64() != 2 {
+		t.Fatalf("kcp.retry.attempts = %v (set: %v), want 2: the first retry must recover", attempts, ok)
 	}
 }
