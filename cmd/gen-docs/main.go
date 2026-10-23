@@ -34,21 +34,21 @@ var commandOrder = map[string][]string{
 		"discover",
 		"scan",
 		"report",
-		"create-asset",
+		"iac",
 		"migration",
 		"ui",
 		"docs",
 		"update",
 		"version",
 	},
-	"kcp create-asset": {
+	"kcp iac": {
 		"bastion-host",
 		"target-infra",
 		"migration-infra",
-		"migrate-topics",
-		"migrate-schemas",
-		"migrate-acls",
-		"migrate-connectors",
+		"topics",
+		"schemas",
+		"acls",
+		"connectors",
 	},
 	"kcp migration": {
 		"init",
@@ -188,8 +188,8 @@ func emit(c *cobra.Command, outDir string, linkMap map[string]string) error {
 
 	// For parent commands (anything rendered as index.md), emit a sibling
 	// `.pages` so mkdocs-material's navigation.indexes picks up the full
-	// command path (e.g. "kcp create-asset migrate-acls") as the section
-	// label instead of a titleized directory name ("Migrate acls"). The
+	// command path (e.g. "kcp iac acls") as the section
+	// label instead of a titleized directory name ("Acls"). The
 	// root gets "Command Reference" so the top-nav tab doesn't read "kcp"
 	// (awesome-pages: a directory's own .pages title beats any override
 	// from the parent nav, so this has to be fixed at the source).

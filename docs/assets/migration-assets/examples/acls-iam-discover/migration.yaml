@@ -2,7 +2,7 @@
 #
 # Example: ACL migration, AWS MSK IAM plane with auto-discovery — MSK →
 # Confluent Cloud. spec.acls.iam is legal only for spec.source.type: msk. The
-# shell running `kcp migrate` needs AWS credentials with iam:GetRole,
+# shell running `kcp migration resources` needs AWS credentials with iam:GetRole,
 # iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies,
 # iam:ListAttachedRolePolicies, iam:GetAccountAuthorizationDetails (for
 # discoverAllRoles), plus iam:SimulatePrincipalPolicy for verifyEffectiveAccess.

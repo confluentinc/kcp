@@ -17,7 +17,7 @@ body:
       options:
         - Scanning (kcp scan)
         - Reporting (kcp report)
-        - Asset Creation (kcp create-asset)
+        - Asset Creation (kcp iac)
         - Authentication & Security
         - CLI User Experience
         - Documentation

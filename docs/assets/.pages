@@ -7,3 +7,4 @@ nav:
 - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
 - gateway-manifest-reference
 - gateway-switchover
+- migration-assets

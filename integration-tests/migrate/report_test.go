@@ -76,12 +76,12 @@ func (rc *reportCollector) render() string {
 	sort.Slice(secs, func(i, j int) bool { return secs[i].seq < secs[j].seq })
 
 	var b strings.Builder
-	b.WriteString("# kcp migrate verification report\n\n")
-	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` verification matrix "+
+	b.WriteString("# kcp migration resources verification report\n\n")
+	fmt.Fprintf(&b, "Generated %s by the live `kcp migration resources` verification matrix "+
 		"(`make test-migrate-report`), run against the cp-server brokers in "+
 		"`integration-tests/migrate/docker-compose.yml`. The matrix covers three areas: "+
 		"cluster-link auth, mirror topics (destination- and source-initiated), and new "+
-		"(plain, non-mirror) topics. Most test cases below run a live `kcp migrate apply`; "+
+		"(plain, non-mirror) topics. Most test cases below run a live `kcp migration resources create`; "+
 		"a few are dry-run-only or document a deferral and run no apply (their **Result** "+
 		"reflects this). Each case shows the commands it ran with their output inline, ending "+
 		"with the relevant live Kafka REST read: the link state (`GET …/links/<name>`) for "+
@@ -177,7 +177,7 @@ func mdCell(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 // (e.g. the config+drift case using m1.yaml/m2.yaml) pass their own literal
 // command strings to addRun instead of using these.
 const (
-	applyCmd       = "kcp migrate apply -f migration.yaml"
+	applyCmd       = "kcp migration resources create -f migration.yaml"
 	applyDryRunCmd = applyCmd + " --dry-run"
 )
 
