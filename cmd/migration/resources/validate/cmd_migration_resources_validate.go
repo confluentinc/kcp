@@ -15,6 +15,12 @@ func NewMigrationResourcesValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate a migration manifest",
+		Long: `Check a migration manifest (kind: Migration) for structural problems and report every one found.
+
+Validation reads only the manifest file: it does not read the credential files it references or connect to the source or target. Exits non-zero if the manifest is invalid.
+
+See the [manifest reference](../../../migration-assets/manifest-reference.md) for every manifest field.`,
+		Example: `  kcp migration resources validate -f migration.yaml`,
 		// We return errors for a non-zero exit; silence Cobra's usage dump and
 		// duplicate error print so validation output stays readable.
 		SilenceUsage:  true,

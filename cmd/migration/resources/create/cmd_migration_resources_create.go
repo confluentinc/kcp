@@ -285,8 +285,20 @@ func NewMigrationResourcesCreateCmd() *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:           "create",
-		Short:         "Create the resources in a migration manifest (additive; existing resources are left untouched)",
+		Use:   "create",
+		Short: "Create the resources in a migration manifest (additive; existing resources are left untouched)",
+		Long: `Create the resources described in a migration manifest (kind: Migration) on the target through its APIs, rather than generating Terraform.
+
+Depending on the sections the manifest declares, this reconciles a cluster link, topics (mirror or new), service accounts and ACLs. Create is additive: whatever is absent is created, and whatever already exists is reported and left untouched. Nothing is altered or deleted.
+
+Run ` + "`kcp migration resources validate`" + ` first to check the manifest, and use --dry-run to print the plan without making any change.
+
+See the [manifest reference](../../../migration-assets/manifest-reference.md) for every manifest field.`,
+		Example: `  # Preview the plan; nothing is changed
+  kcp migration resources create -f migration.yaml --dry-run
+
+  # Create the resources
+  kcp migration resources create -f migration.yaml`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PreRunE:       func(cmd *cobra.Command, _ []string) error { return utils.BindEnvToFlags(cmd) },
