@@ -53,6 +53,7 @@
     "lodash": "^4.18.0",
     "lodash-es": "^4.18.0",
     "fast-uri": "^3.1.6",
+    "ip-address": "^10.7.1",
     "@rjsf/core/nanoid": "^6.0.0",
     "@rjsf/utils/nanoid": "^6.0.0",
     "**/postcss/nanoid": "^6.0.0"
