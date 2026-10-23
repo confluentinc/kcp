@@ -12,6 +12,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"github.com/confluentinc/kcp/internal/retry"
 )
 
 // worker is one pool member: the function that handles an item and the function that releases whatever the
@@ -23,9 +25,10 @@ type worker struct {
 
 // forEach runs each item on up to n workers. Every worker is built by setup, so it can own its own client:
 // sarama holds a lock per broker connection, so goroutines sharing one client gain nothing against the same
-// broker. At most len(items) workers are built. After the first failure, or when ctx ends, no further items
-// are handed out. The returned error is the failure of the lowest-named failed item, so it does not depend on
-// which worker finished first, and it keeps the cause for errors.Is.
+// broker. At most len(items) workers are built. A worker whose client fails to connect on a connection error is
+// built again (internal/retry); any other setup failure stops the run. After the first failure, or when ctx
+// ends, no further items are handed out. The returned error is the failure of the lowest-named failed item, so
+// it does not depend on which worker finished first, and it keeps the cause for errors.Is.
 func forEach(ctx context.Context, items []string, n int, setup func() (worker, error)) error {
 	if len(items) == 0 {
 		return nil
@@ -52,7 +55,12 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 
 	jobs := make(chan string)
 	for i := 0; i < n; i++ {
-		w, err := setup()
+		var w worker
+		err := retry.Do(ctx, "kafka.open_client", func(context.Context) error {
+			var err error
+			w, err = setup()
+			return err
+		})
 		if err != nil {
 			fail(fmt.Sprintf("<worker %d>", i), fmt.Errorf("starting worker: %w", err))
 			break
