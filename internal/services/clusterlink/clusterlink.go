@@ -14,8 +14,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
+)
+
+// RequestTimeout bounds one REST request, response body included, so a request that hangs fails and is retried
+// (internal/retry) instead of blocking the run.
+const RequestTimeout = 30 * time.Second
+
+// PromoteTimeout bounds one promote request. Confluent Cloud can take a while to accept a large batch, and a
+// promote cut off while the cluster is still accepting it is resent and rejected topic by topic, so it gets
+// longer than RequestTimeout.
+const PromoteTimeout = 2 * time.Minute
+
+// requestTimeout and promoteTimeout are the timeouts the requests use; tests shorten them.
+var (
+	requestTimeout = RequestTimeout
+	promoteTimeout = PromoteTimeout
 )
 
 // httpStatusError is returned by doRequest/doPostRequest when the server
@@ -29,6 +45,9 @@ type httpStatusError struct {
 func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("unexpected status code %d: %s", e.StatusCode, e.Body)
 }
+
+// HTTPStatusCode lets internal/retry read the status without importing this package.
+func (e *httpStatusError) HTTPStatusCode() int { return e.StatusCode }
 
 // linkPath returns the escaped base path for the cluster link resource.
 func linkPath(config Config) string {
@@ -114,13 +133,16 @@ type ConfigAlteration struct {
 	Operation string `json:"operation"`
 }
 
-// PromoteMirrorTopicsResponse represents the response from promoting mirror topics
+// promoteEntry is one topic in a promote response: accepted when ErrorCode is 0. It is an alias for the
+// unnamed struct, so PromoteMirrorTopicsResponse.Data keeps its type.
+type promoteEntry = struct {
+	MirrorTopicName string `json:"mirror_topic_name"`
+	ErrorMessage    string `json:"error_message,omitempty"`
+	ErrorCode       int    `json:"error_code,omitempty"`
+}
+
 type PromoteMirrorTopicsResponse struct {
-	Data []struct {
-		MirrorTopicName string `json:"mirror_topic_name"`
-		ErrorMessage    string `json:"error_message,omitempty"`
-		ErrorCode       int    `json:"error_code,omitempty"`
-	} `json:"data"`
+	Data []promoteEntry `json:"data"`
 }
 
 // Service defines cluster link operations.
@@ -349,7 +371,11 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 	return fmt.Errorf("failed to %s cluster link config %q on link %q: %w", alteration.Operation, alteration.Name, config.LinkName, err)
 }
 
-// PromoteMirrorTopics promotes the specified mirror topics
+// PromoteMirrorTopics promotes the named mirror topics. A promote that fails on a connection error, a timeout,
+// or a 429, 502, 503 or 504 may still have reached the cluster, so it is never resent blindly: the mirror
+// status is read again, topics now PENDING_STOPPED or STOPPED count as accepted, and only the rest are sent
+// again, within the retry budget (internal/retry). The response lists every topic once: those accepted by an
+// earlier request whose answer was lost with error code 0, the rest as the last request answered them.
 func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (_ *PromoteMirrorTopicsResponse, err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.promote_mirror_topics", attribute.Int("kcp.batch.size", len(topicNames)))
 	defer func() { tracing.End(span, err) }()
@@ -357,20 +383,72 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
 
-	path := linkPath(config) + "/mirrors:promote"
+	merged := &PromoteMirrorTopicsResponse{}
+	pending := topicNames
+	unanswered := false // the last promote request failed in a way that may still have reached the cluster
+	err = retry.Do(ctx, "rest.promote", func(ctx context.Context) error {
+		if unanswered {
+			still, err := s.notYetPromoted(ctx, config, pending, merged)
+			if err != nil {
+				return err
+			}
+			pending, unanswered = still, false
+			if len(pending) == 0 {
+				return nil
+			}
+		}
+		resp, err := s.postPromote(ctx, config, pending)
+		if err != nil {
+			unanswered = retry.Retryable(err)
+			return err
+		}
+		merged.Data = append(merged.Data, resp.Data...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+	}
+	return merged, nil
+}
 
+// postPromote sends one promote request for topicNames, bounded by PromoteTimeout.
+func (s *ConfluentCloudService) postPromote(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
 	requestBody := struct {
 		MirrorTopicNames []string `json:"mirror_topic_names"`
 	}{
 		MirrorTopicNames: topicNames,
 	}
-
 	var response PromoteMirrorTopicsResponse
-	if err := s.doPostRequest(ctx, config, path, requestBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+	if err := s.doPostRequest(ctx, config, linkPath(config)+"/mirrors:promote", promoteTimeout, requestBody, &response); err != nil {
+		return nil, err
 	}
-
 	return &response, nil
+}
+
+// notYetPromoted reads the mirror status after a promote request whose answer was lost. Topics in pending that
+// are now PENDING_STOPPED or STOPPED were accepted by that request: they are added to merged as accepted. It
+// returns the rest, which are sent again.
+func (s *ConfluentCloudService) notYetPromoted(ctx context.Context, config Config, pending []string, merged *PromoteMirrorTopicsResponse) ([]string, error) {
+	unfiltered := config
+	unfiltered.Topics = nil // ListMirrorTopics filters by Config.Topics; pending may hold topics outside it
+	mirrors, err := s.ListMirrorTopics(ctx, unfiltered)
+	if err != nil {
+		return nil, fmt.Errorf("reading mirror status after a promote request went unanswered: %w", err)
+	}
+	status := make(map[string]string, len(mirrors))
+	for _, m := range mirrors {
+		status[m.MirrorTopicName] = m.MirrorStatus
+	}
+	var still []string
+	for _, topic := range pending {
+		switch status[topic] {
+		case MirrorStatusPendingStopped, MirrorStatusStopped:
+			merged.Data = append(merged.Data, promoteEntry{MirrorTopicName: topic})
+		default:
+			still = append(still, topic)
+		}
+	}
+	return still, nil
 }
 
 // CreateMirrorTopic creates a mirror topic on the link. mirrorTopic must equal
@@ -469,10 +547,19 @@ func (s *ConfluentCloudService) CreateTopic(ctx context.Context, config Config, 
 	return nil
 }
 
-// doRequest performs an authenticated HTTP GET request to Confluent Cloud API.
-// Non-2xx responses are returned as *httpStatusError so callers can branch on
-// the status code.
+// doRequest performs an authenticated HTTP GET request to Confluent Cloud API, and again after a connection
+// error, a timeout, or a 429, 502, 503 or 504 (internal/retry). Non-2xx responses are returned as
+// *httpStatusError so callers can branch on the status code.
 func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, path string, result interface{}) error {
+	return retry.Do(ctx, "rest.get", func(ctx context.Context) error {
+		return s.getOnce(ctx, config, path, result)
+	}, retry.WithAttributes(attribute.String("kcp.retry.endpoint", endpointOf(path))))
+}
+
+// getOnce is one attempt of doRequest.
+func (s *ConfluentCloudService) getOnce(ctx context.Context, config Config, path string, result interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -505,8 +592,10 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 	return nil
 }
 
-// doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API
-func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, requestBody interface{}, result interface{}) error {
+// doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API, bounded by timeout.
+func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, timeout time.Duration, requestBody interface{}, result interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -547,10 +636,19 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 	return nil
 }
 
-// doPutRequest performs an authenticated HTTP PUT. Used by AlterConfigs to
-// update a single config key on the CP Kafka REST v3 API. Treats 200 and 204
-// as success.
+// doPutRequest performs an authenticated HTTP PUT, and again after a connection error, a timeout, or a 429,
+// 502, 503 or 504 (internal/retry): AlterConfigs uses it to SET one config key, which is idempotent. Treats 200
+// and 204 as success.
 func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config, path string, requestBody interface{}) error {
+	return retry.Do(ctx, "rest.put", func(ctx context.Context) error {
+		return s.putOnce(ctx, config, path, requestBody)
+	}, retry.WithAttributes(attribute.String("kcp.retry.endpoint", endpointOf(path))))
+}
+
+// putOnce is one attempt of doPutRequest.
+func (s *ConfluentCloudService) putOnce(ctx context.Context, config Config, path string, requestBody interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -585,6 +683,8 @@ func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config,
 // doDeleteRequest performs an authenticated HTTP DELETE. Used by AlterConfigs
 // to reset a single config key to its server-side default.
 func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Config, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -823,6 +923,8 @@ func (s *ConfluentCloudService) GetKafkaClusterID(ctx context.Context, config Co
 // returning *httpStatusError otherwise. (doPostRequest unmarshals a result and
 // only accepts 200/204; create returns 201 with no body we need.)
 func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, config Config, path string, requestBody any) error {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
@@ -847,4 +949,23 @@ func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, c
 		b, _ := io.ReadAll(res.Body)
 		return &httpStatusError{StatusCode: res.StatusCode, Body: string(b)}
 	}
+}
+
+// endpointOf is path with the cluster, link, topic and mirror names in it replaced by placeholders, so a span
+// attribute can say which endpoint a request hit without carrying a topic name.
+func endpointOf(path string) string {
+	parts := strings.Split(path, "/")
+	for i := 1; i < len(parts); i++ {
+		switch parts[i-1] {
+		case "clusters":
+			parts[i] = "{cluster}"
+		case "links":
+			parts[i] = "{link}"
+		case "topics":
+			parts[i] = "{topic}"
+		case "mirrors":
+			parts[i] = "{mirror}"
+		}
+	}
+	return strings.Join(parts, "/")
 }
