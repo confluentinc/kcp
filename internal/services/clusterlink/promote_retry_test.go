@@ -187,3 +187,26 @@ func TestPromoteMirrorTopics_IsNotCutOffAtTheRequestTimeout(t *testing.T) {
 	assert.Zero(t, api.gets, "the promote's own answer arrives, so the mirror status is not read")
 	assert.Equal(t, []string{"orders"}, promoted(resp))
 }
+
+func TestPromoteMirrorTopics_ReadsTheStatusAgainAfterASecondUnansweredRequest(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive, "users": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		switch n {
+		case 1:
+			// The cluster accepted "orders", then the connection dropped before the answer.
+			a.status["orders"] = MirrorStatusPendingStopped
+		case 2:
+			// The resend for "users" was accepted, and its answer was lost too.
+			a.status["users"] = MirrorStatusPendingStopped
+		}
+		resetConnection(t, w)
+	}
+
+	resp, err := runPromote(t, api, []string{"orders", "users"})
+
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"orders", "users"}, {"users"}}, api.posts)
+	assert.Equal(t, 2, api.gets, "the mirror status is read after each unanswered request")
+	assert.ElementsMatch(t, []string{"orders", "users"}, promoted(resp))
+}

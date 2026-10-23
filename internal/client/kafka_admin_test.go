@@ -23,6 +23,8 @@ import (
 	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/confluentinc/kcp/internal/testsupport"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -1273,4 +1275,41 @@ func TestClusterID_ReturnsANonConnectionErrorAtOnce(t *testing.T) {
 	assert.Contains(t, err.Error(), "cluster ID not available")
 	var gave *retry.GaveUpError
 	assert.False(t, errors.As(err, &gave), "a missing cluster id is an answer, not something to retry")
+}
+
+func TestClusterID_RecoversWhenTheControllerResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	rec := tracingtest.Install(t)
+	ln := testsupport.NewCutListener(t)
+	mb := sarama.NewMockBrokerListener(t, 1, ln)
+	t.Cleanup(mb.Close)
+	// NewMockMetadataResponse sets no cluster id, so the metadata is a fixed v7 response, the version sarama
+	// sends for Kafka 2.1 and getClusterIDFromBroker always sends.
+	id := "lkc-cut"
+	md := &sarama.MetadataResponse{Version: 7, ClusterID: &id, ControllerID: mb.BrokerID()}
+	md.AddBroker(mb.Addr(), mb.BrokerID())
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":    sarama.NewMockWrapper(md),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_1_0_0
+	admin, err := sarama.NewClusterAdmin([]string{mb.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+	got, err := k.ClusterID(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, id, got)
+
+	ln.Cut()
+
+	ctx, span := tracing.Start(context.Background(), "test", "step.cluster_id")
+	got, err = k.ClusterID(ctx)
+	span.End()
+	require.NoError(t, err, "the retry must reach the controller on a fresh connection")
+	assert.Equal(t, id, got)
+	attempts, ok := tracingtest.Attr(tracingtest.Find(t, tracingtest.Spans(rec), "step.cluster_id"), "kcp.retry.attempts")
+	require.True(t, ok, "the read after the reset needed a retry")
+	assert.Equal(t, int64(2), attempts.AsInt64())
 }

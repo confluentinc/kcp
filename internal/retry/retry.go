@@ -94,8 +94,10 @@ func WithoutRetries(ctx context.Context) context.Context {
 }
 
 // Do calls fn until it returns nil or an error the classifier (Retryable by default) rejects, the budget runs
-// out, or ctx ends. A rejected error is returned unchanged. Running out of budget returns a *GaveUpError
-// wrapping the last error. When ctx ends, Do returns ctx's error joined with the last error.
+// out, or ctx ends. When fn fails Do checks ctx first: once ctx has ended, during an attempt or the wait after
+// one, Do returns ctx's error joined with fn's last error, whether or not the classifier would reject it. While
+// ctx is live, a rejected error is returned unchanged, and running out of budget returns a *GaveUpError
+// wrapping the last error.
 //
 // Each retry adds a retry.attempt event to the span current in ctx, waits inside a wait.retry_backoff span, and
 // logs a warning. A call that needed retries sets kcp.retry.attempts on that span, and kcp.retry.gave_up when
