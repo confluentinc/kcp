@@ -89,8 +89,8 @@ func (e *unreadPartitions) Unwrap() error { return e.failed[0].cause }
 // are grouped by leader broker across all topics and one ListOffsets request is sent per broker (concurrently),
 // so a sweep of N topics costs one round trip instead of N.
 //
-// Partitions that fail because cached metadata went stale (leader moved, replica unavailable) or because the
-// leader's connection failed (internal/retry's Retryable) are fetched again within the retry budget: before each
+// Partitions that fail because cached metadata went stale (leader moved, replica unavailable, every broker
+// dropped) or because the leader's connection failed (internal/retry's Retryable) are fetched again within the retry budget: before each
 // retry the failed leaders' connections are closed and their topics' metadata refreshed. A sweep in which any
 // partition failed some other way, such as a failed login or a TLS error, fails at once with that cause. The lag
 // wait and promote also tolerate 2 failed sweeps in a row, so on a cluster that stays unreachable they fail after
@@ -178,13 +178,27 @@ func retryableUnread(failed []failedPartition) bool {
 }
 
 // retryableCause reports whether a partition's cause is stale metadata (a leader lookup or offset block that
-// failed with one of isStaleMetadataErr's errors) or a connection-level failure (retry.Retryable).
+// failed with one of isStaleMetadataErr's errors), a leader lookup that ran out of brokers without recording
+// why, or a connection-level failure (retry.Retryable).
 func retryableCause(err error) bool {
 	var kerr sarama.KError
 	if errors.As(err, &kerr) && isStaleMetadataErr(kerr) {
 		return true
 	}
-	return retry.Retryable(err)
+	return outOfBrokersWithoutCause(err) || retry.Retryable(err)
+}
+
+// outOfBrokersWithoutCause reports whether err is sarama's ErrOutOfBrokers carrying no broker errors. sarama
+// returns it when a metadata refresh finds every broker already dropped, as after a burst of resets; it brings
+// the dropped brokers back for the next refresh. An ErrOutOfBrokers that carries its brokers' errors is judged
+// by those errors (retry.Retryable), so a TLS error stays a failure.
+func outOfBrokersWithoutCause(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		if errors.Is(err, sarama.ErrOutOfBrokers) && errors.Unwrap(err) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // retryPlan is what the next attempt needs after a sweep left failed unread: the partitions to fetch again, the

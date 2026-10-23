@@ -470,6 +470,12 @@ func TestRetryableUnread_RetriesOnlyStaleMetadataAndConnectionErrors(t *testing.
 			failedWith(fmt.Errorf("offset request to broker b failed for t/0: %w", x509.UnknownAuthorityError{})), false},
 		"a closed client on leader lookup": {
 			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.ErrClosedClient)), false},
+		"a leader lookup that ran out of brokers with no recorded cause": {
+			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.ErrOutOfBrokers)), true},
+		"a leader lookup that ran out of brokers, wrapped by sarama with no causes": {
+			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.Wrap(sarama.ErrOutOfBrokers))), true},
+		"a leader lookup that ran out of brokers on TLS errors": {
+			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.Wrap(sarama.ErrOutOfBrokers, x509.UnknownAuthorityError{}))), false},
 		"a reset and a failed login": {
 			failedWith(fmt.Errorf("x: %w", reset), fmt.Errorf("y: %w", sarama.ErrSASLAuthenticationFailed)), false},
 	} {
@@ -593,5 +599,37 @@ func TestGetMany_ReturnsAMissingBlockAtOnce(t *testing.T) {
 	}
 	if n := countOffsetRequests(broker); n != 1 {
 		t.Fatalf("ListOffsets requests = %d, want 1", n)
+	}
+}
+
+// outOfBrokersOnce is a client whose first leader lookup fails the way sarama's does when every broker was
+// dropped and none recorded an error: a bare ErrOutOfBrokers.
+type outOfBrokersOnce struct {
+	sarama.Client
+	failed bool
+}
+
+func (c *outOfBrokersOnce) Leader(topic string, partition int32) (*sarama.Broker, error) {
+	if !c.failed {
+		c.failed = true
+		return nil, sarama.ErrOutOfBrokers
+	}
+	return c.Client.Leader(topic, partition)
+}
+
+func TestGetMany_RetriesALeaderLookupThatRanOutOfBrokers(t *testing.T) {
+	retrytest.Fast(t)
+	const topic = "cut-topic"
+	_, broker, client := newCutCluster(t, topic)
+
+	got, err := NewOffsetService(&outOfBrokersOnce{Client: client}).GetMany(t.Context(), []string{topic})
+	if err != nil {
+		t.Fatalf("GetMany: %v", err)
+	}
+	if got[topic][0] != 4242 {
+		t.Fatalf("offset = %d, want 4242", got[topic][0])
+	}
+	if n := countOffsetRequests(broker); n != 1 {
+		t.Fatalf("ListOffsets requests = %d, want 1 (sent by the retry)", n)
 	}
 }
