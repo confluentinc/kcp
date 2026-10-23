@@ -187,11 +187,32 @@ kcp migration execute                       root span, one per command
 | `step.wait_for_lags` | `kcp.polls`, `kcp.topics_behind` |
 | `step.promote` | `kcp.polls`, `kcp.batches`, `kcp.promote_errors`; one `clusterlink.promote_mirror_topics` per batch; `wait.promote_poll` between polls |
 | `wait.offset_sync_drain` | Static pause_offset_sync drain |
+| `wait.retry_backoff` | Between two attempts of a call that failed on a connection error (see Retries) |
 | `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers` |
 | `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.snapshot` |
 | `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers` |
 
 Every `wait.*` span carries `kcp.wait.configured_ms`.
+
+### Retries
+
+A call that fails on a connection error (reset, dropped, refused, timed out, or HTTP 429, 502, 503, 504) is tried
+again with backoff: 500 ms, doubling, at most 10 s per wait, giving up rather than start a wait that would end more
+than 2 minutes after the first failure (`internal/retry`). A call that succeeds first time records nothing.
+
+| What | Where |
+|---|---|
+| `retry.attempt` event | On the span current when the call failed, once per failed attempt that is retried: `kcp.retry.operation`, `kcp.retry.attempt`, `kcp.retry.next_wait_ms`, `kcp.retry.error`; plus `kcp.retry.endpoint` on REST calls (names replaced by `{cluster}`, `{link}`, `{topic}`, `{mirror}`) and `kcp.cluster` on `kafka.list_offsets` |
+| `wait.retry_backoff` span | Each wait between attempts |
+| `kcp.retry.attempts` | On the same span, when the call needed more than one attempt |
+| `kcp.retry.gave_up` | `true` on the same span when the call ran out of budget |
+
+Operations: `kafka.list_topics`, `kafka.cluster_id`, `kafka.list_groups`, `kafka.committed_offsets`,
+`kafka.commit_offsets`, `kafka.probe_describe_group`, `kafka.probe_describe_topic`, `kafka.probe_commit`,
+`kafka.partition_counts`, `kafka.open_client`, `kafka.list_offsets`, `rest.get`, `rest.put`, `rest.promote`.
+
+`kcp.retry.error` is kcp's error message and may name a topic or group, as a failed span's error does. Each retry
+also logs a warning (`⚠️ connection error, retrying`), and giving up logs `❌ giving up after connection errors`.
 
 ## Adding spans
 
