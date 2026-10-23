@@ -1,11 +1,15 @@
 package offset
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
+	"github.com/confluentinc/kcp/internal/testsupport"
 )
 
 // newMockCluster starts a single MockBroker acting as controller and leader
@@ -202,10 +206,7 @@ func TestComputeTotalLag_DstAhead(t *testing.T) {
 // refresh-and-retry pass must re-route the partition to the live leader and
 // succeed rather than failing the sweep.
 func TestGetMany_DeadLeaderBrokerRetried(t *testing.T) {
-	// Shrink the retry backoff so the test doesn't pay the production 500ms.
-	oldBackoff := retryBackoff
-	retryBackoff = 5 * time.Millisecond
-	t.Cleanup(func() { retryBackoff = oldBackoff })
+	retrytest.Fast(t)
 
 	live := sarama.NewMockBroker(t, 1)
 
@@ -261,5 +262,117 @@ func TestGetMany_DeadLeaderBrokerRetried(t *testing.T) {
 	// transport-error path (not a lucky first route) was exercised.
 	if n := countOffsetRequests(live); n != 1 {
 		t.Errorf("live broker received %d ListOffsets requests, want 1 (the post-refresh retry)", n)
+	}
+}
+
+// newCutCluster is newMockCluster with the broker behind a listener the test can cut.
+func newCutCluster(t *testing.T, topic string) (*testsupport.CutListener, *sarama.MockBroker, sarama.Client) {
+	t.Helper()
+	ln := testsupport.NewCutListener(t)
+	broker := sarama.NewMockBrokerListener(t, 1, ln)
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).SetController(broker.BrokerID()).SetLeader(topic, 0, broker.BrokerID()),
+		"OffsetRequest": sarama.NewMockOffsetResponse(t).SetOffset(topic, 0, sarama.OffsetNewest, 4242),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	client, err := sarama.NewClient([]string{broker.Addr()}, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client against mock broker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		broker.Close()
+	})
+	return ln, broker, client
+}
+
+// The reason for closing the broker before a retry: sarama keeps failing every request on a connection the
+// broker reset, even once the broker is back, until the broker is closed.
+func TestSarama_ABrokenConnectionStaysBrokenUntilTheBrokerIsClosed(t *testing.T) {
+	const topic = "cut-topic"
+	ln, _, client := newCutCluster(t, topic)
+	leader, err := client.Leader(topic, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &sarama.OffsetRequest{Version: 1}
+	req.AddBlock(topic, 0, sarama.OffsetNewest, 1)
+	if _, err := leader.GetAvailableOffsets(req); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+
+	ln.Cut()
+
+	for i := 1; i <= 2; i++ {
+		if _, err := leader.GetAvailableOffsets(req); err == nil {
+			t.Fatalf("request %d after the reset succeeded on the broken connection", i)
+		}
+	}
+	_ = leader.Close()
+	leader, err = client.Leader(topic, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := leader.GetAvailableOffsets(req); err != nil {
+		t.Fatalf("after closing the broker, a request must reconnect: %v", err)
+	}
+}
+
+func TestGetMany_RecoversWhenTheLeaderResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	const topic = "cut-topic"
+	ln, broker, client := newCutCluster(t, topic)
+	svc := NewOffsetService(client)
+	if _, err := svc.GetMany(t.Context(), []string{topic}); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+
+	ln.Cut()
+
+	got, err := svc.GetMany(t.Context(), []string{topic})
+	if err != nil {
+		t.Fatalf("sweep after the reset: %v", err)
+	}
+	if got[topic][0] != 4242 {
+		t.Fatalf("offset = %d, want 4242", got[topic][0])
+	}
+	if n := countOffsetRequests(broker); n != 2 {
+		t.Fatalf("ListOffsets requests reaching the broker = %d, want 2 (one per sweep)", n)
+	}
+}
+
+func TestGetMany_GivesUpAtTheBudgetOnATopicThatIsGone(t *testing.T) {
+	retrytest.Fast(t)
+	const topic = "gone-topic"
+	// The leader answers UNKNOWN_TOPIC_OR_PARTITION for the partition, as it does once the topic is deleted.
+	gone := &sarama.OffsetResponse{Version: 1}
+	gone.AddTopicPartition(topic, 0, -1)
+	gone.Blocks[topic][0].Err = sarama.ErrUnknownTopicOrPartition
+	broker := sarama.NewMockBroker(t, 1)
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).SetController(broker.BrokerID()).SetLeader(topic, 0, broker.BrokerID()),
+		"OffsetRequest": sarama.NewMockWrapper(gone),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	client, err := sarama.NewClient([]string{broker.Addr()}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close(); broker.Close() })
+
+	_, err = NewOffsetService(client).GetMany(t.Context(), []string{topic})
+
+	var gave *retry.GaveUpError
+	if !errors.As(err, &gave) {
+		t.Fatalf("err = %v, want a *retry.GaveUpError", err)
+	}
+	if !errors.Is(err, sarama.ErrUnknownTopicOrPartition) || !strings.Contains(err.Error(), topic+"/0") {
+		t.Fatalf("err = %v, want it to name %s/0 and UNKNOWN_TOPIC_OR_PARTITION", err, topic)
 	}
 }

@@ -2,13 +2,14 @@ package offset
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
@@ -16,13 +17,6 @@ import (
 
 // tracerName is the instrumentation scope of this package's spans.
 const tracerName = "kcp/services/offset"
-
-// retryBackoff is how long GetMany waits after refreshing metadata before
-// retrying failed partitions. An immediate retry tends to observe the same
-// in-flight leader election that failed the first pass; a short pause gives
-// the cluster time to settle. A var (not const) so tests exercising the
-// retry path can shrink it.
-var retryBackoff = 500 * time.Millisecond
 
 // Provider abstracts offset retrieval for testability.
 type Provider interface {
@@ -70,21 +64,35 @@ type topicPartition struct {
 	partition int32
 }
 
-// failedPartition pairs a partition with the error that deferred it to the
-// retry pass, so the sweep's final error can name the underlying cause.
+// failedPartition pairs a partition with the error that left it unread, so the sweep's final error can name
+// the cause. broker is the leader whose connection failed, or nil when the leader lookup failed or the leader
+// answered with a stale-metadata error.
 type failedPartition struct {
-	tp    topicPartition
-	cause error
+	tp     topicPartition
+	cause  error
+	broker *sarama.Broker
 }
 
-// GetMany fetches the log end offset (LEO) for every partition of every
-// topic in a single sweep. Partitions are grouped by leader broker across
-// all topics and one ListOffsets request is sent per broker (concurrently),
+// unreadPartitions is a sweep that left partitions unread for a reason a retry can fix: a leader moved, or the
+// leader's connection failed. It wraps the first cause.
+type unreadPartitions struct {
+	failed []failedPartition
+}
+
+func (e *unreadPartitions) Error() string {
+	return fmt.Sprintf("offset fetch failed for %d partition(s): %v", len(e.failed), e.failed[0].cause)
+}
+
+func (e *unreadPartitions) Unwrap() error { return e.failed[0].cause }
+
+// GetMany fetches the log end offset (LEO) for every partition of every topic in a single sweep. Partitions
+// are grouped by leader broker across all topics and one ListOffsets request is sent per broker (concurrently),
 // so a sweep of N topics costs one round trip instead of N.
 //
-// Partitions that fail because cached metadata went stale mid-sweep (leader
-// moved, replica unavailable, or the cached leader broker unreachable) are
-// retried once against refreshed metadata before the sweep fails.
+// Partitions that fail because cached metadata went stale (leader moved, replica unavailable) or because the
+// leader's connection failed are fetched again within the retry budget (internal/retry): before each retry the
+// failed leaders' connections are closed and their topics' metadata refreshed. The lag wait and promote also
+// tolerate 2 failed sweeps in a row, so on a cluster that stays unreachable they fail after about three budgets.
 func (t *Service) GetMany(ctx context.Context, topics []string) (_ map[string]map[int32]int64, err error) {
 	if len(topics) == 0 {
 		return map[string]map[int32]int64{}, nil
@@ -114,45 +122,59 @@ func (t *Service) getMany(ctx context.Context, topics []string) (map[string]map[
 	}
 
 	tracing.SetAttributes(ctx, attribute.Int("kcp.partitions", len(pending)))
-	retriable, err := t.fetchBatch(ctx, pending, results)
+
+	var dead []*sarama.Broker
+	var refresh []string
+	err := retry.Do(ctx, "kafka.list_offsets", func(ctx context.Context) error {
+		failed, err := t.fetchBatch(ctx, pending, results)
+		if err != nil {
+			return err
+		}
+		if len(failed) == 0 {
+			return nil
+		}
+		pending, dead, refresh = retryPlan(failed)
+		tracing.SetAttributes(ctx, attribute.Int("kcp.retried_partitions", len(pending)))
+		return &unreadPartitions{failed: failed}
+	},
+		retry.WithRetryable(func(err error) bool {
+			var unread *unreadPartitions
+			return errors.As(err, &unread) || retry.Retryable(err)
+		}),
+		retry.WithAttributes(attribute.String("kcp.cluster", t.cluster)),
+		retry.WithBeforeRetry(func() {
+			for _, b := range dead {
+				_ = b.Close() // a close's own error is not a result; the next lookup reopens the broker
+			}
+			if err := t.client.RefreshMetadata(refresh...); err != nil {
+				slog.Warn("⚠️ could not refresh metadata before retrying the offset fetch", "cluster", t.cluster, "error", err)
+			}
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}
-	if len(retriable) > 0 {
-		retry := make([]topicPartition, 0, len(retriable))
-		refresh := make([]string, 0, len(retriable))
-		seen := make(map[string]struct{}, len(retriable))
-		for _, f := range retriable {
-			retry = append(retry, f.tp)
-			if _, dup := seen[f.tp.topic]; !dup {
-				seen[f.tp.topic] = struct{}{}
-				refresh = append(refresh, f.tp.topic)
-			}
-		}
-		slog.Debug("retrying offset fetch after metadata refresh",
-			"partitions", len(retriable), "topics", len(refresh))
-		tracing.SetAttributes(ctx, attribute.Int("kcp.retried_partitions", len(retriable)))
-		if err := t.client.RefreshMetadata(refresh...); err != nil {
-			return nil, fmt.Errorf("failed to refresh metadata for retry: %w", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(retryBackoff):
-		}
-
-		stillFailed, err := t.fetchBatch(ctx, retry, results)
-		if err != nil {
-			return nil, err
-		}
-		if len(stillFailed) > 0 {
-			return nil, fmt.Errorf("offset fetch failed for %d partition(s) after metadata refresh: %w",
-				len(stillFailed), stillFailed[0].cause)
-		}
-	}
-
 	slog.Debug("fetched offsets for topic batch", "topics", len(topics))
 	return results, nil
+}
+
+// retryPlan is what the next attempt needs after a sweep left failed unread: the partitions to fetch again, the
+// leaders whose connections failed (to close first) and the topics whose metadata to refresh.
+func retryPlan(failed []failedPartition) (pending []topicPartition, dead []*sarama.Broker, refresh []string) {
+	seenTopic := map[string]bool{}
+	seenBroker := map[*sarama.Broker]bool{}
+	for _, f := range failed {
+		pending = append(pending, f.tp)
+		if !seenTopic[f.tp.topic] {
+			seenTopic[f.tp.topic] = true
+			refresh = append(refresh, f.tp.topic)
+		}
+		if f.broker != nil && !seenBroker[f.broker] {
+			seenBroker[f.broker] = true
+			dead = append(dead, f.broker)
+		}
+	}
+	return pending, dead, refresh
 }
 
 // fetchBatch groups partitions by leader broker, issues one ListOffsets
@@ -197,25 +219,15 @@ func (t *Service) fetchBatch(ctx context.Context, tps []topicPartition, results 
 
 			resp, err := broker.GetAvailableOffsets(req)
 			if err != nil {
-				// A transport-level failure (connection refused/reset, EOF from
-				// a restarting broker) is the blunt form of stale metadata: the
-				// cached leader is gone. Defer every partition routed to this
-				// broker to the refresh-and-retry pass — after the refresh they
-				// re-route to the current leaders — rather than failing the
-				// sweep on a condition the retry exists to absorb.
-				//
-				// Deliberately unclassified: persistent transport failures
-				// (bad TLS/SASL config, dead cluster) also take this path and
-				// cost one refresh + backoff + retry per sweep before
-				// surfacing. That bounded delay is accepted because reliably
-				// separating "broker restarting" from "misconfigured" out of
-				// the wrapped error is not feasible, and misclassifying a
-				// transient as fatal would abort a live migration.
+				// A transport-level failure (connection refused, reset, EOF from a restarting broker) is the
+				// blunt form of stale metadata: the cached leader is gone, or its connection is. Every partition
+				// routed to this broker is retried by getMany after the broker is closed and metadata refreshed.
 				mu.Lock()
 				for _, tp := range parts {
 					failed = append(failed, failedPartition{
-						tp:    tp,
-						cause: fmt.Errorf("offset request to broker %s failed for %s/%d: %w", broker.Addr(), tp.topic, tp.partition, err),
+						tp:     tp,
+						cause:  fmt.Errorf("offset request to broker %s failed for %s/%d: %w", broker.Addr(), tp.topic, tp.partition, err),
+						broker: broker,
 					})
 				}
 				mu.Unlock()
