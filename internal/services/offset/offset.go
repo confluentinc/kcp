@@ -73,8 +73,8 @@ type failedPartition struct {
 	broker *sarama.Broker
 }
 
-// unreadPartitions is a sweep that left partitions unread for a reason a retry can fix: a leader moved, or the
-// leader's connection failed. It wraps the first cause.
+// unreadPartitions is a sweep that left partitions unread because a leader lookup, a leader's connection or a
+// partition's offset block failed. It wraps the first cause; getMany puts first a cause a retry cannot fix.
 type unreadPartitions struct {
 	failed []failedPartition
 }
@@ -90,9 +90,11 @@ func (e *unreadPartitions) Unwrap() error { return e.failed[0].cause }
 // so a sweep of N topics costs one round trip instead of N.
 //
 // Partitions that fail because cached metadata went stale (leader moved, replica unavailable) or because the
-// leader's connection failed are fetched again within the retry budget (internal/retry): before each retry the
-// failed leaders' connections are closed and their topics' metadata refreshed. The lag wait and promote also
-// tolerate 2 failed sweeps in a row, so on a cluster that stays unreachable they fail after about three budgets.
+// leader's connection failed (internal/retry's Retryable) are fetched again within the retry budget: before each
+// retry the failed leaders' connections are closed and their topics' metadata refreshed. A sweep in which any
+// partition failed some other way, such as a failed login or a TLS error, fails at once with that cause. The lag
+// wait and promote also tolerate 2 failed sweeps in a row, so on a cluster that stays unreachable they fail after
+// about three budgets.
 func (t *Service) GetMany(ctx context.Context, topics []string) (_ map[string]map[int32]int64, err error) {
 	if len(topics) == 0 {
 		return map[string]map[int32]int64{}, nil
@@ -133,13 +135,19 @@ func (t *Service) getMany(ctx context.Context, topics []string) (map[string]map[
 		if len(failed) == 0 {
 			return nil
 		}
+		if i := slices.IndexFunc(failed, func(f failedPartition) bool { return !retryableCause(f.cause) }); i > 0 {
+			failed[0], failed[i] = failed[i], failed[0] // the error names and wraps the cause that stops the sweep
+		}
 		pending, dead, refresh = retryPlan(failed)
 		tracing.SetAttributes(ctx, attribute.Int("kcp.retried_partitions", len(pending)))
 		return &unreadPartitions{failed: failed}
 	},
 		retry.WithRetryable(func(err error) bool {
 			var unread *unreadPartitions
-			return errors.As(err, &unread) || retry.Retryable(err)
+			if errors.As(err, &unread) {
+				return retryableUnread(unread.failed)
+			}
+			return retry.Retryable(err)
 		}),
 		retry.WithAttributes(attribute.String("kcp.cluster", t.cluster)),
 		retry.WithBeforeRetry(func() {
@@ -156,6 +164,27 @@ func (t *Service) getMany(ctx context.Context, topics []string) (map[string]map[
 	}
 	slog.Debug("fetched offsets for topic batch", "topics", len(topics))
 	return results, nil
+}
+
+// retryableUnread reports whether fetching failed again can succeed: every partition's cause is stale metadata or
+// a connection-level failure.
+func retryableUnread(failed []failedPartition) bool {
+	for _, f := range failed {
+		if !retryableCause(f.cause) {
+			return false
+		}
+	}
+	return true
+}
+
+// retryableCause reports whether a partition's cause is stale metadata (a leader lookup or offset block that
+// failed with one of isStaleMetadataErr's errors) or a connection-level failure (retry.Retryable).
+func retryableCause(err error) bool {
+	var kerr sarama.KError
+	if errors.As(err, &kerr) && isStaleMetadataErr(kerr) {
+		return true
+	}
+	return retry.Retryable(err)
 }
 
 // retryPlan is what the next attempt needs after a sweep left failed unread: the partitions to fetch again, the
@@ -181,7 +210,8 @@ func retryPlan(failed []failedPartition) (pending []topicPartition, dead []*sara
 // request per broker, and writes offsets into results. Partitions whose
 // leader lookup failed, whose offset block carried a stale-metadata error,
 // or whose broker request failed at the transport level are returned (with
-// their cause) for the caller to retry; any other failure aborts the batch.
+// their cause) for the caller, which retries those retryableCause accepts; any
+// other failure aborts the batch.
 func (t *Service) fetchBatch(ctx context.Context, tps []topicPartition, results map[string]map[int32]int64) ([]failedPartition, error) {
 	var failed []failedPartition
 
@@ -221,7 +251,8 @@ func (t *Service) fetchBatch(ctx context.Context, tps []topicPartition, results 
 			if err != nil {
 				// A transport-level failure (connection refused, reset, EOF from a restarting broker) is the
 				// blunt form of stale metadata: the cached leader is gone, or its connection is. Every partition
-				// routed to this broker is retried by getMany after the broker is closed and metadata refreshed.
+				// routed to this broker is retried by getMany after the broker is closed and metadata refreshed,
+				// when the failure is connection-level (retryableCause); a failed login or TLS error is not retried.
 				mu.Lock()
 				for _, tp := range parts {
 					failed = append(failed, failedPartition{

@@ -1,9 +1,13 @@
 package offset
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -438,5 +442,156 @@ func TestGetMany_ClosesTheResetLeaderSoTheFirstRetryRecovers(t *testing.T) {
 	attempts, ok := tracingtest.Attr(sweeps[1], "kcp.retry.attempts")
 	if !ok || attempts.AsInt64() != 2 {
 		t.Fatalf("kcp.retry.attempts = %v (set: %v), want 2: the first retry must recover", attempts, ok)
+	}
+}
+
+func TestRetryableUnread_RetriesOnlyStaleMetadataAndConnectionErrors(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}
+	tp := topicPartition{topic: "t", partition: 0}
+	failedWith := func(causes ...error) []failedPartition {
+		var out []failedPartition
+		for _, c := range causes {
+			out = append(out, failedPartition{tp: tp, cause: c})
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		failed []failedPartition
+		want   bool
+	}{
+		"a reset connection": {failedWith(fmt.Errorf("offset request to broker b failed for t/0: %w", reset)), true},
+		"a stale-metadata block error": {
+			failedWith(fmt.Errorf("offset error for t/0: %w", sarama.ErrNotLeaderForPartition)), true},
+		"a leader lookup that found no leader": {
+			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.ErrLeaderNotAvailable)), true},
+		"a failed login": {
+			failedWith(fmt.Errorf("offset request to broker b failed for t/0: %w", sarama.ErrSASLAuthenticationFailed)), false},
+		"a TLS error": {
+			failedWith(fmt.Errorf("offset request to broker b failed for t/0: %w", x509.UnknownAuthorityError{})), false},
+		"a closed client on leader lookup": {
+			failedWith(fmt.Errorf("failed to get leader for t/0: %w", sarama.ErrClosedClient)), false},
+		"a reset and a failed login": {
+			failedWith(fmt.Errorf("x: %w", reset), fmt.Errorf("y: %w", sarama.ErrSASLAuthenticationFailed)), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := retryableUnread(tc.failed); got != tc.want {
+				t.Fatalf("retryableUnread = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// newSASLCluster is a single-broker cluster whose SASL login succeeds for the client's bootstrap connection and
+// fails for every later one, so the partition leader's connection fails to log in.
+func newSASLCluster(t *testing.T, topic string) (*sarama.MockBroker, sarama.Client) {
+	t.Helper()
+	broker := sarama.NewMockBroker(t, 1)
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest":   sarama.NewMockApiVersionsResponse(t),
+		"SaslHandshakeRequest": sarama.NewMockSaslHandshakeResponse(t).SetEnabledMechanisms([]string{sarama.SASLTypePlaintext}),
+		"SaslAuthenticateRequest": sarama.NewMockSequence(
+			sarama.NewMockSaslAuthenticateResponse(t),
+			sarama.NewMockSaslAuthenticateResponse(t).SetError(sarama.ErrSASLAuthenticationFailed),
+		),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).SetController(broker.BrokerID()).SetLeader(topic, 0, broker.BrokerID()),
+		"OffsetRequest": sarama.NewMockOffsetResponse(t).SetOffset(topic, 0, sarama.OffsetNewest, 4242),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	cfg.Net.SASL.Enable = true
+	cfg.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+	cfg.Net.SASL.User = "u"
+	cfg.Net.SASL.Password = "p"
+	client, err := sarama.NewClient([]string{broker.Addr()}, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client against mock broker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		broker.Close()
+	})
+	return broker, client
+}
+
+func TestGetMany_ReturnsAFailedLoginAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	rec := tracingtest.Install(t)
+	const topic = "sasl-topic"
+	_, client := newSASLCluster(t, topic)
+
+	_, err := NewOffsetService(client).GetMany(t.Context(), []string{topic})
+
+	var gave *retry.GaveUpError
+	if err == nil || errors.As(err, &gave) {
+		t.Fatalf("err = %v, want the failed login returned without retries", err)
+	}
+	if !errors.Is(err, sarama.ErrSASLAuthenticationFailed) {
+		t.Fatalf("err = %v, want it to wrap ErrSASLAuthenticationFailed", err)
+	}
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "offset.get_many")
+	if attempts, ok := tracingtest.Attr(span, "kcp.retry.attempts"); ok {
+		t.Fatalf("kcp.retry.attempts = %v, want unset: a single attempt", attempts)
+	}
+}
+
+// newBlockCluster is a single-broker cluster whose leader answers every ListOffsets with resp.
+func newBlockCluster(t *testing.T, topic string, resp *sarama.OffsetResponse) (*sarama.MockBroker, sarama.Client) {
+	t.Helper()
+	broker := sarama.NewMockBroker(t, 1)
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).SetController(broker.BrokerID()).SetLeader(topic, 0, broker.BrokerID()),
+		"OffsetRequest": sarama.NewMockWrapper(resp),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	client, err := sarama.NewClient([]string{broker.Addr()}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close(); broker.Close() })
+	return broker, client
+}
+
+func TestGetMany_ReturnsANonStaleBlockErrorAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	const topic = "denied-topic"
+	denied := &sarama.OffsetResponse{Version: 1}
+	denied.AddTopicPartition(topic, 0, -1)
+	denied.Blocks[topic][0].Err = sarama.ErrTopicAuthorizationFailed
+	broker, client := newBlockCluster(t, topic, denied)
+
+	_, err := NewOffsetService(client).GetMany(t.Context(), []string{topic})
+
+	var gave *retry.GaveUpError
+	if err == nil || errors.As(err, &gave) {
+		t.Fatalf("err = %v, want the block error returned without retries", err)
+	}
+	if !strings.Contains(err.Error(), sarama.ErrTopicAuthorizationFailed.Error()) {
+		t.Fatalf("err = %v, want it to name TOPIC_AUTHORIZATION_FAILED", err)
+	}
+	if n := countOffsetRequests(broker); n != 1 {
+		t.Fatalf("ListOffsets requests = %d, want 1", n)
+	}
+}
+
+func TestGetMany_ReturnsAMissingBlockAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	const topic = "blockless-topic"
+	broker, client := newBlockCluster(t, topic, &sarama.OffsetResponse{Version: 1})
+
+	_, err := NewOffsetService(client).GetMany(t.Context(), []string{topic})
+
+	var gave *retry.GaveUpError
+	if err == nil || errors.As(err, &gave) {
+		t.Fatalf("err = %v, want the missing block returned without retries", err)
+	}
+	if !strings.Contains(err.Error(), "no offset block returned for "+topic+"/0") {
+		t.Fatalf("err = %v, want it to name the missing block", err)
+	}
+	if n := countOffsetRequests(broker); n != 1 {
+		t.Fatalf("ListOffsets requests = %d, want 1", n)
 	}
 }
