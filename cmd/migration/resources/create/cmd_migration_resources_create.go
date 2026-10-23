@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsiam "github.com/aws/aws-sdk-go-v2/service/iam"
 	awsiamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
@@ -293,7 +294,7 @@ Depending on the sections the manifest declares, this reconciles a cluster link,
 
 Run ` + "`kcp migration resources validate`" + ` first to check the manifest, and use --dry-run to print the plan without making any change.
 
-See the [manifest reference](../../../migration-assets/manifest-reference.md) for every manifest field.`,
+Manifest reference (every field): ` + build_info.DocsURL() + `migration-assets/manifest-reference/`,
 		Example: `  # Preview the plan; nothing is changed
   kcp migration resources create -f migration.yaml --dry-run
 
