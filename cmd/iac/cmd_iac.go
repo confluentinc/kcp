@@ -14,11 +14,11 @@ import (
 )
 
 func NewIacCmd() *cobra.Command {
-	iacCmd := &cobra.Command{
+	iacCmd := utils.NewGroupCmd(&cobra.Command{
 		Use:   "iac",
 		Short: "Generate infrastructure and migration assets",
 		Long:  "Generate various infrastructure and migration assets including bastion host configurations, data migration tools, and target environment setups.",
-	}
+	})
 
 	iacCmd.AddCommand(
 		utils.NewNounCmd("bastion-host", bastion_host.NewGenerateCmd()),
