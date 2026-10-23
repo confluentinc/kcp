@@ -26,7 +26,7 @@ type fakeFetcher struct {
 	errs    map[string]error
 }
 
-func (f *fakeFetcher) CommittedOffsets(group string) (Offsets, error) {
+func (f *fakeFetcher) CommittedOffsets(_ context.Context, group string) (Offsets, error) {
 	if err := f.errs[group]; err != nil {
 		return nil, err
 	}

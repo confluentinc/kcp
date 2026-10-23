@@ -40,7 +40,7 @@ type GroupLister interface {
 // needs; the real client satisfies it.
 type strictGroupClient interface {
 	ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error)
-	CommittedTopics(groups []string) (map[string][]string, error)
+	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
 	CanDescribeAnyGroup() (bool, error)
 	CanDescribeAnyTopic() (bool, error)
 	CanCommitAnyOffsets() (bool, error)
@@ -63,8 +63,8 @@ func (l *KafkaGroupLister) ListGroups(context.Context) ([]types.ConsumerGroupLis
 	return l.client.ListGroupsAllBrokers()
 }
 
-func (l *KafkaGroupLister) CommittedTopics(_ context.Context, groups []string) (map[string][]string, error) {
-	return l.client.CommittedTopics(groups)
+func (l *KafkaGroupLister) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
+	return l.client.CommittedTopics(ctx, groups)
 }
 
 func (l *KafkaGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {

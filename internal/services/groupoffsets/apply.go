@@ -10,7 +10,7 @@ import (
 
 // GroupCommitter writes one group's offsets to the destination. *client.ConsumerGroupClient satisfies it.
 type GroupCommitter interface {
-	CommitGroupOffsets(group string, offsets Offsets) error
+	CommitGroupOffsets(ctx context.Context, group string, offsets Offsets) error
 }
 
 // CommitterFactory returns a committer and the function that releases it (which may be nil). Each pool worker
@@ -42,7 +42,7 @@ func Apply(ctx context.Context, newCommitter CommitterFactory, plan *Plan, worke
 			return worker{}, err
 		}
 		return worker{
-			do:      func(group string) error { return c.CommitGroupOffsets(group, byGroup[group]) },
+			do:      func(group string) error { return c.CommitGroupOffsets(ctx, group, byGroup[group]) },
 			release: release,
 		}, nil
 	})

@@ -33,7 +33,7 @@ func (f *fakeStrictClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing,
 	return f.groups, f.err
 }
 
-func (f *fakeStrictClient) CommittedTopics([]string) (map[string][]string, error) {
+func (f *fakeStrictClient) CommittedTopics(context.Context, []string) (map[string][]string, error) {
 	return f.tracked, f.err
 }
 

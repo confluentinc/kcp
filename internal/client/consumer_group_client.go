@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -234,12 +236,15 @@ const committedTopicsWorkers = 8
 
 // CommittedTopics returns, for each group, the sorted topics it has committed an
 // offset on. A conversion checks only these topics, so a failure to read any
-// group is an error: skipping it would leave its topics unverified.
-func (c *ConsumerGroupClient) CommittedTopics(groups []string) (map[string][]string, error) {
-	return committedTopics(c.admin, groups, committedTopicsWorkers)
+// group is an error: skipping it would leave its topics unverified. Each group's fetch is retried (see
+// retryGroupOp).
+func (c *ConsumerGroupClient) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
+	return committedTopics(ctx, c.admin, groups, committedTopicsWorkers, c.resetCoordinator)
 }
 
-func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[string][]string, error) {
+// committedTopics fetches each group's committed topics on workers goroutines. reset, if set, is called with
+// the group before each retry of that group's fetch.
+func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string, workers int, reset func(group string)) (map[string][]string, error) {
 	if workers < 1 {
 		workers = 1
 	}
@@ -262,7 +267,7 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 				if failed.Load() {
 					continue
 				}
-				topics, err := committedTopicsOf(f, g)
+				topics, err := committedTopicsOf(ctx, f, g, resetFor(reset, g))
 				if err != nil {
 					failed.Store(true)
 				}
@@ -302,6 +307,14 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	return out, nil
 }
 
+// resetFor binds reset to group, or returns nil when reset is nil.
+func resetFor(reset func(group string), group string) func() {
+	if reset == nil {
+		return nil
+	}
+	return func() { reset(group) }
+}
+
 // CommittedOffset is one partition's committed position and the metadata string the committing client
 // stored with it (Kafka Streams keeps per-partition stream time there). Both are carried to the destination.
 type CommittedOffset struct {
@@ -311,11 +324,12 @@ type CommittedOffset struct {
 
 // committedOffsetsOf fetches every committed offset of one group, with its metadata: topic -> partition ->
 // committed offset. A partition counts only if its committed offset is >= 0 (-1 means a subscription with no
-// commit), so a topic with no commit is absent. Any block-level error fails the whole fetch; a coordinator that
-// is not ready, for the whole fetch or any partition, is retried (see retryWhileCoordinatorNotReady).
-func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
+// commit), so a topic with no commit is absent. Any block-level error fails the fetch. A connection error, or a
+// coordinator that moved, is unavailable or is still loading, is retried (see retryGroupOp); reset, if set, runs
+// before each retry.
+func committedOffsetsOf(ctx context.Context, f groupOffsetFetcher, group string, reset func()) (map[string]map[int32]CommittedOffset, error) {
 	var out map[string]map[int32]CommittedOffset
-	err := retryWhileCoordinatorNotReady(nil, func() error {
+	err := retryGroupOp(ctx, "kafka.committed_offsets", reset, func() error {
 		var err error
 		out, err = fetchCommittedOffsets(f, group)
 		return err
@@ -347,8 +361,8 @@ func fetchCommittedOffsets(f groupOffsetFetcher, group string) (map[string]map[i
 }
 
 // committedTopicsOf is the topics of committedOffsetsOf, sorted.
-func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
-	offsets, err := committedOffsetsOf(f, group)
+func committedTopicsOf(ctx context.Context, f groupOffsetFetcher, group string, reset func()) ([]string, error) {
+	offsets, err := committedOffsetsOf(ctx, f, group, reset)
 	if err != nil {
 		return nil, err
 	}
@@ -362,34 +376,34 @@ func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
 
 // CommittedOffsets returns one group's committed offsets and their metadata, topic -> partition -> committed
 // offset, offsets >= 0 only.
-func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int32]CommittedOffset, error) {
-	return committedOffsetsOf(c.admin, group)
+func (c *ConsumerGroupClient) CommittedOffsets(ctx context.Context, group string) (map[string]map[int32]CommittedOffset, error) {
+	return committedOffsetsOf(ctx, c.admin, group, func() { c.resetCoordinator(group) })
 }
 
-// coordinatorBackoffs is the wait before each retry of a group read or commit whose coordinator is not ready:
-// about ten seconds in all, which rides out a coordinator moving or (re)loading __consumer_offsets, as a freshly
-// built cluster does on its first group request. It is a var so tests can shorten it.
-var coordinatorBackoffs = []time.Duration{
-	250 * time.Millisecond, 500 * time.Millisecond, time.Second,
-	2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second,
-}
-
-// retryWhileCoordinatorNotReady runs op, and again after each of coordinatorBackoffs while it fails only
-// because the group's coordinator is not ready (coordinatorNotReady); it returns op's last error. beforeRetry,
-// if set, runs before each retry.
-func retryWhileCoordinatorNotReady(beforeRetry func(), op func() error) error {
-	err := op()
-	for _, wait := range coordinatorBackoffs {
-		if err == nil || !coordinatorNotReady(err) {
-			return err
-		}
-		time.Sleep(wait)
-		if beforeRetry != nil {
-			beforeRetry()
-		}
-		err = op()
+// retryGroupOp runs op with retry.Do: a connection error, or a coordinator that moved, is not available yet or
+// is still loading (coordinatorNotReady, as when a freshly built cluster loads __consumer_offsets), is retried
+// within the retry budget. reset, if set, runs before each retry.
+func retryGroupOp(ctx context.Context, operation string, reset func(), op func() error) error {
+	opts := []retry.Option{retry.WithRetryable(func(err error) bool {
+		return retry.Retryable(err) || coordinatorNotReady(err)
+	})}
+	if reset != nil {
+		opts = append(opts, retry.WithBeforeRetry(reset))
 	}
-	return err
+	return retry.Do(ctx, operation, func(context.Context) error { return op() }, opts...)
+}
+
+// resetCoordinator closes the connection to group's coordinator and looks the coordinator up again, so the next
+// attempt neither reuses a connection the broker reset nor asks a broker that no longer coordinates the group.
+// sarama fails every request on a connection that broke until the broker is closed; its coordinator lookup
+// opens it again. The close's own error is not a result: a broker already closed answers ErrNotConnected.
+func (c *ConsumerGroupClient) resetCoordinator(group string) {
+	if b, err := c.client.Coordinator(group); err == nil {
+		_ = b.Close()
+	}
+	if err := c.client.RefreshCoordinator(group); err != nil {
+		slog.Warn("⚠️ could not look up the coordinator again before retrying", "group", group, "error", err)
+	}
 }
 
 // buildGroupCommit builds the admin commit for one group: OffsetCommit v7 (a bare request is v0), generation
@@ -443,11 +457,11 @@ func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) 
 }
 
 // CommitGroupOffsets writes one group's offsets to this cluster as a single admin commit (see
-// buildGroupCommit). A coordinator that moved or is still loading is retried; anything else, including a
-// group that has live members (UNKNOWN_MEMBER_ID) or a credential without READ on the group or topic, is an
-// error naming the group, topic and partition, and is not retried.
-func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]CommittedOffset) error {
-	return retryWhileCoordinatorNotReady(func() { _ = c.client.RefreshCoordinator(group) }, func() error {
+// buildGroupCommit). A connection error, or a coordinator that moved or is still loading, is retried (see
+// retryGroupOp). Anything else, including a group that has live members (UNKNOWN_MEMBER_ID) or a credential
+// without READ on the group or topic, is an error naming the group, topic and partition, and is not retried.
+func (c *ConsumerGroupClient) CommitGroupOffsets(ctx context.Context, group string, offsets map[string]map[int32]CommittedOffset) error {
+	return retryGroupOp(ctx, "kafka.commit_offsets", func() { c.resetCoordinator(group) }, func() error {
 		coordinator, err := c.client.Coordinator(group)
 		if err != nil {
 			return fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)

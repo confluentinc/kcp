@@ -1,16 +1,23 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -236,7 +243,7 @@ func TestCommittedTopics_TrackedMeansACommittedOffset(t *testing.T) {
 		"app":  offsetsResponse(map[string]map[int32]int64{"orders": {0: 5, 1: -1}, "payments": {0: 0}, "subscribed-only": {0: -1}}),
 		"idle": offsetsResponse(nil),
 	}}
-	got, err := committedTopics(f, []string{"app", "idle"}, 2)
+	got, err := committedTopics(context.Background(), f, []string{"app", "idle"}, 2, nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string][]string{"app": {"orders", "payments"}, "idle": nil}, got)
 }
@@ -249,7 +256,7 @@ func TestCommittedTopics_ManyGroupsConcurrently(t *testing.T) {
 		groups = append(groups, g)
 		f.resp[g] = offsetsResponse(map[string]map[int32]int64{"t-" + g: {0: 1}})
 	}
-	got, err := committedTopics(f, groups, 8)
+	got, err := committedTopics(context.Background(), f, groups, 8, nil)
 	require.NoError(t, err)
 	require.Len(t, got, 50)
 	assert.Equal(t, []string{"t-g07"}, got["g07"])
@@ -260,7 +267,7 @@ func TestCommittedTopics_AnyGroupFailureIsAnError(t *testing.T) {
 		resp: map[string]*sarama.OffsetFetchResponse{"ok": offsetsResponse(nil)},
 		errs: map[string]error{"bad": errors.New("coordinator not available")},
 	}
-	_, err := committedTopics(f, []string{"ok", "bad"}, 2)
+	_, err := committedTopics(context.Background(), f, []string{"ok", "bad"}, 2, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad")
 }
@@ -268,7 +275,7 @@ func TestCommittedTopics_AnyGroupFailureIsAnError(t *testing.T) {
 func TestCommittedTopics_ABlockErrorIsAnError(t *testing.T) {
 	r := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
 	r.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: -1, Err: sarama.ErrTopicAuthorizationFailed})
-	_, err := committedTopics(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"g": r}}, []string{"g"}, 1)
+	_, err := committedTopics(context.Background(), fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"g": r}}, []string{"g"}, 1, nil)
 	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
 }
 
@@ -300,7 +307,7 @@ func TestCommittedTopics_StopsFetchingAfterAFailure(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		groups = append(groups, fmt.Sprintf("g%03d", i))
 	}
-	_, err := committedTopics(f, groups, 1)
+	_, err := committedTopics(context.Background(), f, groups, 1, nil)
 	require.Error(t, err)
 	assert.Less(t, f.calls.Load(), int64(10), "a failed group means the run fails; it must not go on to fetch the other ~200 groups")
 }
@@ -312,14 +319,14 @@ func TestCommittedTopics_ReportsTheLowestFailedGroupWhenSeveralFail(t *testing.T
 		barrier := &sync.WaitGroup{}
 		barrier.Add(3)
 		f := &countingFetcher{failing: map[string]bool{"g3": true, "g1": true, "g2": true}, barrier: barrier}
-		_, err := committedTopics(f, []string{"g3", "g1", "g2"}, 3)
+		_, err := committedTopics(context.Background(), f, []string{"g3", "g1", "g2"}, 3, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "g1", "run %d: want the error for the lowest-named failed group", i)
 	}
 }
 
 func TestCommittedTopics_NoGroups(t *testing.T) {
-	got, err := committedTopics(fakeOffsetFetcher{}, nil, 4)
+	got, err := committedTopics(context.Background(), fakeOffsetFetcher{}, nil, 4, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -380,7 +387,16 @@ func TestCanDescribeAnyGroup_OtherFailuresAreErrorsNotRefusals(t *testing.T) {
 // than a fake of it. handlers supplies the group-related responses; ApiVersions and Metadata are filled in.
 func newClientAndMockBroker(t *testing.T, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) (*ConsumerGroupClient, *sarama.MockBroker) {
 	t.Helper()
-	mb := sarama.NewMockBroker(t, 1)
+	ln, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	return newClientAndMockBrokerOn(t, ln, metadataMax, handlers)
+}
+
+// newClientAndMockBrokerOn is newClientAndMockBroker with the mock broker on ln (a testsupport.CutListener, to
+// drop the client's connections mid-test).
+func newClientAndMockBrokerOn(t *testing.T, ln net.Listener, metadataMax int16, handlers func(mb *sarama.MockBroker) map[string]sarama.MockResponse) (*ConsumerGroupClient, *sarama.MockBroker) {
+	t.Helper()
+	mb := sarama.NewMockBrokerListener(t, 1, ln)
 	t.Cleanup(mb.Close)
 	all := map[string]sarama.MockResponse{
 		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
@@ -599,12 +615,12 @@ func TestCommittedOffsetsOf_ReturnsOnlyCommittedOffsetsPerPartition(t *testing.T
 		"idle": offsetsResponse(nil),
 	}}
 
-	got, err := committedOffsetsOf(f, "app")
+	got, err := committedOffsetsOf(context.Background(), f, "app", nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {0: at(5), 2: at(0)}}, got,
 		"a partition at -1 has no commit; a topic with none is absent; offset 0 is a real commit")
 
-	got, err = committedOffsetsOf(f, "idle")
+	got, err = committedOffsetsOf(context.Background(), f, "idle", nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -613,24 +629,13 @@ func TestCommittedOffsetsOf_ErrorsAreErrors(t *testing.T) {
 	blockErr := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
 	blockErr.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: -1, Err: sarama.ErrTopicAuthorizationFailed})
 
-	_, err := committedOffsetsOf(fakeOffsetFetcher{errs: map[string]error{"orders-app": errors.New("boom")}}, "orders-app")
+	_, err := committedOffsetsOf(context.Background(), fakeOffsetFetcher{errs: map[string]error{"orders-app": errors.New("boom")}}, "orders-app", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "orders-app")
 
-	_, err = committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"orders-app": blockErr}}, "orders-app")
+	_, err = committedOffsetsOf(context.Background(), fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"orders-app": blockErr}}, "orders-app", nil)
 	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
 	assert.Contains(t, err.Error(), "orders-app")
-}
-
-// shortCoordinatorBackoffs swaps coordinatorBackoffs for n 1ms waits for the test.
-func shortCoordinatorBackoffs(t *testing.T, n int) {
-	t.Helper()
-	old := coordinatorBackoffs
-	coordinatorBackoffs = make([]time.Duration, n)
-	for i := range coordinatorBackoffs {
-		coordinatorBackoffs[i] = time.Millisecond
-	}
-	t.Cleanup(func() { coordinatorBackoffs = old })
 }
 
 // seqOffsetFetcher answers each ListConsumerGroupOffsets with the next step, repeating the last one.
@@ -662,7 +667,7 @@ func answer(blocks map[string]map[int32]int64) func() (*sarama.OffsetFetchRespon
 }
 
 func TestCommittedOffsetsOf_RetriesWhileTheCoordinatorIsNotReady(t *testing.T) {
-	shortCoordinatorBackoffs(t, 7)
+	retrytest.Fast(t)
 	f := &seqOffsetFetcher{steps: []func() (*sarama.OffsetFetchResponse, error){
 		// A fresh or reloading coordinator answers COORDINATOR_LOAD_IN_PROGRESS for the whole fetch or per
 		// partition; a moved one NOT_COORDINATOR, which sarama retries only briefly itself.
@@ -673,48 +678,39 @@ func TestCommittedOffsetsOf_RetriesWhileTheCoordinatorIsNotReady(t *testing.T) {
 		answer(map[string]map[int32]int64{"orders": {0: 5}}),
 	}}
 
-	got, err := committedOffsetsOf(f, "app")
+	got, err := committedOffsetsOf(context.Background(), f, "app", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {0: at(5)}}, got)
 	assert.Equal(t, 5, f.calls)
 }
 
-func TestCommittedOffsetsOf_GivesUpAfterTheBackoffs(t *testing.T) {
-	shortCoordinatorBackoffs(t, 3)
+func TestCommittedOffsetsOf_GivesUpAtTheBudget(t *testing.T) {
+	retrytest.Fast(t)
 	f := &seqOffsetFetcher{steps: []func() (*sarama.OffsetFetchResponse, error){failWith(sarama.ErrOffsetsLoadInProgress)}}
 
-	_, err := committedOffsetsOf(f, "app")
+	_, err := committedOffsetsOf(context.Background(), f, "app", nil)
 
+	var gave *retry.GaveUpError
+	require.ErrorAs(t, err, &gave)
 	require.ErrorIs(t, err, sarama.ErrOffsetsLoadInProgress)
 	assert.Contains(t, err.Error(), "app")
-	assert.Equal(t, 4, f.calls, "one attempt, then one retry after each backoff")
+	assert.Greater(t, f.calls, 1)
 }
 
 func TestCommittedOffsetsOf_DoesNotRetryOtherErrors(t *testing.T) {
-	shortCoordinatorBackoffs(t, 7)
+	retrytest.Fast(t)
 	for name, step := range map[string]func() (*sarama.OffsetFetchResponse, error){
 		"call":      failWith(sarama.ErrGroupAuthorizationFailed),
 		"partition": blockFailsWith(sarama.ErrTopicAuthorizationFailed),
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &seqOffsetFetcher{steps: []func() (*sarama.OffsetFetchResponse, error){step}}
-			_, err := committedOffsetsOf(f, "app")
+			_, err := committedOffsetsOf(context.Background(), f, "app", nil)
 			require.Error(t, err)
 			assert.Equal(t, 1, f.calls)
 		})
 	}
-}
-
-// The default backoffs must ride out a coordinator reload, which takes seconds, not the 400ms the commit
-// used to wait in all.
-func TestCoordinatorBackoffs_WaitSecondsInAll(t *testing.T) {
-	var total time.Duration
-	for _, d := range coordinatorBackoffs {
-		total += d
-	}
-	assert.GreaterOrEqual(t, total, 5*time.Second)
-	assert.LessOrEqual(t, total, 15*time.Second, "a coordinator that never settles must still fail the run promptly")
 }
 
 // at is a committed offset with no metadata.
@@ -728,7 +724,7 @@ func TestCommittedOffsetsOf_CarriesEachPartitionsMetadata(t *testing.T) {
 	resp.AddBlock("orders", 1, &sarama.OffsetFetchResponseBlock{Offset: 7})
 	resp.AddBlock("orders", 2, &sarama.OffsetFetchResponseBlock{Offset: -1, Metadata: "ignored"})
 
-	got, err := committedOffsetsOf(fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"app": resp}}, "app")
+	got, err := committedOffsetsOf(context.Background(), fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"app": resp}}, "app", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {
@@ -799,7 +795,7 @@ func commitRequests(mb *sarama.MockBroker) []*sarama.OffsetCommitRequest {
 func TestCommitGroupOffsets_SendsOneAdminCommitForTheWholeGroup(t *testing.T) {
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t, sarama.NewMockOffsetCommitResponse(t)))
 
-	err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{
+	err := c.CommitGroupOffsets(context.Background(), "g1", map[string]map[int32]CommittedOffset{
 		"orders":   {0: at(10), 1: {Offset: 4, Metadata: "stream-time=1700000000000"}},
 		"payments": {0: at(2)},
 	})
@@ -829,7 +825,7 @@ func TestCommitGroupOffsets_APartitionErrorIsAnErrorAndNotRetriedWhenPermanent(t
 			c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
 				sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, kerr)))
 
-			err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
+			err := c.CommitGroupOffsets(context.Background(), "g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
 
 			require.ErrorIs(t, err, kerr)
 			assert.Contains(t, err.Error(), "g1")
@@ -840,24 +836,95 @@ func TestCommitGroupOffsets_APartitionErrorIsAnErrorAndNotRetriedWhenPermanent(t
 }
 
 func TestCommitGroupOffsets_RetriesWhileTheCoordinatorSettles(t *testing.T) {
-	shortCoordinatorBackoffs(t, 7)
+	retrytest.Fast(t)
 	loading := sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
 		sarama.NewMockSequence(loading, loading, loading, loading, sarama.NewMockOffsetCommitResponse(t))))
 
-	require.NoError(t, c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}}))
+	require.NoError(t, c.CommitGroupOffsets(context.Background(), "g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}}))
 	assert.Len(t, commitRequests(mb), 5, "a retry after each COORDINATOR_LOAD_IN_PROGRESS")
 }
 
-func TestCommitGroupOffsets_GivesUpAfterTheBackoffs(t *testing.T) {
-	shortCoordinatorBackoffs(t, 3)
+func TestCommitGroupOffsets_GivesUpAtTheBudget(t *testing.T) {
+	retrytest.Fast(t)
 	c, mb := newClientAndMockBroker(t, 10, commitHandlers(t,
 		sarama.NewMockOffsetCommitResponse(t).SetError("g1", "orders", 0, sarama.ErrOffsetsLoadInProgress)))
 
-	err := c.CommitGroupOffsets("g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
+	err := c.CommitGroupOffsets(context.Background(), "g1", map[string]map[int32]CommittedOffset{"orders": {0: at(10)}})
 
+	var gave *retry.GaveUpError
+	require.ErrorAs(t, err, &gave)
 	require.ErrorIs(t, err, sarama.ErrOffsetsLoadInProgress)
-	assert.Len(t, commitRequests(mb), 4, "one attempt, then one retry after each backoff")
+	assert.Greater(t, len(commitRequests(mb)), 1)
+}
+
+var connReset = &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}
+
+func TestCommittedOffsetsOf_RetriesAResetAndResetsTheCoordinatorFirst(t *testing.T) {
+	retrytest.Fast(t)
+	f := &seqOffsetFetcher{steps: []func() (*sarama.OffsetFetchResponse, error){
+		failWith(fmt.Errorf("fetching: %w", connReset)),
+		answer(map[string]map[int32]int64{"orders": {0: 5}}),
+	}}
+	resets := 0
+
+	got, err := committedOffsetsOf(context.Background(), f, "app", func() { resets++ })
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]map[int32]CommittedOffset{"orders": {0: at(5)}}, got)
+	assert.Equal(t, 2, f.calls)
+	assert.Equal(t, 1, resets, "the coordinator's connection is reset before the retry")
+}
+
+func TestCommitGroupOffsets_RecoversWhenTheCoordinatorResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	ln := testsupport.NewCutListener(t)
+	c, mb := newClientAndMockBrokerOn(t, ln, 10, commitHandlers(t, sarama.NewMockOffsetCommitResponse(t)))
+	offsets := map[string]map[int32]CommittedOffset{"orders": {0: at(10)}}
+	require.NoError(t, c.CommitGroupOffsets(context.Background(), "g1", offsets))
+
+	ln.Cut()
+
+	require.NoError(t, c.CommitGroupOffsets(context.Background(), "g1", offsets),
+		"the retry must reach the broker on a fresh connection, not the one the broker reset")
+	assert.Len(t, commitRequests(mb), 2)
+}
+
+func TestCommittedTopics_AllParallelFetchesRecoverWhenTheCoordinatorResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	groups := []string{"g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7"}
+	ln := testsupport.NewCutListener(t)
+	c, _ := newClientAndMockBrokerOn(t, ln, 10, func(mb *sarama.MockBroker) map[string]sarama.MockResponse {
+		fc := sarama.NewMockFindCoordinatorResponse(t)
+		of := sarama.NewMockOffsetFetchResponse(t)
+		for _, g := range groups {
+			fc.SetCoordinator(sarama.CoordinatorGroup, g, mb)
+			of.SetOffset(g, "orders", 0, 7, "", sarama.ErrNoError)
+		}
+		return map[string]sarama.MockResponse{
+			"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+				{ApiKey: 18, MinVersion: 0, MaxVersion: 3}, // ApiVersions
+				{ApiKey: 3, MinVersion: 0, MaxVersion: 10}, // Metadata
+				{ApiKey: 10, MinVersion: 0, MaxVersion: 3}, // FindCoordinator, one group per request
+				{ApiKey: 9, MinVersion: 0, MaxVersion: 7},  // OffsetFetch, one group per request
+			}),
+			"FindCoordinatorRequest": fc,
+			"OffsetFetchRequest":     of,
+		}
+	})
+	want := map[string][]string{}
+	for _, g := range groups {
+		want[g] = []string{"orders"}
+	}
+	got, err := c.CommittedTopics(context.Background(), groups)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	ln.Cut()
+
+	got, err = c.CommittedTopics(context.Background(), groups)
+	require.NoError(t, err, "every fetch sharing the reset coordinator must recover")
+	assert.Equal(t, want, got)
 }
 
 // fakeCommitSender is the coordinator the offset-commit probe talks to.

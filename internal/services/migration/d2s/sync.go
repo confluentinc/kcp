@@ -32,8 +32,8 @@ type liveMembersCommitter struct {
 	groupoffsets.GroupCommitter
 }
 
-func (c liveMembersCommitter) CommitGroupOffsets(group string, offsets groupoffsets.Offsets) error {
-	err := c.GroupCommitter.CommitGroupOffsets(group, offsets)
+func (c liveMembersCommitter) CommitGroupOffsets(ctx context.Context, group string, offsets groupoffsets.Offsets) error {
+	err := c.GroupCommitter.CommitGroupOffsets(ctx, group, offsets)
 	if errors.Is(err, sarama.ErrUnknownMemberId) {
 		return &LiveMembersError{Group: group, Err: err}
 	}
