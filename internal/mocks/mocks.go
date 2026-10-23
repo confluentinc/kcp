@@ -17,6 +17,7 @@ type MockKafkaAdmin struct {
 	ListTopicsWithNonDefaultConfigsFunc func() (map[string]sarama.TopicDetail, error)
 	ListTopicInternalFlagsFunc          func() (map[string]bool, error)
 	GetClusterKafkaMetadataFunc         func() (*client.ClusterKafkaMetadata, error)
+	ClusterIDFunc                       func() (string, error)
 	DescribeConfigFunc                  func() ([]sarama.ConfigEntry, error)
 	ListAclsFunc                        func() ([]sarama.ResourceAcls, error)
 	CloseFunc                           func() error
@@ -30,8 +31,12 @@ func (m *MockKafkaAdmin) ListTopicsWithNonDefaultConfigs() (map[string]sarama.To
 	return m.ListTopicsWithNonDefaultConfigsFunc()
 }
 
-func (m *MockKafkaAdmin) ListTopicInternalFlags() (map[string]bool, error) {
+func (m *MockKafkaAdmin) ListTopicInternalFlags(context.Context) (map[string]bool, error) {
 	return m.ListTopicInternalFlagsFunc()
+}
+
+func (m *MockKafkaAdmin) ClusterID(context.Context) (string, error) {
+	return m.ClusterIDFunc()
 }
 
 func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {
