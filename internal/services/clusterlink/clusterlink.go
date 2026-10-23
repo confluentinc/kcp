@@ -118,13 +118,16 @@ type ConfigAlteration struct {
 	Operation string `json:"operation"`
 }
 
-// PromoteMirrorTopicsResponse represents the response from promoting mirror topics
+// promoteEntry is one topic in a promote response: accepted when ErrorCode is 0. It is an alias for the
+// unnamed struct, so PromoteMirrorTopicsResponse.Data keeps its type.
+type promoteEntry = struct {
+	MirrorTopicName string `json:"mirror_topic_name"`
+	ErrorMessage    string `json:"error_message,omitempty"`
+	ErrorCode       int    `json:"error_code,omitempty"`
+}
+
 type PromoteMirrorTopicsResponse struct {
-	Data []struct {
-		MirrorTopicName string `json:"mirror_topic_name"`
-		ErrorMessage    string `json:"error_message,omitempty"`
-		ErrorCode       int    `json:"error_code,omitempty"`
-	} `json:"data"`
+	Data []promoteEntry `json:"data"`
 }
 
 // Service defines cluster link operations.
@@ -353,7 +356,11 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 	return fmt.Errorf("failed to %s cluster link config %q on link %q: %w", alteration.Operation, alteration.Name, config.LinkName, err)
 }
 
-// PromoteMirrorTopics promotes the specified mirror topics
+// PromoteMirrorTopics promotes the named mirror topics. A promote that fails on a connection error, a timeout,
+// or a 429, 502, 503 or 504 may still have reached the cluster, so it is never resent blindly: the mirror
+// status is read again, topics now PENDING_STOPPED or STOPPED count as accepted, and only the rest are sent
+// again, within the retry budget (internal/retry). The response lists every topic once: those accepted by an
+// earlier request whose answer was lost with error code 0, the rest as the last request answered them.
 func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (_ *PromoteMirrorTopicsResponse, err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.promote_mirror_topics", attribute.Int("kcp.batch.size", len(topicNames)))
 	defer func() { tracing.End(span, err) }()
@@ -361,20 +368,70 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
 
-	path := linkPath(config) + "/mirrors:promote"
+	merged := &PromoteMirrorTopicsResponse{}
+	pending := topicNames
+	unanswered := false // the last promote request failed in a way that may still have reached the cluster
+	err = retry.Do(ctx, "rest.promote", func(ctx context.Context) error {
+		if unanswered {
+			still, err := s.notYetPromoted(ctx, config, pending, merged)
+			if err != nil {
+				return err
+			}
+			pending, unanswered = still, false
+			if len(pending) == 0 {
+				return nil
+			}
+		}
+		resp, err := s.postPromote(ctx, config, pending)
+		if err != nil {
+			unanswered = retry.Retryable(err)
+			return err
+		}
+		merged.Data = append(merged.Data, resp.Data...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+	}
+	return merged, nil
+}
 
+// postPromote sends one promote request for topicNames.
+func (s *ConfluentCloudService) postPromote(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
 	requestBody := struct {
 		MirrorTopicNames []string `json:"mirror_topic_names"`
 	}{
 		MirrorTopicNames: topicNames,
 	}
-
 	var response PromoteMirrorTopicsResponse
-	if err := s.doPostRequest(ctx, config, path, requestBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+	if err := s.doPostRequest(ctx, config, linkPath(config)+"/mirrors:promote", requestBody, &response); err != nil {
+		return nil, err
 	}
-
 	return &response, nil
+}
+
+// notYetPromoted reads the mirror status after a promote request whose answer was lost. Topics in pending that
+// are now PENDING_STOPPED or STOPPED were accepted by that request: they are added to merged as accepted. It
+// returns the rest, which are sent again.
+func (s *ConfluentCloudService) notYetPromoted(ctx context.Context, config Config, pending []string, merged *PromoteMirrorTopicsResponse) ([]string, error) {
+	mirrors, err := s.ListMirrorTopics(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("reading mirror status after a promote request went unanswered: %w", err)
+	}
+	status := make(map[string]string, len(mirrors))
+	for _, m := range mirrors {
+		status[m.MirrorTopicName] = m.MirrorStatus
+	}
+	var still []string
+	for _, topic := range pending {
+		switch status[topic] {
+		case MirrorStatusPendingStopped, MirrorStatusStopped:
+			merged.Data = append(merged.Data, promoteEntry{MirrorTopicName: topic})
+		default:
+			still = append(still, topic)
+		}
+	}
+	return still, nil
 }
 
 // CreateMirrorTopic creates a mirror topic on the link. mirrorTopic must equal
