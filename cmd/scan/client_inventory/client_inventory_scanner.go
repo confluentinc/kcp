@@ -82,6 +82,12 @@ func (cis *ClientInventoryScanner) Run() error {
 
 	discoveredClients := cis.handleLogFiles(ctx, chunks)
 
+	if len(discoveredClients) == 0 {
+		fmt.Printf("  ⏭️  No clients discovered; leaving state unchanged\n")
+		slog.Info("⏭️ no clients discovered; skipping state update")
+		return nil
+	}
+
 	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
 		return fmt.Errorf("failed to upsert discovered clients: %w", err)
 	}

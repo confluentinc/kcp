@@ -8,12 +8,15 @@ package client_inventory
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // fakeCW is a fake cwLogsAPI. Each entry in pages is one FilterLogEvents page;
@@ -198,5 +201,33 @@ func TestCloudWatchLogSource_EmptyWindow(t *testing.T) {
 	got := parseViaScanner(content)
 	if len(got) != 0 {
 		t.Fatalf("want 0 clients for empty window, got %d", len(got))
+	}
+}
+
+// Review Focus #4 (Run path): an empty CloudWatch window must be a clean skip —
+// Run returns nil, no "cluster not found" error, and no state file is written —
+// even when the cluster is not yet present in state. (CloudWatch always lists one
+// chunk, so this can only hold if Run short-circuits on zero discovered clients.)
+func TestRun_CloudWatchEmptyWindow_CleanSkipNoUpsert(t *testing.T) {
+	fake := &fakeCW{pages: [][]string{{}}} // zero events in the window
+	src := NewCloudWatchLogSource(fake, "kcp", time.Now().Add(-time.Hour), time.Now())
+
+	stateFilePath := filepath.Join(t.TempDir(), "kcp-state.json")
+	scanner, err := NewClientInventoryScanner(src, types.State{}, ClientInventoryScannerOpts{
+		Region:       "us-east-1",
+		ClusterName:  "not-yet-in-state",
+		StateFile:    stateFilePath,
+		LogGroupName: "kcp",
+	})
+	if err != nil {
+		t.Fatalf("NewClientInventoryScanner: %v", err)
+	}
+
+	if err := scanner.Run(); err != nil {
+		t.Fatalf("empty CloudWatch window should be a clean skip, got error: %v", err)
+	}
+
+	if _, statErr := os.Stat(stateFilePath); !os.IsNotExist(statErr) {
+		t.Errorf("expected no state file written on empty-window skip, but one exists")
 	}
 }
