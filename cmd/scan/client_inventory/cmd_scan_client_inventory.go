@@ -110,7 +110,12 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 
 	s3Service := s3.NewS3Service(s3Client)
 
-	clientInventoryScanner, err := NewClientInventoryScanner(s3Service, *state, *opts)
+	source, err := NewS3LogSource(s3Service, opts.S3Uri)
+	if err != nil {
+		return fmt.Errorf("failed to create S3 log source: %w", err)
+	}
+
+	clientInventoryScanner, err := NewClientInventoryScanner(source, *state, *opts)
 	if err != nil {
 		return fmt.Errorf("failed to create client inventory scanner: %v", err)
 	}

@@ -25,7 +25,7 @@ type ClientInventoryScannerOpts struct {
 }
 
 type ClientInventoryScanner struct {
-	s3Service            S3Service
+	source               LogSource
 	kafkaTraceLineParser *KafkaApiTraceLineParser
 	state                types.State
 	opts                 ClientInventoryScannerOpts
@@ -48,9 +48,9 @@ type RequestMetadata struct {
 	Timestamp    time.Time
 }
 
-func NewClientInventoryScanner(s3Service S3Service, state types.State, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
+func NewClientInventoryScanner(source LogSource, state types.State, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
 	return &ClientInventoryScanner{
-		s3Service:            s3Service,
+		source:               source,
 		kafkaTraceLineParser: &KafkaApiTraceLineParser{},
 		state:                state,
 		opts:                 opts,
@@ -58,29 +58,24 @@ func NewClientInventoryScanner(s3Service S3Service, state types.State, opts Clie
 }
 
 func (cis *ClientInventoryScanner) Run() error {
-	fmt.Printf("🚀 Starting client inventory scan for %s\n", cis.opts.S3Uri)
-	slog.Info("🔍 scanning client inventory", "s3_uri", cis.opts.S3Uri, "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
+	fmt.Printf("🚀 Starting client inventory scan for %s\n", cis.source.Name())
+	slog.Info("🔍 scanning client inventory", "source", cis.source.Name(), "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
 
 	ctx := context.Background()
 
-	bucket, prefix, err := cis.s3Service.ParseS3URI(cis.opts.S3Uri)
+	chunks, err := cis.source.ListChunks(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to parse S3 URI: %w", err)
+		return fmt.Errorf("failed to list log chunks: %w", err)
 	}
+	slog.Info("🔍 found log files", "count", len(chunks))
 
-	logFiles, err := cis.s3Service.ListLogFiles(ctx, bucket, prefix)
-	if err != nil {
-		return fmt.Errorf("failed to list log files: %w", err)
-	}
-	slog.Info("🔍 found log files", "count", len(logFiles))
-
-	if len(logFiles) == 0 {
+	if len(chunks) == 0 {
 		fmt.Printf("  ⏭️  No log files found to process\n")
 		slog.Info("⏭️ no log files found; skipping")
 		return nil
 	}
 
-	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
+	discoveredClients := cis.handleLogFiles(ctx, chunks)
 
 	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
 		return fmt.Errorf("failed to upsert discovered clients: %w", err)
@@ -94,18 +89,18 @@ func (cis *ClientInventoryScanner) Run() error {
 	return nil
 }
 
-func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) []types.DiscoveredClient {
+func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, chunks []LogChunk) []types.DiscoveredClient {
 	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
 
-	for _, file := range logFiles {
-		requestsMetadata, err := cis.handleLogFile(ctx, bucket, file)
+	for _, chunk := range chunks {
+		requestsMetadata, err := cis.handleLogFile(ctx, chunk)
 		if err != nil {
-			slog.Error("failed to extract API requests", "file", file, "error", err)
+			slog.Error("failed to extract API requests", "file", chunk.ID, "error", err)
 			continue
 		}
 
-		fmt.Printf("  🔍 Parsed log file %s: found %d matching log lines\n", file, len(requestsMetadata))
-		slog.Debug("🔍 parsed log file", "file", file, "matching_lines", len(requestsMetadata))
+		fmt.Printf("  🔍 Parsed log file %s: found %d matching log lines\n", chunk.ID, len(requestsMetadata))
+		slog.Debug("🔍 parsed log file", "file", chunk.ID, "matching_lines", len(requestsMetadata))
 
 		for _, metadata := range requestsMetadata {
 			// we cannot guarantee that the client id is unique as it may not be set on clients
@@ -143,10 +138,10 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket st
 	return discoveredClients
 }
 
-func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
-	content, err := cis.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
+func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, chunk LogChunk) ([]RequestMetadata, error) {
+	content, err := cis.source.ReadChunk(ctx, chunk)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
+		return nil, fmt.Errorf("failed to read log chunk: %w", err)
 	}
 
 	var requestsMetadata []RequestMetadata
@@ -158,7 +153,7 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 
 		switch {
 		case KafkaApiTracePattern.MatchString(line):
-			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, key)
+			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, chunk.ID)
 			if err != nil {
 				// slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue
