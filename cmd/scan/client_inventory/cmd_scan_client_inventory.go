@@ -25,10 +25,23 @@ var (
 )
 
 func clientInventoryIAMAnnotation() string {
-	return iampolicy.RenderSingle("",
-		[]string{"s3:GetObject", "s3:ListBucket"},
-		"arn:aws:s3:::<BROKER_LOGS_BUCKET>",
-		"arn:aws:s3:::<BROKER_LOGS_BUCKET>/*",
+	return iampolicy.RenderStatements(
+		"Grant the statement matching your chosen broker-log source (`--s3-uri` or `--log-group-name`).",
+		[]iampolicy.Statement{
+			{
+				Sid:     "BrokerLogsFromS3",
+				Actions: []string{"s3:GetObject", "s3:ListBucket"},
+				Resources: []string{
+					"arn:aws:s3:::<BROKER_LOGS_BUCKET>",
+					"arn:aws:s3:::<BROKER_LOGS_BUCKET>/*",
+				},
+			},
+			{
+				Sid:       "BrokerLogsFromCloudWatch",
+				Actions:   []string{"logs:FilterLogEvents"},
+				Resources: []string{"arn:aws:logs:<AWS REGION>:<AWS ACCOUNT ID>:log-group:<LOG GROUP NAME>:*"},
+			},
+		},
 	)
 }
 

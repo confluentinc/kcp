@@ -1,6 +1,7 @@
 package client_inventory
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,5 +102,22 @@ func TestCmd_RejectsNeitherSource(t *testing.T) {
 	cmd.SetArgs([]string{"--state-file", "s"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("want error when neither --s3-uri nor --log-group-name is set")
+	}
+}
+
+// The published IAM annotation must document both the S3 and the CloudWatch
+// source footprints (it feeds the generated command-reference docs).
+func TestClientInventoryIAMAnnotation_CoversBothSources(t *testing.T) {
+	got := clientInventoryIAMAnnotation()
+	for _, want := range []string{
+		"s3:GetObject",
+		"s3:ListBucket",
+		"logs:FilterLogEvents",
+		"BrokerLogsFromS3",
+		"BrokerLogsFromCloudWatch",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("annotation missing %q:\n%s", want, got)
+		}
 	}
 }
