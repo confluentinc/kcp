@@ -22,6 +22,11 @@ type ClientInventoryScannerOpts struct {
 	Region      string
 	ClusterName string
 	StateFile   string
+
+	// CloudWatch-mode fields (empty/zero in S3 mode).
+	LogGroupName string
+	StartTime    time.Time
+	EndTime      time.Time
 }
 
 type ClientInventoryScanner struct {
