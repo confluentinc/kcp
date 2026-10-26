@@ -264,7 +264,7 @@ func TestInit_RejectsInvalidManifest(t *testing.T) {
 	assert.Contains(t, err.Error(), "spec.clusterLink.name")
 }
 
-// TestInit_RejectsMigrationKindManifest — a kcp migrate manifest must be
+// TestInit_RejectsMigrationKindManifest — a kcp migration resources manifest must be
 // refused with a message that names the problem.
 func TestInit_RejectsMigrationKindManifest(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "migration.yaml")

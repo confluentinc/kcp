@@ -1,5 +1,5 @@
 // Package migrate wires the manifest, source, target, and reconcile engine
-// together for `kcp migrate apply`.
+// together for `kcp migration resources create`.
 package migrate
 
 import (

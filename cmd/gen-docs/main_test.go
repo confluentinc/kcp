@@ -23,12 +23,14 @@ func buildTree() *cobra.Command {
 	scan.AddCommand(clusters)
 	root.AddCommand(scan)
 
-	createAsset := &cobra.Command{Use: "create-asset", Run: func(*cobra.Command, []string) {}}
-	migrateAcls := &cobra.Command{Use: "migrate-acls", Run: func(*cobra.Command, []string) {}}
+	iac := &cobra.Command{Use: "iac", Run: func(*cobra.Command, []string) {}}
+	acls := &cobra.Command{Use: "acls", Run: func(*cobra.Command, []string) {}}
 	kafka := &cobra.Command{Use: "kafka", Run: func(*cobra.Command, []string) {}}
-	migrateAcls.AddCommand(kafka)
-	createAsset.AddCommand(migrateAcls)
-	root.AddCommand(createAsset)
+	generate := &cobra.Command{Use: "generate", Run: func(*cobra.Command, []string) {}}
+	kafka.AddCommand(generate)
+	acls.AddCommand(kafka)
+	iac.AddCommand(acls)
+	root.AddCommand(iac)
 
 	return root
 }
@@ -69,8 +71,8 @@ func TestOutputPath(t *testing.T) {
 		{"leaf directly under root", "kcp discover", filepath.Join(outDir, "discover.md")},
 		{"parent with children → index.md", "kcp scan", filepath.Join(outDir, "scan", "index.md")},
 		{"leaf under parent", "kcp scan clusters", filepath.Join(outDir, "scan", "clusters.md")},
-		{"deep parent → index.md", "kcp create-asset migrate-acls", filepath.Join(outDir, "create-asset", "migrate-acls", "index.md")},
-		{"deep leaf", "kcp create-asset migrate-acls kafka", filepath.Join(outDir, "create-asset", "migrate-acls", "kafka.md")},
+		{"deep parent → index.md", "kcp iac acls", filepath.Join(outDir, "iac", "acls", "index.md")},
+		{"deep leaf", "kcp iac acls kafka generate", filepath.Join(outDir, "iac", "acls", "kafka", "generate.md")},
 	}
 
 	for _, tc := range cases {
@@ -86,8 +88,8 @@ func TestOutputPath(t *testing.T) {
 
 func TestCobraBasename(t *testing.T) {
 	root := buildTree()
-	c := findCmd(t, root, "kcp create-asset migrate-acls kafka")
-	if got, want := cobraBasename(c), "kcp_create-asset_migrate-acls_kafka.md"; got != want {
+	c := findCmd(t, root, "kcp iac acls kafka generate")
+	if got, want := cobraBasename(c), "kcp_iac_acls_kafka_generate.md"; got != want {
 		t.Errorf("cobraBasename = %q, want %q", got, want)
 	}
 }
@@ -97,11 +99,11 @@ func TestBuildLinkMapRewritesToRealPaths(t *testing.T) {
 	m := buildLinkMap(root, "docs/assets/command-reference")
 
 	checks := map[string]string{
-		"kcp.md":                                 filepath.Join("docs/assets/command-reference", "index.md"),
-		"kcp_discover.md":                        filepath.Join("docs/assets/command-reference", "discover.md"),
-		"kcp_scan.md":                            filepath.Join("docs/assets/command-reference", "scan", "index.md"),
-		"kcp_scan_clusters.md":                   filepath.Join("docs/assets/command-reference", "scan", "clusters.md"),
-		"kcp_create-asset_migrate-acls_kafka.md": filepath.Join("docs/assets/command-reference", "create-asset", "migrate-acls", "kafka.md"),
+		"kcp.md":                         filepath.Join("docs/assets/command-reference", "index.md"),
+		"kcp_discover.md":                filepath.Join("docs/assets/command-reference", "discover.md"),
+		"kcp_scan.md":                    filepath.Join("docs/assets/command-reference", "scan", "index.md"),
+		"kcp_scan_clusters.md":           filepath.Join("docs/assets/command-reference", "scan", "clusters.md"),
+		"kcp_iac_acls_kafka_generate.md": filepath.Join("docs/assets/command-reference", "iac", "acls", "kafka", "generate.md"),
 	}
 	for cobraName, want := range checks {
 		if got := m[cobraName]; got != want {

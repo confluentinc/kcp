@@ -11,7 +11,7 @@ import (
 )
 
 // MigrateClusterCredentials is the flat, single-cluster, auth-only Kafka credentials
-// format used by `kcp migrate` (spec.source.credentials, spec.clusterLink.source.credentials,
+// format used by `kcp migration resources` (spec.source.credentials, spec.clusterLink.source.credentials,
 // spec.clusterLink.destination.credentials). Unlike the OSK scan format it has no
 // clusters: list, no id, no bootstrap_servers, and no scan-only jolokia/prometheus/metadata
 // blocks — bootstrap addresses come from the manifest, and this file holds auth only.
@@ -245,7 +245,7 @@ func ValidateMigrateClusterCredentials(mc MigrateClusterCredentials) []error {
 	// kcp discover fills in), so require an explicit SCRAM mechanism rather than
 	// silently defaulting — a wrong default (SHA256 against MSK, which is
 	// SHA-512-only) surfaces only as an opaque auth failure. Both kcp migration and
-	// kcp migrate share this rule; the scan format keeps its SHA256 default, hence
+	// kcp migration resources share this rule; the scan format keeps its SHA256 default, hence
 	// this check lives here and not in the shared validateAuthMethodConfig.
 	if mc.SASLScram != nil && !isValidScramMechanism(mc.SASLScram.Mechanism) {
 		errs = append(errs, fmt.Errorf("sasl_scram.mechanism is required and must be SHA256 or SHA512 (MSK requires SHA512)"))

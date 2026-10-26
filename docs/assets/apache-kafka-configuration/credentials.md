@@ -7,7 +7,7 @@ title: Apache Kafka credentials
 The Apache Kafka® source has no automated discovery step — instead, you
 hand-author an `apache-kafka-credentials.yaml` describing how `kcp` should connect to
 your cluster(s). It is consumed by [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md)
-and any downstream `kcp create-asset` commands that target an Apache Kafka source.
+and any downstream `kcp iac` commands that target an Apache Kafka source.
 
 For comparison, the MSK equivalent (`msk-credentials.yaml`) is generated for
 you by [`kcp discover`](../command-reference/discover.md) — there is no MSK
@@ -102,7 +102,7 @@ clusters:
 
 | Field               | Type             | Required | Description                                                                                                                                  |
 | ------------------- | ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `create-asset` commands. |
+| `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `kcp iac` commands. |
 | `bootstrap_servers` | list of strings  | yes      | Broker `host:port` addresses.                                                                                                                |
 | `auth_method`       | object           | yes      | Authentication method. Choose **exactly one** sub-block (see below).                                                                         |
 | `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point endpoints to Connect workers rather than brokers. |

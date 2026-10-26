@@ -220,7 +220,7 @@ func (m *Migration) Validate() []error {
 		add("spec.target.cloudCredentials: required for spec.serviceAccounts.autoCreate on a confluent-cloud target (used to provision accounts via IAM v2)")
 	}
 	// spec.target.kafka.credentials / restCredentials exist on the shared
-	// TargetKafka for kind: GatewayMigration only. kcp migrate authenticates the
+	// TargetKafka for kind: GatewayMigration only. kcp migration resources authenticates the
 	// destination via spec.target.clusterCredentials and never reads them, so a
 	// value here would be silently ignored at apply — reject it rather than let an
 	// author believe they configured destination auth (the same stance the gateway

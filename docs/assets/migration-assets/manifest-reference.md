@@ -1,33 +1,34 @@
 # Manifest reference
 
-`kcp migrate apply -f migration.yaml` migrates a Kafka source — AWS MSK, Apache
+`kcp migration resources create -f migration.yaml` migrates a Kafka source — AWS MSK, Apache
 Kafka®, or Confluent Platform — to a Confluent target (Confluent Cloud or
 Confluent Platform) by declaring the desired end state in a single YAML manifest.
 This page is the field-by-field reference for that manifest.
 
 For an annotated, ready-to-copy manifest see
 [`migration.example.yaml`](migration.example.yaml); for worked per-scenario
-manifests see [examples/](examples/); for the credential file formats each
+manifests see [examples/](README.md#examples); for the credential file formats each
 `credentials:` slot points at, see the [credential catalog](credentials/README.md).
 
 ## Execution model
 
 The manifest is declarative: you describe the cluster link, topics, service
-accounts, and ACLs you want on the target, and `apply` reconciles the target
+accounts, and ACLs you want on the target, and `create` reconciles the target
 toward that state.
 
 - **Additive-only.** Reconcilers only ever create resources or confirm they are
   already present. Nothing on the target is deleted, altered, or pruned.
-- **Idempotent.** Re-running `apply` against an unchanged source and manifest
+- **Idempotent.** Re-running `create` against an unchanged source and manifest
   reports every resource as already present and makes no further change.
-- **Reads the source live.** The source is connected to and read at apply time
+- **Reads the source live.** The source is connected to and read at run time
   from `spec.source.bootstrapServers` plus its credentials file. Topic lists,
   topic configs, and ACLs always reflect the source's current state at the
   moment of the run — no intermediate state file is consulted.
 - **`--dry-run`.** Preconditions and planning still run — live connections to
   source and target are opened and real state is read — but no mutation is
   performed. Output is rendered in future tense ("Planned") rather than past
-  tense ("Applying"). Use it to review exactly what a real apply would do.
+  tense ("Applying"). Use it to review exactly what `create` would do without
+  `--dry-run`.
 - **Drift reporting.** For the cluster link, mirror topics, and new topics, an
   existing resource that differs from what the manifest describes is reported as
   drift. Drift is report-only; existing target state is never overwritten.
@@ -35,7 +36,7 @@ toward that state.
 Validation runs structurally first, with no I/O; any error aborts the run before
 the source or target is touched. At least one of `spec.clusterLink`,
 `spec.topics`, or `spec.acls` must be present, or the run refuses with "nothing
-to apply".
+to create".
 
 ## At a glance
 
@@ -61,7 +62,7 @@ independently reconciled units of work.
 
 ## `spec.source`
 
-The cluster being migrated from, read live at apply time.
+The cluster being migrated from, read live at run time.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -100,7 +101,7 @@ for a `confluent-cloud` target, and is **required whenever `spec.acls` is
 present**: it is used both to provision service accounts (Confluent Cloud IAM v2
 rejects a Kafka-cluster API key) and, regardless of `spec.serviceAccounts.autoCreate`,
 to build the numeric-id → `sa-`-id map the ACL reconciler needs for idempotent
-re-apply.
+re-runs.
 
 ## `spec.clusterLink`
 
@@ -220,7 +221,7 @@ description does not record the expected source principal is a hard error (namin
 collision). The special principals `User:*` and `User:ANONYMOUS` are skipped,
 with a warning, unless explicitly mapped.
 
-With `autoCreate` off and a principal left unmapped, apply stops with an error
+With `autoCreate` off and a principal left unmapped, `create` stops with an error
 listing every unresolved principal.
 
 ## `spec.acls`

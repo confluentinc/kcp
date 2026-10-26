@@ -274,7 +274,7 @@ func TestGenerate_MigrationCredentialsArePolymorphicToo(t *testing.T) {
 
 // TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials — credentials and
 // restCredentials live on the shared TargetKafka for kind: GatewayMigration
-// only; kcp migrate ignores them and Validate() rejects them, so the kind:
+// only; kcp migration resources ignores them and Validate() rejects them, so the kind:
 // Migration schema must not offer them (they otherwise reflect as a broken raw
 // {Path, Inline} object).
 func TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials(t *testing.T) {

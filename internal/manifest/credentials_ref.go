@@ -89,7 +89,7 @@ func rejectInlineInterpolateKey(inline []byte) error {
 //
 // interp governs ONLY the inline form. A referenced file governs itself via its
 // own top-level `interpolate:` key, so a manifest opting in never changes how a
-// shared kcp migrate credentials file is read.
+// shared kcp migration resources credentials file is read.
 func (r CredentialsRef) ResolveMigrateCluster(interp bool) (types.MigrateClusterCredentials, []error) {
 	mc, err := r.unmarshalMigrateCluster(interp)
 	if err != nil {

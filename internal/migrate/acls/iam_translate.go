@@ -17,7 +17,7 @@ import (
 //
 // This ports processPolicy/parseKafkaResourceFromArn/
 // determineResourceNameAndPattern/getPrincipalFromArn from
-// cmd/create_asset/migrate_acls/iam_acls/iam_acls_generator.go, with three
+// cmd/iac/acls/iam_acls/iam_acls_generator.go, with three
 // structural fixes over that reference:
 //
 //  1. Iterates ALL of a statement's resources (the reference only ever reads
