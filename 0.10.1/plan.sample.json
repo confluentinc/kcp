@@ -1,0 +1,700 @@
+{
+  "header": {
+    "source": "Amazon MSK",
+    "state_file_path": "sample-state.json",
+    "kcp_version": "0.0.0-localdev",
+    "generated_at": "2026-05-15T15:00:00Z",
+    "state_generated_at": "2026-05-15T15:00:00Z",
+    "plan_schema_version": "1-experimental"
+  },
+  "inputs": {
+    "raw": {
+      "schema_strategy": "no_schemas"
+    },
+    "sla_target": "99.9",
+    "sizing_percentile": "p95",
+    "headroom_fraction": 0.3,
+    "spiky_workload_ratio": 2,
+    "enforce_schemas_at_the_broker": false,
+    "requires_high_throughput_rest_produce_api": false,
+    "requires_99_95_sla_within_a_single_zone": false,
+    "target_cloud": "aws",
+    "existing_vpc_connectivity": "privatelink_or_pni",
+    "cc_egress_required": false,
+    "projected_pni_gateway_count": 1,
+    "downtime_tolerance": "let_confluent_choose",
+    "sub_pattern": "app-by-app",
+    "prefer_gateway": true,
+    "confluent_for_kubernetes_status": "not_started",
+    "cc_gateway_license_status": "not_started",
+    "iam_pre_migration_status": "not_started",
+    "target_auth_method": "",
+    "schema_strategy": "no_schemas"
+  },
+  "source_environment": {
+    "clusters": [
+      {
+        "cluster_id": "heavy-acls",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 65,
+        "source_auths": [
+          "scram"
+        ]
+      },
+      {
+        "cluster_id": "mtls-cluster",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 38,
+        "source_auths": [
+          "mtls"
+        ]
+      },
+      {
+        "cluster_id": "small-orders",
+        "region": "us-east-1",
+        "broker_count": 3,
+        "topic_count": 42,
+        "source_auths": [
+          "scram"
+        ]
+      },
+      {
+        "cluster_id": "steady-events",
+        "region": "us-east-1",
+        "broker_count": 6,
+        "topic_count": 120,
+        "source_auths": [
+          "scram"
+        ]
+      }
+    ],
+    "total_regions": 1
+  },
+  "sizing": [
+    {
+      "cluster_id": "heavy-acls",
+      "sized_in_mbps": 15,
+      "sized_out_mbps": 25,
+      "peak_in_mbps": 18,
+      "peak_out_mbps": 30,
+      "user_partitions": 300,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.25,
+      "egress_ratio": 0.1388888888888889,
+      "partition_ratio": 0.1,
+      "max_ratio": 0.25,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.3,
+      "peak_burst_out_ratio": 0.16666666666666666,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.p95",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 26214400
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.max",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.max",
+          "value": 31457280
+        },
+        {
+          "path": "cluster[heavy-acls].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 300
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "sized_in_mbps": 12,
+      "sized_out_mbps": 18,
+      "peak_in_mbps": 15,
+      "peak_out_mbps": 22,
+      "user_partitions": 250,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.2,
+      "egress_ratio": 0.1,
+      "partition_ratio": 0.08333333333333333,
+      "max_ratio": 0.2,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.25,
+      "peak_burst_out_ratio": 0.12222222222222222,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.p95",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.max",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[mtls-cluster].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 250
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "sized_in_mbps": 10,
+      "sized_out_mbps": 20,
+      "peak_in_mbps": 12,
+      "peak_out_mbps": 22,
+      "user_partitions": 200,
+      "internal_partitions": 0,
+      "ingress_ratio": 0.16666666666666666,
+      "egress_ratio": 0.1111111111111111,
+      "partition_ratio": 0.06666666666666667,
+      "max_ratio": 0.16666666666666666,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 1,
+      "sla_floor_ecku": 1,
+      "final_ecku": 1,
+      "peak_burst_in_ratio": 0.2,
+      "peak_burst_out_ratio": 0.12222222222222222,
+      "peak_burst_ecku": 1,
+      "peak_burst_pct_of_pl_cap": 10,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.p95",
+          "value": 10485760
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 20971520
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.max",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[small-orders].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 200
+        }
+      ]
+    },
+    {
+      "cluster_id": "steady-events",
+      "sized_in_mbps": 100,
+      "sized_out_mbps": 180,
+      "peak_in_mbps": 130,
+      "peak_out_mbps": 240,
+      "user_partitions": 800,
+      "internal_partitions": 0,
+      "ingress_ratio": 1.6666666666666667,
+      "egress_ratio": 1,
+      "partition_ratio": 0.26666666666666666,
+      "max_ratio": 1.6666666666666667,
+      "max_ratio_driver": "ingress",
+      "sized_ecku": 3,
+      "sla_floor_ecku": 1,
+      "final_ecku": 3,
+      "peak_burst_in_ratio": 2.1666666666666665,
+      "peak_burst_out_ratio": 1.3333333333333333,
+      "peak_burst_ecku": 3,
+      "peak_burst_pct_of_pl_cap": 30,
+      "spiky_ingress": false,
+      "spiky_egress": false,
+      "citations": [
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesInPerSec.p95",
+          "value": 104857600
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 188743680
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesInPerSec.max",
+          "value": 136314880
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesOutPerSec.max",
+          "value": 251658240
+        },
+        {
+          "path": "cluster[steady-events].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 800
+        }
+      ]
+    }
+  ],
+  "cluster_type_decision": [
+    {
+      "cluster_id": "heavy-acls",
+      "verdict": "Dedicated",
+      "triggers": [
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "evidence": "4001 ACLs \u003e Enterprise cap 4000"
+        }
+      ],
+      "topology": "MultiZone",
+      "final_cku": 1,
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "fired",
+          "evidence": "4001 ACLs \u003e Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"aws\""
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "verdict": "Enterprise",
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "mTLS source + target_cloud=\"aws\" (AWS supports mTLS on Enterprise/Freight)"
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "verdict": "Enterprise",
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 1 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"aws\""
+        }
+      ]
+    },
+    {
+      "cluster_id": "steady-events",
+      "verdict": "Enterprise",
+      "evaluated_rules": [
+        {
+          "row_id": "eCKU_exceeds_pni_cap",
+          "description": "Sized eCKU exceeds Enterprise PNI cap",
+          "outcome": "not_fired",
+          "evidence": "sized 3 eCKU ≤ PNI cap 32 eCKU"
+        },
+        {
+          "row_id": "acl_count_exceeds_cap",
+          "description": "ACL count exceeds Enterprise cap",
+          "outcome": "not_fired",
+          "evidence": "0 ACLs ≤ Enterprise cap 4000"
+        },
+        {
+          "row_id": "broker_side_schema_validation_required",
+          "description": "Broker-side schema ID validation required",
+          "outcome": "not_fired",
+          "evidence": "`enforce_schemas_at_the_broker: false`"
+        },
+        {
+          "row_id": "rest_produce_api_high_throughput",
+          "description": "High-throughput Kafka REST Produce v3 required",
+          "outcome": "not_fired",
+          "evidence": "`requires_high_throughput_rest_produce_api: false`"
+        },
+        {
+          "row_id": "sla_99_95_single_zone",
+          "description": "99.95% single-zone SLA required",
+          "outcome": "not_fired",
+          "evidence": "`requires_99_95_sla_within_a_single_zone: false`"
+        },
+        {
+          "row_id": "mtls_on_non_aws_target",
+          "description": "Source uses mTLS, target is non-AWS",
+          "outcome": "not_fired",
+          "evidence": "no mTLS source + target_cloud=\"aws\""
+        }
+      ]
+    }
+  ],
+  "networking_decision": [
+    {
+      "cluster_id": "heavy-acls",
+      "verdict": "PNI",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "Dedicated AWS cluster — PNI required (TGW / VPC Peering are alternatives only when the customer's existing MSK topology already uses them; see `existing_vpc_connectivity` in plan-inputs.yaml)"
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "verdict": "PNI",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
+    },
+    {
+      "cluster_id": "small-orders",
+      "verdict": "PNI",
+      "peak_burst_ecku": 1,
+      "percentage_of_cap": 10,
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
+    },
+    {
+      "cluster_id": "steady-events",
+      "verdict": "PNI",
+      "peak_burst_ecku": 3,
+      "percentage_of_cap": 30,
+      "reason": "default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap)"
+    }
+  ],
+  "cutover": {
+    "style": "Stop-Restart-Repeat",
+    "sub_pattern": "app-by-app",
+    "gateway_mediated": "false",
+    "recommendation_status": "degraded_awaiting_oq",
+    "alternatives_shown_for_trust": [
+      "Stop-Wait-Restart",
+      "Restart-All-At-Once",
+      "Blue/Green"
+    ],
+    "prereqs": [
+      {
+        "description": "Confluent for Kubernetes (CFK) cluster",
+        "status": "blocked"
+      },
+      {
+        "description": "Confluent Cloud Gateway Add-On license",
+        "status": "blocked"
+      }
+    ]
+  },
+  "auth": [
+    {
+      "cluster_id": "heavy-acls",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "source_auths_detected": [
+        "mtls"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "mtls",
+          "effective_target": "mtls",
+          "gateway_compatible": true,
+          "transparent_swap": false,
+          "note": "Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode).",
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    },
+    {
+      "cluster_id": "steady-events",
+      "source_auths_detected": [
+        "scram"
+      ],
+      "target_mappings": [
+        {
+          "source_auth": "scram",
+          "effective_target": "confluent_cloud_api_keys",
+          "gateway_compatible": true,
+          "transparent_swap": true,
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html",
+          "last_verified": "2026-05-20"
+        }
+      ]
+    }
+  ],
+  "sizing_appendix": [
+    {
+      "cluster_id": "heavy-acls",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 15.00 MBps / 60 = 0.2500",
+        "egress ratio  = 25.00 MBps / 180 = 0.1389",
+        "partition ratio = 300 / 3000 = 0.1000",
+        "max ratio = 0.2500",
+        "sized = CEIL(0.2500 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.p95",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 26214400
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesInPerSec.max",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[heavy-acls].metrics.aggregates.BytesOutPerSec.max",
+          "value": 31457280
+        },
+        {
+          "path": "cluster[heavy-acls].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 300
+        }
+      ]
+    },
+    {
+      "cluster_id": "mtls-cluster",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 12.00 MBps / 60 = 0.2000",
+        "egress ratio  = 18.00 MBps / 180 = 0.1000",
+        "partition ratio = 250 / 3000 = 0.0833",
+        "max ratio = 0.2000",
+        "sized = CEIL(0.2000 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.p95",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 18874368
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesInPerSec.max",
+          "value": 15728640
+        },
+        {
+          "path": "cluster[mtls-cluster].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[mtls-cluster].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 250
+        }
+      ]
+    },
+    {
+      "cluster_id": "small-orders",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 10.00 MBps / 60 = 0.1667",
+        "egress ratio  = 20.00 MBps / 180 = 0.1111",
+        "partition ratio = 200 / 3000 = 0.0667",
+        "max ratio = 0.1667",
+        "sized = CEIL(0.1667 * 1.30) = 1  (1 + 0.30 headroom)",
+        "final = max(1 sized, 1 SLA floor) = 1 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.p95",
+          "value": 10485760
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 20971520
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesInPerSec.max",
+          "value": 12582912
+        },
+        {
+          "path": "cluster[small-orders].metrics.aggregates.BytesOutPerSec.max",
+          "value": 23068672
+        },
+        {
+          "path": "cluster[small-orders].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 200
+        }
+      ]
+    },
+    {
+      "cluster_id": "steady-events",
+      "formula": "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))",
+      "intermediate_steps": [
+        "ingress ratio = 100.00 MBps / 60 = 1.6667",
+        "egress ratio  = 180.00 MBps / 180 = 1.0000",
+        "partition ratio = 800 / 3000 = 0.2667",
+        "max ratio = 1.6667",
+        "sized = CEIL(1.6667 * 1.30) = 3  (1 + 0.30 headroom)",
+        "final = max(3 sized, 1 SLA floor) = 3 eCKU"
+      ],
+      "citations": [
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesInPerSec.p95",
+          "value": 104857600
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesOutPerSec.p95",
+          "value": 188743680
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesInPerSec.max",
+          "value": 136314880
+        },
+        {
+          "path": "cluster[steady-events].metrics.aggregates.BytesOutPerSec.max",
+          "value": 251658240
+        },
+        {
+          "path": "cluster[steady-events].kafka_admin_client_information.topics.summary.total_partitions",
+          "value": 800
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "gateway_intent_unconfirmed",
+      "title": "Gateway intent — pick CC Gateway or plain Cluster Linking",
+      "body": "`prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.",
+      "how_to_close": "In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ."
+    }
+  ]
+}
