@@ -57,7 +57,7 @@ If a run is interrupted at any step, simply re-run 'kcp migration cutover execut
 from the live state.
 
 The manifest's fields, validation rules and a fully-annotated example are documented in the
-[Migration manifest reference](../../migration-manifest-reference.md).`
+[Migration manifest reference](../../../migration-manifest-reference.md).`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to the live
 // dependencies both branches share.

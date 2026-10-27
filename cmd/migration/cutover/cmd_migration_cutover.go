@@ -34,7 +34,7 @@ If execution is interrupted at any step, re-running ` + "`kcp migration cutover 
 
 **Before you run it.** Every run, including ` + "`--dry-run`" + `, connects to the source Kafka cluster, the destination Kafka cluster, the cluster-link REST API and the Kubernetes API, using the credentials in the manifest. To confirm each gateway pod applied a config change, the Kubernetes identity also needs ` + "`get`" + ` on ` + "`pods/proxy`" + `. All producers must go through the gateway for the fence to hold. If the reconcile plan is refused — for example a selected topic is not a mirror topic on the cluster link — nothing is changed and the whole run is refused; ` + "`--dry-run`" + ` prints the plan and the reasons.
 
-The manifest these commands read is documented in the [Migration manifest reference](../../migration-manifest-reference.md) — every field, validation rules, and a fully-annotated example.`,
+The manifest these commands read is documented in the [Migration manifest reference](../../../migration-manifest-reference.md) — every field, validation rules, and a fully-annotated example.`,
 	})
 	cmd.AddCommand(execute.NewMigrationExecuteCmd())
 	cmd.AddCommand(lagcheck.NewMigrationLagCheckCmd())
