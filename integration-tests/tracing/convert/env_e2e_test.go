@@ -151,12 +151,12 @@ func workersLine(workers int) string {
 	return fmt.Sprintf("      offsetSyncConcurrency: %d\n", workers)
 }
 
-// execute runs `kcp migration execute` on manifest with tracing on, appending
+// execute runs `kcp migration cutover execute` on manifest with tracing on, appending
 // its spans to traceFile and labelling the run run=<label>.
 func (e *env) execute(t *testing.T, report, manifest, traceFile, label string) (string, error) {
 	t.Helper()
 	return e.runKCP(t, report, []string{"KCP_TRACING_ENABLED=true", "KCP_TRACE_FILE=" + traceFile,
-		"OTEL_RESOURCE_ATTRIBUTES=run=" + label}, "migration", "execute", "--migration-yaml", manifest)
+		"OTEL_RESOURCE_ATTRIBUTES=run=" + label}, "migration", "cutover", "execute", "--migration-yaml", manifest)
 }
 
 // runKCP execs the in-pod kcp binary with extraEnv added to its environment.

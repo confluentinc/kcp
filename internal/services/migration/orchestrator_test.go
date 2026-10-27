@@ -1248,7 +1248,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 // config.PauseConsumerOffsetSync. This drives a real failed Execute into
 // several different landing states an operator can actually reach with the
 // pause opt-in set, then feeds the resulting config+error to the guidance
-// exactly as cmd/migration/execute does, and asserts the SAME generic copy
+// exactly as cmd/migration/cutover/execute does, and asserts the SAME generic copy
 // appears no matter which state the FSM rested in.
 func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *testing.T) {
 	validCR := "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
@@ -1372,7 +1372,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 			assert.Equal(t, tc.wantState, orch.fsm.Current(), "landed state")
 
 			// Feed the landed config + error to the guidance exactly as the
-			// executor does (cmd/migration/execute/migration_executor.go). The
+			// executor does (cmd/migration/cutover/execute/migration_executor.go). The
 			// copy is the same generic reminder regardless of which state the
 			// FSM landed in.
 			out := captureStderr(t, func() {

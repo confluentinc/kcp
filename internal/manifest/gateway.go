@@ -150,10 +150,10 @@ func ParseKind(data []byte) (string, error) {
 func wrongKindError(got, want string) error {
 	switch got {
 	case KindMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migration resources`), but %q was expected — `kcp migration execute`, `lag-check` and `reconcile` read a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration resources`), but %q was expected — `kcp migration cutover execute` and `lag-check` read a %s file",
 			KindMigration, want, KindGatewayMigration)
 	case KindGatewayMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migration execute`, `lag-check` and `reconcile`), but %q was expected — `kcp migration resources` reads a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration cutover execute` and `lag-check`), but %q was expected — `kcp migration resources` reads a %s file",
 			KindGatewayMigration, want, KindMigration)
 	default:
 		return fmt.Errorf("unsupported kind %q (expected %q)", got, want)
@@ -335,7 +335,7 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
 // end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
 // already uses — including a custom ca_cert on sasl_plain (the destination leg
-// dials through the mapper; see cmd/migration/execute's destinationConn).
+// dials through the mapper; see cmd/migration/cutover/execute's destinationConn).
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(

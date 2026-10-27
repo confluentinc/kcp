@@ -1,6 +1,6 @@
 # Tracing — live smoke E2E
 
-Proves that clean, uninterrupted `kcp migration execute` runs each produce **one complete OpenTelemetry trace** against a
+Proves that clean, uninterrupted `kcp migration cutover execute` runs each produce **one complete OpenTelemetry trace** against a
 live Confluent Gateway, a real cluster link and Kafka in minikube (profile
 `kcp-e2e-tracing-<mode>`). Unit tests cover the span trees of all three strategies; this suite checks the whole chain
 in the real binary: environment variables read, spans written as each ends, flushed on exit, and the shared gateway,
@@ -68,7 +68,7 @@ environment down and set it up again.
 
 For each run:
 
-- one trace for the whole run, rooted at the `kcp migration execute` span (resource `service.name=kcp`, and the run's
+- one trace for the whole run, rooted at the `kcp migration cutover execute` span (resource `service.name=kcp`, and the run's
   label set through `OTEL_RESOURCE_ATTRIBUTES`);
 - `migplan.reconcile`, `migration.build_services` and `migration.run` directly under it, with `kcp.strategy` and the
   steps in order for the mode (dynamic: initialize, wait_for_lags, fence, verify_fence, promote, switch; static adds

@@ -5,8 +5,8 @@
 # route bound to the destination, carrying the consumer groups' committed offsets
 # across. Topics stay the same; the route's mode changes.
 #
-#   kcp migration execute --migration-yaml gateway-route-conversion.yaml --dry-run
-#   kcp migration execute --migration-yaml gateway-route-conversion.yaml
+#   kcp migration cutover execute --migration-yaml gateway-route-conversion.yaml --dry-run
+#   kcp migration cutover execute --migration-yaml gateway-route-conversion.yaml
 #
 # The topology, auth and credentials files are the topic-based migration's own;
 # gateway-static-migration.yaml documents every shared field. Paths in this file
