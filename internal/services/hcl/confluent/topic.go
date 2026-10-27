@@ -1,5 +1,5 @@
 // Package confluent: topic.go generates Terraform for plain Confluent Cloud
-// topics (used by `kcp create-asset migrate-topics --mode new`).
+// topics (used by `kcp iac topics generate --mode new`).
 //
 // The CCSupportedTopicConfigs allow-list captures the subset of Apache Kafka
 // topic-level configs that Confluent Cloud accepts at create time. Any source

@@ -26,7 +26,7 @@ body:
       options:
         - kcp scan
         - kcp report
-        - kcp create-asset
+        - kcp iac
         - Other (please specify in description)
     validations:
       required: true

@@ -71,7 +71,7 @@ func Generate() ([]byte, error) {
 // GenerateGateway reflects the GatewayMigration struct into its own JSON
 // Schema. A second schema rather than a merged one: the two kinds share an
 // apiVersion and sub-types but not a shape, and one schema covering both would
-// validate every gateway field as unknown in a kcp migrate file, and vice versa.
+// validate every gateway field as unknown in a kcp migration resources file, and vice versa.
 func GenerateGateway() ([]byte, error) {
 	s, err := jsonschema.For[manifest.GatewayMigration](nil)
 	if err != nil {
