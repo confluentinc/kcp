@@ -270,5 +270,5 @@ The UI runs locally on `http://localhost:5556`; see [`kcp ui`](command-reference
 ## Next steps
 
 - [`kcp report`](command-reference/report/index.md): cost and metrics reports from the state file.
-- [`kcp create-asset`](command-reference/create-asset/index.md): generate Terraform for the target, migration infrastructure, topics, schemas, ACLs and connectors.
+- [`kcp iac`](command-reference/iac/index.md): generate Terraform for the target, migration infrastructure, topics, schemas, ACLs and connectors.
 - [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md): initialize and execute the client switchover.
