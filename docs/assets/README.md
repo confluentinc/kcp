@@ -124,7 +124,7 @@ The full CLI reference is generated directly from the Cobra command definitions 
 - [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
 - [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
 - [`kcp iac`](command-reference/iac/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/migration/index.md) — initialize, monitor and execute migrations
+- [`kcp migration`](command-reference/migration/index.md) — cut clients over to Confluent Cloud through the Gateway (`cutover`) and create Kafka resources directly (`resources`)
 - [`kcp ui`](command-reference/ui.md) — launch the local web UI
 - [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
 

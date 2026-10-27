@@ -924,7 +924,7 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		// include a producer stop, so it leads the section rather than trailing it.
 		gatewayCutover := sw.GatewayMediated
 		if gatewayCutover {
-			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway, and deploy it and route your clients through it, before you run the cutover step below. The Gateway also needs the backend secrets for its credential swap in your secret store before the cutover.")
+			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration cutover`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway, and deploy it and route your clients through it, before you run the cutover step below. The Gateway also needs the backend secrets for its credential swap in your secret store before the cutover.")
 		}
 		targetClusterStep(md, cp, stateFilePath, step)
 		// The source credentials (and any listener the link signs in with) must be in
@@ -1138,7 +1138,7 @@ func sourceAuthUnauthOnly(cp ClusterPlan) bool {
 // clusterLinkCutoverStep renders the shared final Cluster Linking cutover step and
 // its backing-out note, used by both the auto-mapped and the specialist-wired
 // cluster-link paths so they read identically. A Gateway-mediated cutover is driven
-// by `kcp migration`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
+// by `kcp migration cutover`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
 // has no such tool and is walked through by hand.
 func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
 	sw := cp.Plan.Switchover
