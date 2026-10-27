@@ -13,7 +13,7 @@ Supports Amazon MSK and Apache Kafka (including Confluent Platform and other Kaf
 > [!CAUTION]
 > **Do not build from source for normal use.** Install a released binary using the methods below instead. Source builds can contain breaking, untested changes.
 
-kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64).
+kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64). Each release includes these assets: `kcp_darwin_amd64`, `kcp_darwin_arm64`, `kcp_linux_amd64`, `kcp_linux_arm64`, and `kcp_windows_amd64.exe`.
 
 ### macOS & Linux
 
@@ -43,9 +43,25 @@ LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/late
 
 curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
 chmod +x kcp
+./kcp version
+
+# Optional: put kcp on your PATH so you can run it from any directory
 sudo mv kcp /usr/local/bin/kcp
 kcp version
 ```
+
+### Run with Docker
+
+Prefer a container? kcp is published as a multi-arch image:
+
+```bash
+docker pull confluentinc/kcp:latest
+docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" confluentinc/kcp:latest version
+```
+
+See [Running kcp in Docker](docs/assets/running-kcp-in-docker.md) for AWS
+credentials, state-file mounts, the web UI, and mirroring into an internal
+registry (e.g. JFrog Artifactory).
 
 ### Windows
 
