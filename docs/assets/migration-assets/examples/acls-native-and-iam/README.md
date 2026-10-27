@@ -1,7 +1,7 @@
 # Example: ACLs — native + IAM
 
 Migrates ACLs for an MSK cluster that serves **both** SASL/SCRAM principals and
-IAM roles at once. `kcp migrate` reads the native Kafka ACLs (for the SASL/SCRAM
+IAM roles at once. `kcp migration resources` reads the native Kafka ACLs (for the SASL/SCRAM
 principals) from the source, unions them with the IAM-derived grants
 (`discoverAllRoles`, scoped to `clusterArn`), deduplicates on the exact ACL
 tuple, and writes the result to the target.
@@ -16,7 +16,7 @@ account, while every other unmapped principal (native or IAM-derived) is
 found-or-created via `autoCreate`. An explicit mapping entry always wins over
 `autoCreate`.
 
-The shell running `kcp migrate` needs AWS credentials with `iam:GetRole`,
+The shell running `kcp migration resources` needs AWS credentials with `iam:GetRole`,
 `iam:GetPolicy`, `iam:GetPolicyVersion`, `iam:ListRolePolicies`,
 `iam:ListAttachedRolePolicies`, `iam:GetAccountAuthorizationDetails`, and
 `iam:SimulatePrincipalPolicy` for the IAM reads and `verifyEffectiveAccess`.
@@ -35,9 +35,9 @@ auth method.
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml   # structural check
-kcp migrate apply -f migration.yaml --dry-run   # preview, change nothing
-kcp migrate apply -f migration.yaml             # migrate the ACLs
+kcp migration resources validate -f migration.yaml   # structural check
+kcp migration resources create -f migration.yaml --dry-run   # preview, change nothing
+kcp migration resources create -f migration.yaml             # migrate the ACLs
 ```
 
 > Credential paths here point at the shared catalog (`../../credentials/…`) to

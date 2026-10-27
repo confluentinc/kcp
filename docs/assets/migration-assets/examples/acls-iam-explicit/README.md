@@ -1,7 +1,7 @@
 # Example: ACLs — IAM (explicit)
 
 Migrates ACLs for an MSK cluster authorized via the **AWS MSK IAM plane**,
-translating a fixed list of named IAM roles. `kcp migrate` reads each role's
+translating a fixed list of named IAM roles. `kcp migration resources` reads each role's
 identity-based policies and translates its `kafka-cluster:*` grants into
 Confluent Cloud ACLs, scoped to `clusterArn`.
 
@@ -11,10 +11,10 @@ the grants that are effectively allowed.
 
 `principalArns` and `discoverAllRoles` are mutually exclusive; exactly one is
 required whenever `spec.acls.iam` is present. This example uses `principalArns`
-— see [`acls-iam-discover`](../acls-iam-discover/) for auto-discovery of every
+— see [`acls-iam-discover`](../acls-iam-discover/README.md) for auto-discovery of every
 workload role in the account.
 
-The shell running `kcp migrate` needs AWS credentials with `iam:GetRole`,
+The shell running `kcp migration resources` needs AWS credentials with `iam:GetRole`,
 `iam:GetPolicy`, `iam:GetPolicyVersion`, `iam:ListRolePolicies`, and
 `iam:ListAttachedRolePolicies`, plus `iam:SimulatePrincipalPolicy` for
 `verifyEffectiveAccess`.
@@ -35,9 +35,9 @@ shell's AWS credentials, not this file. See the
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml   # structural check
-kcp migrate apply -f migration.yaml --dry-run   # preview, change nothing
-kcp migrate apply -f migration.yaml             # migrate the ACLs
+kcp migration resources validate -f migration.yaml   # structural check
+kcp migration resources create -f migration.yaml --dry-run   # preview, change nothing
+kcp migration resources create -f migration.yaml             # migrate the ACLs
 ```
 
 > Credential paths here point at the shared catalog (`../../credentials/…`) to

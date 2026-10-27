@@ -216,7 +216,7 @@ func TestTranslatePrincipalPolicies_MultiplePrincipals(t *testing.T) {
 	}, got)
 }
 
-// TestNormalizePrincipalARNs mirrors create-asset's evaluatePrincipal:
+// TestNormalizePrincipalARNs mirrors `kcp iac acls iam`'s evaluatePrincipal:
 // STS assumed-role ARNs normalize to their iam role-arn form, and an
 // already-normalized duplicate is deduped away.
 func TestNormalizePrincipalARNs(t *testing.T) {

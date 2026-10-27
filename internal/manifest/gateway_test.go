@@ -703,7 +703,7 @@ func TestParseKind_ErrorsOnMalformedYAML(t *testing.T) {
 }
 
 // TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage — pointing
-// `kcp migration init -f` at a kcp migrate manifest must say so, not produce a
+// `kcp migration execute` at a kcp migration resources manifest must say so, not produce a
 // field-by-field unknown-key dump.
 func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing.T) {
 	_, err := ParseGatewayMigration(readFixture(t, "valid_cc.yaml"))
@@ -711,6 +711,9 @@ func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing
 	msg := err.Error()
 	assert.Contains(t, msg, KindMigration)
 	assert.Contains(t, msg, KindGatewayMigration)
+	for _, cmd := range []string{"execute", "lag-check", "reconcile"} {
+		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
+	}
 	assert.NotContains(t, msg, "unknown field", "a wrong-kind file must not produce an unknown-field dump")
 }
 
@@ -719,6 +722,9 @@ func TestParse_RejectsGatewayMigrationKindWithAUsefulMessage(t *testing.T) {
 	require.Error(t, err)
 	msg := err.Error()
 	assert.Contains(t, msg, KindGatewayMigration)
+	for _, cmd := range []string{"execute", "lag-check", "reconcile"} {
+		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
+	}
 	assert.NotContains(t, msg, "unknown field")
 }
 
@@ -754,7 +760,7 @@ func requireErrContains(t *testing.T, errs []error, want string) {
 }
 
 // TestGateway_OmittedScramMechanismIsRejected — the gateway kind follows the
-// same rule as kcp migrate: an omitted mechanism is rejected rather than
+// same rule as kcp migration resources: an omitted mechanism is rejected rather than
 // silently defaulted. Inferring SHA512 hid a wrong guess (a SHA256 source)
 // behind an opaque auth failure, so the config file must state the mechanism.
 //
