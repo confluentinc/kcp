@@ -341,7 +341,7 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 			return fmt.Errorf("cluster link %q not found on cluster %s (while %s %q)", config.LinkName, config.ClusterID, alteration.Operation, alteration.Name)
 		case http.StatusUnauthorized, http.StatusForbidden:
 			// Names the credential rather than a flag or a manifest field: this
-			// package is shared with `kcp migrate`, where the same credential
+			// package is shared with `kcp migration resources`, where the same credential
 			// arrives under a different key.
 			return fmt.Errorf("authentication failed (status %d) while %s %q on cluster link %q — verify the destination cluster API key and secret", statusErr.StatusCode, alteration.Operation, alteration.Name, config.LinkName)
 		}

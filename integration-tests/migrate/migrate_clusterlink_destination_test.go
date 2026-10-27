@@ -213,7 +213,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 
 	out, err := runKCP(t, m1)
 	if reportEnabled {
-		in.addRun("Apply (m1)", "kcp migrate apply -f m1.yaml", out)
+		in.addRun("Apply (m1)", "kcp migration resources create -f m1.yaml", out)
 	}
 	require.NoError(t, err, out)
 	require.Contains(t, out, "1 created", out)
@@ -232,7 +232,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	require.NoError(t, os.WriteFile(m2, []byte(manifestFor("1000")), 0600))
 	out, err = runKCP(t, m2)
 	if reportEnabled {
-		in.addRun("Re-apply (m2 — changes consumerOffsetSync.intervalMs 30000 → 1000)", "kcp migrate apply -f m2.yaml", out)
+		in.addRun("Re-apply (m2 — changes consumerOffsetSync.intervalMs 30000 → 1000)", "kcp migration resources create -f m2.yaml", out)
 	}
 	require.NoError(t, err, out)
 	require.Contains(t, out, "1 drift", out)

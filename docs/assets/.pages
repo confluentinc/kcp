@@ -5,3 +5,4 @@ nav:
 - command-reference
 - apache-kafka-configuration
 - Migration Manifest Reference: migration-manifest-reference.md
+- migration-assets

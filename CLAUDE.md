@@ -45,7 +45,7 @@ make clean              # remove build artifacts
 
 ## Architecture
 
-The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `create-asset`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree. (`migrate` — the in-development direct-API migration command — is registered but hidden from help and not yet user-facing.)
+The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `iac`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree. Direct-API resource migration lives under `kcp migration resources` (`create`, `validate`).
 
 ### Source abstraction
 
@@ -88,7 +88,7 @@ React + TypeScript + Vite at `cmd/ui/frontend/`, embedded into the Go binary via
 
 ### Migration types
 
-Configured via `kcp create-asset migration-infra --type N`:
+Configured via `kcp iac migration-infra generate --type N`:
 
 - **Type 1** — Public source endpoints with SASL/SCRAM cluster link.
 - **Type 2** — Private source with external outbound cluster link (SASL/SCRAM).

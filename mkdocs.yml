@@ -18,8 +18,6 @@ exclude_docs: |
   brainstorms/
   ideation/
   plans/
-  # in-development direct-API migration feature — hidden until the `kcp migrate` command is user-facing
-  migration-assets/
   # hidden from the published beta docs; files stay in the repo
   getting-started-with-zero-cut-migrations.md
   gateway-switchover/

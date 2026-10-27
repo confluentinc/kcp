@@ -53,7 +53,7 @@ func (f *fakeSAClient) UserExists(ctx context.Context, id string) (bool, error) 
 
 // buildPipeline wires a fresh serviceAccounts + acls reconciler pair over the
 // given (possibly already-mutated, for a second run) fake clients — mirroring
-// exactly how cmd/migrate/apply builds the same two reconcilers.
+// exactly how cmd/migration/resources/create builds the same two reconcilers.
 func buildPipeline(saClient *fakeSAClient, aclClient *fakeACLClient, desired []types.Acls, principals []string) (*serviceaccounts.Reconciler, *Reconciler) {
 	saRec := serviceaccounts.New(serviceaccounts.Config{
 		AutoCreate: true,
@@ -101,7 +101,7 @@ func TestIntegration_Idempotent_SecondRunCreatesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	// A fresh pair of reconcilers over the same, now-mutated fake clients, as
-	// a second real invocation of `kcp migrate apply` would see them.
+	// a second real invocation of `kcp migration resources create` would see them.
 	saRec2, aclRec2 := buildPipeline(saClient, aclClient, desired, principals)
 	report, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec2, aclRec2}}, false)
 	require.NoError(t, err)
