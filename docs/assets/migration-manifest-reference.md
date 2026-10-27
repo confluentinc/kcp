@@ -73,7 +73,7 @@ CLI flag can override for a single run, without editing the file.
   `detectUnroutedProducersDuration` at all; it has its own
   `detectUnroutedCommitsDuration` instead (see
   [What it does](#what-it-does)): it watches for consumers committing to the
-  source directly, and that check can't be turned off.
+  source directly, and like the producer check it is **off by default**.
 - **What is fenced.** A static route is fenced and switched as a whole — the
   topic selection only decides which mirrors are promoted and lag-checked. A
   dynamic route fences and switches only the selected topics.
@@ -381,9 +381,10 @@ and the cluster link:
    `security.cluster.<targetStreamingDomain>` auth, no fence kcp didn't write,
    no route-level fence) or the warnings about topics outside the link; those
    run before the fence. It then takes two snapshots of every source group's
-   committed offsets, `detectUnroutedCommitsDuration` apart (`30s` by default;
-   it can't be skipped). A change means a client is committing to the source directly,
-   bypassing the gateway, and the run fails.
+   committed offsets, `detectUnroutedCommitsDuration` apart, but only when it
+   is set (minimum `10s`; the default, `0s`, skips the check and the first
+   snapshot is the one synced). A change means a client is committing to the
+   source directly, bypassing the gateway, and the run fails.
 3. **Sync offsets.** kcp writes the in-scope groups' committed offsets, with
    their metadata, to the destination. It refuses the whole sync if an offset
    is past its destination partition's high-water mark.
@@ -399,7 +400,7 @@ on every gateway pod, as in a migration.
 ### What clients see
 
 - **A pause.** Every topic on the route is blocked from the fence to the
-  switch: about `detectUnroutedCommitsDuration` plus two gateway reloads.
+  switch: about `detectUnroutedCommitsDuration` (if set) plus two gateway reloads.
   Producers retry (give them a `delivery.timeout.ms` longer than that);
   consumers fetch nothing and can't commit.
 - **A rejoin, and possibly a re-read.** After the switch, consumers' group
@@ -480,7 +481,7 @@ command-line flags do accept a plain `0`). Negative values are rejected.
 | `consumerOffsetSyncDrainDuration` | duration | `0s`    | `--consumer-offset-sync-drain-duration` | `staticMigration` only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `consumerOffsetSync.pause` is set. `0s` means no wait.                                           |
 | `hotReloadTimeout`                | duration | `0s`    | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0s` uses the built-in 90s budget rather than waiting forever. |
 | `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
-| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` uses the built-in `30s` (this check can never be skipped); minimum `10s` when set. |
+| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` skips the check; minimum `10s` when set. |
 | `offsetSyncConcurrency`           | int      | `0`     | `--offset-sync-concurrency`             | `dynamicToStaticConversion` only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. |
 
 ## Credentials
@@ -666,7 +667,7 @@ Key rules, beyond required/optional per field above:
   parse error.
 - No `policies` field may be negative;
   `detectUnroutedProducersDuration` and `detectUnroutedCommitsDuration`, if
-  greater than zero, must be at least `10s`.
+  greater than zero, must be at least `10s` (`0` skips the check).
 
 Rules that need the contents of a credentials file run when that file is read,
 not when the manifest is parsed: the `iam`-needs-an-`msk`-source rule, the

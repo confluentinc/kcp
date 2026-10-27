@@ -22,11 +22,9 @@ import (
 // convertMode is migplan.Result.Mode for a route conversion.
 const convertMode = "convert"
 
-// Policy is the conversion's two execute-time policies, already resolved to their effective values
-// (manifest.DynamicToStaticPolicies.EffectiveDetectUnroutedCommitsDuration and EffectiveOffsetSyncConcurrency).
+// Policy is the conversion's execute-time policies; Workers is already resolved to its default.
 type Policy struct {
-	// DetectUnroutedCommitsDuration is the wait between verify_fence's two committed-offset snapshots. It must
-	// be positive: the direct-commit check can never be skipped.
+	// DetectUnroutedCommitsDuration is the gap between verify_fence's two snapshots; 0 skips the check.
 	DetectUnroutedCommitsDuration time.Duration
 	// Workers is the number of offset-fetch and offset-commit workers, each with its own client.
 	Workers int

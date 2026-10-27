@@ -310,9 +310,7 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
 }
 
-// TestExecute_ConversionPolicyOverrides — the two route-conversion policies
-// follow the same rule as every other: only an explicitly set flag overrides,
-// and an explicit 0 counts as set (it means "use the built-in default").
+// An explicit 0 counts as set; for the commits window it skips the check.
 func TestExecute_ConversionPolicyOverrides(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{
@@ -337,14 +335,19 @@ func TestExecute_ConversionPolicyOverrides(t *testing.T) {
 	q := g2.Spec.DynamicToStaticConversion.Policies
 	assert.Equal(t, 20*time.Second, q.DetectUnroutedCommitsDuration, "an unset flag leaves the manifest value alone")
 	assert.Equal(t, 4, q.OffsetSyncConcurrency)
+
+	skip := NewMigrationExecuteCmd()
+	require.NoError(t, skip.Flags().Parse([]string{"--migration-yaml", "x", "--detect-unrouted-commits-duration", "0s"}))
+	g3 := gatewayOf(t, manifest.MigrationTypeDynamicToStatic)
+	g3.Spec.DynamicToStaticConversion.Policies = manifest.DynamicToStaticPolicies{DetectUnroutedCommitsDuration: 20 * time.Second}
+	require.NoError(t, applyPolicyOverrides(skip, g3))
+	assert.Zero(t, g3.Spec.DynamicToStaticConversion.Policies.DetectUnroutedCommitsDuration, "an explicit 0s skips the check")
 }
 
-// TestExecute_PolicyLogArgsLogEffectiveConversionDefaults — a conversion manifest
-// that leaves the conversion knobs unset runs with their defaults, so the audit
-// line must show those defaults (30s, 8), not the zero the manifest carried.
+// An unset commits window logs 0s (skipped); an unset concurrency logs its default 8.
 func TestExecute_PolicyLogArgsLogEffectiveConversionDefaults(t *testing.T) {
 	kv := kvMap(t, effectivePolicyLogArgs("mig-1", gatewayOf(t, manifest.MigrationTypeDynamicToStatic).Spec))
-	assert.Equal(t, 30*time.Second, kv["detect_unrouted_commits_duration"])
+	assert.Equal(t, time.Duration(0), kv["detect_unrouted_commits_duration"])
 	assert.Equal(t, 8, kv["offset_sync_concurrency"])
 }
 

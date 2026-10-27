@@ -11,6 +11,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -18,29 +19,12 @@ import (
 // fence. The refusal itself is printed with the reconcile report renderer, as --dry-run prints it.
 var ErrVerifyRefused = errors.New("the conversion's checks refused after the fence")
 
-// VerifyFence runs the verify_fence transition, the conversion's authoritative safety check (spec decision
-// 7). It runs after the fence is confirmed on every gateway pod and is never skipped as a no-op. Nothing about
-// groups or offsets carries over from reconcile; every fact is read again, through the same gather-only
-// function reconcile uses. In order:
-//
-//  1. gather the facts (migplan.GatherConvertFacts) and re-run the route preconditions (for the route view)
-//     and the five credential checks; a refusal here comes before snapshot 1 reads listings a denied probe
-//     says may be partial;
-//  2. snapshot 1: a fresh strict listing of every source group, then each group's committed offsets;
-//  3. the link and group checks (reconcile.CheckLinkScope) on the gathered facts with snapshot 1's commit
-//     topics, including a first split-brain check on the gathered destination listing; the in-scope groups
-//     form G;
-//  4. to 6. wait the detection window, list the source groups again and take snapshot 2, and compare
-//     (groupoffsets.DetectRogueCommits): any addition, change or removal is groupoffsets.ErrRogueCommits;
-//  7. split-brain again, on a fresh destination listing (decision 23);
-//  8. hand snapshot 2, restricted to G, to sync_offsets in memory.
-//
-// A refusal is rendered with migplan's report renderer and returned as ErrVerifyRefused (decision 24), with
-// every failed check in the error so it reaches kcp.log. A read failure is a plain error, never a refusal.
+// VerifyFence re-reads the facts after the fence and runs the route, link and split-brain checks.
+// A zero commits window skips the direct-commit diff; snapshot 1 is then handed to sync_offsets.
 func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, p Policy) error {
 	a.handoff = nil
-	if p.DetectUnroutedCommitsDuration <= 0 {
-		return fmt.Errorf("verify_fence needs a detection window above zero, got %s; the direct-commit check can never be skipped", p.DetectUnroutedCommitsDuration)
+	if p.DetectUnroutedCommitsDuration < 0 {
+		return fmt.Errorf("verify_fence needs a detection window of zero (skip) or above, got %s", p.DetectUnroutedCommitsDuration)
 	}
 
 	// 1. Gather and probe.
@@ -103,12 +87,18 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 
 	// 4-6. Wait, snapshot 2 from a fresh listing, and the direct-commit diff. ErrRogueCommits is returned as
 	// is; so is a failure to wait, list or fetch, which is not evidence of a commit.
-	a.reporter.Detail("Watching committed offsets for %s, for a client committing to the source directly...", p.DetectUnroutedCommitsDuration)
-	second, err := groupoffsets.DetectRogueCommits(ctx, first, a.deps.SourceGroups, a.deps.Fetchers, p.Workers, p.DetectUnroutedCommitsDuration, a.deps.Wait)
-	if err != nil {
-		return err
+	second := first
+	if p.DetectUnroutedCommitsDuration == 0 {
+		tracing.MarkSkipped(ctx, "detect_unrouted_commits_disabled")
+		a.reporter.Detail("⏭️ Direct-commit check skipped (detectUnroutedCommitsDuration is 0)")
+	} else {
+		a.reporter.Detail("Watching committed offsets for %s, for a client committing to the source directly...", p.DetectUnroutedCommitsDuration)
+		second, err = groupoffsets.DetectRogueCommits(ctx, first, a.deps.SourceGroups, a.deps.Fetchers, p.Workers, p.DetectUnroutedCommitsDuration, a.deps.Wait)
+		if err != nil {
+			return err
+		}
+		a.reporter.Success("Committed offsets held still while fenced — no direct commits detected")
 	}
-	a.reporter.Success("Committed offsets held still while fenced — no direct commits detected")
 
 	// 7. Split-brain again, after the wait. Refusal only; the idle-group warning is not repeated.
 	listing, err := a.deps.DestinationGroups(ctx)
