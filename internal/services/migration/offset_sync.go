@@ -58,7 +58,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 		return
 	}
 	newReporter().Remediation(
-		"Migration execute failed (%v).\n   If offset-sync pause was applied on cluster link %q, verify %s matches your declared baseline (spec.staticMigration.consumerOffsetSync.baseline) before resuming normal operation.\n   Re-run `kcp migration execute` to resume — the pause and restore steps are idempotent — or re-apply manually.",
+		"Migration execute failed (%v).\n   If offset-sync pause was applied on cluster link %q, verify %s matches your declared baseline (spec.staticMigration.consumerOffsetSync.baseline) before resuming normal operation.\n   Re-run `kcp migration cutover execute` to resume — the pause and restore steps are idempotent — or re-apply manually.",
 		execErr,
 		config.ClusterLinkName,
 		offsetSyncEnableKey,

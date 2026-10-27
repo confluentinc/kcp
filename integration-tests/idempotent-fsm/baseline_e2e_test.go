@@ -34,7 +34,7 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 
 	e.snapshot(t, ctx, "before", "BEFORE — pristine (expect mirrors ACTIVE, route → source-domain, fencing empty)", topics)
 
-	out, err := e.runKCP(t, "kcp-run-1-execute.log", "", "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCP(t, "kcp-run-1-execute.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err, "an uninterrupted execute must complete against the live gateway")
 	require.Contains(t, strings.ToLower(out), "migration complete", "execute must report completion")
 
@@ -43,7 +43,7 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	// Idempotency baseline: with the migration complete, a fresh reconcile must
 	// classify every topic Unchanged and plan zero work — the property every
 	// resume test relies on.
-	out2, err2 := e.runKCP(t, "kcp-run-2-dry-run.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	out2, err2 := e.runKCP(t, "kcp-run-2-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.NoError(t, err2, "a dry-run on a completed migration must succeed")
 	assert.Contains(t, out2, "0 to migrate", "a completed migration must plan zero further work")
 	assert.Contains(t, out2, "unchanged", "a completed migration's topics must classify as Unchanged")
@@ -51,7 +51,7 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	// Re-running execute on the completed migration: reconcile finds nothing to
 	// do, so no state machine runs and the gateway CR is not touched.
 	crBefore := e.readCR(t, ctx)
-	out3, err3 := e.runKCP(t, "kcp-run-3-rerun.log", "", "migration", "execute", "--migration-yaml", mani)
+	out3, err3 := e.runKCP(t, "kcp-run-3-rerun.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err3, "re-running execute on a completed migration must succeed")
 	requireNothingToDo(t, out3)
 	require.Equal(t, string(crBefore), string(e.readCR(t, ctx)), "a nothing-to-do run must not touch the gateway CR")

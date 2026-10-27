@@ -227,7 +227,7 @@ func TestWarnIfPaused_Requested_Warns(t *testing.T) {
 	assert.Contains(t, out, "link-1")
 	assert.Contains(t, out, offsetSyncEnableKey)
 	assert.Contains(t, out, "declared baseline")
-	assert.Contains(t, out, "kcp migration execute")
+	assert.Contains(t, out, "kcp migration cutover execute")
 }
 
 // ---------------------------------------------------------------------------

@@ -71,13 +71,13 @@ func TestSetupShutdown_WritesARootSpanWithTheCommandError(t *testing.T) {
 
 	Setup(context.Background())
 	require.NotNil(t, active)
-	ctx := StartRoot(context.TODO(), "kcp migration execute")
+	ctx := StartRoot(context.TODO(), "kcp migration cutover execute")
 	_, child := Start(ctx, "test", "migration.run")
 	End(child, nil)
 	Shutdown(errors.New("failed to execute migration"))
 
 	spans := spansByName(t, path)
-	root, ok := spans["kcp migration execute"]
+	root, ok := spans["kcp migration cutover execute"]
 	require.True(t, ok, "root span written at shutdown")
 	assert.Equal(t, ptrace.StatusCodeError, root.Status().Code())
 	assert.Equal(t, root.SpanID(), spans["migration.run"].ParentSpanID())

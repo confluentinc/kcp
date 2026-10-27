@@ -5,7 +5,7 @@ which drives the `kcp migration resources` direct-API commands (`validate`,
 `create`) — keep any future addition here scoped to that manifest, not the
 unrelated one below.
 
-`kcp migration execute|lag-check` is driven by a different manifest,
+`kcp migration cutover execute|lag-check` is driven by a different manifest,
 `gateway-static-migration.yaml` (`kind: GatewayMigration`; there is one example per migration type), which
 shares this one's `apiVersion` and parser but nothing else. Its docs live
 **outside** this folder, published normally: see
