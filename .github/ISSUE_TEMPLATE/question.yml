@@ -21,7 +21,7 @@ body:
         - Authentication & Credentials
         - Scanning & Discovery (kcp scan)
         - Reporting & Cost Analysis (kcp report)
-        - Asset Generation (kcp create-asset)
+        - Asset Generation (kcp iac)
         - Infrastructure & Networking
         - Troubleshooting & Debugging
         - Other

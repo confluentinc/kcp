@@ -89,7 +89,11 @@ The typical migration flow:
 
 1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`.
 2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
-3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
+3. **Generate migration assets for data migration**:
+
+- `kcp iac <asset> generate` for Terraform using `target-infra`, `migration-infra`, `topics`, `schemas`; `kcp iac acls kafka|iam generate`; `kcp iac connectors msk|self-managed|connector-utility generate`.
+- `kcp migration resources` for direct creation on the destination cluster through the REST API for cluster links, topics and ACLs.
+
 4. **Execute client switchover** — `kcp migration execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
 
 ## Key infrastructure decisions
@@ -100,13 +104,13 @@ Before starting, decide on:
 2. If private, do you already have a bastion / jump host, or do you need one?
 3. What authentication methods are enabled on the source, and which will you use for the migration cluster link?
 
-Only certain migration topologies are possible for a given combination — see [`kcp create-asset migration-infra`](command-reference/create-asset/migration-infra.md) for the type matrix.
+Only certain migration topologies are possible for a given combination — see [`kcp iac migration-infra generate`](command-reference/iac/migration-infra/generate.md) for the type matrix.
 
 ### Bastion host requirements
 
 - **Public endpoints** — you can run `kcp` commands directly from your local machine.
 - **Private endpoints** — `kcp` must run from inside the source VPC. Either:
-  1. Provision a new bastion with [`kcp create-asset bastion-host`](command-reference/create-asset/bastion-host.md), or
+  1. Provision a new bastion with [`kcp iac bastion-host generate`](command-reference/iac/bastion-host/generate.md), or
   2. Use an existing jump server and copy the `kcp` binary onto it.
 
 > [!NOTE]
@@ -119,8 +123,8 @@ The full CLI reference is generated directly from the Cobra command definitions 
 - [`kcp discover`](command-reference/discover.md) — scan AWS for MSK clusters
 - [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
 - [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
-- [`kcp create-asset`](command-reference/create-asset/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/migration/index.md) — execute migrations and monitor replication lag
+- [`kcp iac`](command-reference/iac/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
+- [`kcp migration`](command-reference/migration/index.md) — initialize, monitor and execute migrations
 - [`kcp ui`](command-reference/ui.md) — launch the local web UI
 - [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
 

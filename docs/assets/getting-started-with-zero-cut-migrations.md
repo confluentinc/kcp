@@ -1,6 +1,6 @@
 # Confluent Cloud Migration: KCP + Gateway Reference Guide
 
-**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the two KCP migration commands (`kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
+**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the two KCP migration commands (`kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp iac`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
 
 ---
 
@@ -54,12 +54,17 @@ KCP itself needs credentials to the source cluster's cloud provider in the stand
 
 ### 4.2 Migration Infrastructure Types
 
-For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via `kcp create-asset migration-infra`. This covers four connectivity patterns:
+For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via `kcp iac migration-infra generate`. This covers four connectivity patterns:
 
 For Apache Kafka-compatible clusters (including Confluent Platform) and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
 
 > [!NOTE]
+> <<<<<<< HEAD
+> **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `kcp iac` paths (`migration-infra` for all types, `topics generate --mode mirror`, and `schemas generate --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
+> =======
 > **Confluent Cloud for Government** doesn't offer fully managed Cluster Linking or Schema Linking. The linking-based `create-asset` paths (`migration-infra` for all types, `migrate-topics --mode mirror`, and `migrate-schemas --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
+>
+> > > > > > > origin/main
 
 ---
 
@@ -97,7 +102,7 @@ IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS befo
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
 3. Once all clients are confirmed on SCRAM, they can onboard to the gateway.
 
-For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp create-asset migrate-acls iam` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://confluentinc.github.io/kcp/).
+For MSK clusters, KCP provides tooling to accelerate this: `kcp scan clusters` discovers IAM principals from Kafka ACLs, and `kcp iac acls iam generate` generates Terraform for corresponding CC service accounts. These are out of scope for this document but are covered in the [KCP repository](https://confluentinc.github.io/kcp/).
 
 ### 5.3 SASL/SCRAM: How the Gateway Handles It
 
@@ -160,17 +165,17 @@ Without the permission KCP stops at `kcp migration execute` with a message namin
 
 KCP applies the fenced and switchover CRs you supply, so those files can change how your running gateway behaves. KCP will not make that change on your behalf in either direction, and refuses before touching anything if one of them would:
 
-| Live gateway | Your fenced/switchover CR | Result |
-| --- | --- | --- |
-| `true` | `true` | Migration proceeds, verified by config revision |
-| `true` | omits `spec.hotReload` | Migration proceeds — an omitted field is inherited, not cleared |
-| `false` or unset | omits it, or `false` | Migration proceeds, verified by pod rollout |
-| `false` or unset | `true` | **Refused** — applying it would stop your pods rolling |
-| `true` | `false` | **Refused** — applying it would start rolling pods that were not rolling |
+| Live gateway     | Your fenced/switchover CR | Result                                                                   |
+| ---------------- | ------------------------- | ------------------------------------------------------------------------ |
+| `true`           | `true`                    | Migration proceeds, verified by config revision                          |
+| `true`           | omits `spec.hotReload`    | Migration proceeds — an omitted field is inherited, not cleared          |
+| `false` or unset | omits it, or `false`      | Migration proceeds, verified by pod rollout                              |
+| `false` or unset | `true`                    | **Refused** — applying it would stop your pods rolling                   |
+| `true`           | `false`                   | **Refused** — applying it would start rolling pods that were not rolling |
 
 Omitting `spec.hotReload` is the normal case and always safe: server-side apply leaves a field alone when the applier does not own it, so the gateway keeps whatever it was running. None of the worked examples under `docs/assets/gateway-switchover` mention the field.
 
-One extra rule applies when the gateway has hot reload **on**: the fenced and switchover CRs must either both mention `spec.hotReload` or both omit it. KCP applies them in turn, and server-side apply *deletes* a field that an earlier apply from the same field manager declared once a later one leaves it out — so a fenced CR that declares hot reload followed by a switchover CR that does not would switch hot reload off part-way through the migration, with traffic already fenced.
+One extra rule applies when the gateway has hot reload **on**: the fenced and switchover CRs must either both mention `spec.hotReload` or both omit it. KCP applies them in turn, and server-side apply _deletes_ a field that an earlier apply from the same field manager declared once a later one leaves it out — so a fenced CR that declares hot reload followed by a switchover CR that does not would switch hot reload off part-way through the migration, with traffic already fenced.
 
 Every refusal names the file to change and lists the ways forward, and all of these checks run again at `kcp migration execute`, because the gateway can be changed between the two commands.
 
@@ -205,7 +210,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Gateway HA**: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.
 
-**Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
+**Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp iac target-infra generate` with appropriate sizing gives you the CC estimate.
 
 **Rollback states**:
 
@@ -275,15 +280,15 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 Performs the cutover in seven automatic phases. The operation is resumable: if interrupted at any point, re-running the same command reads the live state of the gateway and the cluster link and continues from there — phases already done are no-ops.
 
-| Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
-| **Block**             | Fences the route in the gateway CR; the route stops accepting produce/consume requests                                                             | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Pause offset sync** | With `spec.staticMigration.consumerOffsetSync.pause`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise. `--consumer-offset-sync-drain-duration` optionally holds here first (sync still enabled) so final offsets propagate before the pause | Still retrying                                                          |
-| **Verify fence**      | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped) | Still retrying                                                          |
-| **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
-| **Switch + unblock**  | Switches the route to CC in the gateway CR; traffic is unblocked                                                                                   | First retry succeeds; clients now on CC                                 |
-| **Restore offset sync** | With the offset-sync pause on, sets cluster-link consumer offset sync back to its declared baseline; skipped otherwise. If it fails, or the run stops before it, re-running execute performs it | On CC                                                                   |
+| Phase                   | What KCP does                                                                                                                                                                                                                                                                                                           | What clients see                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Pre-flight**          | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                                                                                                                                                                                                 | Normal traffic                                                          |
+| **Block**               | Fences the route in the gateway CR; the route stops accepting produce/consume requests                                                                                                                                                                                                                                  | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Pause offset sync**   | With `spec.staticMigration.consumerOffsetSync.pause`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise. `--consumer-offset-sync-drain-duration` optionally holds here first (sync still enabled) so final offsets propagate before the pause | Still retrying                                                          |
+| **Verify fence**        | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped)                       | Still retrying                                                          |
+| **Promote**             | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding                                                                                                                                                            | Still retrying; records buffered locally                                |
+| **Switch + unblock**    | Switches the route to CC in the gateway CR; traffic is unblocked                                                                                                                                                                                                                                                        | First retry succeeds; clients now on CC                                 |
+| **Restore offset sync** | With the offset-sync pause on, sets cluster-link consumer offset sync back to its declared baseline; skipped otherwise. If it fails, or the run stops before it, re-running execute performs it                                                                                                                         | On CC                                                                   |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
 
