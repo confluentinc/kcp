@@ -124,6 +124,48 @@ func TestEngineRunHappyPath(t *testing.T) {
 	}
 }
 
+// TestEngineRun_StaticSwitchedButUnobservedCRIsNothingToDo reproduces the
+// Gateway drift bug (design: ~/claude-plans/kcp/2026-10-23-gateway-cr-pod-sync-design.md
+// §8.2) as TODAY's behaviour. The CR is switched to the target, but its
+// status shows the operator never observed that generation, so the pods may
+// still serve the fence. Reconcile reads the spec alone: every topic is
+// Unchanged and the run is nothing-to-do. When drift detection lands, this
+// test flips to a refusal.
+func TestEngineRun_StaticSwitchedButUnobservedCRIsNothingToDo(t *testing.T) {
+	eng := NewReconciliationEngine(
+		NewGatewayFile("testdata/gateway-static-switched-unobserved.yaml", "migration-route"),
+		&fakeLister{topics: []string{"orders"}}, // source
+		&fakeLister{topics: []string{"orders"}}, // target
+		&fakeLink{ls: &LinkStatus{
+			Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped},
+		}},
+		&fakeSecretChecker{},
+	)
+	in := reconcile.ReconcileInput{Type: reconcile.TypeStatic, Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Report.Refused() {
+		t.Fatalf("today's reconcile must not refuse an unobserved switched CR, refused: %+v", plan.Report)
+	}
+	if len(plan.Report.Unchanged) != 1 || plan.Report.Unchanged[0].Topic != "orders" {
+		t.Fatalf("Unchanged = %+v, want [orders]", plan.Report.Unchanged)
+	}
+	if plan.Artifacts != nil {
+		t.Fatalf("Artifacts = %+v, want nil: nothing is left to fence or switch", plan.Artifacts)
+	}
+	if !plan.NothingToDo {
+		t.Fatal("the plan must be NothingToDo: the CR alone says the switch is done")
+	}
+	if res := newResult(plan); res.SwitchoverYAML != "" {
+		t.Fatalf("SwitchoverYAML = %q, want empty", res.SwitchoverYAML)
+	}
+	if strings.Contains(plan.GatewayYAML, "observedGeneration") {
+		t.Fatal("the status that shows the operator lagging is stripped before reconcile decides")
+	}
+}
+
 // TestEngineRunProviderErrorIsError proves that a failure in ANY of the four
 // providers surfaces as a Go error (an I/O failure the caller must handle), never
 // swallowed into a feasibility refusal — a refusal means "read everything, the
