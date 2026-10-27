@@ -1,0 +1,67 @@
+# Source + destination Confluent Platform clusters with cluster-linking enabled,
+# for the migplan (migration reconciliation engine) provider + engine integration
+# tests. Plaintext only (no SASL/SSL, so no cert dependency) — enough to exercise
+# live topic listing, cluster-link mirror status, and the engine against a static
+# gateway-config file. No gateway here (the live TBR gateway is a separate,
+# in-development dependency; artifact-apply validation is deferred).
+#
+# Ports (host):
+#   source Kafka (PLAINTEXT):  localhost:19092   REST v3: http://localhost:18090
+#   dest   Kafka (PLAINTEXT):  localhost:29092   REST v3: http://localhost:28090
+# The link runs on dest and reaches source over the docker network at source:29092.
+services:
+  source:
+    image: confluentinc/cp-server:8.1.2
+    hostname: source
+    container_name: kcp-migplan-source
+    ports: ["19092:19092", "18090:8090"]
+    environment:
+      CLUSTER_ID: '6ub6fPVJRzKjE4i-REkq-A'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@source:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:19092'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://source:29092,HOST://localhost:19092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_CLUSTER_LINK_ENABLE: 'true'
+      KAFKA_CONFLUENT_HTTP_SERVER_LISTENERS: 'http://0.0.0.0:8090'
+      # Single broker: every Confluent internal topic must be RF=1 (default 3) or
+      # the cluster-link coordinator topics fail to create and the link hangs.
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_COMMAND_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_TELEMETRY_METRICS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
+
+  dest:
+    image: confluentinc/cp-server:8.1.2
+    hostname: dest
+    container_name: kcp-migplan-dest
+    ports: ["29092:29092", "28090:8090"]
+    environment:
+      CLUSTER_ID: 'LKsbYRvfTM-TVXKjdjgdxA'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@dest:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:39092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:29092'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://dest:39092,HOST://localhost:29092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_CLUSTER_LINK_ENABLE: 'true'
+      KAFKA_CONFLUENT_HTTP_SERVER_LISTENERS: 'http://0.0.0.0:8090'
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_COMMAND_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_TELEMETRY_METRICS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'

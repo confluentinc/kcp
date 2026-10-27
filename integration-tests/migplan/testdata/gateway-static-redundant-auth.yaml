@@ -1,0 +1,45 @@
+# Static-mode gateway CR fixture that satisfies every CheckStaticPreconditions
+# check, so the engine can be driven to a full static-route (AAO) success —
+# and, with a fake SecretExistenceChecker configured to report its
+# authentication.secretRef missing, the one static-only halt that depends on a
+# live secrets read.
+#
+# spec.streamingDomains (CR-level) declares each domain's single bootstrap
+# server id: msk (source) = MSK, cc (target) = CC. The route binds a SINGLE
+# domain (route.streamingDomain, not the plural streamingDomains a dynamic
+# route uses) and is still bound to msk — the pre-cutover state a static
+# migration reconciles from, not yet switched to cc. route.security.cluster.cc
+# is the pre-staged redundant-auth block the switch depends on.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static-redundant-auth
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29092
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: msk
+        bootstrapServerId: MSK
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk

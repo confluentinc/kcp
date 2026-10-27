@@ -1,0 +1,40 @@
+# TBM resume — mirror promoted but the route was not switched over.
+#
+# Selects tbm-topic-045, the RESERVED mirrored topic. The test stops the mirror
+# on 045 (promoting it) without switching the route, then Decide; the engine
+# classifies it SwitchOnly (reconcile/verdict.go): not refused, nothing to
+# promote, switchover routes 045 to the target. 045 is never selected by a
+# success batch. Runs against the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-resume-promoted-not-switched
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  dynamicMigration:
+    route:
+      name: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"
+    topicGroup:
+      - topics:
+          - "tbm-topic-045"

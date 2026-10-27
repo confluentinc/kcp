@@ -9,7 +9,7 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 - **MSK Provisioned / Express** — AWS MSK provisioned clusters (including MSK Express brokers).
 - **MSK Serverless** — AWS MSK Serverless clusters.
-- **Apache Kafka** — Any Kafka API compatible source, reached via the Kafka Admin API.
+- **Apache Kafka** — Any Kafka API compatible source, including **Confluent Platform**, reached via the Kafka Admin API.
 
 ## Legend
 
@@ -47,10 +47,8 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp iac migration-infra generate` - Type 4             | Yes                     | N/A                                    | AWS only                    |
 | `kcp iac migration-infra generate` - Type 5             | Yes                     | Yes                                    | AWS only - Requires IAM JAR |
 | `kcp iac target-infra generate`                         | N/A                     | N/A                                    | N/A                         |
-| `kcp migration init`                                    | Yes                     | No                                     | Yes                         |
 | `kcp migration lag-check`                               | Yes                     | No                                     | Yes                         |
 | `kcp migration execute`                                 | Yes                     | No                                     | Yes                         |
-| `kcp migration list`                                    | Yes                     | No                                     | Yes                         |
 | `kcp migration resources create`                        | Yes                     | No                                     | Yes                         |
 | `kcp migration resources validate`                      | Yes                     | No                                     | Yes                         |
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |
@@ -102,7 +100,7 @@ The matrix above describes _source_ support. Independently, three `kcp iac` comm
 
 The declaration is **required** on these three commands (there is no default). It is not accepted on any other command.
 
-**Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
+**Confluent Cloud for Government** doesn't offer fully managed Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
 
 | Path                                             | `commercial` (Standard) | `government` (Government)              |
 | :----------------------------------------------- | :---------------------- | :-------------------------------------------- |

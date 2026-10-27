@@ -221,3 +221,14 @@ func TestWriteToTerminalWithGlamourMethod(t *testing.T) {
 
 	t.Logf("Successfully wrote %d bytes to terminal with glamour", bytesWritten)
 }
+
+func TestAddAlert(t *testing.T) {
+	md := New()
+	md.AddAlert(AlertNote, "line one\n- item")
+	got := md.String()
+	for _, want := range []string{"> [!NOTE]\n", "> line one\n", "> - item\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("alert missing %q in:\n%s", want, got)
+		}
+	}
+}

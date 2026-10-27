@@ -86,10 +86,11 @@ func TestDeploymentRolloutComplete_Nil(t *testing.T) {
 // waitForGatewayReady — happy paths
 // ===========================================================================
 
-func TestWaitForGatewayReady_DetectionPhase_NoRollout_ReturnsNoOp(t *testing.T) {
-	// Deployment is already at rollout-complete state for the entire detection
-	// window — should report RolloutDetected=false and return.
-	shortenDetectionWindow(t, 50*time.Millisecond)
+func TestWaitForGatewayReady_NoGenerationBump_ReturnsNoOp(t *testing.T) {
+	// The Deployment's generation never moves past the pre-apply baseline, so the
+	// operator did not rewrite the pod template — report RolloutDetected=false and
+	// return rather than waiting for a rollout that is not coming.
+	shortenRollConfirmationWindow(t, 50*time.Millisecond)
 
 	dep := newGatewayDeployment("test-gw", "test-ns", 3,
 		withObservedGeneration(3),
@@ -108,7 +109,7 @@ func TestWaitForGatewayReady_DetectionPhase_NoRollout_ReturnsNoOp(t *testing.T) 
 		progressCalls = append(progressCalls, p)
 	}
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 10*time.Millisecond, 0, onProgress)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 0, onProgress)
 	require.NoError(t, err)
 
 	progressMu.Lock()
@@ -122,7 +123,7 @@ func TestWaitForGatewayReady_DetectionPhase_NoRollout_ReturnsNoOp(t *testing.T) 
 func TestWaitForGatewayReady_RolloutThenReady_ReturnsNil(t *testing.T) {
 	// Deployment starts with observedGeneration < generation (rollout in
 	// progress); a background goroutine transitions it to complete.
-	shortenDetectionWindow(t, 30*time.Millisecond)
+	shortenRollConfirmationWindow(t, 30*time.Millisecond)
 
 	initial := newGatewayDeployment("test-gw", "test-ns", 7,
 		withObservedGeneration(6),
@@ -153,7 +154,7 @@ func TestWaitForGatewayReady_RolloutThenReady_ReturnsNil(t *testing.T) {
 		progressCalls = append(progressCalls, p)
 	}
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 15*time.Millisecond, 5*time.Second, onProgress)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 6, 15*time.Millisecond, 5*time.Second, onProgress)
 	require.NoError(t, err)
 
 	progressMu.Lock()
@@ -169,7 +170,7 @@ func TestWaitForGatewayReady_RolloutThenReady_ReturnsNil(t *testing.T) {
 func TestWaitForGatewayReady_NoDeadline_RunsUntilReady(t *testing.T) {
 	// timeout=0 means no deadline. Simulate a slow rollout (~300ms) and assert
 	// we wait it out instead of failing.
-	shortenDetectionWindow(t, 20*time.Millisecond)
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
 
 	initial := newGatewayDeployment("test-gw", "test-ns", 2,
 		withObservedGeneration(1),
@@ -191,7 +192,7 @@ func TestWaitForGatewayReady_NoDeadline_RunsUntilReady(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 20*time.Millisecond, 0, nil)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 1, 20*time.Millisecond, 0, nil)
 	elapsed := time.Since(start)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, elapsed, 300*time.Millisecond, "wait should run for at least the rollout duration")
@@ -202,7 +203,7 @@ func TestWaitForGatewayReady_NoDeadline_RunsUntilReady(t *testing.T) {
 // ===========================================================================
 
 func TestWaitForGatewayReady_TimeoutExceeded_ReturnsDeadlineExceeded(t *testing.T) {
-	shortenDetectionWindow(t, 20*time.Millisecond)
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
 
 	dep := newGatewayDeployment("test-gw", "test-ns", 4,
 		withObservedGeneration(3),
@@ -212,13 +213,13 @@ func TestWaitForGatewayReady_TimeoutExceeded_ReturnsDeadlineExceeded(t *testing.
 	)
 	cs := newFakeClientset(dep)
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 10*time.Millisecond, 100*time.Millisecond, nil)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 100*time.Millisecond, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.DeadlineExceeded), "expected DeadlineExceeded, got: %v", err)
 }
 
 func TestWaitForGatewayReady_ParentCtxCancelled_ReturnsCanceled(t *testing.T) {
-	shortenDetectionWindow(t, 20*time.Millisecond)
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
 
 	dep := newGatewayDeployment("test-gw", "test-ns", 4,
 		withObservedGeneration(3),
@@ -234,7 +235,7 @@ func TestWaitForGatewayReady_ParentCtxCancelled_ReturnsCanceled(t *testing.T) {
 		cancel()
 	}()
 
-	err := waitForGatewayReady(ctx, cs, "test-ns", "test-gw", 10*time.Millisecond, 0, nil)
+	err := waitForGatewayReady(ctx, cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 0, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled), "expected Canceled, got: %v", err)
 }
@@ -245,16 +246,16 @@ func TestWaitForGatewayReady_ParentCtxCancelled_ReturnsCanceled(t *testing.T) {
 
 func TestWaitForGatewayReady_NoDeploymentFound_ReturnsError(t *testing.T) {
 	// No deployment in fake clientset — initial resolution fails.
-	shortenDetectionWindow(t, 20*time.Millisecond)
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
 	cs := newFakeClientset()
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 10*time.Millisecond, 0, nil)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 0, 10*time.Millisecond, 0, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gateway deployment not found")
 }
 
 func TestWaitForGatewayReady_TransientAPIError_ReturnsError(t *testing.T) {
-	shortenDetectionWindow(t, 100*time.Millisecond)
+	shortenRollConfirmationWindow(t, 100*time.Millisecond)
 
 	// Deployment is incomplete so detection loop polls and hits the transient error.
 	dep := newGatewayDeployment("test-gw", "test-ns", 5,
@@ -275,7 +276,7 @@ func TestWaitForGatewayReady_TransientAPIError_ReturnsError(t *testing.T) {
 		return false, nil, nil
 	})
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 10*time.Millisecond, 0, nil)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 4, 10*time.Millisecond, 0, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transient failure")
 }
@@ -320,7 +321,7 @@ func TestResolveGatewayDeployment_OwnerRefFallback_OneMatch_Returns(t *testing.T
 func TestWaitForGatewayReady_OwnerRefFallback_FullWait_ReturnsNil(t *testing.T) {
 	// Deployment is found via ownerReferences (name differs from gateway).
 	// Wait detects rollout in progress and converges to complete.
-	shortenDetectionWindow(t, 30*time.Millisecond)
+	shortenRollConfirmationWindow(t, 30*time.Millisecond)
 
 	initial := newGatewayDeployment("test-gw-deploy", "test-ns", 5,
 		withGatewayOwner("test-gw"),
@@ -343,7 +344,7 @@ func TestWaitForGatewayReady_OwnerRefFallback_FullWait_ReturnsNil(t *testing.T) 
 		updateDeployment(cs, updated)
 	}()
 
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 15*time.Millisecond, 5*time.Second, nil)
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 4, 15*time.Millisecond, 5*time.Second, nil)
 	require.NoError(t, err)
 }
 
@@ -352,7 +353,7 @@ func TestWaitForGatewayReady_OwnerRefFallback_FullWait_ReturnsNil(t *testing.T) 
 // ===========================================================================
 
 func TestWaitForGatewayReady_ProgressElapsedIsMonotonic(t *testing.T) {
-	shortenDetectionWindow(t, 20*time.Millisecond)
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
 
 	initial := newGatewayDeployment("test-gw", "test-ns", 3,
 		withObservedGeneration(2),
@@ -375,7 +376,7 @@ func TestWaitForGatewayReady_ProgressElapsedIsMonotonic(t *testing.T) {
 
 	var elapsedSeen []time.Duration
 	mu := &sync.Mutex{}
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 25*time.Millisecond, 5*time.Second, func(p GatewayReadinessProgress) {
+	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 2, 25*time.Millisecond, 5*time.Second, func(p GatewayReadinessProgress) {
 		mu.Lock()
 		defer mu.Unlock()
 		elapsedSeen = append(elapsedSeen, p.Elapsed)
@@ -412,7 +413,7 @@ func TestWaitForGatewayPods_SurgeCapture_CompletesOnDeploymentComplete(t *testin
 	var last PodRolloutProgress
 	onProgress := func(p PodRolloutProgress) { last = p }
 
-	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 2*time.Second, onProgress)
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 2*time.Second, onProgress)
 	require.NoError(t, err, "must complete via deploymentRolloutComplete despite newPodsReady (1) < captured count (2)")
 
 	assert.Equal(t, 0, last.OldPodsRemaining)
@@ -439,7 +440,7 @@ func TestWaitForGatewayPods_OldPodStillServing_DoesNotComplete(t *testing.T) {
 		),
 	)
 
-	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 150*time.Millisecond, nil)
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 1, 5*time.Millisecond, 150*time.Millisecond, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out", "must keep waiting while an old pod is still present")
 }
@@ -447,7 +448,7 @@ func TestWaitForGatewayPods_OldPodStillServing_DoesNotComplete(t *testing.T) {
 // TestWaitForGatewayPods_NoRollout_ReturnsNoOp covers the Phase-1 no-op path:
 // when the apply triggers no pod change, the wait returns without a rollout.
 func TestWaitForGatewayPods_NoRollout_ReturnsNoOp(t *testing.T) {
-	shortenDetectionWindow(t, 40*time.Millisecond)
+	shortenRollConfirmationWindow(t, 40*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	initialUIDs := map[types.UID]struct{}{"old-1": {}}
 	// Only the captured pod exists and it is ready → no rollout is detected.
@@ -460,7 +461,7 @@ func TestWaitForGatewayPods_NoRollout_ReturnsNoOp(t *testing.T) {
 	var got bool
 	onProgress := func(p PodRolloutProgress) { last = p; got = true }
 
-	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 2*time.Second, onProgress)
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 1, 5*time.Millisecond, 2*time.Second, onProgress)
 	require.NoError(t, err)
 	require.True(t, got, "no-op should still fire onProgress once")
 	assert.False(t, last.RolloutDetected, "no pod change means no rollout detected")
@@ -482,7 +483,7 @@ func TestWaitForGatewayPods_ContextCancelled_Propagates(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
-	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 5*time.Millisecond, 0, nil)
+	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 1, 5*time.Millisecond, 0, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -681,18 +682,104 @@ func TestWaitForGatewayAccepted_TimeoutShorterThanSettleWindow_ReportsRejection(
 	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
-// TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil ensures
-// acceptance is checked first: once observedGeneration catches up, a lingering
-// failure condition is the operator's business, not a reason to abort.
-func TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil(t *testing.T) {
+// TestWaitForGatewayAccepted_FailedConditionWithNoStalenessEvidence_IsRejected
+// covers a fatal condition carrying neither its own observedGeneration nor a
+// parseable lastTransitionTime: with no evidence it predates the current
+// generation, it must be treated as current rather than waved through. A
+// false rejection costs an investigation; a false acceptance costs a
+// migration reported as succeeded over a CR the operator actually refused
+// (cfet1 #6205997094).
+func TestWaitForGatewayAccepted_FailedConditionWithNoStalenessEvidence_IsRejected(t *testing.T) {
 	shortenRejectionSettleWindow(t, time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 4, true,
-		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "stale from a previous generation"),
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "no generation or timestamp evidence"),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	assert.ErrorAs(t, err, &rejected)
+}
+
+// TestWaitForGatewayAccepted_StaleConditionByObservedGeneration_ReturnsNil
+// reproduces the live incident written up at cfet1 #6205997094: a
+// cluster-ready/ApplyFailed condition raised during an earlier generation's
+// reconcile (a deploy-time jaas-secret race) never gets cleared by CFK once
+// it resolves. The condition's own observedGeneration shows it belongs to
+// generation 9, but the CR is now at generation 11 with observedGeneration
+// caught up — kcp must accept the CR rather than trip over the stale,
+// long-resolved failure.
+func TestWaitForGatewayAccepted_StaleConditionByObservedGeneration_ReturnsNil(t *testing.T) {
+	shortenRejectionSettleWindow(t, time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 11, 11, true,
+		withGatewayConditionAt(clusterReadyCondition, "False", "ApplyFailed",
+			"missing jaas configuration in CR", 9, time.Now().Add(-2*time.Hour)),
 	))
 
 	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
 	require.NoError(t, err)
+}
+
+// TestWaitForGatewayAccepted_StaleConditionByLastTransitionTime_ReturnsNil
+// covers the same staleness as above when the condition carries no
+// observedGeneration of its own — CFK's fallback to lastTransitionTime,
+// predating when kcp started waiting on this apply.
+func TestWaitForGatewayAccepted_StaleConditionByLastTransitionTime_ReturnsNil(t *testing.T) {
+	shortenRejectionSettleWindow(t, time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 11, 11, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"missing jaas configuration in CR", time.Now().Add(-2*time.Hour)),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.NoError(t, err)
+}
+
+// TestWaitForGatewayAccepted_LastTransitionTimeWithinClockSkew_TreatedAsCurrent
+// guards the lastTransitionTime fallback against clock skew between the
+// apiserver/controller clock that stamps the condition and kcp's own local
+// clock: a lastTransitionTime only fractionally before waitStartedAt is
+// exactly what ordinary skew (or plain scheduling jitter between the patch
+// landing and this wait's first poll) produces for a condition that is
+// genuinely tied to the current generation. Without a tolerance window, a
+// slightly-behind local clock would misclassify it as stale and skip it —
+// reintroducing the false-acceptance risk this fix exists to close.
+func TestWaitForGatewayAccepted_LastTransitionTimeWithinClockSkew_TreatedAsCurrent(t *testing.T) {
+	shortenRejectionSettleWindow(t, 5*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 5, 5, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef kcp-perf-plain-jaas not found", time.Now().Add(-1*time.Second)),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	require.ErrorAs(t, err, &rejected, "a lastTransitionTime only fractionally earlier than waitStartedAt must not be read as stale")
+}
+
+// TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_ReturnsRejection
+// is the false-success regression this incident actually warns about: the
+// operator can advance observedGeneration to the generation kcp just patched
+// while still reporting that same generation's spec as fatally rejected.
+// Trusting observedGeneration alone would report the CR accepted; tying the
+// condition to the generation it belongs to must not let that happen.
+func TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_ReturnsRejection(t *testing.T) {
+	shortenRejectionSettleWindow(t, 5*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 5, 5, true,
+		withGatewayConditionAt(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef kcp-perf-plain-jaas not found", 5, time.Now()),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	require.ErrorAs(t, err, &rejected, "observedGeneration catching up must not excuse a condition tied to that same generation")
+	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
 func TestIsFatalGatewayConditionReason(t *testing.T) {
@@ -764,13 +851,13 @@ func withGatewayOwner(gatewayName string) deploymentOption {
 	}
 }
 
-// shortenDetectionWindow swaps the package-level detection window for a
+// shortenRollConfirmationWindow swaps the package-level roll-confirmation window for a
 // shorter test value and restores it on teardown.
-func shortenDetectionWindow(t *testing.T, d time.Duration) {
+func shortenRollConfirmationWindow(t *testing.T, d time.Duration) {
 	t.Helper()
-	original := gatewayReadinessDetectionWindow
-	gatewayReadinessDetectionWindow = d
-	t.Cleanup(func() { gatewayReadinessDetectionWindow = original })
+	original := gatewayRollConfirmationWindow
+	gatewayRollConfirmationWindow = d
+	t.Cleanup(func() { gatewayRollConfirmationWindow = original })
 }
 
 // gatewayGVRForTest is the Gateway CR GVR used to seed the fake dynamic client.
@@ -807,6 +894,41 @@ func withGatewayCondition(condType, status, reason, message string) gatewayCROpt
 			"status":  status,
 			"reason":  reason,
 			"message": message,
+		})
+		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
+	}
+}
+
+// withGatewayConditionAt appends a status condition carrying its own
+// observedGeneration, mirroring the standard Kubernetes Condition shape CFK
+// uses to record which generation's reconcile produced the condition.
+func withGatewayConditionAt(condType, status, reason, message string, observedGeneration int64, lastTransitionTime time.Time) gatewayCROption {
+	return func(obj *unstructured.Unstructured) {
+		existing, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+		existing = append(existing, map[string]any{
+			"type":               condType,
+			"status":             status,
+			"reason":             reason,
+			"message":            message,
+			"observedGeneration": observedGeneration,
+			"lastTransitionTime": lastTransitionTime.Format(time.RFC3339),
+		})
+		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
+	}
+}
+
+// withGatewayConditionAtTime appends a status condition carrying only a
+// lastTransitionTime (no observedGeneration) — the fallback staleness signal
+// for a condition CFK does not tag with its own generation.
+func withGatewayConditionAtTime(condType, status, reason, message string, lastTransitionTime time.Time) gatewayCROption {
+	return func(obj *unstructured.Unstructured) {
+		existing, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+		existing = append(existing, map[string]any{
+			"type":               condType,
+			"status":             status,
+			"reason":             reason,
+			"message":            message,
+			"lastTransitionTime": lastTransitionTime.Format(time.RFC3339),
 		})
 		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
 	}

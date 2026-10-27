@@ -2,7 +2,6 @@ package lib_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -50,10 +49,9 @@ func TestScanSummary_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-// With nil planInputs, PlanInputs in the reply must still be populated
-// with the full default set — it's the same `resolved` struct that
-// Build consumed, so a follow-up call echoing it back produces an
-// identical plan and a UI can use the first call to discover defaults.
+// With nil planInputs, GeneratePlan still returns a full result: parseable
+// plan JSON, markdown with the plan header, and a scaffolded plan-inputs.yaml
+// (a `clusters:` block a UI can present for editing).
 func TestGeneratePlan_NilInputsEchoesDefaults(t *testing.T) {
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), nil)
 	if err != nil {
@@ -72,6 +70,9 @@ func TestGeneratePlan_NilInputsEchoesDefaults(t *testing.T) {
 	if err := json.Unmarshal(res.JSON, &plan); err != nil {
 		t.Fatalf("GeneratePlan.JSON is not valid JSON: %v", err)
 	}
+	if _, ok := plan["clusters"]; !ok {
+		t.Fatalf("plan JSON missing `clusters`; top-level keys: %v", keys(plan))
+	}
 	if !strings.Contains(string(res.Markdown), "Migration Plan") {
 		t.Fatalf("GeneratePlan.Markdown missing expected header; got first 200 bytes: %s", truncate(res.Markdown, 200))
 	}
@@ -79,56 +80,31 @@ func TestGeneratePlan_NilInputsEchoesDefaults(t *testing.T) {
 	if err := yaml.Unmarshal(res.PlanInputs, &inputs); err != nil {
 		t.Fatalf("GeneratePlan.PlanInputs is not valid YAML: %v", err)
 	}
-	// Spot-check three independent default keys; if any is missing the
-	// resolver is leaking nil pointers and the UI can't render its form.
-	for _, k := range []string{"sizing_percentile", "headroom_fraction", "target_cloud"} {
-		if _, ok := inputs[k]; !ok {
-			t.Fatalf("PlanInputs missing default key %q; keys: %v", k, keys(inputs))
-		}
+	if _, ok := inputs["clusters"]; !ok {
+		t.Fatalf("PlanInputs missing `clusters` block; keys: %v", keys(inputs))
 	}
-	// The echo must match what Build consumed: the inputs in the plan
-	// JSON's header must equal the standalone PlanInputs field. (json
-	// and yaml decoders both produce map[string]any; numeric types may
-	// differ — compare via fmt.Sprint to dodge int64/float64 noise.)
-	planInputs, ok := plan["inputs"].(map[string]any)
-	if !ok {
-		t.Fatalf("plan.inputs missing from plan JSON; top-level keys: %v", keys(plan))
-	}
-	for _, k := range []string{"sizing_percentile", "headroom_fraction", "target_cloud"} {
-		gotPlan, gotInputs := fmt.Sprint(planInputs[k]), fmt.Sprint(inputs[k])
-		if gotPlan != gotInputs {
-			t.Fatalf("plan.inputs[%q] = %s, PlanInputs[%q] = %s (must match)", k, gotPlan, k, gotInputs)
-		}
+	// A single-cluster scaffold pre-fills the optional target_cloud default.
+	if !strings.Contains(string(res.PlanInputs), "target_cloud: aws") {
+		t.Fatalf("PlanInputs should pre-fill the target_cloud default; got:\n%s", res.PlanInputs)
 	}
 }
 
-// PlanInputs in the reply must echo back the caller's overrides AND
-// include the default keys they didn't set, so a UI can use an empty
-// initial call to discover the full input shape.
+// PlanInputs in the reply must echo back the caller's override under its cluster.
 func TestGeneratePlan_PlanInputsEchoesOverridesAndDefaults(t *testing.T) {
-	inputs := []byte("target_cloud: azure\n")
+	inputs := []byte("clusters:\n  demo-cluster:\n    target_cloud: azure\n")
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
 	if err != nil {
 		t.Fatalf("GeneratePlan: %v", err)
+	}
+	if !strings.Contains(string(res.PlanInputs), "target_cloud: azure") {
+		t.Fatalf("PlanInputs should echo the target_cloud override; got:\n%s", res.PlanInputs)
 	}
 	var got map[string]any
 	if err := yaml.Unmarshal(res.PlanInputs, &got); err != nil {
 		t.Fatalf("PlanInputs is not valid YAML: %v", err)
 	}
-	if got["target_cloud"] != "azure" {
-		t.Fatalf("PlanInputs.target_cloud = %v, want azure", got["target_cloud"])
-	}
-	// At least one default key the caller didn't set must be present —
-	// the whole point of the echo is to surface defaults to the UI.
-	if _, ok := got["sizing_percentile"]; !ok {
-		t.Fatalf("PlanInputs missing default key sizing_percentile; keys: %v", keys(got))
-	}
-	// PlanInputsResolved carries a `Raw *PlanInputs` runtime helper. It
-	// must not surface in the YAML echo — the echo is supposed to match
-	// the flat plan-inputs.yaml shape a user edits, not the internal
-	// resolved struct.
-	if _, ok := got["raw"]; ok {
-		t.Fatalf("PlanInputs YAML must not contain `raw` wrapper; keys: %v", keys(got))
+	if _, ok := got["clusters"]; !ok {
+		t.Fatalf("PlanInputs missing `clusters` block; keys: %v", keys(got))
 	}
 }
 
@@ -141,33 +117,51 @@ func keys(m map[string]any) []string {
 }
 
 func TestGeneratePlan_AcceptsYAMLPlanInputs(t *testing.T) {
-	inputs := []byte("target_cloud: azure\nheadroom_fraction: 0.4\n")
+	inputs := []byte("clusters:\n  demo-cluster:\n    downtime_tolerance: zero\n")
 	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
 	if err != nil {
 		t.Fatalf("GeneratePlan with YAML inputs: %v", err)
 	}
-	assertPlanInputsContains(t, res.PlanInputs, map[string]any{
-		"target_cloud":      "azure",
-		"headroom_fraction": 0.4,
-	})
-}
-
-func assertPlanInputsContains(t *testing.T, planInputs []byte, want map[string]any) {
-	t.Helper()
-	var got map[string]any
-	if err := yaml.Unmarshal(planInputs, &got); err != nil {
-		t.Fatalf("PlanInputs is not valid YAML: %v", err)
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Fatalf("PlanInputs[%q] = %v, want %v", k, got[k], v)
-		}
+	if !strings.Contains(string(res.PlanInputs), "downtime_tolerance: zero") {
+		t.Fatalf("PlanInputs should echo the downtime_tolerance override; got:\n%s", res.PlanInputs)
 	}
 }
 
 func TestGeneratePlan_RejectsMalformedPlanInputs(t *testing.T) {
 	if _, err := lib.GeneratePlan([]byte(sampleStateJSON), []byte(":\n  - not")); err == nil {
 		t.Fatal("expected error for malformed plan-inputs")
+	}
+}
+
+// Unlike the CLI (which fails hard on plan-inputs mistakes), the library returns a
+// plan plus warnings so a caller can still detect a mis-typed input rather than have
+// it silently dropped. An unknown key and an invalid value must both surface in
+// plan.json (a "warnings" array) and plan.md.
+func TestGeneratePlan_SurfacesPlanInputWarnings(t *testing.T) {
+	inputs := []byte("clusters:\n  demo-cluster:\n    typo_key: whatever\n    target_cloud: marssss\n")
+	res, err := lib.GeneratePlan([]byte(sampleStateJSON), inputs)
+	if err != nil {
+		t.Fatalf("GeneratePlan: %v", err)
+	}
+
+	var parsed struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(res.JSON, &parsed); err != nil {
+		t.Fatalf("plan.json is not valid JSON: %v", err)
+	}
+	if len(parsed.Warnings) == 0 {
+		t.Fatalf("plan.json should carry plan-input warnings; got none:\n%s", res.JSON)
+	}
+	joined := strings.Join(parsed.Warnings, "\n")
+	if !strings.Contains(joined, "typo_key") {
+		t.Errorf("expected the unknown key %q to surface in warnings; got:\n%s", "typo_key", joined)
+	}
+	if !strings.Contains(joined, "target_cloud") {
+		t.Errorf("expected the invalid value for target_cloud to surface in warnings; got:\n%s", joined)
+	}
+	if !strings.Contains(string(res.Markdown), "typo_key") {
+		t.Errorf("expected plan.md to note the dropped input; got first 400 bytes:\n%s", truncate(res.Markdown, 400))
 	}
 }
 

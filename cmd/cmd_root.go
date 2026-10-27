@@ -24,6 +24,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/logging"
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -89,6 +90,21 @@ var RootCmd = &cobra.Command{
 			color.YellowString("commit=%s", build_info.Commit),
 			color.BlueString("date=%s", build_info.Date))
 
+		if err := checkWritePermissions(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
+			os.Exit(1)
+		}
+
+		// Tracing starts after logging so its warnings reach the console and
+		// kcp.log. The root span covers the rest of the command; main ends it.
+		tracing.Setup(cmd.Context())
+		cmd.SetContext(tracing.StartRoot(cmd.Context(), cmd.CommandPath()))
+
+		// With OTLP export on, every kcp.log line goes there too, carrying the root span's trace id.
+		if h := tracing.LogHandler(); h != nil {
+			sendLogsOverOTLP(fileHandler, consoleHandler, h)
+		}
+
 		// Detailed, structured build provenance for support diagnostics. Logged at
 		// Debug so it lands in kcp.log (file handler is Debug+) without doubling the
 		// coloured banner above on the console (Debug is below the console default).
@@ -120,12 +136,15 @@ var RootCmd = &cobra.Command{
 			"os", runtime.GOOS,
 			"arch", runtime.GOARCH,
 		)
-
-		if err := checkWritePermissions(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
-			os.Exit(1)
-		}
 	},
+}
+
+// sendLogsOverOTLP adds the OTLP handler beside kcp.log's: to the default
+// logger, and to the file-only logger the migration reporters mirror their
+// terminal narrative to. Every line kcp.log gets then goes over OTLP too.
+func sendLogsOverOTLP(file, console, otlp slog.Handler) {
+	slog.SetDefault(slog.New(NewFanOutHandler(file, console, otlp)))
+	logging.SetFile(slog.New(NewFanOutHandler(file, otlp)))
 }
 
 func init() {
