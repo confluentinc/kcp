@@ -91,7 +91,7 @@ func checkLinkTopics(in LinkScopeInput) (unchanged, failFast []TopicVerdict) {
 				to = fmt.Sprintf("%q", domain)
 			}
 			reasons = append(reasons, fmt.Sprintf(
-				"the route sends it to %s, not the destination %q, so its producers still write to the source copy: finish the topic-based migration batch (rerun kcp migration execute on its manifest) before converting",
+				"the route sends it to %s, not the destination %q, so its producers still write to the source copy: finish the topic-based migration batch (rerun kcp migration cutover execute on its manifest) before converting",
 				to, in.View.TargetDomain))
 		}
 		if onTarget {

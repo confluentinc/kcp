@@ -34,7 +34,7 @@ func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics
 
 	e.snapshot(t, ctx, "before", "BEFORE "+name+" (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", checkpoint, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", checkpoint, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Errorf(t, err1, "the run interrupted at %q must exit non-zero (simulated abrupt exit)", checkpoint)
 	require.Containsf(t, out1, "kill-point", "the non-zero exit at %q must be OUR seam firing, not a real failure", checkpoint)
 	require.NotContains(t, strings.ToLower(out1), "migration complete", "the interrupted run must NOT have completed")
@@ -46,7 +46,7 @@ func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics
 	e.snapshot(t, ctx, "after-interrupt", "AFTER interrupt at "+checkpoint, topics)
 	assertPartial(t, ctx)
 
-	out2, err2 := e.runKCP(t, "kcp-run-2-resume.log", "", "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCP(t, "kcp-run-2-resume.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoErrorf(t, err2, "re-running the same manifest after an interrupt at %q must drive to completion", checkpoint)
 	require.Contains(t, strings.ToLower(out2), "migration complete", "the resume run must report completion")
 

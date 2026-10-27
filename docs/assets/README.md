@@ -94,7 +94,7 @@ The typical migration flow:
 - `kcp iac <asset> generate` for Terraform using `target-infra`, `migration-infra`, `topics`, `schemas`; `kcp iac acls kafka|iam generate`; `kcp iac connectors msk|self-managed|connector-utility generate`.
 - `kcp migration resources` for direct creation on the destination cluster through the REST API for cluster links, topics and ACLs.
 
-4. **Execute client switchover** — `kcp migration execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
+4. **Execute client switchover** — `kcp migration cutover execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
 
 ## Key infrastructure decisions
 

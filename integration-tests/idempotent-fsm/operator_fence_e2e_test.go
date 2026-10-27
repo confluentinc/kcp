@@ -83,7 +83,7 @@ func TestOperatorFence_SurvivesAResumedMigration(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect the operator's produce-only fence on the slice, mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 	e.snapshot(t, ctx, "after-interrupt", "AFTER interrupt at fenced (expect kcp's fence AND the operator's)", topics)
@@ -91,7 +91,7 @@ func TestOperatorFence_SurvivesAResumedMigration(t *testing.T) {
 	require.True(t, hasKcpFence(r, topics), "kcp's fence must be on the route — the interrupt came after the fence step")
 	require.Equal(t, 1, countFencingEntry(r, op), "the fence step must keep the operator's entry, unchanged")
 
-	out2, err2 := e.runKCP(t, "kcp-run-2-resume.log", "", "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCP(t, "kcp-run-2-resume.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err2, "the resume must complete the migration")
 	require.Contains(t, strings.ToLower(out2), "migration complete", "the resume must report completion")
 
@@ -125,7 +125,7 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect the operator's produce-only fence on the slice, mirrors ACTIVE, route → source)", topics)
 
-	out, err := e.runKCPFailingAt(t, "kcp-run-1-fails.log", failStep, "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCPFailingAt(t, "kcp-run-1-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err, "the failed step must fail the run")
 	require.Contains(t, out, killpoint.FailEnvVar, "the failure must be the hook's")
 	require.Contains(t, out, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
@@ -177,7 +177,7 @@ func TestOperatorFence_StaticRouteIsRefused(t *testing.T) {
 	routeBefore := e.routeObj(t, e.readCR(t, ctx))
 	mirrorsBefore := e.mirrorStatus(t, ctx)
 
-	out, err := e.runKCP(t, "kcp-run-1-refused.log", "", "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCP(t, "kcp-run-1-refused.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err, "a route fenced by someone else must be refused")
 	require.Contains(t, out, "already carries a fence kcp didn't write", "the refusal must name the operator's fence")
 
