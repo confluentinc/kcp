@@ -231,8 +231,8 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 		_, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(&patchRecordingGateway{}, w))
 
 		require.NoError(t, err)
-		assert.Equal(t, []time.Duration{manifest.DefaultDetectUnroutedCommitsDuration}, w.waits)
-		assert.Equal(t, 8, w.fetcherBuilds, "the default 8 workers, capped at the 4 groups, for each snapshot")
+		assert.Empty(t, w.waits, "an unset detectUnroutedCommitsDuration skips the check")
+		assert.Equal(t, 4, w.fetcherBuilds, "the default 8 workers, capped at the 4 groups, for the one snapshot")
 	})
 }
 

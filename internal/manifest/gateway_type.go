@@ -126,25 +126,13 @@ type DynamicPolicies struct {
 type DynamicToStaticPolicies struct {
 	// RolloutTimeout bounds the gateway rollout. 0 means no deadline.
 	RolloutTimeout time.Duration `yaml:"rolloutTimeout,omitempty" json:"rolloutTimeout,omitempty"`
-	// DetectUnroutedCommitsDuration is the wait between the two committed-offset
-	// snapshots taken after fencing, to catch a consumer that bypasses the
-	// gateway and commits to the source directly. Its own field, not a reuse of
-	// detectUnroutedProducersDuration, because that field's 0 means "skip the
-	// check" and this check can never be skipped. 0 uses the built-in 30s; when
-	// set the minimum is 10s (two default auto-commit intervals).
+	// DetectUnroutedCommitsDuration is the gap between the two post-fence snapshots.
+	// 0 SKIPS the check; minimum 10s.
 	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
 	// OffsetSyncConcurrency is how many workers, each with its own broker
 	// connection, read and write consumer-group offsets. 0 uses the built-in 8.
 	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
 	CommonPolicies        `yaml:",inline"`
-}
-
-// EffectiveDetectUnroutedCommitsDuration resolves 0 to the built-in default.
-func (p DynamicToStaticPolicies) EffectiveDetectUnroutedCommitsDuration() time.Duration {
-	if p.DetectUnroutedCommitsDuration == 0 {
-		return DefaultDetectUnroutedCommitsDuration
-	}
-	return p.DetectUnroutedCommitsDuration
 }
 
 // EffectiveOffsetSyncConcurrency resolves 0 to the built-in default.
@@ -308,7 +296,7 @@ func (p DynamicPolicies) LogArgs() []any {
 func (p DynamicToStaticPolicies) LogArgs() []any {
 	return append([]any{
 		"rollout_timeout", p.RolloutTimeout,
-		"detect_unrouted_commits_duration", p.EffectiveDetectUnroutedCommitsDuration(),
+		"detect_unrouted_commits_duration", p.DetectUnroutedCommitsDuration,
 		"offset_sync_concurrency", p.EffectiveOffsetSyncConcurrency(),
 	}, p.logArgs()...)
 }
@@ -381,11 +369,11 @@ func (p DynamicToStaticPolicies) Validate(path string) []error {
 	errs := validateRollout(path, p.RolloutTimeout)
 	switch d := p.DetectUnroutedCommitsDuration; {
 	case d < 0:
-		errs = append(errs, fmt.Errorf("%s.detectUnroutedCommitsDuration: must not be negative (0 uses the built-in %s)", path, DefaultDetectUnroutedCommitsDuration))
+		errs = append(errs, fmt.Errorf("%s.detectUnroutedCommitsDuration: must not be negative (0 skips the check)", path))
 	case d > 0 && d < minDetectUnroutedProducersDuration:
 		errs = append(errs, fmt.Errorf(
-			"%s.detectUnroutedCommitsDuration: must be at least %s when set (0 uses the built-in %s) — a shorter window can miss a consumer on default auto-commit settings",
-			path, minDetectUnroutedProducersDuration, DefaultDetectUnroutedCommitsDuration))
+			"%s.detectUnroutedCommitsDuration: must be at least %s when set (0 skips the check) — a shorter window can miss a consumer on default auto-commit settings",
+			path, minDetectUnroutedProducersDuration))
 	}
 	if p.OffsetSyncConcurrency < 0 {
 		errs = append(errs, fmt.Errorf("%s.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", path, DefaultOffsetSyncConcurrency))
