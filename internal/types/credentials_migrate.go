@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
@@ -32,12 +31,6 @@ type MigrateClusterCredentials struct {
 	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty" json:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty" json:"unauthenticated_plaintext,omitempty"`
 	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty" json:"insecure_skip_tls_verify,omitempty"`
-
-	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
-	// rather than a CLI flag so each file governs itself: a manifest that opts
-	// in never changes how a credentials file it references is read, and an
-	// operator whose secret legitimately contains "${" has a way out.
-	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 // MigrateIAM is the MSK IAM auth block. region is required (SigV4 token signing);
@@ -202,16 +195,6 @@ func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials,
 				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)
 		}
 		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", err)
-	}
-
-	// Resolution runs immediately after the unmarshal and before every
-	// validation below: the mechanism check and the cert paths are in
-	// interpolation scope, so resolving afterwards would reject the literal
-	// "${MECH}" rather than its value.
-	if mc.Interpolate {
-		if err := interpolate.Struct(&mc); err != nil {
-			return MigrateClusterCredentials{}, fmt.Errorf("resolving migrate credentials: %w", err)
-		}
 	}
 
 	return mc, nil

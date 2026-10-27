@@ -3,7 +3,9 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,31 +48,52 @@ func TestValidCCFixtureIsValid(t *testing.T) {
 	require.Empty(t, m.Validate(), "valid_cc.yaml must validate clean (it must not put a managed key in clusterLink.configs)")
 }
 
-// TestGatewayExampleManifestIsValid keeps the documented gateway example in
-// step with the parser and validator. The example is secret-bearing by design
-// (inline credentials), so it uses ${ENV_VAR} references throughout — which
-// means the test must supply them.
-func TestGatewayExampleManifestIsValid(t *testing.T) {
-	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
-		t.Setenv(v, "example-value")
+// TestGatewayExamplesAreValid keeps each documented example in step with the
+// parser and validator, and proves each declares the type its file name says.
+// Credentials are referenced files, so the examples carry no secrets and
+// validate structurally without any I/O.
+func TestGatewayExamplesAreValid(t *testing.T) {
+	for file, want := range map[string]MigrationType{
+		"gateway-static-migration.yaml":  MigrationTypeStatic,
+		"gateway-dynamic-migration.yaml": MigrationTypeDynamic,
+		"gateway-route-conversion.yaml":  MigrationTypeDynamicToStatic,
+	} {
+		t.Run(file, func(t *testing.T) {
+			data, err := os.ReadFile("../../docs/assets/gateway-examples/" + file)
+			require.NoError(t, err)
+			g, err := ParseGatewayMigration(data)
+			require.NoError(t, err)
+			require.Empty(t, g.Validate(), "the documented example must validate clean")
+			require.Equal(t, want, g.Spec.MigrationType())
+		})
 	}
-	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
-	require.NoError(t, err)
-	g, err := ParseGatewayMigration(data)
-	require.NoError(t, err)
-	require.Empty(t, g.Validate(), "the documented gateway example must validate clean")
 }
 
 // TestGatewayExampleResolvesEveryLeg proves the example is not merely
-// structurally valid: all three connection legs resolve from it.
+// structurally valid: substituting real credential files for its illustrative
+// /etc/kcp/*.yaml paths, all three connection legs resolve to the auth shapes
+// the file's own comments document.
 func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
-	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
-		t.Setenv(v, "example-value")
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-static-migration.yaml")
+	require.NoError(t, err)
+	doc := string(data)
+
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
 	}
-	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
+	doc = strings.Replace(doc, "credentials: /etc/kcp/source-creds.yaml",
+		"credentials: "+write("source-creds.yaml", "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"), 1)
+	doc = strings.Replace(doc, "clusterCredentials: /etc/kcp/dest-kafka-creds.yaml",
+		"clusterCredentials: "+write("dest-kafka-creds.yaml", "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n"), 1)
+	doc = strings.Replace(doc, "linkCredentials: /etc/kcp/link-creds.yaml",
+		"linkCredentials: "+write("link-creds.yaml", "api_key: CC_KEY\napi_secret: CC_SECRET\n"), 1)
+
+	g, err := ParseGatewayMigration([]byte(doc))
 	require.NoError(t, err)
-	g, err := ParseGatewayMigration(data)
-	require.NoError(t, err)
+	require.Empty(t, g.Validate())
 
 	src, errs := g.SourceCredentials()
 	require.Empty(t, errs)
@@ -82,5 +105,17 @@ func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
-	require.Equal(t, "example-value", rest.APIKey)
+	require.Equal(t, "CC_KEY", rest.APIKey)
+}
+
+// TestGatewayRouteConversionExampleIsValid: a conversion declares no topic
+// selection and carries the conversion policies.
+func TestGatewayRouteConversionExampleIsValid(t *testing.T) {
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-route-conversion.yaml")
+	require.NoError(t, err)
+	g, err := ParseGatewayMigration(data)
+	require.NoError(t, err)
+	require.NotNil(t, g.Spec.DynamicToStaticConversion)
+	require.Nil(t, g.Spec.DeclaredTopicGroup(), "a conversion selects no topics")
+	require.Equal(t, 30*time.Second, g.Spec.DynamicToStaticConversion.Policies.EffectiveDetectUnroutedCommitsDuration())
 }

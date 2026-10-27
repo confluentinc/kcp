@@ -5,11 +5,12 @@ which drives the `kcp migration resources` direct-API commands (`validate`,
 `create`) — keep any future addition here scoped to that manifest, not the
 unrelated one below.
 
-`kcp migration init|execute|lag-check` is driven by a different manifest,
-`gateway-migration.yaml` (`kind: GatewayMigration`), which shares this one's
-`apiVersion` and parser but nothing else. Its docs live **outside** this folder:
-see [gateway manifest reference](../gateway-manifest-reference/README.md) and
-[`gateway-examples/gateway-migration.yaml`](../gateway-examples/gateway-migration.yaml).
+`kcp migration execute|lag-check` is driven by a different manifest,
+`gateway-static-migration.yaml` (`kind: GatewayMigration`; there is one example per migration type), which
+shares this one's `apiVersion` and parser but nothing else. Its docs live
+**outside** this folder, published normally: see
+[migration manifest reference](../migration-manifest-reference.md) and
+[`gateway-examples/gateway-static-migration.yaml`](../gateway-examples/gateway-static-migration.yaml).
 A file written for one `kind` is rejected with a clear error if pointed at the
 other command.
 
@@ -20,24 +21,24 @@ that describes the desired end state, plus external **credential files** that ho
 auth only. This section provides a ready-to-copy reference manifest, worked
 examples for each scenario, and a catalog of every credential format.
 
-| | |
-|---|---|
-| [manifest reference](manifest-reference.md) | field-by-field reference for every manifest section — the single source of truth for field detail |
-| [`migration.example.yaml`](migration.example.yaml) | the fully-annotated reference manifest — every field, with comments |
-| [examples/](#examples) | minimal, validated manifests per scenario (below) |
-| [credentials/](credentials/README.md) | one credential file per auth method, with a slot-applicability table |
+|                                                    |                                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [manifest reference](manifest-reference.md)        | field-by-field reference for every manifest section — the single source of truth for field detail |
+| [`migration.example.yaml`](migration.example.yaml) | the fully-annotated reference manifest — every field, with comments                               |
+| [examples/](#examples)                             | minimal, validated manifests per scenario (below)                                                 |
+| [credentials/](credentials/README.md)              | one credential file per auth method, with a slot-applicability table                              |
 
 ## Examples
 
-| Example | Topics mode | Cluster link | Source → target |
-|---|---|---|---|
-| [new-topics](examples/new-topics/README.md) | `new` | none | Apache Kafka → Confluent Cloud |
-| [mirror-topics](examples/mirror-topics/README.md) | `mirror` | destination-initiated | MSK → Confluent Cloud |
-| [source-initiated](examples/source-initiated/README.md) | `mirror` | source-initiated | private Confluent Platform → Confluent Cloud |
-| [acls-native](examples/acls-native/README.md) | — | none | Apache Kafka → Confluent Cloud — native ACLs only |
-| [acls-iam-explicit](examples/acls-iam-explicit/README.md) | — | none | MSK → Confluent Cloud — IAM plane, explicit named roles |
-| [acls-iam-discover](examples/acls-iam-discover/README.md) | — | none | MSK → Confluent Cloud — IAM plane, auto-discovered roles |
-| [acls-native-and-iam](examples/acls-native-and-iam/README.md) | — | none | MSK → Confluent Cloud — native + IAM union, explicit service-account mapping |
+| Example                                                       | Topics mode | Cluster link          | Source → target                                                              |
+| ------------------------------------------------------------- | ----------- | --------------------- | ---------------------------------------------------------------------------- |
+| [new-topics](examples/new-topics/README.md)                   | `new`       | none                  | Apache Kafka → Confluent Cloud                                               |
+| [mirror-topics](examples/mirror-topics/README.md)             | `mirror`    | destination-initiated | MSK → Confluent Cloud                                                        |
+| [source-initiated](examples/source-initiated/README.md)       | `mirror`    | source-initiated      | private Confluent Platform → Confluent Cloud                                 |
+| [acls-native](examples/acls-native/README.md)                 | —           | none                  | Apache Kafka → Confluent Cloud — native ACLs only                            |
+| [acls-iam-explicit](examples/acls-iam-explicit/README.md)     | —           | none                  | MSK → Confluent Cloud — IAM plane, explicit named roles                      |
+| [acls-iam-discover](examples/acls-iam-discover/README.md)     | —           | none                  | MSK → Confluent Cloud — IAM plane, auto-discovered roles                     |
+| [acls-native-and-iam](examples/acls-native-and-iam/README.md) | —           | none                  | MSK → Confluent Cloud — native + IAM union, explicit service-account mapping |
 
 Validate, preview, then create any of them:
 

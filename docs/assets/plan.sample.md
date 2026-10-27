@@ -1,172 +1,219 @@
-# Migration Plan — Amazon MSK → Confluent Cloud
+# Migration Plan
 
-_Generated 2026-05-15 15:00:00 UTC by KCP 0.0.0-localdev from `sample-state.json` · plan schema `1-experimental`._
+Source: Amazon MSK · Generated <example> · kcp 0.0.0-localdev · scanned 2026-09-04 12:00 UTC
 
-## Definitions
+## Summary
 
-- **Enterprise / Dedicated** — Confluent Cloud cluster tiers. Enterprise has elastic billing per eCKU; Dedicated is fixed-provisioned per CKU. **MZ** (Multi-Zone) is the default Dedicated topology; **SZ** (Single-Zone) fires only when `requires_99_95_sla_within_a_single_zone: true` is set in `plan-inputs.yaml`.
-- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. 60 MB/s ingress + 180 MB/s egress per eCKU at the per-eCKU caps used below.
-- **CKU** — Confluent Kafka Unit, the Dedicated-tier equivalent of eCKU. Sizing math is the same; only the unit name changes. Dedicated clusters always render with `CKU`.
-- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.
-- **Final size** — the recommended eCKU (Enterprise) or CKU (Dedicated) count for the cluster. `(floor)` next to a value means the SLA minimum was binding (the math came in below the floor and was rounded up).
-- **Peak burst** — short-window peak throughput observed in metrics, expressed as eCKU. Surfaces in the spiky-workload note when peak diverges from P95 by more than the configured ratio.
-- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to 32 eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).
-- **PrivateLink** — capped at 10 eCKU on Enterprise. Fires when `target_cloud != "aws"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.
-- **ACL cap (4000)** — Enterprise supports up to 4000 ACLs; exceeding the cap forces Dedicated. Source: [https://docs.confluent.io/cloud/current/clusters/cluster-types.html](https://docs.confluent.io/cloud/current/clusters/cluster-types.html).
+**1 cluster** across **1 region**. Each cluster gets one migration plan, split into an infrastructure half and an application half. Where a cluster runs multiple apps with different needs, the application half is per app.
 
-<details><summary>Cutover-related terms (Stop-Restart-Repeat, Blue/Green, CC Gateway-mediated, etc.)</summary>
+| Migration plan | Region | Infrastructure plan | Application plan |
+| --- | --- | --- | --- |
+| [clickstream](#cluster-clickstream-us-east-1) | us-east-1 | Ready | Ready |
 
-- **Stop-Restart-Repeat** — phased per-service cutover. Each application (or topic) is stopped on MSK, mirrored to CC, and resumed at the CC endpoint, one at a time. Recoverable per step; longer elapsed time.
-- **Stop-Wait-Restart** — single coordinated maintenance window. Producers stop, the mirror catches up, services resume in sequence inside the window.
-- **Restart-All-At-Once** — single window where every client reconfigures and reconnects at the same instant. Largest blast radius; one rollback point for the whole fleet.
-- **Blue/Green** — parallel run on both sides via Cluster Linking. Zero downtime, highest operational complexity; customer-designed orchestration.
-- **CC Gateway-mediated** — a sidecar component that absorbs the cutover with a 30–90 s `BROKER_NOT_AVAILABLE` window per service, after which clients auto-retry against CC. Removes the per-service producer restart; requires Confluent for Kubernetes + a Gateway Add-On license.
-- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the simpler op model. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Fully supported; chosen via `prefer_gateway: false`.
+No throughput metrics were scanned, so all sizing below is a lower bound. Run `kcp discover --region <your-region>` (without `--skip-metrics`) to size from real ingress/egress before you commit.
 
-</details>
+0 required + 5 optional questions open across all plans.
 
-## 1. Source Environment
+**Prefer a hand?** [Talk to a person](#talk-to-a-person). A Confluent migration specialist can walk through this plan with you, for free.
 
-- **4** source clusters across **1** region · **15** brokers · **265** topics
+## Cluster: clickstream (us-east-1)
 
-| Cluster | Region | Brokers | Topics | Source auth |
-|---|---|---:|---:|---|
-| heavy-acls | us-east-1 | 3 | 65 | `scram` |
-| mtls-cluster | us-east-1 | 3 | 38 | `mtls` |
-| small-orders | us-east-1 | 3 | 42 | `scram` |
-| steady-events | us-east-1 | 6 | 120 | `scram` |
+**Source:** MSK Provisioned · 180 topics · 6 brokers · auth: AWS IAM, SASL/SCRAM
 
-## 2. Sizing & Cluster Decisions
+### Infrastructure plan
 
-This section combines three per-cluster decisions: the **sizing** (how many eCKU each cluster needs to absorb its workload at the chosen percentile + headroom), the **cluster type** (Enterprise, Dedicated, or Freight — driven by hard limits like ACL count and customer-declared flags), and the **networking** topology (PNI, PrivateLink, Transit Gateway, or VPC Peering — driven by `target_cloud`, egress requirements, and projected PNI gateway count). They render together because each row's verdict in one column constrains the others: e.g. a Dedicated cluster opens up PrivateLink networking patterns that Enterprise caps.
+**Ready**
 
-| Cluster | P95 in / out (MBps) | Partitions | Final size | Cluster Type | Networking |
-|---|---|---:|---:|---|---|
-| heavy-acls | 15.0 / 25.0 | 300 | 1 CKU | Dedicated Multi-Zone (MZ) | PNI |
-| mtls-cluster | 12.0 / 18.0 | 250 | 1 eCKU | Enterprise | PNI |
-| small-orders | 10.0 / 20.0 | 200 | 1 eCKU | Enterprise | PNI |
-| steady-events | 100.0 / 180.0 | 800 | 3 eCKU | Enterprise | PNI |
+| Category | Recommendation | Why |
+| --- | --- | --- |
+| Cluster type | Enterprise | Private networking is a hard requirement you set, and that starts at Enterprise. [docs](https://docs.confluent.io/cloud/current/clusters/cluster-types.html) |
+| Sizing | Autoscales, nothing to provision | We size from your partition count (the only signal we have); measured ingress/egress can raise this. [docs](https://docs.confluent.io/cloud/current/clusters/cluster-types.html) |
+| Networking | PNI + Egress PrivateLink Endpoint | PNI (Private Network Interface) scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you. The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, which PNI doesn't carry. [docs](https://docs.confluent.io/cloud/current/networking/aws-egress-privatelink-esku.html) |
+| Authentication | API keys (SASL/PLAIN) | Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover. [docs](https://docs.confluent.io/cloud/current/security/authenticate/overview.html) |
 
-### Why These Recommendations
+**Sized from your scan:** 1,500 partitions. Not measured: ingress throughput, egress throughput, request rate.
 
-- **heavy-acls** — Cluster type **Dedicated Multi-Zone (MZ)** — ACL count exceeds Enterprise cap (4001 ACLs > Enterprise cap 4000). Networking **PNI** — Dedicated AWS cluster — PNI required (TGW / VPC Peering are alternatives only when the customer's existing MSK topology already uses them; see `existing_vpc_connectivity` in plan-inputs.yaml).
-  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.
-- **mtls-cluster** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
-- **small-orders** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
-- **steady-events** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
+#### Why these recommendations
 
-## 3. Cutover Approach
+- **Cluster type**: Based on your answer (private networking required), an Enterprise cluster fits: private networking starts at Enterprise, and nothing else you told us pushes it up to Dedicated. Zones: Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.
+- **Sizing**: Based on your scan (1,500 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.
+  - **Heads up:** Sizing is a lower bound; see the note at the top of the plan.
+- **Networking**: Based on your answer (private networking required), on AWS, we recommend PNI (Private Network Interface) for your private connection. It scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you. Confluent Cloud pulls your data over the cluster link, reaching out to your source cluster. PNI doesn't carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI.
+- **Authentication**: After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. Your applications' API keys belong to Confluent Cloud service accounts. Your Kafka ACLs don't carry over with your data. Recreate them in Confluent Cloud: `kcp create-asset migrate-acls kafka` turns the ACLs from your kcp scan into Terraform, with a Confluent Cloud service account and its ACLs for each principal. Review the generated files before you apply them. Your AWS IAM policies don't carry over with your data. `kcp create-asset migrate-acls iam` reads the IAM policies of the roles and users you name and turns their Kafka actions into Confluent Cloud ACLs, as Terraform. It reads only the first resource in each policy statement and ignores conditions, so check each generated ACL against the policy it came from.
 
-_The cutover style below applies to the **entire fleet**. Per-cluster cutover overrides aren't supported in this kcp version (planned for a follow-up). Heterogeneous fleets can run kcp against a state-file subset that contains only the clusters sharing a style — re-run for each subset and combine the recommendations manually._
+### Application plan
 
-- **Style:** Stop-Restart-Repeat (app-by-app)
-- **Gateway mediation:** Plain Cluster Linking
-  - ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose.
-- **Alternatives considered:**
-  - **Stop-Wait-Restart** — single coordinated window; needs the window to be long enough for re-mirroring + validation. Pick via `downtime_tolerance: scheduled_window_sequential`.
-  - **Restart-All-At-Once** — single window; every client reconfigures at the same instant. Highest blast radius. Pick via `downtime_tolerance: scheduled_window_all_at_once`.
-  - **Blue/Green** — parallel run via Cluster Linking; zero downtime, highest operational complexity. Pick via `downtime_tolerance: zero`.
-- **Prerequisites:**
+**Ready**
 
-  | Prereq | Status |
-  |---|---|
-  | Confluent for Kubernetes (CFK) cluster | ⛔ not started |
-  | Confluent Cloud Gateway Add-On license | ⛔ not started |
+| Category | Recommendation | Why |
+| --- | --- | --- |
+| Data migration | Cluster Linking, all at once (Restart-All-At-Once) | We recommend a Cluster Linking cutover, moving all your clients over together in one scheduled window. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
+| Schema | Schema Linking | Your registry can reach Confluent Cloud, so we recommend Schema Linking. [docs](https://docs.confluent.io/cloud/current/sr/schema-linking.html) |
+| Connectors | None to move | There is no connector work in this plan. |
+| Topics | Topics should mirror as they are | Your topics carry over as they are. [docs](https://docs.confluent.io/cloud/current/client-apps/topics/manage.html) |
+| Historical data | No separate backfill to plan | There's nothing to re-fetch from object storage. [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
 
-  _IAM pre-migration prereq omitted — no IAM source detected in this fleet._
+#### Why these recommendations
 
+- **Data migration**: Based on your answer (a scheduled window, all at once), we recommend a Cluster Linking cutover, moving all your clients over together in one scheduled window. Before you cut over, enable consumer offset sync on the cluster link: set consumer.offset.sync.enable=true and list the consumer groups to migrate in consumer.offset.group.filters (it defaults to none), so consumer offsets come across too. At cutover, stop your producers and consumers, wait for the mirror to catch up (lag zero) and one consumer offset sync interval, promote the mirror topics so they accept writes, then restart your clients against Confluent Cloud.
+- **Schema**: Based on your answer (Confluent Platform Enterprise 7.1+, migrate your schemas), your registry can reach Confluent Cloud, so we recommend Schema Linking. It preserves your schema IDs, and no client change is needed for the schema move.
+- **Connectors**: Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.
+- **Topics**: Based on your answer (topic settings match the defaults), your topics carry over as they are.
+- **Historical data**: Based on your scan (no tiered storage), there's nothing to re-fetch from object storage. Your data migration still copies everything your topics currently retain, so if they keep a lot of data, plan a cutover window long enough to move it. Run `kcp discover --region <your-region>` (without `--skip-metrics`) to size the retained data.
 
-## 4. Client Auth Migration
+### Migration steps
 
-Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.
+**Before you start.** The steps below read these from your state file. Run any scan you haven't already, so the state file has them:
 
-| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |
-|---|---|---|---|---|
-| heavy-acls | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
-| mtls-cluster | `mtls` | `mtls` | ✅ yes (auth-swap mode) | Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode). |
-| small-orders | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
-| steady-events | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
+- Schemas: `kcp scan schema-registry --state-file demo-scan.json --sr-type confluent --url <source-sr-url> --use-unauthenticated` (or `--use-basic-auth` / `--use-mtls` with its credentials)
 
-_Mapping provenance:_
-- `mtls` mapping → https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html (last verified 2026-05-20)
-- `scram` mapping → https://docs.confluent.io/cloud/current/security/authenticate/overview.html (last verified 2026-05-20)
+Build the infrastructure this plan recommends, then move your data over it. `kcp` generates the Terraform for each step; you review it and `terraform apply`.
 
-## 5. Actions Needed
+**Step 1: create the target cluster.** Create an **Enterprise** cluster with **PNI + Egress PrivateLink Endpoint** networking in the [Confluent Cloud Console](https://docs.confluent.io/cloud/current/clusters/create-cluster.html), or [Talk to a person](#talk-to-a-person) to set it up with a specialist. `kcp create-asset target-infra` isn't used here: it builds PrivateLink networking, not PNI, so it can't provision the networking this plan recommends. Set up **PNI + Egress PrivateLink Endpoint** networking on it and **API keys (SASL/PLAIN)** client authentication, and note its **environment ID**, **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps. The migration link's Egress PrivateLink Endpoint is added in the link step below.
 
-Each item below is a concrete action that tightens the recommendation. The current recommendation stands; these close state-file gaps, fix invalid inputs, or resolve preference questions. **Severity prefix:** 🟢 preference (pick one).
+If you would rather use PrivateLink than PNI, `kcp create-asset target-infra` ([docs](https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/)) builds the environment, the cluster, and PrivateLink networking:
 
-1. 🟢 **Gateway intent — pick CC Gateway or plain Cluster Linking**
-   - `prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.
-   - _How to close:_ In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.
+```bash
+kcp create-asset target-infra \
+  --state-file demo-scan.json \
+  --source-cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/clickstream/b2 \
+  --needs-environment --env-name <your-env-name> \
+  --needs-cluster --cluster-name <your-cluster-name> --cluster-type enterprise \
+  --needs-private-link --subnet-cidrs <your-subnet-cidrs>
+```
 
-## Appendix A1 — Sizing Math
-<details><summary>Show sizing math per cluster</summary>
+**Step 2: prepare your source credentials.** What the link needs to sign in to your source, by method:
 
-Each cluster is sized by taking the largest of its three throughput-vs-cap ratios (ingress, egress, partitions) and scaling that by `(1 + headroom)`, so the recommended size has spare capacity above the observed P95. Headroom for this run is `0.30` (override via `headroom_fraction` in `plan-inputs.yaml`). SLA floor binds when the math comes in below the minimum eCKU for the target SLA (1 eCKU for 99.9, 1 eCKU for 99.95, 2 eCKU for 99.99 — published in the Confluent Cloud cluster-types SLA table). The `Sized` and `Final` columns are in eCKU on Enterprise and CKU on Dedicated.
+- **AWS IAM**: Nothing to do for IAM here. The cluster link uses your existing SASL/SCRAM path (above), so your MSK cluster is unchanged for the migration; your IAM clients get new Confluent Cloud credentials when you point them over. Your plan's authentication recommendation covers how to recreate your AWS IAM permissions in Confluent Cloud.
+- **SASL/SCRAM**: No change. Cluster Linking uses your SCRAM credentials as-is. The link's user needs READ and DESCRIBE_CONFIGS on the topics you mirror, and DESCRIBE on the consumer groups.
 
-Formula: `CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))`
+**Step 3: build the migration link.** Your data migration runs over the recommended link (**Private source with external outbound cluster link (SASL/SCRAM)**, [`--type 2`](https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/)). Your source is private and its brokers use SASL/SCRAM, so the cluster link reaches it privately, over an external outbound endpoint, using your source's SASL/SCRAM credentials. Fill in the placeholders (the cluster you created plus a link name), then `terraform apply`:
 
-| Cluster | Ingress ratio | Egress ratio | Partition ratio | Max (driver) | Sized | SLA floor | Final |
-|---|---:|---:|---:|---|---:|---:|---:|
-| heavy-acls | 0.2500 | 0.1389 | 0.1000 | **0.2500** (ingress) | 1 | 1 | 1 |
-| mtls-cluster | 0.2000 | 0.1000 | 0.0833 | **0.2000** (ingress) | 1 | 1 | 1 |
-| small-orders | 0.1667 | 0.1111 | 0.0667 | **0.1667** (ingress) | 1 | 1 | 1 |
-| steady-events | 1.6667 | 1.0000 | 0.2667 | **1.6667** (ingress) | 3 | 1 | 3 |
+```bash
+kcp create-asset migration-infra \
+  --type 2 \
+  --source-type msk \
+  --state-file demo-scan.json \
+  --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/clickstream/b2 \
+  --cc-type commercial \
+  --target-cluster-type enterprise \
+  --cluster-link-name <your-link-name> \
+  --target-cluster-id <cc-cluster-id> \
+  --target-rest-endpoint <cc-rest-endpoint> \
+  --target-environment-id <cc-env-id>
+```
 
-Max-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized`. `Final` is `max(Sized, SLA floor)`.
+- `<your-link-name>`: a name you choose for the cluster link, for example `msk-to-cc`.
+- `<cc-env-id>`, `<cc-cluster-id>`, `<cc-rest-endpoint>`: from the cluster you created.
 
-</details>
+Alternative: a jump cluster in your VPC (SASL/SCRAM), if Confluent Cloud can't reach your brokers over an egress endpoint. That is `--type 4`, which needs extra jump-cluster inputs (a bootstrap endpoint, an existing PrivateLink endpoint, and subnet CIDRs). See the [docs](https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/).
 
-## Appendix A2 — Hard-Limit Rules Evaluated
-<details><summary>Show per-cluster rule-evaluation trace</summary>
+**Step 4: create your topics on the target.** Recreate your source topics as mirror topics that the cluster link forwards your data into, with their partition counts and configs, using `kcp create-asset migrate-topics` ([docs](https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-topics/)):
 
-Every cluster runs the same hard-limit catalog; this table records each rule's outcome so a reviewer can confirm the verdict and see negative evidence (e.g. "47 ACLs ≤ 4000 cap"). `skipped` rows mean the rule couldn't be evaluated — the cluster's verdict resolves on the other rules.
+```bash
+kcp create-asset migrate-topics \
+  --mode mirror \
+  --source-type msk \
+  --state-file demo-scan.json \
+  --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/clickstream/b2 \
+  --cc-type commercial \
+  --target-cluster-id <cc-cluster-id> \
+  --target-rest-endpoint <cc-rest-endpoint> \
+  --cluster-link-name <your-link-name>
+```
 
-_Evidence below reflects the source state file as of 2026-05-15 15:00:00 UTC. Re-run `kcp discover` / `kcp scan ...` if the source environment has changed materially since._
+**Step 5: migrate your schemas.** Copy the source schemas into Confluent Cloud Schema Registry; the Schema recommendation above covers the approach. Run `kcp create-asset migrate-schemas` ([docs](https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migrate-schemas/)):
 
-**Cluster** `heavy-acls`
+```bash
+kcp create-asset migrate-schemas \
+  --url <source-sr-url> \
+  --state-file demo-scan.json \
+  --cc-type commercial \
+  --cc-sr-rest-endpoint <cc-sr-rest-endpoint>
+```
 
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `fired` | 4001 ACLs > Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
+**Step 6: run the cutover.** Before you cut over, enable consumer offset sync on the cluster link: set consumer.offset.sync.enable=true and list the consumer groups to migrate in consumer.offset.group.filters (it defaults to none), so consumer offsets come across too. In the properties file, set `consumer.offset.sync.enable=true` and `consumer.offset.group.filters={"groupFilters":[{"name":"<consumer-group>","patternType":"LITERAL","filterType":"INCLUDE"}]}`. Then run `confluent kafka link configuration update <your-link-name> --config <your-link-config-file>` ([docs](https://docs.confluent.io/confluent-cli/current/command-reference/kafka/link/configuration/confluent_kafka_link_configuration_update.html)). At cutover, stop your producers and consumers, wait for the mirror to catch up (lag zero) and one consumer offset sync interval, promote the mirror topics so they accept writes, then restart your clients against Confluent Cloud.
 
-**Cluster** `mtls-cluster`
+What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **API keys (SASL/PLAIN)** with the new Confluent Cloud credentials; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**.
 
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | mTLS source + target_cloud="aws" (AWS supports mTLS on Enterprise/Freight) |
+At cutover, stop the schema exporter and set the Confluent Cloud Schema Registry back to READWRITE, so producers can register new schemas.
 
-**Cluster** `small-orders`
+**Backing out:** until you promote the mirror topics, nothing is committed: your source keeps taking writes until you stop your producers and cut over. To roll back, restart your producers against the still-running source instead of promoting the mirror.
 
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
+**Step 7: decommission.** Delete the cluster link and the Egress PrivateLink Endpoint, then retire your source cluster.
 
-**Cluster** `steady-events`
+**Access control (set up separately).** Your source's authorization rules don't carry over. Recreate them with `kcp create-asset migrate-acls iam` and `kcp create-asset migrate-acls kafka`. The Authentication recommendation above covers what it reads. Do this before cutover. This is independent of moving your data — plan it alongside the steps above, not after.
 
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 3 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
+---
 
-</details>
+## Questions
+
+Every question, its wording, and its options, listed once. Set answers per cluster (or fleet-wide in `all_clusters:`) in `plan-inputs.yaml`; see **Answers by cluster** for each cluster's current answers and what's still needed.
+
+| Key | Question | Options |
+| --- | --- | --- |
+| `use_case_breadth` | How widely is this cluster used? | `one-app` → One team, one application<br>`few-teams` → A few teams or applications<br>`shared-fabric` → Shared fabric across many apps and teams |
+| `move_existing_data` | Do you need to move your existing data? | `true` → Yes, move my existing data: Brings your history along. Availability depends on your source setup.<br>`false` → No, we can start fresh: Moves producers to the new cluster first, then consumers once they finish the old one |
+| `private_networking_required` | Is private networking a hard requirement?<br>_Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted._ | `true` → Yes, private networking is required<br>`false` → No, public endpoints are fine |
+| `connects_today` | How do you connect to your cluster today? | `same-vpc` → Same VPC<br>`peered` → Peered<br>`privatelink` → PrivateLink<br>`other` → Other or more than one |
+| `cc_egress_required` | Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?<br>_For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network._ | `true` → Yes<br>`false` → No |
+| `schema_registry` | What Schema Registry does your source environment use? | `none` → None: Schemaless, or schemas kept in app code<br>`glue` → AWS Glue Schema Registry<br>`cp-enterprise-7.1` → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later<br>`cp-community` → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1<br>`other` → Other, not sure |
+| `schema_strategy` | What do you want to do with your schemas on Confluent Cloud? | `migrate` → Migrate my existing schemas<br>`fresh` → Start fresh on Confluent Cloud<br>`schemaless` → Stay schemaless |
+| `schema_reachable_to_cc` | Can your Schema Registry reach Confluent Cloud to sync schemas (outbound, port 443)? | `yes` → Yes<br>`no` → No<br>`unsure` → Not sure |
+| `downtime_tolerance` | What is your target downtime window at cutover? | `window-all` → A scheduled window, all at once<br>`window-sequential` → A scheduled window, one service at a time<br>`minutes` → Minutes per service<br>`seconds` → Seconds per service<br>`zero` → Zero downtime |
+| `exceeds_standard_limits` | Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?<br>_If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking._ | `true` → Yes<br>`false` → No  (default) |
+| `target_cloud` | Which cloud should your new Confluent Cloud cluster run on?<br>_This is independent of your source cloud. Confluent supports cross-cloud migrations._ | `aws` → AWS  (default)<br>`azure` → Azure<br>`gcp` → GCP |
+| `target_auth` | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS and Azure we keep your existing mTLS as-is; on Google Cloud, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | `api-keys` → API keys (SASL/PLAIN)<br>`oauth` → OAuth<br>`mtls` → mTLS<br>_Select all that apply, as a list, for example `[api-keys, oauth]`._ |
+| `client_coordination` | How much coordination will it take to cut over all your clients and apps at the same time? | `easy` → Low (few clients, one team)<br>`moderate` → Moderate  (default)<br>`hard` → High (many clients and teams) |
+| `eos_streams` | Do any applications use exactly-once transactions and/or Kafka Streams? | `eos` → Exactly-once or transactions<br>`kstreams` → Kafka Streams<br>_Select all that apply, as a list, for example `[eos, kstreams]`._ |
+| `source_cluster_type` | Source cluster type | `provisioned` → Provisioned<br>`serverless` → Serverless |
+| `kafka_version` | What Kafka version does your source cluster run?<br>_Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead._ | `3.0-plus` → 3.0 or newer<br>`2.4-2.9` → 2.4–2.9<br>`older` → Older than 2.4 |
+| `source_auth` | How your Kafka clients authenticate today | `iam` → AWS IAM<br>`scram` → SASL/SCRAM<br>`mtls` → TLS client certificates (mTLS)<br>`unauth` → None / plaintext<br>_Select all that apply, as a list, for example `[iam, scram]`._ |
+| `tiered_storage` | Do your topics use tiered storage?<br>_Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost._ | `true` → Yes<br>`false` → No |
+| `topics_have_custom_settings` | Do any of your topics use non-default settings?<br>_This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete._ | `true` → Yes<br>`false` → No |
+| `msk_connect_present` | Do you use MSK Connect? | `true` → Yes<br>`false` → No |
+| `self_managed_connectors` | Do you run self-managed Kafka Connect? | `true` → Yes<br>`false` → No |
+
+## Answers by cluster
+
+Every question and its current answer, per cluster. The **Required questions (Action needed)** rows are the ones still to answer; the rest are already filled in (optional defaults, or facts from your scan and earlier answers). Set answers in `plan-inputs.yaml` (wording and options are in [Questions](#questions) above), then re-run `kcp report plan --state-file demo-scan.json --plan-inputs plan-inputs.yaml` (adjust the paths to where your files are). Answering some may reveal follow-up questions.
+
+### Cluster: clickstream
+
+_0 required, 5 optional open. Edit `plan-inputs.yaml` under `clickstream` to answer._
+
+#### Optional questions (defaults pre-selected)
+
+| Default (key: value) |
+| --- |
+| `exceeds_standard_limits`: `false` |
+| `target_cloud`: `aws` |
+| `target_auth`: `[]` |
+| `client_coordination`: `moderate` |
+| `eos_streams`: `[]` |
+
+#### Already answered / from your scan (edit to override)
+
+| Current (key: value) |
+| --- |
+| `use_case_breadth`: `few-teams` _(from cluster)_ |
+| `move_existing_data`: `true` _(from all clusters)_ |
+| `private_networking_required`: `true` _(from cluster)_ |
+| `connects_today`: `same-vpc` _(from cluster)_ |
+| `cc_egress_required`: `false` _(from cluster)_ |
+| `schema_registry`: `cp-enterprise-7.1` _(from cluster)_ |
+| `schema_strategy`: `migrate` _(from all clusters)_ |
+| `schema_reachable_to_cc`: `yes` _(from cluster)_ |
+| `downtime_tolerance`: `window-all` _(from cluster)_ |
+| `source_cluster_type`: `provisioned` _(from scan)_ |
+| `kafka_version`: `3.0-plus` _(from scan)_ |
+| `source_auth`: `iam, scram` _(from scan)_ |
+| `tiered_storage`: `false` _(from scan)_ |
+| `topics_have_custom_settings`: `false` _(you set this)_ |
+| `msk_connect_present`: `false` _(you set this)_ |
+| `self_managed_connectors`: `false` _(you set this)_ |
+
+## Talk to a person
+
+Migrating to Confluent is easier with a hand. Reach a Confluent migration specialist in the Confluent Cloud Migration Hub: https://confluent.cloud/migration-hub
 

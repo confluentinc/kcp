@@ -248,65 +248,25 @@ func TestHTTPClient_NotDefaultClient(t *testing.T) {
 	assert.NotSame(t, http.DefaultClient, concreteClient)
 }
 
-// --- ${ENV_VAR} interpolation (opt-in, per file) ---
+// --- no ${ENV_VAR} substitution ---
 
-// TestLoadCredentials_InterpolatesWhenOptedIn is the headline behaviour: with
-// interpolate: true, ${VAR} references resolve from the environment.
-func TestLoadCredentials_InterpolatesWhenOptedIn(t *testing.T) {
-	t.Setenv("CC_API_KEY", "KEY-123")
-	t.Setenv("CC_API_SECRET", "SECRET-456")
-	yaml := "interpolate: true\napi_key: ${CC_API_KEY}\napi_secret: ${CC_API_SECRET}\n"
-	c, err := LoadCredentials(writeTemp(t, yaml))
-	require.NoError(t, err)
-	assert.Equal(t, "KEY-123", c.APIKey)
-	assert.Equal(t, "SECRET-456", c.APISecret)
-}
-
-// TestLoadCredentials_NoInterpolationByDefault pins that every already-shipped
-// credentials file is read byte-for-byte as before — interpolation is a new
-// capability, not a behaviour change.
-func TestLoadCredentials_NoInterpolationByDefault(t *testing.T) {
+// TestLoadCredentials_NoEnvSubstitution pins that a ${VAR}-shaped value is read
+// literally: there is no environment-variable substitution anywhere in the
+// credentials-loading path.
+func TestLoadCredentials_NoEnvSubstitution(t *testing.T) {
 	t.Setenv("CC_API_KEY", "KEY-123")
 	yaml := "api_key: ${CC_API_KEY}\napi_secret: literal\n"
 	c, err := LoadCredentials(writeTemp(t, yaml))
 	require.NoError(t, err)
-	assert.Equal(t, "${CC_API_KEY}", c.APIKey, "absent interpolate: every value is literal")
+	assert.Equal(t, "${CC_API_KEY}", c.APIKey, "every value is literal — no substitution")
 }
 
-// TestLoadCredentials_InterpolateUndefinedVariableFails — hard error naming the
-// variable, never the value of a sibling that did resolve.
-func TestLoadCredentials_InterpolateUndefinedVariableFails(t *testing.T) {
-	t.Setenv("CC_API_KEY", "KEY-123")
-	yaml := "interpolate: true\napi_key: ${CC_API_KEY}\napi_secret: ${KCP_UNSET_SECRET}\n"
-	_, err := LoadCredentials(writeTemp(t, yaml))
+// TestLoadCredentials_RejectsInterpolateKey — the retired interpolate key is now
+// an unknown field, so a stale file that still sets it fails the strict decode.
+func TestLoadCredentials_RejectsInterpolateKey(t *testing.T) {
+	_, err := LoadCredentials(writeTemp(t, "interpolate: true\napi_key: K\napi_secret: S\n"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "KCP_UNSET_SECRET")
-	assert.NotContains(t, err.Error(), "KEY-123")
-}
-
-// TestLoadCredentials_InterpolatesBeforeValidation is the ordering requirement
-// from §10: LoadCredentials os.Stats ca_cert, so resolution placed after
-// validation would yield `ca_cert file "${CA_PATH}": no such file`.
-func TestLoadCredentials_InterpolatesBeforeValidation(t *testing.T) {
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	require.NoError(t, os.WriteFile(caFile, []byte("pem"), 0600))
-	t.Setenv("CA_PATH", caFile)
-
-	yaml := "interpolate: true\nbasic:\n  username: u\n  password: p\n  ca_cert: ${CA_PATH}\n"
-	c, err := LoadCredentials(writeTemp(t, yaml))
-	require.NoError(t, err, "ca_cert must be resolved before its existence is checked")
-	assert.Equal(t, caFile, c.Basic.CACert)
-}
-
-// TestLoadCredentials_InterpolatedValueIsNotReparsed proves the post-parse
-// design: a secret containing YAML structure cannot alter the document.
-func TestLoadCredentials_InterpolatedValueIsNotReparsed(t *testing.T) {
-	t.Setenv("EVIL", "p\nusername: attacker")
-	yaml := "interpolate: true\nbasic:\n  username: real-user\n  password: ${EVIL}\n"
-	c, err := LoadCredentials(writeTemp(t, yaml))
-	require.NoError(t, err)
-	assert.Equal(t, "real-user", c.Basic.Username, "the injected key must not have taken effect")
-	assert.Equal(t, "p\nusername: attacker", c.Basic.Password)
+	assert.Contains(t, err.Error(), "interpolate")
 }
 
 // --- parse / validate split ---

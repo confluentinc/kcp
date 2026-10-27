@@ -1,0 +1,44 @@
+# Pruned from the real Gateway CRD shipped by the CFK Helm chart:
+#   confluent-for-kubernetes chart v0.1718.34 (appVersion 3.3.0)
+#   crds/platform.confluent.io_gateways.yaml
+#
+# The CRD identity, the version/schema nesting, and the configId and hotReload
+# schema subtrees are verbatim. The other ~2500 lines of unrelated field schemas
+# are removed — this fixture exists to pin kcp's capability detection and configId
+# generation against the shape the operator actually enforces, not to mirror the
+# whole CRD. Regenerate by re-pruning a newer chart; do not hand-edit the values.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gateways.platform.confluent.io
+  annotations:
+    platform.confluent.io/app-version: 3.3.0
+    platform.confluent.io/chart-version: v0.1718.34
+spec:
+  group: platform.confluent.io
+  names:
+    kind: Gateway
+    listKind: GatewayList
+    plural: gateways
+    singular: gateway
+  scope: Namespaced
+  versions:
+  - name: v1beta1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              configId:
+                maxLength: 64
+                pattern: ^[a-zA-Z0-9._:-]+$
+                type: string
+              hotReload:
+                properties:
+                  enabled:
+                    type: boolean
+                type: object

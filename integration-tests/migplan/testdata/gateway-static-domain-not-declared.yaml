@@ -1,0 +1,31 @@
+# Permutation fixture: a static route whose target domain (cc) is not declared
+# anywhere in spec.streamingDomains — only the source domain (msk) is. The
+# "target domain is declared" precondition must fail and refuse.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static-domain-not-declared
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: msk
+        bootstrapServerId: MSK
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk

@@ -8,7 +8,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -32,14 +31,19 @@ func NewMigrationLagCheckCmd() *cobra.Command {
 		Use:   "lag-check",
 		Short: "Show mirror topic lag for the cluster link",
 		Long: `Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal.
-Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
+Press q (or ctrl+c) to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys or j/k to scroll.
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
-comes from the GatewayMigration manifest, so this command reads no state file and works
-before 'kcp migration init' has ever run.
+comes from the migration manifest, so this command works before
+'kcp migration execute' has ever run. The credentials are the cluster-link REST leg
+(spec.clusterLink.linkCredentials), honoured in whatever form the manifest resolves —
+api_key, basic, bearer, or mtls. lag-check never dials the source or destination Kafka
+legs directly.
 
-It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
-		Example:       `  kcp migration lag-check --migration-yaml gateway-migration.yaml`,
+It always shows every mirror topic on the link; the declared migration's topicGroup does not narrow the view.
+
+Before the view opens, kcp reads the cluster link (15s timeout); if that fails, the command exits with an error.`,
+		Example:       `  kcp migration lag-check --migration-yaml gateway-static-migration.yaml`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
 		SilenceUsage: true,
@@ -48,8 +52,8 @@ It always shows every mirror topic on the link; spec.topics does not narrow the 
 		RunE:         runMigrationLag,
 	}
 
-	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().IntVar(&pollInterval, "poll-interval", 1, "Poll interval in seconds (1-60)")
+	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the migration manifest describing this migration.")
+	cmd.Flags().IntVar(&pollInterval, "poll-interval", 1, "Poll interval in seconds. Values outside 1-60 are clamped to that range.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 
@@ -90,10 +94,11 @@ func runMigrationLag(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildLagCheckConfig maps the manifest onto the five values clusterlink.Config
-// needs, plus an HTTP client carrying the REST leg's TLS trust — so a private-CA
-// or self-signed destination is reachable rather than the manifest's ca_cert
-// being a silent no-op.
+// buildLagCheckConfig maps the manifest onto clusterlink.Config plus an HTTP
+// client, mirroring migration.BuildClusterLinkConfig: Auth carries whichever
+// REST auth form the manifest resolved — basic, bearer, mtls, or api_key — and
+// the HTTP client carries that same block's TLS trust (private-CA/self-signed
+// support) plus a client certificate when the form is mtls.
 //
 // Topics is deliberately empty: this command always reports every mirror topic
 // on the link, and spec.topics does not narrow it.
@@ -103,7 +108,7 @@ func buildLagCheckConfig(g *manifest.GatewayMigration) (clusterlink.Config, clus
 		return clusterlink.Config{}, nil, fmt.Errorf("resolving destination REST credentials: %w", err)
 	}
 
-	httpClient, err := migration.NewRESTHTTPClient(restCreds.CACert, restCreds.InsecureSkipVerify)
+	httpClient, err := restCreds.HTTPClient()
 	if err != nil {
 		return clusterlink.Config{}, nil, fmt.Errorf("building destination REST client: %w", err)
 	}
@@ -112,8 +117,7 @@ func buildLagCheckConfig(g *manifest.GatewayMigration) (clusterlink.Config, clus
 		RestEndpoint: g.Spec.Target.Kafka.RestEndpoint,
 		ClusterID:    g.Spec.Target.ClusterID,
 		LinkName:     g.Spec.ClusterLink.Name,
-		APIKey:       restCreds.APIKey,
-		APISecret:    restCreds.APISecret,
+		Auth:         restCreds.Authenticator(),
 		Topics:       []string{},
 	}, httpClient, nil
 }

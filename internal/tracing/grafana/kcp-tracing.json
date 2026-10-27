@@ -1,0 +1,988 @@
+{
+  "uid": "kcp-tracing",
+  "title": "kcp tracing",
+  "tags": [
+    "kcp",
+    "tracing"
+  ],
+  "editable": true,
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "",
+  "templating": {
+    "list": [
+      {
+        "name": "trace",
+        "type": "textbox",
+        "label": "Trace ID",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**kcp tracing.** Every kcp command run with `KCP_TRACING_ENABLED=true` and an OTLP endpoint appears in *Traced commands*. **Click a command** (or a strategy in *Migration runs*) to load that run into the panels below it. *Across all runs* aggregates every span since the backend started (`make otel-up`)."
+      }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Runs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Traced commands",
+      "description": "One row per kcp command run (the trace's root span). Click a command to load that run below.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"kcp\" && nestedSetParent < 0} | select(resource.run)",
+          "limit": 100,
+          "spss": 1,
+          "tableType": "spans"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Trace Service": true,
+              "Span ID": true,
+              "nestedSetParent": true,
+              "service.name": true,
+              "span:parentID": true,
+              "Name": true
+            },
+            "renameByName": {
+              "traceIdHidden": "Trace ID",
+              "Trace Name": "Command",
+              "run": "Run label",
+              "Start time": "Started"
+            },
+            "indexByName": {
+              "Start time": 0,
+              "Trace Name": 1,
+              "run": 2,
+              "Duration": 3,
+              "traceIdHidden": 4
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Started",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Command"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this run below",
+                    "url": "/d/kcp-tracing/kcp-tracing?var-trace=${__data.fields.traceIdHidden}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Duration"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ns"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Migration runs",
+      "description": "One row per migration run (migration.run): its kind (static, dynamic or dynamic to static), migration, topic count. Click a strategy to load that run below.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"kcp\" && name=\"migration.run\"} | select(span.kcp.strategy, span.kcp.migration.id, span.kcp.topics.migrate, resource.run)",
+          "limit": 100,
+          "spss": 1,
+          "tableType": "spans"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Trace Service": true,
+              "Span ID": true,
+              "nestedSetParent": true,
+              "service.name": true,
+              "span:parentID": true,
+              "Trace Name": true,
+              "Name": true
+            },
+            "renameByName": {
+              "traceIdHidden": "Trace ID",
+              "kcp.strategy": "Strategy",
+              "kcp.migration.id": "Migration",
+              "kcp.topics.migrate": "Topics",
+              "run": "Run label",
+              "Start time": "Started"
+            },
+            "indexByName": {
+              "Start time": 0,
+              "kcp.strategy": 1,
+              "kcp.migration.id": 2,
+              "kcp.topics.migrate": 3,
+              "run": 4,
+              "Duration": 5,
+              "traceIdHidden": 6
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Started",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Strategy"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this run below",
+                    "url": "/d/kcp-tracing/kcp-tracing?var-trace=${__data.fields.traceIdHidden}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Duration"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ns"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Strategy"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "aao": {
+                        "text": "static",
+                        "index": 0
+                      },
+                      "tbm": {
+                        "text": "dynamic",
+                        "index": 1
+                      },
+                      "d2s": {
+                        "text": "dynamic to static",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "Selected run \u2014 trace $trace",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Whole run",
+      "description": "Duration of the selected trace's root span (the whole command).",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "include",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Trace parentSpanID",
+                "config": {
+                  "id": "regex",
+                  "options": {
+                    "value": "^$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ],
+          "fields": "/^Trace duration$/",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Deliberate waiting",
+      "description": "Total time in wait.* spans: waits kcp chooses to make (detection windows, promote polls, drains), not time spent waiting on a cluster.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "include",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Trace operationName",
+                "config": {
+                  "id": "regex",
+                  "options": {
+                    "value": "^wait\\."
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "/^Trace duration$/",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Migration phases",
+      "description": "The top level of a migration: reconcile, service setup and the state-machine run.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "include",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Trace operationName",
+                "config": {
+                  "id": "regex",
+                  "options": {
+                    "value": "^(migplan\\.reconcile|migration\\.build_services|migration\\.run)$"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "startTime"
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Trace traceID": true,
+              "Trace spanID": true,
+              "Trace parentSpanID": true,
+              "Trace serviceName": true,
+              "Trace serviceNamespace": true,
+              "Trace kind": true,
+              "Trace statusCode": true,
+              "Trace statusMessage": true,
+              "Trace instrumentationLibraryName": true,
+              "Trace instrumentationLibraryVersion": true,
+              "Trace traceState": true,
+              "Trace serviceTags": true,
+              "Trace logs": true,
+              "Trace references": true,
+              "Trace tags": true,
+              "Trace startTime": true
+            },
+            "renameByName": {
+              "Trace operationName": "span",
+              "Trace duration": "duration"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "span",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false
+        },
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "traces",
+      "title": "Timeline",
+      "description": "The selected trace as a parent/child waterfall.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Migration steps",
+      "description": "Time per state-machine step, in workflow order (migration commands only).",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "include",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Trace operationName",
+                "config": {
+                  "id": "regex",
+                  "options": {
+                    "value": "^step\\."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "startTime"
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Trace traceID": true,
+              "Trace spanID": true,
+              "Trace parentSpanID": true,
+              "Trace serviceName": true,
+              "Trace serviceNamespace": true,
+              "Trace kind": true,
+              "Trace statusCode": true,
+              "Trace statusMessage": true,
+              "Trace instrumentationLibraryName": true,
+              "Trace instrumentationLibraryVersion": true,
+              "Trace traceState": true,
+              "Trace serviceTags": true,
+              "Trace logs": true,
+              "Trace references": true,
+              "Trace tags": true,
+              "Trace startTime": true
+            },
+            "renameByName": {
+              "Trace operationName": "span",
+              "Trace duration": "duration"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "span",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false
+        },
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Deliberate waits",
+      "description": "Each wait.* span in the selected run.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "$trace"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "include",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Trace operationName",
+                "config": {
+                  "id": "regex",
+                  "options": {
+                    "value": "^wait\\."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "startTime"
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Trace traceID": true,
+              "Trace spanID": true,
+              "Trace parentSpanID": true,
+              "Trace serviceName": true,
+              "Trace serviceNamespace": true,
+              "Trace kind": true,
+              "Trace statusCode": true,
+              "Trace statusMessage": true,
+              "Trace instrumentationLibraryName": true,
+              "Trace instrumentationLibraryVersion": true,
+              "Trace traceState": true,
+              "Trace serviceTags": true,
+              "Trace logs": true,
+              "Trace references": true,
+              "Trace tags": true,
+              "Trace startTime": true
+            },
+            "renameByName": {
+              "Trace operationName": "span",
+              "Trace duration": "duration"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "span",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false
+        },
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "Across all runs (since the backend started)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "bargauge",
+      "title": "Mean time per step",
+      "description": "Mean duration of each step.* span over every traced run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (span_name) (max_over_time(traces_spanmetrics_latency_sum{service=\"kcp\", span_name=~\"step\\\\..*\"}[$__range])) / sum by (span_name) (max_over_time(traces_spanmetrics_latency_count{service=\"kcp\", span_name=~\"step\\\\..*\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{span_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "bargauge",
+      "title": "Mean time per operation",
+      "description": "Mean duration of the inner operations (gateway, offset, cluster-link, reconcile reads, waits) over every traced run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (span_name) (max_over_time(traces_spanmetrics_latency_sum{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|wait)\\\\..*\"}[$__range])) / sum by (span_name) (max_over_time(traces_spanmetrics_latency_count{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|wait)\\\\..*\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{span_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "bargauge",
+      "title": "Calls per operation",
+      "description": "How many times each step and operation ran, over every traced run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (span_name) (max_over_time(traces_spanmetrics_calls_total{service=\"kcp\", span_name!=\"\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{span_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    }
+  ]
+}

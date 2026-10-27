@@ -8,7 +8,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/plan"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/goccy/go-yaml"
 )
 
 // PlanResult is the output of GeneratePlan. JSON and Markdown are two
@@ -47,44 +46,24 @@ func GeneratePlan(stateJSON, planInputsYAML []byte) (*PlanResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse state: %w", err)
 	}
-	cfg, err := plan.LoadPlanConfig("")
+	declared, inputWarnings, err := plan.ParseDeclaredInputs(planInputsYAML)
 	if err != nil {
-		return nil, fmt.Errorf("load plan-config: %w", err)
+		return nil, fmt.Errorf("parse plan-inputs: %w", err)
 	}
-	var pi *plan.PlanInputs
-	if len(planInputsYAML) > 0 {
-		var parsed plan.PlanInputs
-		if err := yaml.Unmarshal(planInputsYAML, &parsed); err != nil {
-			return nil, fmt.Errorf("parse plan-inputs: %w", err)
-		}
-		pi = &parsed
-	}
-	resolved := plan.ResolvePlanInputs(pi, cfg)
 	processed := report.NewReportService().ProcessState(*state)
-	// Empty state-file path: library callers passed bytes, not a file.
-	// The renderer omits the "from <path>" header clause when this is
-	// empty; JSON consumers get `"state_file_path": ""`.
-	p, err := plan.NewPlanService(cfg, time.Now).Build(processed, resolved, "")
-	if err != nil {
-		return nil, fmt.Errorf("build plan: %w", err)
-	}
-	js, err := plan.RenderJSON(p)
+	// Empty state-file path: library callers passed bytes, not a file. The
+	// renderer omits the "from <path>" header clause when this is empty.
+	ep := plan.BuildEnginePlan(processed, declared, "", time.Now)
+	// The CLI fails hard on plan-inputs mistakes (unknown keys, invalid values);
+	// a library caller instead gets a plan plus these warnings, so mis-typed
+	// inputs stay detectable rather than being silently dropped. Surface them
+	// first — they precede any advisory warnings the engine added.
+	ep.Warnings = append(inputWarnings, ep.Warnings...)
+	js, err := plan.RenderEnginePlanJSON(ep)
 	if err != nil {
 		return nil, fmt.Errorf("render plan json: %w", err)
 	}
-	md, err := plan.RenderMarkdown(p, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("render plan markdown: %w", err)
-	}
-	// Strip the Raw pointer before YAML marshalling so the echoed
-	// plan-inputs match the flat plan-inputs.yaml shape — Raw is a
-	// runtime helper that surfaces customer-set vs default fields and
-	// has no place in user-facing YAML output.
-	echo := resolved
-	echo.Raw = nil
-	piYAML, err := yaml.Marshal(echo)
-	if err != nil {
-		return nil, fmt.Errorf("marshal resolved plan-inputs: %w", err)
-	}
-	return &PlanResult{JSON: js, Markdown: md, PlanInputs: piYAML}, nil
+	md := plan.RenderEnginePlanMarkdown(ep)
+	piYAML := plan.RenderPlanInputsYAML(ep)
+	return &PlanResult{JSON: []byte(js), Markdown: []byte(md), PlanInputs: []byte(piYAML)}, nil
 }
