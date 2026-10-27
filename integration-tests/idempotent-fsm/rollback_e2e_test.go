@@ -31,7 +31,7 @@ func TestRollback_OnResume_LiftsTheFence(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 	e.snapshot(t, ctx, "after-interrupt", "AFTER interrupt at fenced (expect route fenced, mirrors ACTIVE)", topics)
@@ -40,7 +40,7 @@ func TestRollback_OnResume_LiftsTheFence(t *testing.T) {
 		require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — the interrupt came after the fence step", tp)
 	}
 
-	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failStep, "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
 	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
@@ -73,7 +73,7 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoteAccepted, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoteAccepted, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted mid-batch must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 	ms := e.mirrorStatusAfterPromote(t, ctx, topics, midBatchPromoteSize)
@@ -88,7 +88,7 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 	}
 	require.Equalf(t, midBatchPromoteSize, promoted, "exactly one batch of %d must be promoting or promoted before the resume", midBatchPromoteSize)
 
-	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failStep, "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
 	require.Contains(t, out2, "keeping the fence", "part of the batch is promoted, so the run must not roll back")
@@ -101,7 +101,7 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 		require.Falsef(t, e.isSwitchedToTarget(t, cr, tp), "%s must not be switched yet", tp)
 	}
 
-	out3, err3 := e.runKCP(t, "kcp-run-3-resume.log", "", "migration", "execute", "--migration-yaml", mani)
+	out3, err3 := e.runKCP(t, "kcp-run-3-resume.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err3, "a plain re-run must complete the migration")
 	require.Contains(t, strings.ToLower(out3), "migration complete", "the re-run must report completion")
 
@@ -145,7 +145,7 @@ func TestRollback_OnResume_FailureBeforeTheFenceStep_LiftsTheFence(t *testing.T)
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", killAt, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", killAt, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the interrupted run must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 	e.snapshot(t, ctx, "after-interrupt", "AFTER interrupt with the fence up (expect route fenced, mirrors ACTIVE; static: offset sync off)", topics)
@@ -157,7 +157,7 @@ func TestRollback_OnResume_FailureBeforeTheFenceStep_LiftsTheFence(t *testing.T)
 		require.Equal(t, "false", e.linkOffsetSync(t, ctx), "offset sync must be paused — the interrupt came after the pause")
 	}
 
-	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failBeforeFenceStep, "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failBeforeFenceStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
 	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")

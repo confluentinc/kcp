@@ -1,8 +1,8 @@
 //go:build integration
 
-// This file is the LIVE proof for `kcp migration execute`'s destination auth
+// This file is the LIVE proof for `kcp migration cutover execute`'s destination auth
 // methods. Unlike migrate_clusterlink_*_test.go (which shell out to
-// `kcp migrate apply`), `kcp migration execute` cannot run against
+// `kcp migrate apply`), `kcp migration cutover execute` cannot run against
 // docker-compose alone — it requires a live Kubernetes gateway CR
 // (GetGatewayYAML / ResolveGatewayCapability), which only the Minikube e2e tier
 // (integration-tests/migration/) provides. But the destination-auth code those
@@ -19,7 +19,7 @@
 //     at those listeners exercises identical code.
 //   - REST leg: targets.Credentials.HTTPClient()/Authenticator() driving a real
 //     clusterlink call against dest-basic/dest-mtls/dest-bearer, the wiring
-//     migration execute uses (ListMirrorTopics to reconcile, PromoteTopics to
+//     migration cutover execute uses (ListMirrorTopics to reconcile, PromoteTopics to
 //     promote).
 
 package migrate
@@ -46,7 +46,7 @@ type destKafkaCase struct {
 }
 
 // resolveDestKafkaAuth mirrors destinationConn
-// (cmd/migration/execute/migration_dependencies.go): it resolves the
+// (cmd/migration/cutover/execute/migration_dependencies.go): it resolves the
 // destination Kafka auth from the migration destination credentials via
 // MigrateConn and applies the SASL_SSL backward-compat default. Kept in lockstep
 // with that function so this live test proves the same resolution the CLI runs.
@@ -122,7 +122,7 @@ func TestMigrationDestAuth_KafkaLeg(t *testing.T) {
 // TestMigrationDestAuth_RESTLeg proves every new destination REST auth method
 // authenticates a real clusterlink.ConfluentCloudService call. GetKafkaClusterID
 // (GET /kafka/v3/clusters) is an authenticated request that returns 200 with the
-// cluster id — the exact HTTPClient() + Config.Auth wiring migration execute
+// cluster id — the exact HTTPClient() + Config.Auth wiring migration cutover execute
 // drives (ListMirrorTopics to reconcile, PromoteTopics to promote), without
 // needing a pre-existing cluster link.
 func TestMigrationDestAuth_RESTLeg(t *testing.T) {

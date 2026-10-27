@@ -94,7 +94,7 @@ The typical migration flow:
 - `kcp iac <asset> generate` for Terraform using `target-infra`, `migration-infra`, `topics`, `schemas`; `kcp iac acls kafka|iam generate`; `kcp iac connectors msk|self-managed|connector-utility generate`.
 - `kcp migration resources` for direct creation on the destination cluster through the REST API for cluster links, topics and ACLs.
 
-4. **Execute client switchover** — `kcp migration execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
+4. **Execute client switchover** — `kcp migration cutover execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
 
 ## Key infrastructure decisions
 
@@ -124,7 +124,7 @@ The full CLI reference is generated directly from the Cobra command definitions 
 - [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
 - [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
 - [`kcp iac`](command-reference/iac/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/migration/index.md) — initialize, monitor and execute migrations
+- [`kcp migration`](command-reference/migration/index.md) — cut clients over to Confluent Cloud through the Gateway (`cutover`) and create Kafka resources directly (`resources`)
 - [`kcp ui`](command-reference/ui.md) — launch the local web UI
 - [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
 

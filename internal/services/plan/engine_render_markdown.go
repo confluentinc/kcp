@@ -13,7 +13,7 @@ import (
 // (the migration-type matrix and flags).
 const docMigrationInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"
 const docLinkConfigUpdate = "https://docs.confluent.io/confluent-cli/current/command-reference/kafka/link/configuration/confluent_kafka_link_configuration_update.html"
-const docMigration = "https://confluentinc.github.io/kcp/latest/command-reference/migration/"
+const docMigration = "https://confluentinc.github.io/kcp/latest/command-reference/migration/cutover/"
 const docTargetInfra = "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/target-infra/"
 const docPrivateLinkAttachment = "https://docs.confluent.io/cloud/current/networking/aws-platt.html"
 const docCPClusterLinkCommands = "https://docs.confluent.io/platform/current/multi-dc-deployments/cluster-linking/commands.html"
@@ -924,7 +924,7 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		// include a producer stop, so it leads the section rather than trailing it.
 		gatewayCutover := sw.GatewayMediated
 		if gatewayCutover {
-			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway, and deploy it and route your clients through it, before you run the cutover step below. The Gateway also needs the backend secrets for its credential swap in your secret store before the cutover.")
+			md.AddAlert(markdown.AlertNote, "The Gateway-mediated cutover your Data migration recommendation calls for runs through the Confluent Gateway with `kcp migration cutover`, which needs Confluent for Kubernetes and a Gateway license. [Talk to a person](#talk-to-a-person) to set up the Gateway, and deploy it and route your clients through it, before you run the cutover step below. The Gateway also needs the backend secrets for its credential swap in your secret store before the cutover.")
 		}
 		targetClusterStep(md, cp, stateFilePath, step)
 		// The source credentials (and any listener the link signs in with) must be in
@@ -1138,12 +1138,12 @@ func sourceAuthUnauthOnly(cp ClusterPlan) bool {
 // clusterLinkCutoverStep renders the shared final Cluster Linking cutover step and
 // its backing-out note, used by both the auto-mapped and the specialist-wired
 // cluster-link paths so they read identically. A Gateway-mediated cutover is driven
-// by `kcp migration`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
+// by `kcp migration cutover`, the CPC Gateway cutover tool; a plain Cluster Linking cutover
 // has no such tool and is walked through by hand.
 func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
 	sw := cp.Plan.Switchover
 	if sw.GatewayMediated {
-		md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut over through the Confluent Gateway with `kcp migration` ([docs](" + docMigration + ")). How consumer offsets come across depends on the route type in your `GatewayMigration` manifest. For a static route, enable consumer offset sync on the cluster link before you cut over: set `consumer.offset.sync.enable=true` and list the consumer groups to migrate in `consumer.offset.group.filters` (it defaults to none, and its value is JSON such as `" + engine.OffsetSyncFiltersExample + "`), for example by putting both in a properties file and running `confluent kafka link configuration update <your-link-name> --config <your-link-config-file>` ([docs](" + docLinkConfigUpdate + ")). For a topic-based (dynamic) route, keep consumer offset sync disabled on the link: `kcp migration` refuses the run if it is enabled. Then:")
+		md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut over through the Confluent Gateway with `kcp migration cutover` ([docs](" + docMigration + ")). How consumer offsets come across depends on the route type in your `GatewayMigration` manifest. For a static route, enable consumer offset sync on the cluster link before you cut over: set `consumer.offset.sync.enable=true` and list the consumer groups to migrate in `consumer.offset.group.filters` (it defaults to none, and its value is JSON such as `" + engine.OffsetSyncFiltersExample + "`), for example by putting both in a properties file and running `confluent kafka link configuration update <your-link-name> --config <your-link-config-file>` ([docs](" + docLinkConfigUpdate + ")). For a topic-based (dynamic) route, keep consumer offset sync disabled on the link: `kcp migration cutover` refuses the run if it is enabled. Then:")
 		items := []string{
 			gatewaySecretsItem(cp),
 		}
@@ -1163,8 +1163,8 @@ func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(str
 		}
 		items = append(items,
 			"Write the `GatewayMigration` manifest that describes the migration (source, cluster link, Gateway, and topics) ([docs]("+docMigration+")).",
-			"`kcp migration lag-check --migration-yaml <your-gateway-migration.yaml>` — confirm the mirror has caught up to the source (lag is zero).",
-			"`kcp migration execute --migration-yaml <your-gateway-migration.yaml>` — every run reads the manifest and the live state of the Gateway and cluster link, validates them, and resumes from wherever the live state says work remains (add `--dry-run` to validate only and change nothing), then fences the Gateway, promotes the mirror topics, and switches the Gateway to route to Confluent Cloud.",
+			"`kcp migration cutover lag-check --migration-yaml <your-gateway-migration.yaml>` — confirm the mirror has caught up to the source (lag is zero).",
+			"`kcp migration cutover execute --migration-yaml <your-gateway-migration.yaml>` — every run reads the manifest and the live state of the Gateway and cluster link, validates them, and resumes from wherever the live state says work remains (add `--dry-run` to validate only and change nothing), then fences the Gateway, promotes the mirror topics, and switches the Gateway to route to Confluent Cloud.",
 		)
 		md.AddOrderedList(items)
 		clientCutoverChanges(md, cp)
@@ -1189,7 +1189,7 @@ func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(str
 func selfManagedSinksAfterPromote(md *markdown.Markdown, cp ClusterPlan) {
 	if linkKeepsSelfManagedConnectors(cp) {
 		if cp.Plan.Switchover.GatewayMediated {
-			md.AddParagraph("Once `kcp migration execute` promotes the mirror topics, create your self-managed sink connectors on your Connect cluster. On a static route, each resumes from the offsets synced for its consumer group (`connect-<connector-name>`).")
+			md.AddParagraph("Once `kcp migration cutover execute` promotes the mirror topics, create your self-managed sink connectors on your Connect cluster. On a static route, each resumes from the offsets synced for its consumer group (`connect-<connector-name>`).")
 			return
 		}
 		md.AddParagraph("Once the mirror topics are promoted, create your self-managed sink connectors on your Connect cluster. Each resumes from the offsets synced for its consumer group (`connect-<connector-name>`).")
@@ -1240,7 +1240,7 @@ func gatewaySecretsItem(cp ClusterPlan) string {
 }
 
 // scramRegistrationItem registers each client's SCRAM credentials through the deployed
-// Gateway, so it follows the deploy and precedes `kcp migration execute`.
+// Gateway, so it follows the deploy and precedes `kcp migration cutover execute`.
 func scramRegistrationItem(cp ClusterPlan) string {
 	return "Register each client's SCRAM credentials through the Gateway's registration route (`scram-registration-route`, port 9599) with `kafka-configs --bootstrap-server <gateway-host>:9599 --command-config <admin.properties> --alter --add-config '" + scramMechanismForRegistration(cp) + "=[password=<password>]' --entity-type users --entity-name <client-user>`, and the Gateway stores them in the secret store for you. SCRAM passwords can't contain `[` or `]`, which conflict with the `kafka-configs` bracket syntax."
 }
@@ -1820,7 +1820,7 @@ func connectorsStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string,
 		applyCue := "once you cut your clients over"
 		if byLink {
 			if sw.GatewayMediated {
-				applyCue = "only after `kcp migration execute` promotes the mirror topics"
+				applyCue = "only after `kcp migration cutover execute` promotes the mirror topics"
 			} else {
 				applyCue = "only after you promote the mirror topics"
 			}

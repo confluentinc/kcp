@@ -174,17 +174,17 @@ func failAt(step string) *seam {
 	return &seam{env: killpoint.FailEnvVar + "=" + step, effect: "simulated step failure"}
 }
 
-// execute runs `kcp migration execute --migration-yaml manifest` with s (nil
+// execute runs `kcp migration cutover execute --migration-yaml manifest` with s (nil
 // for a plain run); see runKCP.
 func (e *env) execute(t *testing.T, report, manifest string, s *seam, onLine func(string)) (string, error) {
 	t.Helper()
-	return e.runKCP(t, report, s, onLine, "migration", "execute", "--migration-yaml", manifest)
+	return e.runKCP(t, report, s, onLine, "migration", "cutover", "execute", "--migration-yaml", manifest)
 }
 
-// dryRun runs `kcp migration execute --migration-yaml manifest --dry-run`.
+// dryRun runs `kcp migration cutover execute --migration-yaml manifest --dry-run`.
 func (e *env) dryRun(t *testing.T, report, manifest string) (string, error) {
 	t.Helper()
-	return e.runKCP(t, report, nil, nil, "migration", "execute", "--migration-yaml", manifest, "--dry-run")
+	return e.runKCP(t, report, nil, nil, "migration", "cutover", "execute", "--migration-yaml", manifest, "--dry-run")
 }
 
 // runKCP execs the in-pod kcp binary. Its combined output is streamed line by

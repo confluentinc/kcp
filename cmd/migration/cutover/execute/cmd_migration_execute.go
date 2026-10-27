@@ -53,11 +53,11 @@ its flag, without editing the manifest. A flag that does not apply to the declar
 type is an error. Every flag can also be set through an upper-case environment variable
 named after it (--lag-threshold is LAG_THRESHOLD), which overrides the manifest in the same way.
 
-If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
+If a run is interrupted at any step, simply re-run 'kcp migration cutover execute' — it resumes
 from the live state.
 
 The manifest's fields, validation rules and a fully-annotated example are documented in the
-[Migration manifest reference](../../migration-manifest-reference.md).`
+[Migration manifest reference](../../../migration-manifest-reference.md).`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to the live
 // dependencies both branches share.
@@ -74,11 +74,11 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
 		Example: `  # Run (or resume) the cutover
-  kcp migration execute --migration-yaml gateway-static-migration.yaml
+  kcp migration cutover execute --migration-yaml gateway-static-migration.yaml
 
   # Override a policy default for this run only (a flag that does not apply to
   # the declared migration type is an error)
-  kcp migration execute --migration-yaml gateway-static-migration.yaml --detect-unrouted-producers-duration 60s`,
+  kcp migration cutover execute --migration-yaml gateway-static-migration.yaml --detect-unrouted-producers-duration 60s`,
 		SilenceErrors: true,
 		// A runtime failure mid-cutover (e.g. a source-connect error) must not
 		// bury the error under Cobra's usage block.
@@ -408,7 +408,7 @@ func overrideCommon(cmd *cobra.Command, p *manifest.CommonPolicies) {
 }
 
 // tracerName is the instrumentation scope of this package's spans.
-const tracerName = "kcp/cmd/migration/execute"
+const tracerName = "kcp/cmd/migration/cutover/execute"
 
 // commandContext is the command's context, which carries the command's root
 // span. A command run outside cobra's Execute — as the executor tests do — has

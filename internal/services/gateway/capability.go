@@ -21,7 +21,7 @@ import (
 // spec.configId landed in CFK v3.3.x, and writing an undeclared field is not a
 // no-op — kcp adds it with a JSON Patch (`add /spec/configId`), and the API
 // server rejects an add to a field the CRD does not declare. So the CRD must be
-// read before kcp writes a configId, or `kcp migration execute` breaks on every
+// read before kcp writes a configId, or `kcp migration cutover execute` breaks on every
 // cluster running an older operator.
 //
 // Reading it needs cluster-scoped RBAC, which a namespace-scoped installation of
