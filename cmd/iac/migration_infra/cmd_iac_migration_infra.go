@@ -61,7 +61,7 @@ func NewGenerateCmd() *cobra.Command {
 
 Type options:
 
-> **Note:** "MSK" below also covers Apache Kafka-compatible sources — including Confluent Platform — hosted on AWS; Type 5 (IAM) is MSK-only. See [Source compatibility](../../source-compatibility.md) for exactly which types apply to which source.
+> **Note:** "MSK" below also covers Apache Kafka-compatible sources — including Confluent Platform — hosted on AWS; Type 5 (IAM) is MSK-only.
 
 1. Public MSK endpoints — Cluster Link (SASL/SCRAM)
 2. Private MSK endpoints — External Outbound Cluster Link (SASL/SCRAM, Enterprise only)
