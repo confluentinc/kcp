@@ -6,6 +6,10 @@ same commands work on Linux, macOS (Intel + Apple Silicon), and Windows (via
 Docker Desktop / WSL2). There is no Windows-specific image — Windows hosts run
 the Linux image through their Linux backend.
 
+For the scanning workflow itself (credentials, `scan clusters`, and the optional
+schema registry and connector scans), see [Getting started](getting-started.md).
+This page covers running those same commands in a container.
+
 ## Pull
 
 ```bash
