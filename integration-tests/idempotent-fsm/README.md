@@ -51,7 +51,8 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..085`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `011..085`: rollback when a resume fails before its own fence step
+in `001..005` and `011..085`: drift reproduction (operator stopped mid-switch)
+`001..005` (static only), rollback when a resume fails before its own fence step
 `011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
 and through a rollback `026..030` (dynamic only), unrouted-producer detection
@@ -125,5 +126,18 @@ produce-only fence over exactly the batch's topics to the live route: the fence
 step, a resume, the switch and a rollback must all keep it, and remove only
 kcp's fence. On static, a third (`TestOperatorFence_StaticRouteIsRefused`)
 fences the route with the operator's own fence first: execute must refuse and
-leave the route and the mirrors as they were. The env vars are named
+leave the route and the mirrors as they were.
+
+A drift reproduction (`drift_e2e_test.go`, static only) asserts **today's**
+buggy behaviour on purpose, so a pass confirms the bug. A run is killed after
+promote, then the CFK operator is scaled to 0. The resumed run's switchover
+patch lands on the gateway CR but never reaches the pods, so the switch times
+out, with no rollback past promote. The CR then says switched while producers
+through the gateway are still fenced, yet `--dry-run` plans no work and a
+re-run reports nothing to do and exits 0. The operator is scaled back up when
+the test ends. Once kcp detects drift between the CR and the pods, the
+dry-run and the re-run must refuse instead, and this test flips to assert
+that. The runner's Role grants `deployments/scale` for this test alone.
+
+The env vars are named
 `KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.
