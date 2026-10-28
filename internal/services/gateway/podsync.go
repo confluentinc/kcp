@@ -188,13 +188,17 @@ func checkRolledOut(ctx context.Context, clientset kubernetes.Interface, namespa
 			r.observe("The gateway Deployment reports a rollout in progress (%d of %d pods updated). If it completes, re-run.",
 				s.UpdatedReplicas, s.Replicas)
 		}
+		if s.ObservedGeneration < dep.Generation {
+			return r.verdict(PodsOutOfSync, fmt.Sprintf("the gateway Deployment %q has not finished rolling out: its controller has observed generation %d of %d",
+				dep.Name, s.ObservedGeneration, dep.Generation)), nil
+		}
 		return r.verdict(PodsOutOfSync, fmt.Sprintf("the gateway Deployment %q has not finished rolling out: %d of %d pods updated, %d available",
 			dep.Name, s.UpdatedReplicas, s.Replicas, s.AvailableReplicas)), nil
 	}
 	if len(terminatingPods) > 0 {
 		// The Deployment reports complete while a replaced pod still runs the
 		// previous config, for up to its grace period, which bounds the hint.
-		r.observe("The gateway Deployment reports a rollout in progress (%d pod(s) still terminating). If it completes, re-run.",
+		r.observe("A replaced gateway pod is still terminating (%d pod(s)). If it completes, re-run.",
 			len(terminatingPods))
 		return r.verdict(PodsOutOfSync, fmt.Sprintf("gateway pod %s is still terminating and may still serve the previous config",
 			terminatingPods[0])), nil
@@ -244,8 +248,11 @@ func checkPodsReportConfigID(ctx context.Context, clientset kubernetes.Interface
 	}
 
 	values := map[string]bool{}
-	anyAbsent, anyUnset := false, false
+	anyAbsent, anyUnset, allAbsent := false, false, true
 	for _, p := range results {
+		if p.result.Outcome != ProbeEndpointAbsent {
+			allAbsent = false
+		}
 		switch p.result.Outcome {
 		case ProbeApplied:
 			values[p.result.ConfigID] = true
@@ -257,7 +264,7 @@ func checkPodsReportConfigID(ctx context.Context, clientset kubernetes.Interface
 	}
 
 	if len(values) == 0 {
-		if anyAbsent {
+		if allAbsent {
 			return r.verdict(PodsCannotTell, "the gateway pods do not serve GET /config, so kcp cannot read which config they loaded"), nil
 		}
 		return r.verdict(PodsCannotTell, "no gateway pod reports a configId yet, so there is nothing to compare with the CR"), nil

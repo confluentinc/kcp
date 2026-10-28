@@ -176,6 +176,17 @@ func TestCheckPodSync(t *testing.T) {
 			notEvidence:  []string{"re-run"},
 		},
 		{
+			name: "hot reload off: complete counts but the Deployment controller lags is out of sync",
+			cr:   newGatewayCR(gw, ns, 3, 3, true),
+			objects: []runtime.Object{
+				newGatewayDeployment(gw, ns, 2, withObservedGeneration(1), withReplicas(2),
+					withUpdatedReplicas(2), withAvailableReplicas(2)),
+				pod("gw-1", true), pod("gw-2", true),
+			},
+			wantVerdict: PodsOutOfSync,
+			wantDetail:  `the gateway Deployment "gw" has not finished rolling out: its controller has observed generation 1 of 2`,
+		},
+		{
 			name:        "hot reload off: a terminating pod is out of sync with the re-run hint",
 			cr:          newGatewayCR(gw, ns, 3, 3, true),
 			objects:     []runtime.Object{settled(), pod("gw-1", true), pod("gw-2", true), terminating(pod("gw-0", true))},
@@ -183,7 +194,7 @@ func TestCheckPodSync(t *testing.T) {
 			wantDetail:  "gateway pod gw-0 is still terminating and may still serve the previous config",
 			wantEvidence: []string{
 				"pod gw-0: terminating",
-				"The gateway Deployment reports a rollout in progress (1 pod(s) still terminating). If it completes, re-run.",
+				"A replaced gateway pod is still terminating (1 pod(s)). If it completes, re-run.",
 			},
 		},
 		{
@@ -234,6 +245,17 @@ func TestCheckPodSync(t *testing.T) {
 			wantVerdict:  PodsCannotTell,
 			wantDetail:   "the gateway pods do not serve GET /config, so kcp cannot read which config they loaded",
 			wantEvidence: []string{"pod gw-1: GET /config not served", "pod gw-2: GET /config not served"},
+		},
+		{
+			name:    "a 404 and a never-set pod is cannot tell with the never-set copy",
+			cr:      hotReloadOn("kcp-a"),
+			objects: []runtime.Object{pod("gw-1", true), pod("gw-2", true)},
+			probe: outcomeProber(map[string]ProbeResult{
+				"gw-1": {Outcome: ProbeEndpointAbsent},
+				"gw-2": {Outcome: ProbeNeverSet},
+			}),
+			wantVerdict: PodsCannotTell,
+			wantDetail:  "no gateway pod reports a configId yet, so there is nothing to compare with the CR",
 		},
 		{
 			name:    "hot reload on: never set and a value is out of sync",

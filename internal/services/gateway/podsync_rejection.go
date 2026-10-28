@@ -19,7 +19,7 @@ func lastSpecWriteTime(cr *unstructured.Unstructured) (time.Time, bool) {
 		if entry.Subresource == "status" || entry.Time == nil {
 			continue
 		}
-		if !found || entry.Time.Time.After(newest) {
+		if !found || entry.Time.After(newest) {
 			newest = entry.Time.Time
 			found = true
 		}

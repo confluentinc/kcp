@@ -69,7 +69,9 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		}
 	}
 
-	// A failed gate stops the run before any topic is evaluated.
+	// A gate that fails before topic evaluation leaves no topics to list. The
+	// pod check fails after topics are evaluated, so its refusal still shows
+	// them below.
 	topicsEvaluated := len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged)+len(r.FailFast) > 0
 	if failedGates > 0 && !topicsEvaluated {
 		// No topic lines to attach warnings to, but a refusal's warnings can
