@@ -113,10 +113,18 @@ func envOr(key, fallback string) string {
 // matching setup.sh.
 func (e *env) topic(i int) string { return fmt.Sprintf("%s%03d", e.topicPrefix, i) }
 
-// writeManifest renders a conversion manifest for this environment into the
-// in-pod rendered dir and saves a copy in the test's report folder. Its
-// metadata.name, which kcp prints as the migration id, is "rc-<name>".
+// The migration id kcp prints is "rc-<name>"; a zero detect omits the commits window.
 func (e *env) writeManifest(t *testing.T, name string, detect time.Duration) (path, id string) {
+	t.Helper()
+	policies := ""
+	if detect > 0 {
+		policies = fmt.Sprintf("    policies:\n      detectUnroutedCommitsDuration: %s\n", detect)
+	}
+	return e.writeManifestWithPolicies(t, name, policies)
+}
+
+// Takes the conversion's policies block verbatim, for a test that writes an explicit window.
+func (e *env) writeManifestWithPolicies(t *testing.T, name, policies string) (path, id string) {
 	t.Helper()
 	id = "rc-" + name
 	manifest := fmt.Sprintf(`apiVersion: kcp.confluent.io/v1alpha1
@@ -146,12 +154,10 @@ spec:
     route:
       name: %q
       targetStreamingDomain: %q
-    policies:
-      detectUnroutedCommitsDuration: %s
-`, id, e.sourceBootstrap, filepath.Join(e.renderedDir, "source-creds.yaml"),
+%s`, id, e.sourceBootstrap, filepath.Join(e.renderedDir, "source-creds.yaml"),
 		e.destClusterID, e.destBootstrap, e.restEndpoint, filepath.Join(e.renderedDir, "dest-kafka-creds.yaml"),
 		e.linkName, e.destBootstrap, filepath.Join(e.renderedDir, "link-creds.yaml"),
-		e.namespace, e.gateway, e.route, e.domains.Dest, detect)
+		e.namespace, e.gateway, e.route, e.domains.Dest, policies)
 	path = filepath.Join(e.renderedDir, id+".yaml")
 	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write the conversion manifest")
 	e.saveReport(t, "manifest.yaml", manifest)
