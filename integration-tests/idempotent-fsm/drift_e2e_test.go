@@ -17,17 +17,17 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// TestDrift_StalledSwitchRerunReportsNothingToDo reproduces the Gateway drift
-// bug (design: ~/claude-plans/kcp/2026-10-23-gateway-cr-pod-sync-design.md
-// §8.1) and asserts TODAY's behaviour, so a pass confirms the bug. Run 1 is
-// killed after promote. The CFK operator is then stopped, so run 2's
-// switchover patch lands on the CR but never reaches the pods: the switch
-// times out waiting for the operator, past promote, so nothing rolls back.
-// The CR now says switched while the pods still serve the fence, and clients
-// can't produce. A re-run reads the CR alone, finds nothing to do and exits
-// 0. When drift detection lands, the dry-run and the re-run flip to a
-// refusal. Static only. Slice tbm-topic-001..005.
-func TestDrift_StalledSwitchRerunReportsNothingToDo(t *testing.T) {
+// TestDrift_StalledSwitchRerunIsRefused is the regression test for the
+// Gateway drift bug (design: ~/claude-plans/kcp/2026-10-23-gateway-cr-pod-sync-design.md
+// §8.1). Run 1 is killed after promote. The CFK operator is then stopped, so
+// run 2's switchover patch lands on the CR but never reaches the pods: the
+// switch times out waiting for the operator, past promote, so nothing rolls
+// back. The CR now says switched while the pods still serve the fence, and
+// clients can't produce. Before the pod check, a re-run read the CR alone,
+// found nothing to do and exited 0. Now the pod check sees the operator hasn't
+// caught up with the CR, so the dry-run and the re-run refuse, and the re-run
+// makes no gateway write. Static only. Slice tbm-topic-001..005.
+func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	e := newEnv()
 	if e.mode != "static" {
 		t.Skip("static routes only: the reproduction takes the AAO rollout-verification path")
@@ -107,22 +107,61 @@ func TestDrift_StalledSwitchRerunReportsNothingToDo(t *testing.T) {
 	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
 
 	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
-	require.NoError(t, err3, "today a dry-run sees nothing wrong")
-	require.Contains(t, out3, "0 to migrate", "today a dry-run plans no work")
-	require.Contains(t, out3, "unchanged", "today a dry-run classifies every topic Unchanged")
+	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out3, "gateway pods serve the CR", "the dry-run must name the failed pod check")
+	require.Contains(t, out3, "the operator has not caught up with the CR", "the dry-run must say the operator is behind the CR")
 
 	out4, err4 := e.runKCP(t, "kcp-run-4-rerun.log", "", "migration", "execute", "--migration-yaml", mani)
-	require.NoError(t, err4, "today the re-run exits 0")
-	requireNothingToDo(t, out4)
+	require.Error(t, err4, "the re-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out4, "reconcile plan refused", "the re-run must exit on the refusal")
+	require.NotContains(t, out4, fsmStartBanner, "no state machine may run on a refused plan")
 	gen2, obs2 := e.crGenerations(t, ctx)
 	require.Equal(t, gen1, gen2, "the re-run must make no gateway write")
 	require.Equal(t, obs1, obs2, "the operator is still stopped")
 	acks, firstErr = produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
-	require.Zerof(t, acks, "clients must still be fenced after the re-run reported success (first error: %v)", firstErr)
-	e.snapshot(t, ctx, "after-rerun", "AFTER the re-run (kcp reported success; CR switched; pods still fenced)", topics)
+	require.Zerof(t, acks, "clients are still fenced: the refusal changes nothing (first error: %v)", firstErr)
+	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; pods still fenced; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: BUG REPRODUCED — the CR is switched at generation %d, the operator last observed generation %d, "+
-		"so the pods still serve the fence, and the re-run exited 0 with nothing to do while clients stayed fenced.", gen1, obs1)
+	t.Logf("\n✅ RESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
+		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
+}
+
+// TestDrift_TerminatingPodRefusesUntilSettled pins the pod check's refusal
+// while a replaced gateway pod is still terminating (design §5.2). On a
+// hot-reload-off gateway the fence's rollout reports complete while the old
+// pod terminates for up to its grace period, and that pod may still serve
+// the unfenced config. A dry-run straight after the fenced run must refuse
+// with the rollout-in-progress hint; once the gateway settles, the same
+// dry-run must pass. The test never promotes, but it still reserves its slice
+// so its plan is deterministic. Static only. Slice tbm-topic-091..095.
+func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: a hot-reload gateway replaces no pods")
+	}
+	ctx := context.Background()
+	e.resetStaticRoute(t, ctx)
+	topics := e.topicRange(91, 95)
+	mani := e.writeManifest(t, "drift-terminating-pod", topics)
+	e.saveManifest(t, mani)
+	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
+
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "execute", "--migration-yaml", mani)
+	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
+	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
+
+	out2, err2 := e.runKCPUnsettled(t, "kcp-run-2-dry-run-unsettled.log", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	require.Error(t, err2, "the dry-run must refuse while a replaced gateway pod is terminating")
+	require.Contains(t, out2, "is still terminating", "the dry-run must name the terminating pod")
+	require.Contains(t, out2, "If it completes, re-run.", "the dry-run must carry the rollout-in-progress hint")
+	e.snapshot(t, ctx, "after-fence", "AFTER interrupt at fenced (expect fenced, mirrors ACTIVE)", topics)
+
+	e.waitForGatewaySettled(t, ctx)
+	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run-settled.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	require.NoError(t, err3, "once the gateway settles the dry-run must pass")
+	require.NotContains(t, out3, "is still terminating", "no gateway pod may be terminating once settled")
+
+	t.Logf("\n✅ RESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
 }
 
 // The CFK operator, as e2e_install_operator installs it
