@@ -18,10 +18,18 @@ var _ GatewayConfigSource = (*GatewayFile)(nil)
 type GatewayFile struct {
 	path      string
 	routeName string
+	sync      reconcile.GatewaySync
 }
 
 func NewGatewayFile(path, routeName string) *GatewayFile {
 	return &GatewayFile{path: path, routeName: routeName}
+}
+
+// WithSync sets the pod-sync verdict Load reports, a test seam: a file has no
+// pods to check, so the default stays SyncUnchecked.
+func (g *GatewayFile) WithSync(s reconcile.GatewaySync) *GatewayFile {
+	g.sync = s
+	return g
 }
 
 func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) {
@@ -42,7 +50,7 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 	if err != nil {
 		return nil, fmt.Errorf("marshalling cleaned gateway config %q: %w", g.path, err)
 	}
-	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc}, nil
+	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc, Sync: g.sync}, nil
 }
 
 // cleanGatewayDoc strips the Kubernetes server-managed fields a live CR read
