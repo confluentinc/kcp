@@ -64,8 +64,12 @@ CLI flag can override for a single run, without editing the file.
 - **Connections.** Every `execute` run, including `--dry-run`, connects to the
   source Kafka cluster, the destination Kafka cluster, the cluster-link REST
   API and the Kubernetes API, using the credentials and kubeconfig named in the
-  manifest. To confirm that each gateway pod applied a config change, the
-  Kubernetes identity also needs `get` on `pods/proxy`.
+  manifest. Every run, including `--dry-run`, checks that the gateway pods
+  serve the Gateway CR before deciding anything: it reads the CR's status, the
+  gateway Deployment and its pods, and, on a gateway with hot reload on, each
+  pod's `/config` endpoint. The Kubernetes identity needs `get` on
+  `deployments`, `list` on `pods` and `get` on `pods/proxy`. kcp refuses the
+  run when the pods may not match the CR, and shows what it observed.
 - **Producers must use the gateway.** The fence blocks traffic that goes
   through the gateway. Producers writing to the source directly are not
   blocked, and the check that catches them (`detectUnroutedProducersDuration`)
