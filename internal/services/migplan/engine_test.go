@@ -124,46 +124,95 @@ func TestEngineRunHappyPath(t *testing.T) {
 	}
 }
 
-// TestEngineRun_StaticSwitchedButUnobservedCRIsNothingToDo reproduces the
+// TestEngineRun_StaticSwitchedButUnobservedCR is the regression test for the
 // Gateway drift bug (design: ~/claude-plans/kcp/2026-10-23-gateway-cr-pod-sync-design.md
-// §8.2) as TODAY's behaviour. The CR is switched to the target, but its
-// status shows the operator never observed that generation, so the pods may
-// still serve the fence. Reconcile reads the spec alone: every topic is
-// Unchanged and the run is nothing-to-do. When drift detection lands, this
-// test flips to a refusal.
-func TestEngineRun_StaticSwitchedButUnobservedCRIsNothingToDo(t *testing.T) {
-	eng := NewReconciliationEngine(
-		NewGatewayFile("testdata/gateway-static-switched-unobserved.yaml", "migration-route"),
-		&fakeLister{topics: []string{"orders"}}, // source
-		&fakeLister{topics: []string{"orders"}}, // target
-		&fakeLink{ls: &LinkStatus{
-			Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped},
-		}},
-		&fakeSecretChecker{},
-	)
-	in := reconcile.ReconcileInput{Type: reconcile.TypeStatic, Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
-	plan, err := eng.Run(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
+// §8.2). The CR is switched to the target, but its status shows the operator
+// never observed that generation, so the pods may still serve the fence.
+// Reconcile reads the spec alone and would call every topic Unchanged; the pod
+// check's verdict now decides whether that stands.
+func TestEngineRun_StaticSwitchedButUnobservedCR(t *testing.T) {
+	run := func(t *testing.T, sync reconcile.GatewaySync) *reconcile.Plan {
+		t.Helper()
+		eng := NewReconciliationEngine(
+			NewGatewayFile("testdata/gateway-static-switched-unobserved.yaml", "migration-route").WithSync(sync),
+			&fakeLister{topics: []string{"orders"}}, // source
+			&fakeLister{topics: []string{"orders"}}, // target
+			&fakeLink{ls: &LinkStatus{
+				Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped},
+			}},
+			&fakeSecretChecker{},
+		)
+		in := reconcile.ReconcileInput{Type: reconcile.TypeStatic, Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+		plan, err := eng.Run(context.Background(), in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
 	}
-	if plan.Report.Refused() {
-		t.Fatalf("today's reconcile must not refuse an unobserved switched CR, refused: %+v", plan.Report)
+	podsCheck := func(t *testing.T, plan *reconcile.Plan) reconcile.PreconditionResult {
+		t.Helper()
+		for _, pc := range plan.Report.Preconditions {
+			if pc.Name == reconcile.GatewayPodsCheckName {
+				return pc
+			}
+		}
+		t.Fatalf("no %q precondition in %+v", reconcile.GatewayPodsCheckName, plan.Report.Preconditions)
+		return reconcile.PreconditionResult{}
 	}
-	if len(plan.Report.Unchanged) != 1 || plan.Report.Unchanged[0].Topic != "orders" {
-		t.Fatalf("Unchanged = %+v, want [orders]", plan.Report.Unchanged)
+	requireRefused := func(t *testing.T, plan *reconcile.Plan) reconcile.PreconditionResult {
+		t.Helper()
+		if !plan.Report.Refused() {
+			t.Fatalf("expected a refusal, got %+v", plan.Report)
+		}
+		if plan.NothingToDo {
+			t.Fatal("a refused plan must not be NothingToDo")
+		}
+		if plan.Artifacts != nil {
+			t.Fatalf("Artifacts = %+v, want nil", plan.Artifacts)
+		}
+		pc := podsCheck(t, plan)
+		if pc.OK {
+			t.Fatalf("pods check passed, want failed: %+v", pc)
+		}
+		return pc
 	}
-	if plan.Artifacts != nil {
-		t.Fatalf("Artifacts = %+v, want nil: nothing is left to fence or switch", plan.Artifacts)
-	}
-	if !plan.NothingToDo {
-		t.Fatal("the plan must be NothingToDo: the CR alone says the switch is done")
-	}
-	if res := newResult(plan); res.SwitchoverYAML != "" {
-		t.Fatalf("SwitchoverYAML = %q, want empty", res.SwitchoverYAML)
-	}
-	if strings.Contains(plan.GatewayYAML, "observedGeneration") {
-		t.Fatal("the status that shows the operator lagging is stripped before reconcile decides")
-	}
+
+	t.Run("out of sync refuses", func(t *testing.T) {
+		detail := "the operator has not caught up with the CR: status.observedGeneration is 6, metadata.generation is 7"
+		plan := run(t, reconcile.GatewaySync{Verdict: reconcile.SyncOutOfSync, Detail: detail})
+		if pc := requireRefused(t, plan); pc.Detail != detail {
+			t.Fatalf("Detail = %q, want %q", pc.Detail, detail)
+		}
+	})
+
+	t.Run("cannot tell refuses, because the switch is treated as done", func(t *testing.T) {
+		plan := run(t, reconcile.GatewaySync{Verdict: reconcile.SyncCannotTell, Detail: "could not read the gateway pods"})
+		if pc := requireRefused(t, plan); !strings.Contains(pc.Detail, "1 topic(s) on the target") {
+			t.Fatalf("Detail = %q, want it to mention 1 topic(s) on the target", pc.Detail)
+		}
+	})
+
+	t.Run("in sync is nothing to do", func(t *testing.T) {
+		plan := run(t, reconcile.GatewaySync{Verdict: reconcile.SyncInSync})
+		if plan.Report.Refused() {
+			t.Fatalf("expected success, refused: %+v", plan.Report)
+		}
+		if len(plan.Report.Unchanged) != 1 || plan.Report.Unchanged[0].Topic != "orders" {
+			t.Fatalf("Unchanged = %+v, want [orders]", plan.Report.Unchanged)
+		}
+		if plan.Artifacts != nil {
+			t.Fatalf("Artifacts = %+v, want nil: nothing is left to fence or switch", plan.Artifacts)
+		}
+		if !plan.NothingToDo {
+			t.Fatal("the plan must be NothingToDo: the CR and the pods agree the switch is done")
+		}
+		if res := newResult(plan); res.SwitchoverYAML != "" {
+			t.Fatalf("SwitchoverYAML = %q, want empty", res.SwitchoverYAML)
+		}
+		if strings.Contains(plan.GatewayYAML, "observedGeneration") {
+			t.Fatal("the status that shows the operator lagging is stripped before reconcile decides")
+		}
+	})
 }
 
 // TestEngineRunProviderErrorIsError proves that a failure in ANY of the four
