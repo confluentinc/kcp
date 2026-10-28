@@ -113,7 +113,7 @@ assertions here are on offsets, never on client exit codes.
 |---|---|---|
 | CFK chart | `0.1718.34` (appVersion 3.3.0) | First chart whose Gateway CRD declares `spec.configId`. **The public Helm repo tops out at `0.1718.10`**, so the chart must come from a local checkout — set `CFK_CHART_PATH` |
 | CFK operator image | `v0.1718.34-amd64` from internal ECR | Docker Hub's operator also stops at `0.1718.10`. Published amd64-only |
-| Gateway | `confluent-gateway-for-cloud:1.3.0` | First release serving `GET /config`. 1.2.x has the licence hook but no endpoint. Multi-arch |
+| Gateway | `confluent-gateway-for-cloud:1.4.0` | 1.3.0 was the first release serving `GET /config`; 1.2.x has the licence hook but no endpoint. Multi-arch |
 | Init container | `confluent-init-container:3.3.0` | Matches CFK 3.3.x. Multi-arch |
 | Licence | CP **Enterprise**, non-expired | The gateway gates its config-file watcher on it |
 | Source broker | `cp-kafka:7.6.0` | Not load-bearing. Matches the other integration suites so it is usually already cached |

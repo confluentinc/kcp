@@ -7,7 +7,7 @@
 # kcp migration execute and interrupts it at kill points to prove resume.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
-# from integration-tests/migration (chart 0.1838.0, cpc-gateway 1.4.0-master-*,
+# from integration-tests/migration (chart 0.1838.0, gateway 1.4.0,
 # SASL_SSL destination, cluster link, REST proxy); the licence/configId/hotReload
 # plumbing is copied from integration-tests/migration-hot-reload. The steps this
 # suite shares with integration-tests/route-conversion (version pins, minikube,

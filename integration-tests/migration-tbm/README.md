@@ -70,7 +70,7 @@ via `GOTOOLCHAIN=auto` against the version pinned in `.go-version`.
 | `CFK_CHART_OCI` | `oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes` | ECR mirror |
 | `CFK_CHART_VERSION` | `0.1838.0` | First chart with **both** the dynamic-route CRD and `spec.configId` |
 | `OPERATOR_IMAGE` | `635910096382.../kcp/confluent-operator:v0.1838.0-amd64` | amd64-only; side-loaded and emulated on arm64 nodes |
-| `GATEWAY_IMAGE` / `GATEWAY_TAG` | `.../kcp/cpc-gateway:1.4.0-master-430-arm64` (arm64) / `...-424-amd64` | Proven dynamic-routing build; native-arch |
+| `GATEWAY_IMAGE` / `GATEWAY_TAG` | `confluentinc/confluent-gateway-for-cloud:1.4.0` | Public, multi-arch |
 | `INIT_IMAGE` | `confluentinc/confluent-init-container:3.3.0` | Matches CFK 3.3.x |
 | `CP_SERVER_TAG` | `8.1.2` | Source + destination brokers |
 
