@@ -443,7 +443,7 @@
                 },
                 "detectUnroutedCommitsDuration": {
                   "type": "string",
-                  "description": "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
+                  "description": "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) skips the check. When set the minimum is 10s.",
                   "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
                 },
                 "offsetSyncConcurrency": {
