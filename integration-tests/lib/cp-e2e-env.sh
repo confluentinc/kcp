@@ -3,7 +3,7 @@
 # the tracing suite's copies of them under integration-tests/tracing).
 # Sourced by each suite's setup.sh, never run on its own. Each function is one
 # step of the original idempotent-fsm setup.sh, moved here unchanged so the two
-# environments cannot drift: the version pins, minikube, ECR images, the CFK
+# environments cannot drift: the version pins, minikube, images, the CFK
 # operator, the CP credentials and CA, the KRaft controllers and Kafka brokers,
 # the gateway licence and client-tls keystore, the destination REST credential
 # secret, the KafkaRestClass, and the static route's swap-auth secrets.
@@ -25,16 +25,11 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The dynamic-routing gateway build. 1.4.0-master-461 is published for both
-# architectures, so a local (arm64) run and CI (amd64) run the same gateway code;
-# the native-arch tag means the gateway pod needs no emulation. Only the operator
-# image is amd64-only.
-case "$(uname -m)" in
-  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-461-arm64" ;;
-  *) GATEWAY_TAG_DEFAULT="1.4.0-master-461-amd64" ;;
-esac
-GATEWAY_TAG="${GATEWAY_TAG:-${GATEWAY_TAG_DEFAULT}}"
-GATEWAY_IMAGE="${GATEWAY_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/cpc-gateway:${GATEWAY_TAG}}"
+# The public gateway image is multi-arch, so the gateway pod runs natively on
+# both a local (arm64) and a CI (amd64) node. Only the operator image is
+# amd64-only.
+GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}}"
 INIT_IMAGE="${INIT_IMAGE:-confluentinc/confluent-init-container:3.3.0}"
 CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
@@ -143,7 +138,7 @@ e2e_start_minikube() {
   KUBECONFIG_PATH="${HOME}/.kube/config"
 }
 
-# e2e_pull_images — private operator + gateway from ECR; public CP images in background.
+# e2e_pull_images — private operator from ECR; public gateway and CP images.
 e2e_pull_images() {
   echo "Authenticating to ECR..."
   ensure_ecr_aws_creds
