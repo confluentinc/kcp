@@ -7,7 +7,7 @@
 # bumped spec.configId (hot reload, no pod roll) between mirror promotions.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
-# from integration-tests/migration (chart 0.1838.0, cpc-gateway 1.4.0-master-*,
+# from integration-tests/migration (chart 0.1838.0, gateway 1.4.0,
 # SASL_SSL destination, cluster link, REST proxy); the licence/configId/hotReload
 # plumbing is copied from integration-tests/migration-hot-reload.
 #
@@ -37,15 +37,10 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The dynamic-routing gateway build. 1.4.0-master-430 is the proven dynamic build
-# (see ~/gateway-testing/gateway-dynamic-local.yaml). Native-arch tag so the
-# gateway pod needs no emulation; only the operator image is amd64-only.
-case "$(uname -m)" in
-  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-430-arm64" ;;
-  *) GATEWAY_TAG_DEFAULT="1.4.0-master-424-amd64" ;;
-esac
-GATEWAY_TAG="${GATEWAY_TAG:-${GATEWAY_TAG_DEFAULT}}"
-GATEWAY_IMAGE="${GATEWAY_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/cpc-gateway:${GATEWAY_TAG}}"
+# The public gateway image is multi-arch, so the gateway pod needs no emulation;
+# only the operator image is amd64-only.
+GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}}"
 INIT_IMAGE="${INIT_IMAGE:-confluentinc/confluent-init-container:3.3.0}"
 CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
@@ -171,7 +166,7 @@ fi
 eval "$(minikube docker-env --profile "${PROFILE}" 2>/dev/null || true)"
 KUBECONFIG_PATH="${HOME}/.kube/config"
 
-# --- Images (private operator + gateway from ECR; public CP images in background) ---
+# --- Images (private operator from ECR; public gateway and CP images) ---
 echo "Authenticating to ECR..."
 ensure_ecr_aws_creds
 aws ecr get-login-password --region "${AWS_REGION}" \
