@@ -239,6 +239,12 @@ blocks:
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
 
+        # Scans the compiled linux binary (see `make trivy-binary`). Unlike `trivy fs`
+        # it sees the Go stdlib the binary was built with.
+        - name: 'trivy binary scan'
+          commands:
+            - make trivy-binary TRIVY_FLAGS="--db-repository=$TRIVY_DB_REPOSITORIES"
+
   - name: 'docs build'
     dependencies: ['resolve go dependencies']
     task:
