@@ -8,9 +8,7 @@
 # The engine reads this CR's SHAPE over the k8s API, reads topics/cluster-IDs by
 # connecting DIRECTLY to the brokers, and promotes mirrors over the destination
 # REST proxy. The gateway->broker upstream leg is never exercised. Declaring it
-# passthrough/PLAINTEXT keeps the CR structurally simple and sidesteps the known
-# dynamic-route swap-filter bug (cpc-gateway <=1.4.0-master-424 drops the per-leg
-# AuthSwap filter on dynamic routes; see ~/gateway-testing/CHANGES.md). The SASL_SSL
+# passthrough/PLAINTEXT keeps the CR structurally simple. The SASL_SSL
 # destination still matters for the cluster-link / REST / mirror-promotion path,
 # which does not go through the gateway.
 #
@@ -98,9 +96,8 @@ spec:
           # engine's OwnerRoute resolves "on source" via a condition and never needs
           # routing.default. This threads the needle between two incompatible schemas:
           # the CFK 0.1838.0 CRD forbids routing.default (it models the fallback as
-          # unmatchedTopics), while this gateway app build (cpc-gateway 1.4.0-master-430)
-          # forbids unmatchedTopics (it wants default). Using conditions only avoids
-          # both. The engine's switchover prepends per-batch conditions ahead of this
+          # unmatchedTopics), while the gateway app forbids unmatchedTopics (it
+          # wants default). Using conditions only avoids both. The engine's switchover prepends per-batch conditions ahead of this
           # one (first-match-wins), so migrated topics resolve to the target.
           conditions:
             - topicPatterns: [".*"]
