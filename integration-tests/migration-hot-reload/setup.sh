@@ -40,7 +40,7 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-GATEWAY_TAG="${GATEWAY_TAG:-1.3.0}"
+GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
 INIT_TAG="${INIT_TAG:-3.3.0}"
 # The broker behind the gateway's SOURCE domain. Not a version pin in the same
 # sense as the others — nothing here depends on this being 7.6.0, it just matches

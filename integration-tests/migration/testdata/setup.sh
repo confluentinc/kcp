@@ -23,24 +23,18 @@ OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
 OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
 OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The gateway app image (kcp/cpc-gateway) is the internal build whose swap
-# implementation actually honours the redundant-auth CR shape; confluentinc's
-# public confluent-gateway-for-cloud does not implement it. Defaults to a
-# native-arch tag so neither local dev (Apple Silicon) nor CI
+# The public gateway 1.4.0 swap implementation honours the redundant-auth CR
+# shape. The image is multi-arch, so neither local dev (Apple Silicon) nor CI
 # (s1-prod-ubuntu24-04-amd64-2) needs cross-arch emulation for the gateway pod
 # itself — only the operator, which is amd64-only regardless of host arch.
-case "$(uname -m)" in
-  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-430-arm64" ;;
-  *) GATEWAY_TAG_DEFAULT="1.4.0-master-424-amd64" ;;
-esac
-GATEWAY_TAG="${GATEWAY_TAG:-${GATEWAY_TAG_DEFAULT}}"
-GATEWAY_IMAGE="${GATEWAY_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/cpc-gateway:${GATEWAY_TAG}}"
+GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}}"
 CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
 INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.3.0}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
-# CI has no ambient AWS credentials for the ECR pulls (operator image, gateway
-# image, CFK chart). When these are set (the Semaphore path, mirroring
+# CI has no ambient AWS credentials for the ECR pulls (operator image, CFK
+# chart). When these are set (the Semaphore path, mirroring
 # migration-hot-reload/setup.sh) the narrowly-scoped ECR access key is read
 # from GCP Secret Manager over OIDC workload-identity federation and exported
 # for the docker/helm logins below. Both must be set together; leave unset
@@ -133,8 +127,8 @@ if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
 fi
 
 # --- Images ---
-# The operator and gateway app images are private (see the version-pins
-# comment above), so they need an explicit ECR login before pulling.
+# The operator image is private (see the version-pins comment above), so it
+# needs an explicit ECR login before pulling.
 # `docker login` writes to ~/.docker/config.json regardless of which daemon
 # DOCKER_HOST points at, so logging in after the docker-env eval above is
 # enough for kubelet's later IfNotPresent lookup to find them already cached

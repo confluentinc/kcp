@@ -206,9 +206,9 @@ blocks:
           value: "kcp-semaphore-ecr-gateway-image-key"
         - name: ECR_AWS_SECRET_GCP_SECRET
           value: "kcp-semaphore-ecr-gateway-image-secret"
-        # CFK 0.1838.0 is not public; the chart, the operator image and the
-        # gateway app image all come from the kcp-owned ECR OCI mirror in
-        # account 635910096382 (setup.sh's defaults).
+        # CFK 0.1838.0 is not public; the chart and the operator image come
+        # from the kcp-owned ECR OCI mirror in account 635910096382 (setup.sh's
+        # defaults). The gateway app image is public on Docker Hub.
         - name: CFK_CHART_OCI
           value: "oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes"
         - name: CFK_CHART_VERSION
