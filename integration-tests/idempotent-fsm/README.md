@@ -69,7 +69,7 @@ only), baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
 after-offset-sync-pause `076..080` (static only), mid-batch `081..085`, a CR
 change before promote `086..090` (both modes), writes through a replaced
-gateway pod after promote `021..025` (static only; reuses a dynamic-only slice). On the dynamic
+gateway pod after promote `021..025` and its detection-on control `026..030` (static only; both reuse dynamic-only slices). On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
 resets the route to source (`resetStaticRoute`).
 
@@ -250,6 +250,10 @@ The test reads back from the source every record whose send started after the
 probe topic's mirror was seen STOPPED: none of them can reach the destination,
 yet the migration reports success. Once the fence wait also waits for the
 replaced pods to be gone, this test flips to assert that no such record exists.
+Its control (`TestFenceRollout_DetectionOnWaitsForReplacedPod`) runs the same
+migration and producer with `detectUnroutedProducersDuration: 10s`, which makes
+the fence step wait for the replaced pod to be gone: the producer is fenced and
+no record reaches the source after the mirror stops.
 
 The env vars are named
 `KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.

@@ -32,11 +32,56 @@ func TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost(t *testing.T) {
 	if e.mode != "static" {
 		t.Skip("static routes only: a dynamic route hot-reloads, so no pod is replaced")
 	}
+	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-replaced-pod", e.topicRange(21, 25), "")
+	require.Contains(t, r.out, "Detection disabled", "the default policy must skip verify_fence")
+	require.NotEmptyf(t, r.lost, "today a producer on the replaced pod writes to the source after promote (%s)", r.timeline)
+	t.Logf("\n✅ RESULT: BUG REPRODUCED — %d records were acked by the source after the mirror of %s stopped, through the replaced gateway pod "+
+		"that the fence step treated as gone; none of them can reach the destination, and the migration reported success.", len(r.lost), r.probe)
+}
+
+// TestFenceRollout_DetectionOnWaitsForReplacedPod is the control for
+// TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost: the same migration
+// and producer, with unrouted-producer detection on. Then the fence step waits
+// for the replaced pods to be gone (WaitForGatewayPods), so the producer's
+// connection to the unfenced pod is cut before promote, and no record reaches
+// the source after the mirror stops. Static only. Slice tbm-topic-026..030.
+func TestFenceRollout_DetectionOnWaitsForReplacedPod(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: a dynamic route hot-reloads, so no pod is replaced")
+	}
+	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-detection-on", e.topicRange(26, 30),
+		"    policies:\n      detectUnroutedProducersDuration: 10s\n")
+	require.Contains(t, r.out, "no unrouted producers detected")
+	require.Truef(t, r.oldGoneAt.Before(r.stoppedAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
+	require.Positive(t, r.errors, "the fence must reject the producer once its connection to the replaced pod is cut")
+	require.Emptyf(t, r.lost, "no record may reach the source after the mirror stops (%s)", r.timeline)
+	t.Logf("\n✅ RESULT: with detection on, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
+		"and no record reached the source after promote.", r.stoppedAt.Sub(r.oldGoneAt).Round(time.Second), r.probe, r.errors)
+}
+
+// replacedPodRun is what migrateWithProducerOnReplacedPod observed.
+type replacedPodRun struct {
+	out       string        // kcp's output
+	probe     string        // the topic the producer wrote to
+	stoppedAt time.Time     // when the watcher first saw the probe's mirror STOPPED
+	oldGoneAt time.Time     // when the watcher first saw the pre-fence pod gone
+	errors    int           // the producer's failed sends
+	lost      []ackedRecord // records sent after stoppedAt that the source holds
+	timeline  string        // a one-line summary for messages
+}
+
+// migrateWithProducerOnReplacedPod runs a full migration of topics while a
+// producer writes to the first of them through the gateway, once a second, on
+// a connection to the pod the fence will replace. policies is the manifest's
+// policies block ("" for the defaults). It waits until the pre-fence pod is
+// gone, then reads every acked record back from the source.
+func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics []string, policies string) replacedPodRun {
+	t.Helper()
 	ctx := context.Background()
 	e.resetStaticRoute(t, ctx)
-	topics := e.topicRange(21, 25)
 	probe := topics[0]
-	mani := e.writeManifest(t, "fence-rollout-replaced-pod", topics)
+	mani := e.renderManifest(t, name, topics, "", policies)
 	e.saveManifest(t, mani)
 
 	// The reset rolls the gateway pods. Wait until only the settled pod is
@@ -52,7 +97,6 @@ func TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost(t *testing.T) {
 	out, err := e.runKCP(t, "kcp-run.log", "", "migration", "execute", "--migration-yaml", mani)
 	require.NoError(t, err, "the migration must complete")
 	require.Contains(t, strings.ToLower(out), "migration complete")
-	require.Contains(t, out, "Detection disabled", "the default policy must skip verify_fence")
 
 	require.Eventually(t, func() bool { return !w.oldPodsGoneAt().IsZero() }, 2*time.Minute, time.Second,
 		"the replaced gateway pod must be gone")
@@ -65,24 +109,21 @@ func TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost(t *testing.T) {
 	// appended after the mirror stopped. If the source holds it, at the offset
 	// it was acked at, no copy of it can reach the destination.
 	onSource := e.recordsOnSource(t, probe, acks)
-	var lost []ackedRecord
+	r := replacedPodRun{out: out, probe: probe, stoppedAt: stoppedAt, oldGoneAt: oldGoneAt, errors: p.errorCount()}
 	for _, a := range acks {
 		if a.sentAt.After(stoppedAt) && onSource[a.value] {
-			lost = append(lost, a)
+			r.lost = append(r.lost, a)
 		}
 	}
-	timeline := fmt.Sprintf("mirror of %s seen STOPPED at %s; replaced pod gone at %s (%s later); %d records acked in all, %d of them on the source",
-		probe, stoppedAt.Format(time.RFC3339Nano), oldGoneAt.Format(time.RFC3339Nano), oldGoneAt.Sub(stoppedAt).Round(time.Second), len(acks), len(onSource))
+	r.timeline = fmt.Sprintf("mirror of %s seen STOPPED at %s; replaced pod gone at %s; %d records acked in all, %d of them on the source; %d failed sends (first: %v)",
+		probe, stoppedAt.Format(time.RFC3339Nano), oldGoneAt.Format(time.RFC3339Nano), len(acks), len(onSource), r.errors, p.firstError())
 	var b strings.Builder
-	for _, a := range lost {
+	for _, a := range r.lost {
 		fmt.Fprintf(&b, "  %s  sent %s  acked at %s[%d]@%d\n", a.value, a.sentAt.Format(time.RFC3339Nano), probe, a.partition, a.offset)
 	}
-	e.saveReport(t, "lost-records.txt", timeline+"\n"+b.String())
-	t.Logf("\n🔍 DATA PLANE ▸ %s\n%s", timeline, b.String())
-
-	require.NotEmptyf(t, lost, "today a producer on the replaced pod writes to the source after promote (%s)", timeline)
-	t.Logf("\n✅ RESULT: BUG REPRODUCED — %d records were acked by the source after the mirror of %s stopped, through the replaced gateway pod "+
-		"that the fence step treated as gone; none of them can reach the destination, and the migration reported success.", len(lost), probe)
+	e.saveReport(t, "lost-records.txt", r.timeline+"\n"+b.String())
+	t.Logf("\n🔍 DATA PLANE ▸ %s\n%s", r.timeline, b.String())
+	return r
 }
 
 // gatewayBootstrap is the static route's client endpoint, as
