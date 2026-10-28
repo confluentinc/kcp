@@ -36,7 +36,7 @@ func TestVerifyFence_ACleanPassHandsTheSecondSnapshotOn(t *testing.T) {
 	assert.Equal(t, 1, w.gathers, "the facts are gathered afresh after the fence")
 	assert.Equal(t, 2, w.src.lists, "a fresh source listing for each snapshot")
 	assert.Equal(t, []time.Duration{10 * time.Second}, w.waits, "the policy's window, waited once")
-	assert.Equal(t, 1, w.dst.groupLists, "the destination is listed again after the wait")
+	assert.Equal(t, 1, w.dst.groupLists, "the destination is listed again after snapshot 1")
 	assert.Empty(t, w.rendered.String(), "nothing is rendered when nothing refuses")
 }
 

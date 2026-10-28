@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -19,8 +20,19 @@ import (
 // fence. The refusal itself is printed with the reconcile report renderer, as --dry-run prints it.
 var ErrVerifyRefused = errors.New("the conversion's checks refused after the fence")
 
-// VerifyFence re-reads the facts after the fence and runs the route, link and split-brain checks.
-// A zero commits window skips the direct-commit diff; snapshot 1 is then handed to sync_offsets.
+// VerifyFence runs after the fence is confirmed on every gateway pod and re-reads every fact:
+//
+//  1. gather the facts and re-run the route and credential checks; a refusal here comes before
+//     snapshot 1, because a denied probe means the listings may be partial;
+//  2. snapshot 1: a fresh strict listing of every source group, then their committed offsets;
+//  3. the link and group checks on the gathered facts, including a first split-brain check on the
+//     gathered destination listing; the in-scope groups form G;
+//  4. to 6. only with a non-zero commits window: wait, take snapshot 2 from a fresh listing, and
+//     compare (groupoffsets.DetectRogueCommits); any change is groupoffsets.ErrRogueCommits;
+//  7. split-brain again, on a fresh destination listing (decision 23);
+//  8. hand the last snapshot (2, or 1 if steps 4-6 were skipped), restricted to G, to sync_offsets.
+//
+// A refusal is returned as ErrVerifyRefused; a read failure is a plain error, never a refusal.
 func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, p Policy) error {
 	a.handoff = nil
 	if p.DetectUnroutedCommitsDuration < 0 {
@@ -85,12 +97,13 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	inScope := scope.InScopeGroups
 	a.reporter.Success("Link topics and consumer groups re-checked: %d link topic(s), %d in-scope consumer group(s)", len(facts.Link.LinkMirrors), len(inScope))
 
-	// 4-6. Wait, snapshot 2 from a fresh listing, and the direct-commit diff. ErrRogueCommits is returned as
-	// is; so is a failure to wait, list or fetch, which is not evidence of a commit.
+	// 4-6. Only with a non-zero window: wait, snapshot 2 from a fresh listing, and the diff.
+	// ErrRogueCommits is returned as is; so is a wait, list or fetch failure (not evidence of a commit).
 	second := first
 	if p.DetectUnroutedCommitsDuration == 0 {
-		tracing.MarkSkipped(ctx, "detect_unrouted_commits_disabled")
-		a.reporter.Detail("⏭️ Direct-commit check skipped (detectUnroutedCommitsDuration is 0)")
+		slog.Debug("unrouted commit detection disabled, skipping")
+		a.reporter.Detail("Detection disabled (spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration=0) — skipping check")
+		tracing.MarkSkipped(ctx, "detection_disabled")
 	} else {
 		a.reporter.Detail("Watching committed offsets for %s, for a client committing to the source directly...", p.DetectUnroutedCommitsDuration)
 		second, err = groupoffsets.DetectRogueCommits(ctx, first, a.deps.SourceGroups, a.deps.Fetchers, p.Workers, p.DetectUnroutedCommitsDuration, a.deps.Wait)
@@ -100,10 +113,10 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		a.reporter.Success("Committed offsets held still while fenced — no direct commits detected")
 	}
 
-	// 7. Split-brain again, after the wait. Refusal only; the idle-group warning is not repeated.
+	// 7. Split-brain again, after snapshot 1. Refusal only; the idle-group warning is not repeated.
 	listing, err := a.deps.DestinationGroups(ctx)
 	if err != nil {
-		return fmt.Errorf("listing destination consumer groups after the wait: %w", err)
+		return fmt.Errorf("listing destination consumer groups after snapshot 1: %w", err)
 	}
 	splitBrain, _ := reconcile.CheckGroupSplitBrain(inScope, groupStates(listing))
 	if !splitBrain.OK {
@@ -125,9 +138,8 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 // convertFenceCheckName names verify_fence's check that kcp's conversion fence is still on the route.
 const convertFenceCheckName = "route carries kcp's conversion fence"
 
-// convertFenceCheck refuses a route whose rules no longer carry kcp's convert fence: verify_fence watches
-// for direct commits on the assumption that the fence is up, so a fence removed or reverted after the fence
-// step voids every check that follows. gw has passed CheckPreconditions, so its route is set.
+// convertFenceCheck refuses a route that lost kcp's convert fence after the fence step: every check
+// verify_fence runs assumes the fence is up. gw has passed CheckPreconditions, so its route is set.
 func convertFenceCheck(gw *reconcile.GatewayConfig) reconcile.PreconditionResult {
 	rules, err := reconcile.ParseRules(gw.Route.Rules)
 	if err == nil && rules.HasConvertFence() {

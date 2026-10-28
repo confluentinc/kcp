@@ -112,8 +112,9 @@ type D2SActions struct {
 	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
 	hotReloadTimeout time.Duration
 
-	// handoff is verify_fence's second snapshot, restricted to the in-scope groups, for sync_offsets in the
-	// same run. nil until verify_fence passes in this process; sync_offsets never reads the source itself.
+	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
+	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
+	// passes in this process; sync_offsets never reads the source itself.
 	handoff groupoffsets.Snapshot
 }
 

@@ -310,7 +310,7 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	assert.EqualValues(t, 60, cfg.DetectUnroutedProducersDuration.Seconds())
 }
 
-// An explicit 0 counts as set; for the commits window it skips the check.
+// Only an explicitly set flag overrides, and an explicit 0 counts as set (a skip for commits).
 func TestExecute_ConversionPolicyOverrides(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{

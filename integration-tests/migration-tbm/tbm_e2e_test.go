@@ -169,10 +169,8 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	require.Falsef(t, res.Refused, "topic %s must be migratable: %v", topic, res.Reasons)
 	require.Equal(t, []string{topic}, res.PromoteTopics)
 
-	// The repo enforces a 10s floor on a nonzero detectUnroutedProducersDuration
-	// (internal/manifest/gateway.go's minDetectUnroutedProducersDuration) — also
-	// the exact value the sibling AAO e2e suite already proved live for this
-	// same check (migration_e2e_test.go's own rogue-producer tests).
+	// The repo enforces a 10s floor on a nonzero detectUnroutedProducersDuration (minDetectionWindow),
+	// the value the sibling AAO e2e suite already proved live for this check.
 	g.Spec.DynamicMigration.Policies.DetectUnroutedProducersDuration = 10 * time.Second
 
 	manifestBytes, err := yaml.Marshal(g)

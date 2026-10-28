@@ -126,8 +126,9 @@ type DynamicPolicies struct {
 type DynamicToStaticPolicies struct {
 	// RolloutTimeout bounds the gateway rollout. 0 means no deadline.
 	RolloutTimeout time.Duration `yaml:"rolloutTimeout,omitempty" json:"rolloutTimeout,omitempty"`
-	// DetectUnroutedCommitsDuration is the gap between the two post-fence snapshots.
-	// 0 SKIPS the check; minimum 10s.
+	// DetectUnroutedCommitsDuration is the gap between the two post-fence committed-offset snapshots,
+	// to catch a consumer committing to the source directly. 0 SKIPS the check; minimum 10s.
+	// Separate from detectUnroutedProducersDuration, which watches log-end offsets.
 	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
 	// OffsetSyncConcurrency is how many workers, each with its own broker
 	// connection, read and write consumer-group offsets. 0 uses the built-in 8.
@@ -336,10 +337,10 @@ func validateDetectProducers(path string, d time.Duration) []error {
 	switch {
 	case d < 0:
 		return []error{fmt.Errorf("%s.detectUnroutedProducersDuration: must not be negative (0 skips the check)", path)}
-	case d > 0 && d < minDetectUnroutedProducersDuration:
+	case d > 0 && d < minDetectionWindow:
 		return []error{fmt.Errorf(
 			"%s.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
-			path, minDetectUnroutedProducersDuration)}
+			path, minDetectionWindow)}
 	}
 	return nil
 }
@@ -370,10 +371,10 @@ func (p DynamicToStaticPolicies) Validate(path string) []error {
 	switch d := p.DetectUnroutedCommitsDuration; {
 	case d < 0:
 		errs = append(errs, fmt.Errorf("%s.detectUnroutedCommitsDuration: must not be negative (0 skips the check)", path))
-	case d > 0 && d < minDetectUnroutedProducersDuration:
+	case d > 0 && d < minDetectionWindow:
 		errs = append(errs, fmt.Errorf(
 			"%s.detectUnroutedCommitsDuration: must be at least %s when set (0 skips the check) — a shorter window can miss a consumer on default auto-commit settings",
-			path, minDetectUnroutedProducersDuration))
+			path, minDetectionWindow))
 	}
 	if p.OffsetSyncConcurrency < 0 {
 		errs = append(errs, fmt.Errorf("%s.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", path, DefaultOffsetSyncConcurrency))

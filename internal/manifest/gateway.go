@@ -21,10 +21,9 @@ import (
 // KindMigration and is discriminated only by kind.
 const KindGatewayMigration = "GatewayMigration"
 
-// minDetectUnroutedProducersDuration mirrors the retired flag's documented
-// minimum: a shorter window cannot span a producer's metadata refresh, so a
-// clean result would mean "we did not look long enough", not "nothing found".
-const minDetectUnroutedProducersDuration = 10 * time.Second
+// minDetectionWindow is the shortest detection window: a shorter one cannot span a producer's
+// metadata refresh or two default auto-commit intervals, so a clean result proves nothing.
+const minDetectionWindow = 10 * time.Second
 
 // DefaultOffsetSyncConcurrency applies when OffsetSyncConcurrency is 0.
 const DefaultOffsetSyncConcurrency = 8
