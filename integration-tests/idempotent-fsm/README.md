@@ -68,7 +68,8 @@ rollback on a mid-batch resume `036..040`, rollback on a resume
 only), baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
 after-offset-sync-pause `076..080` (static only), mid-batch `081..085`, a CR
-change before promote `086..090` (both modes). On the dynamic
+change before promote `086..090` (both modes), writes through a replaced
+gateway pod after promote `021..025` (static only; reuses a dynamic-only slice). On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
 resets the route to source (`resetStaticRoute`).
 
@@ -237,6 +238,18 @@ gateway to settle (`waitForGatewaySettled`): the Deployment's rollout
 complete and no `app=<gateway>` pod terminating. It doesn't wait for the
 operator to observe the CR, so it returns while the operator is stopped. Only
 the terminating-pod test skips it (`runKCPUnsettled`). It's a no-op on dynamic.
+
+A fence-rollout reproduction (`fence_rollout_e2e_test.go`, static only)
+asserts **today's** buggy behaviour on purpose, so a pass confirms the bug. A
+producer writes through the gateway once a second on one long-lived connection
+while a full migration runs with the default policies (unrouted-producer
+detection off). The fence step waits only for the gateway Deployment's rollout
+to complete, but the replaced pod keeps serving the unfenced route to existing
+connections until its grace period ends, and promote runs inside that window.
+The test reads back from the source every record whose send started after the
+probe topic's mirror was seen STOPPED: none of them can reach the destination,
+yet the migration reports success. Once the fence wait also waits for the
+replaced pods to be gone, this test flips to assert that no such record exists.
 
 The env vars are named
 `KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.
