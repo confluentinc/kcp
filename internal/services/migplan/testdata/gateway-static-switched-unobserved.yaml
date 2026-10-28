@@ -1,0 +1,36 @@
+# A static route kcp has switched to the target domain cc, but the operator
+# never observed the switch: status.observedGeneration (6) trails
+# metadata.generation (7), so the gateway pods may still serve generation 6,
+# which was fenced. Reconcile reads the spec alone, so it can't tell.
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+  generation: 7
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: msk-bootstrap
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: cc-bootstrap
+  routes:
+    - name: migration-route
+      streamingDomain:
+        name: cc
+        bootstrapServerId: cc-bootstrap
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              sasl:
+                secretRef: cc-sasl-secret
+status:
+  observedGeneration: 6
+  conditions:
+    - type: Ready
+      status: "True"
