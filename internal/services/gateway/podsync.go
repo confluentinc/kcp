@@ -56,12 +56,28 @@ func (s *K8sService) CheckPodSync(ctx context.Context, namespace, gatewayName st
 
 	pods := clientset.CoreV1().Pods(namespace)
 	probe := func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error) {
-		ctx, cancel := context.WithTimeout(ctx, configProbeRequestTimeout)
+		probeCtx, cancel := context.WithTimeout(ctx, configProbeRequestTimeout)
 		defer cancel()
-		return probeGatewayConfig(ctx, pods, endpoint.Name, port)
+		result, err := probeGatewayConfig(probeCtx, pods, endpoint.Name, port)
+		return podSyncProbeResult(ctx, endpoint.Name, result, err)
 	}
 
 	return checkPodSync(ctx, clientset, probe, namespace, gatewayName, cr)
+}
+
+// podSyncProbeResult keeps a per-pod probe problem a verdict rather than an
+// error. probeGatewayConfig returns an error whenever its own context is done,
+// so a pod that accepts the proxied request but never answers surfaces as the
+// per-request deadline; with the check's own context still live, that pod is
+// unreachable. Only the parent context's end abandons the whole check.
+func podSyncProbeResult(parent context.Context, podName string, result ProbeResult, err error) (ProbeResult, error) {
+	if err == nil {
+		return result, nil
+	}
+	if parentErr := parent.Err(); parentErr != nil {
+		return ProbeResult{}, parentErr
+	}
+	return ProbeResult{Addr: podName, Outcome: ProbeUnreachable, Err: err}, nil
 }
 
 // parseGatewayCR decodes a Gateway CR through JSON, so integer fields read as
@@ -165,8 +181,10 @@ func checkRolledOut(ctx context.Context, clientset kubernetes.Interface, namespa
 
 	if !deploymentRolloutComplete(dep) {
 		// The one case where kcp can tell "in progress" from "stuck": a
-		// stuck rollout flips Progressing to False once its deadline passes.
-		if deploymentProgressing(dep) || len(terminatingPods) > 0 {
+		// stuck rollout flips Progressing to False once its deadline passes. A
+		// terminating pod does not override that: the hint would contradict
+		// the Deployment.
+		if deploymentProgressing(dep) {
 			r.observe("The gateway Deployment reports a rollout in progress (%d of %d pods updated). If it completes, re-run.",
 				s.UpdatedReplicas, s.Replicas)
 		}

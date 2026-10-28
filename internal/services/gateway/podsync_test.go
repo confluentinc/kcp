@@ -163,6 +163,19 @@ func TestCheckPodSync(t *testing.T) {
 			notEvidence: []string{"re-run"},
 		},
 		{
+			name: "hot reload off: stuck rollout with a terminating pod carries no hint",
+			cr:   newGatewayCR(gw, ns, 3, 3, true),
+			objects: []runtime.Object{
+				newGatewayDeployment(gw, ns, 2, withObservedGeneration(2), withReplicas(2),
+					withUpdatedReplicas(1), withAvailableReplicas(1), withProgressing(corev1.ConditionFalse, "ProgressDeadlineExceeded")),
+				pod("gw-1", true), terminating(pod("gw-0", true)),
+			},
+			wantVerdict:  PodsOutOfSync,
+			wantDetail:   `the gateway Deployment "gw" has not finished rolling out: 1 of 2 pods updated, 1 available`,
+			wantEvidence: []string{"pod gw-0: terminating"},
+			notEvidence:  []string{"re-run"},
+		},
+		{
 			name:        "hot reload off: a terminating pod is out of sync with the re-run hint",
 			cr:          newGatewayCR(gw, ns, 3, 3, true),
 			objects:     []runtime.Object{settled(), pod("gw-1", true), pod("gw-2", true), terminating(pod("gw-0", true))},
@@ -388,5 +401,29 @@ status:
 	t.Run("a CR that will not parse is an error", func(t *testing.T) {
 		_, err := parseGatewayCR([]byte("metadata: [unterminated"))
 		require.Error(t, err)
+	})
+}
+
+func TestPodSyncProbeResult(t *testing.T) {
+	t.Run("a probe that times out with a live parent is unreachable", func(t *testing.T) {
+		got, err := podSyncProbeResult(context.Background(), "gw-1", ProbeResult{}, context.DeadlineExceeded)
+		require.NoError(t, err)
+		assert.Equal(t, ProbeUnreachable, got.Outcome)
+		assert.Equal(t, "gw-1", got.Addr)
+		assert.ErrorIs(t, got.Err, context.DeadlineExceeded)
+	})
+
+	t.Run("a cancelled parent's error passes through", func(t *testing.T) {
+		parent, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := podSyncProbeResult(parent, "gw-1", ProbeResult{}, context.Canceled)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("a probe without error is returned unchanged", func(t *testing.T) {
+		want := ProbeResult{Addr: "gw-1:9180", Outcome: ProbeApplied, ConfigID: "kcp-a"}
+		got, err := podSyncProbeResult(context.Background(), "gw-1", want, nil)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
 	})
 }
