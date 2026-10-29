@@ -93,6 +93,14 @@ func WithoutRetries(ctx context.Context) context.Context {
 	return context.WithValue(ctx, withoutRetriesKey{}, true)
 }
 
+// recordAttempts sets kcp.retry.attempts on the span current in ctx once a call has needed more than one
+// attempt. Every way Do returns after a retry has started calls it, so the count is there however the call ends.
+func recordAttempts(ctx context.Context, attempt int) {
+	if attempt > 1 {
+		tracing.SetAttributes(ctx, attribute.Int("kcp.retry.attempts", attempt))
+	}
+}
+
 // Do calls fn until it returns nil or an error the classifier (Retryable by default) rejects, the budget runs
 // out, or ctx ends. A rejected error is returned unchanged, even once ctx has ended: it is the answer, and no
 // retry was cut short. When ctx ends during an attempt that failed with an error the classifier accepts, or
@@ -100,8 +108,8 @@ func WithoutRetries(ctx context.Context) context.Context {
 // a *GaveUpError wrapping the last error.
 //
 // Each retry adds a retry.attempt event to the span current in ctx, waits inside a wait.retry_backoff span, and
-// logs a warning. A call that needed retries sets kcp.retry.attempts on that span, and kcp.retry.gave_up when
-// it ran out of budget. A call that succeeds first time records nothing. Under WithoutRetries Do calls fn once
+// logs a warning. A call that needed retries sets kcp.retry.attempts on that span however it ends, including
+// when ctx ends during a retry, and kcp.retry.gave_up when it ran out of budget. A call that succeeds first time records nothing. Under WithoutRetries Do calls fn once
 // and returns its error unchanged.
 func Do(ctx context.Context, operation string, fn func(ctx context.Context) error, opts ...Option) error {
 	if once, _ := ctx.Value(withoutRetriesKey{}).(bool); once {
@@ -117,18 +125,15 @@ func Do(ctx context.Context, operation string, fn func(ctx context.Context) erro
 	for attempt := 1; ; attempt++ {
 		err := fn(ctx)
 		if err == nil {
-			if attempt > 1 {
-				tracing.SetAttributes(ctx, attribute.Int("kcp.retry.attempts", attempt))
-			}
+			recordAttempts(ctx, attempt)
 			return nil
 		}
 		if !o.retryable(err) {
-			if attempt > 1 {
-				tracing.SetAttributes(ctx, attribute.Int("kcp.retry.attempts", attempt))
-			}
+			recordAttempts(ctx, attempt)
 			return err
 		}
 		if ctx.Err() != nil {
+			recordAttempts(ctx, attempt)
 			return errors.Join(ctx.Err(), err)
 		}
 		if attempt == 1 {
@@ -150,6 +155,7 @@ func Do(ctx context.Context, operation string, fn func(ctx context.Context) erro
 		trace.SpanFromContext(ctx).AddEvent("retry.attempt", trace.WithAttributes(attrs...))
 		slog.Warn("⚠️ connection error, retrying", "operation", operation, "attempt", attempt, "wait", next, "error", err)
 		if werr := wait(ctx, next); werr != nil {
+			recordAttempts(ctx, attempt)
 			return errors.Join(werr, err)
 		}
 		if o.beforeRetry != nil {

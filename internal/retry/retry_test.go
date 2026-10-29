@@ -13,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // fakeClock runs Do's schedule without sleeping: each wait advances the clock and is recorded.
@@ -209,4 +210,26 @@ func TestDo_UnderWithoutRetriesCallsOnceAndReturnsTheErrorUnchanged(t *testing.T
 	step := tracingtest.Find(t, tracingtest.Spans(rec), "step.lag_check")
 	assert.Empty(t, step.Events(), "no retry.attempt event")
 	assert.Empty(t, step.Attributes(), "no kcp.retry attribute")
+}
+
+func TestDo_RecordsTheAttemptCountWhenAWaitFails(t *testing.T) {
+	rec := tracingtest.Install(t)
+	waits := 0
+	oldWait := wait
+	wait = func(context.Context, time.Duration) error {
+		waits++
+		if waits == 2 {
+			return errors.New("wait failed")
+		}
+		return nil
+	}
+	t.Cleanup(func() { wait = oldWait })
+	ctx, span := tracing.Start(context.Background(), "test", "step.verify_fence")
+
+	err := Do(ctx, "kafka.list_groups", func(context.Context) error { return reset })
+	span.End()
+
+	require.ErrorContains(t, err, "wait failed")
+	step := tracingtest.Find(t, tracingtest.Spans(rec), "step.verify_fence")
+	assert.Contains(t, step.Attributes(), attribute.Int("kcp.retry.attempts", 2))
 }

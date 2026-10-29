@@ -86,3 +86,25 @@ func TestDo_MarksTheSpanWhenItGivesUp(t *testing.T) {
 	assert.Contains(t, step.Attributes(), attribute.Bool("kcp.retry.gave_up", true))
 	assert.Contains(t, step.Attributes(), attribute.Int("kcp.retry.attempts", gave.Attempts))
 }
+
+func TestDo_RecordsTheAttemptCountWhenTheContextEndsAfterAFailedRetry(t *testing.T) {
+	rec := tracingtest.Install(t)
+	retrytest.Fast(t)
+	ctx, span := tracing.Start(context.Background(), "test", "step.verify_fence")
+	ctx, cancel := context.WithCancel(ctx)
+	calls := 0
+
+	err := retry.Do(ctx, "kafka.list_groups", func(context.Context) error {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+		return reset
+	})
+	span.End()
+
+	require.ErrorIs(t, err, context.Canceled)
+	step := tracingtest.Find(t, tracingtest.Spans(rec), "step.verify_fence")
+	assert.Contains(t, step.Attributes(), attribute.Int("kcp.retry.attempts", 2))
+	assert.NotContains(t, step.Attributes(), attribute.Bool("kcp.retry.gave_up", true))
+}
