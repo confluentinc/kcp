@@ -57,7 +57,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	require.GreaterOrEqualf(t, acks, 1, "the gateway must carry produce traffic before the migration, or the fenced-probe below proves nothing (first error: %v)", firstErr)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source, produce through the gateway works)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoted, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoted, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted after promote must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 	cr := e.readCR(t, ctx)
@@ -76,7 +76,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	uids0, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
 	require.NoError(t, err)
 
-	out2, err2 := e.runKCP(t, "kcp-run-2-switch-stalls.log", "", "migration", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s")
+	out2, err2 := e.runKCP(t, "kcp-run-2-switch-stalls.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s")
 	require.Error(t, err2, "the switch must fail: the operator never observes it")
 	require.Contains(t, out2, "Switchover gateway CR applied", "run 2 must reach the switch and patch the CR")
 	require.Contains(t, out2, "to be observed by the operator", "the switch must fail waiting for the operator")
@@ -106,12 +106,12 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says switched")
 	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
 
-	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
 	require.Contains(t, out3, "gateway pods serve the CR", "the dry-run must name the failed pod check")
 	require.Contains(t, out3, "the operator has not caught up with the CR", "the dry-run must say the operator is behind the CR")
 
-	out4, err4 := e.runKCP(t, "kcp-run-4-rerun.log", "", "migration", "execute", "--migration-yaml", mani)
+	out4, err4 := e.runKCP(t, "kcp-run-4-rerun.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err4, "the re-run must refuse: the pods may not serve the CR")
 	require.Contains(t, out4, "reconcile plan refused", "the re-run must exit on the refusal")
 	require.NotContains(t, out4, fsmStartBanner, "no state machine may run on a refused plan")
@@ -146,18 +146,18 @@ func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 
-	out2, err2 := e.runKCPUnsettled(t, "kcp-run-2-dry-run-unsettled.log", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	out2, err2 := e.runKCPUnsettled(t, "kcp-run-2-dry-run-unsettled.log", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.Error(t, err2, "the dry-run must refuse while a replaced gateway pod is terminating")
 	require.Contains(t, out2, "is still terminating", "the dry-run must name the terminating pod")
 	require.Contains(t, out2, "If it completes, re-run.", "the dry-run must carry the rollout-in-progress hint")
 	e.snapshot(t, ctx, "after-fence", "AFTER interrupt at fenced (expect fenced, mirrors ACTIVE)", topics)
 
 	e.waitForGatewaySettled(t, ctx)
-	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run-settled.log", "", "migration", "execute", "--migration-yaml", mani, "--dry-run")
+	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run-settled.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.NoError(t, err3, "once the gateway settles the dry-run must pass")
 	require.NotContains(t, out3, "is still terminating", "no gateway pod may be terminating once settled")
 
@@ -182,7 +182,7 @@ func TestDrift_GatewayPodRestartRerunProceeds(t *testing.T) {
 	runResumeScenario(t, e, cpPromoted, "drift-pod-restart", topics, func(t *testing.T, ctx context.Context) {
 		e.restartGatewayPods(t, ctx)
 
-		out, err := e.runKCP(t, "kcp-run-dry-run-after-restart.log", "", "migration", "execute", "--migration-yaml", e.manifestPath("drift-pod-restart.yaml"), "--dry-run")
+		out, err := e.runKCP(t, "kcp-run-dry-run-after-restart.log", "", "migration", "cutover", "execute", "--migration-yaml", e.manifestPath("drift-pod-restart.yaml"), "--dry-run")
 		require.NoError(t, err, "the dry-run must pass: the restarted pods report the CR's configId")
 		require.Contains(t, out, "✓ gateway pods serve the CR", "the pod check must pass, not be skipped")
 		require.NotContains(t, out, "nothing to compare", "no restarted pod may report a missing configId")
