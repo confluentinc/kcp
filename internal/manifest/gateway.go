@@ -21,19 +21,12 @@ import (
 // KindMigration and is discriminated only by kind.
 const KindGatewayMigration = "GatewayMigration"
 
-// minDetectUnroutedProducersDuration mirrors the retired flag's documented
-// minimum: a shorter window cannot span a producer's metadata refresh, so a
-// clean result would mean "we did not look long enough", not "nothing found".
-const minDetectUnroutedProducersDuration = 10 * time.Second
+// minDetectionWindow is the shortest detection window: a shorter one cannot span a producer's
+// metadata refresh or two default auto-commit intervals, so a clean result proves nothing.
+const minDetectionWindow = 10 * time.Second
 
-// DefaultDetectUnroutedCommitsDuration and DefaultOffsetSyncConcurrency are the
-// built-in values a route conversion uses when the matching DynamicToStaticPolicies
-// field is 0. Unlike detectUnroutedProducersDuration, 0 never means "skip": the
-// conversion's rogue-commit check is a safety check and cannot be skipped.
-const (
-	DefaultDetectUnroutedCommitsDuration = 30 * time.Second
-	DefaultOffsetSyncConcurrency         = 8
-)
+// DefaultOffsetSyncConcurrency applies when OffsetSyncConcurrency is 0.
+const DefaultOffsetSyncConcurrency = 8
 
 // GatewayMigration is the declarative form of a `kcp migration` run: the
 // topology, the cluster link, the gateway CRs, and the execute-time policy that

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -30,10 +32,15 @@ import (
 // convertFixture is the canonical manifest declared as a route conversion: a dynamicToStaticConversion
 // section in place of the staticMigration one (no topicGroup).
 func convertFixture(t *testing.T) fixture {
+	return convertFixtureWith(t, "")
+}
+
+// The extra YAML is appended to the dynamicToStaticConversion section.
+func convertFixtureWith(t *testing.T, extra string) fixture {
 	return newFixture(t, func(doc string) string {
 		old := "  staticMigration:\n    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n    topicGroup:\n      - topicPatterns:\n          - '.*'\n"
 		require.Contains(t, doc, old)
-		return strings.Replace(doc, old, "  dynamicToStaticConversion:\n    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n", 1)
+		return strings.Replace(doc, old, "  dynamicToStaticConversion:\n    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n"+extra, 1)
 	})
 }
 
@@ -210,6 +217,62 @@ func TestExecute_ConvertMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	assert.Equal(t, []string{"rules", ""}, gw.patched(), "the fence (a rules patch), then the switch (a whole-route replace)")
 }
 
+// The conversion's reporter prints to os.Stdout, so the console lines are read off it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	defer func() { os.Stdout = orig }()
+	fn()
+	require.NoError(t, w.Close())
+	return <-done
+}
+
+// An omitted or explicit 0s commits window runs the conversion end to end without the check.
+func TestExecute_ConvertMode_ADisabledCommitsWindowSkipsTheCheckEndToEnd(t *testing.T) {
+	const window = "detectUnroutedCommitsDuration"
+	cases := []struct {
+		name    string
+		extra   string
+		written bool
+	}{
+		{"omitted", "", false},
+		{"explicit 0s", "    policies:\n      " + window + ": 0s\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := convertFixtureWith(t, tc.extra)
+			raw, err := os.ReadFile(f.manifestPath)
+			require.NoError(t, err)
+			assert.Equal(t, tc.written, strings.Contains(string(raw), window), "the manifest's window must match the case")
+			w := newConvertWorld("orders-app")
+			gw := &patchRecordingGateway{}
+			var out string
+
+			console := captureStdout(t, func() {
+				out, err = runConvertBranchFor(t, f, nil, convertDeps(gw, w))
+			})
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1")
+			assert.Contains(t, console, "Detection disabled (spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration=0)")
+			assert.NotContains(t, console, "Watching committed offsets")
+			assert.NotContains(t, console, "no direct commits detected")
+			assert.Empty(t, w.waits, "no detection window is waited")
+			assert.Equal(t, []string{"rules", ""}, gw.patched(), "the fence, then the switch")
+			assert.Equal(t, map[string]groupoffsets.Offsets{"orders-app": {"orders": {0: {Offset: 5}}}}, w.commits,
+				"every seeded offset reaches the destination from snapshot 1")
+		})
+	}
+}
+
 func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 	groups := []string{"g1", "g2", "g3", "g4"}
 	t.Run("manifest values", func(t *testing.T) {
@@ -231,8 +294,8 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 		_, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(&patchRecordingGateway{}, w))
 
 		require.NoError(t, err)
-		assert.Equal(t, []time.Duration{manifest.DefaultDetectUnroutedCommitsDuration}, w.waits)
-		assert.Equal(t, 8, w.fetcherBuilds, "the default 8 workers, capped at the 4 groups, for each snapshot")
+		assert.Empty(t, w.waits, "an unset detectUnroutedCommitsDuration skips the check")
+		assert.Equal(t, 4, w.fetcherBuilds, "the default 8 workers, capped at the 4 groups, for the one snapshot")
 	})
 }
 

@@ -22,11 +22,9 @@ import (
 // convertMode is migplan.Result.Mode for a route conversion.
 const convertMode = "convert"
 
-// Policy is the conversion's two execute-time policies, already resolved to their effective values
-// (manifest.DynamicToStaticPolicies.EffectiveDetectUnroutedCommitsDuration and EffectiveOffsetSyncConcurrency).
+// Policy is the conversion's execute-time policies; Workers is already resolved to its default.
 type Policy struct {
-	// DetectUnroutedCommitsDuration is the wait between verify_fence's two committed-offset snapshots. It must
-	// be positive: the direct-commit check can never be skipped.
+	// DetectUnroutedCommitsDuration is the gap between verify_fence's two snapshots; 0 skips the check.
 	DetectUnroutedCommitsDuration time.Duration
 	// Workers is the number of offset-fetch and offset-commit workers, each with its own client.
 	Workers int
@@ -114,8 +112,9 @@ type D2SActions struct {
 	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
 	hotReloadTimeout time.Duration
 
-	// handoff is verify_fence's second snapshot, restricted to the in-scope groups, for sync_offsets in the
-	// same run. nil until verify_fence passes in this process; sync_offsets never reads the source itself.
+	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
+	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
+	// passes in this process; sync_offsets never reads the source itself.
 	handoff groupoffsets.Snapshot
 }
 

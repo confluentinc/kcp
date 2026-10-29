@@ -117,5 +117,5 @@ func TestGatewayRouteConversionExampleIsValid(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g.Spec.DynamicToStaticConversion)
 	require.Nil(t, g.Spec.DeclaredTopicGroup(), "a conversion selects no topics")
-	require.Equal(t, 30*time.Second, g.Spec.DynamicToStaticConversion.Policies.EffectiveDetectUnroutedCommitsDuration())
+	require.Equal(t, 30*time.Second, g.Spec.DynamicToStaticConversion.Policies.DetectUnroutedCommitsDuration)
 }
