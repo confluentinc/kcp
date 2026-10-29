@@ -1,0 +1,622 @@
+package tbm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/fatih/color"
+	"go.opentelemetry.io/otel/attribute"
+)
+
+// maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
+// before WaitForLags aborts. Matches migration.maxConsecutiveSweepFailures —
+// a bare tuning constant, not shared mechanism, so left as its own copy
+// rather than exported for one int.
+const maxConsecutiveSweepFailures = 3
+
+// TBMActions holds the business logic behind each FSM transition. Every
+// transition — Initialize, WaitForLags, Fence, VerifyFence, Promote, and
+// Switch — is real.
+type TBMActions struct {
+	reporter          *reporter
+	sourceOffset      offset.Provider
+	destinationOffset offset.Provider
+	// lagPollInterval is how often WaitForLags re-sweeps offsets. A struct
+	// field (not a const), so tests can shrink it — mirrors
+	// migration.MigrationActions.lagPollInterval.
+	lagPollInterval time.Duration
+
+	gatewayService gateway.Service
+	// gatewayCapability is how gateway transitions are verified for this run.
+	// Zero value (VerifyRollout, no configId) is the safe default — see
+	// migration.MigrationActions.gatewayCapability.
+	gatewayCapability gateway.Capability
+	// capabilityResolved is true once gatewayCapability has actually been
+	// resolved against the live cluster this process — see
+	// ensureGatewayCapability in gateway.go. It starts false in every
+	// process, so the first of Fence or Switch to need the capability
+	// resolves it and neither step ever acts on the unresolved zero value.
+	capabilityResolved bool
+	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
+	// deadline.
+	rolloutTimeout time.Duration
+	// hotReloadTimeout bounds per-pod configId verification. Unlike
+	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
+	// hot-reload moves no Kubernetes signal to wait on.
+	hotReloadTimeout time.Duration
+
+	clusterLinkService clusterlink.Service
+	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
+	// Mirrors migration.MigrationActions.promotePollInterval.
+	promotePollInterval time.Duration
+	// promoteBatchSize caps how many mirror topics are promoted per batch. A
+	// value of 0 means unlimited — all zero-lag topics are promoted at once.
+	// Mirrors migration.MigrationActions.promoteBatchSize.
+	promoteBatchSize int
+}
+
+// NewTBMActions creates a new TBMActions. sourceOffset, destinationOffset,
+// gatewayService and clusterLinkService are all required — TBM has a single
+// command (execute-tbm) that always eventually reaches wait_for_lags, fence
+// and promote, unlike migration's separate init-only path, so there is no
+// legitimate construction path without them.
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service, clusterLinkService clusterlink.Service) *TBMActions {
+	return &TBMActions{
+		reporter:            newReporter(),
+		sourceOffset:        sourceOffset,
+		destinationOffset:   destinationOffset,
+		lagPollInterval:     2 * time.Second,
+		gatewayService:      gatewayService,
+		clusterLinkService:  clusterLinkService,
+		promotePollInterval: 5 * time.Second,
+	}
+}
+
+// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// A value of 0 means no deadline.
+func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
+	a.rolloutTimeout = d
+}
+
+// SetHotReloadTimeout sets the deadline for per-pod configId verification.
+// A value of 0 falls back to gateway.DefaultHotReloadTimeout.
+func (a *TBMActions) SetHotReloadTimeout(d time.Duration) {
+	a.hotReloadTimeout = d
+}
+
+// SetPromoteBatchSize caps how many mirror topics Promote submits per batch.
+// A value of 0 (the default) means unlimited.
+func (a *TBMActions) SetPromoteBatchSize(n int) {
+	a.promoteBatchSize = n
+}
+
+// Initialize runs the initialize transition: validates the reconcile plan
+// migplan.Reconcile already computed live (before Execute was even invoked)
+// and, if the plan is feasible, captures its artifacts onto config for every
+// later transition to consume — never re-derived. res.Refused is checked
+// before config is touched, so a cancelled transition never leaves config
+// partially mutated. There is no simulated delay here: the expensive work
+// (contacting source/target/gateway/cluster-link) already happened producing
+// res; this step is pure validate-and-copy.
+func (a *TBMActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
+	if res.Refused {
+		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
+	}
+
+	config.Topics = res.PromoteTopics
+	config.AwaitStopped = res.AwaitStopped
+	config.FenceYAML = res.FenceYAML
+	config.SwitchoverYAML = res.SwitchoverYAML
+	config.RollbackFenceYAML = res.RollbackFenceYAML
+	config.RollbackAllowed = res.RollbackAllowed
+	config.FencedAtStart = res.FencedAtStart
+	config.MigrateTopics = res.MigrateTopics
+	config.GatewayYAML = res.GatewayYAML
+	config.Route = res.Route
+
+	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
+	return nil
+}
+
+// WaitForLags runs the wait_for_lags transition: polls source and destination
+// offsets for config.Topics until every topic's total lag is at or below
+// lagThreshold. Mirrors migration.MigrationActions.CheckLags.
+func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.MigrationConfig, lagThreshold int64) error {
+	a.reporter.blank()
+	a.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
+		color.CyanString("⏳"),
+		color.CyanString("%d topics", len(config.Topics)),
+		color.YellowString("%d", lagThreshold)))
+	a.reporter.blank()
+
+	if len(config.Topics) == 0 {
+		a.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		tracing.MarkSkipped(ctx, "no_topics")
+		return nil
+	}
+
+	polls, behind := 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx, attribute.Int("kcp.polls", polls), attribute.Int("kcp.topics_behind", behind))
+	}()
+
+	ticker := time.NewTicker(a.lagPollInterval)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	sweepFailures := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		allBelowThreshold := true
+		topicTotalLags := make(map[string]int64)
+
+		polls++
+		sourceOffsets, destinationOffsets, err := a.fetchSourceAndDestinationOffsets(ctx, config.Topics)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
+			}
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(a.lagPollInterval):
+			}
+			continue
+		}
+		sweepFailures = 0
+
+		for _, topic := range config.Topics {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
+			if lag > lagThreshold {
+				allBelowThreshold = false
+				topicTotalLags[topic] = lag
+			}
+		}
+
+		behind = len(topicTotalLags)
+
+		if allBelowThreshold {
+			a.reporter.blank()
+			a.reporter.line(fmt.Sprintf("%s All topic lags below threshold (%d)",
+				color.GreenString("✔"),
+				lagThreshold))
+			return nil
+		}
+
+		lagTopics := make([]string, 0, len(topicTotalLags))
+		for topic := range topicTotalLags {
+			lagTopics = append(lagTopics, topic)
+		}
+		sort.Strings(lagTopics)
+
+		elapsed := time.Since(startTime)
+
+		a.reporter.line(fmt.Sprintf("   %s Waiting for lag to clear  %s  %s",
+			color.YellowString("↳"),
+			color.YellowString("%d/%d topics behind", len(topicTotalLags), len(config.Topics)),
+			color.CyanString("elapsed %s", elapsed.Round(time.Second))))
+
+		for _, topic := range lagTopics {
+			a.reporter.line(fmt.Sprintf("   %s %s  %s %s",
+				color.YellowString("↳"),
+				color.WhiteString(topic),
+				color.CyanString("lag:"),
+				color.YellowString(formatLag64(topicTotalLags[topic]))))
+		}
+		a.reporter.blank()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// fetchSourceAndDestinationOffsets sweeps both clusters' offsets for the
+// given topics concurrently — the clusters are independent, so a poll tick
+// pays the slower of the two sweeps rather than their sum.
+func (a *TBMActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
+	return offset.FetchSourceAndDestinationOffsets(ctx, a.sourceOffset, a.destinationOffset, topics)
+}
+
+// formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655").
+func formatLag64(n int64) string {
+	return gateway.FormatLag64(n)
+}
+
+// Fence runs the fence transition: resolves how gateway transitions will be
+// verified on the live cluster, proves hot-reload actually works if the
+// gateway claims to support it, derives the fence RoutePatch by grafting
+// config.FenceYAML's rules fragment onto config.Route (see
+// deriveFenceRoutePatch), patches it in, and confirms it landed. Unlike
+// migration.FenceGateway there is no pod-UID capture. A failure leaves the FSM
+// at lags_ok. Once the patch has reached the cluster, every failure is marked
+// migration.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
+// client traffic, so the orchestrator removes them (see handleStepFailure).
+func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is nothing
+	// to fence this run. Keyed on config.FenceYAML, NOT config.Topics: Topics (the
+	// promote set) can be empty while a fence is still owed for an all-promoted
+	// batch awaiting switchover. Gating on Topics would silently skip that fence.
+	if config.FenceYAML == "" {
+		a.reporter.Success("No topics to fence")
+		tracing.MarkSkipped(ctx, "no_fence_in_plan")
+		return nil
+	}
+
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+
+	fenceRP, err := deriveFenceRoutePatch(config)
+	if err != nil {
+		return fmt.Errorf("failed to build fence route patch: %w", err)
+	}
+
+	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
+	if err != nil {
+		if errors.Is(err, gateway.ErrApplyUnverified) {
+			// The patch persisted; only kcp's read-back of the stored configId
+			// failed, so the fenced rules are live like after any failure below.
+			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", migration.ErrFenceUnconfirmed, err)
+		}
+		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
+	}
+	a.reporter.Success("Fenced gateway CR applied")
+
+	// The fenced rules are live in the cluster from here on.
+	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
+		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
+	}
+	if err := a.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
+		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
+	}
+
+	a.reporter.Success("Gateway fenced and ready")
+	return nil
+}
+
+// unfenceGateway sets config.Route's rules to reconcile's rollback target
+// (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
+// batch taken out). Called only by onAbortFence.
+//
+// Calls ensureGatewayCapability first, exactly like Fence does: a process
+// that resumes directly at verify_fence (Fence already completed in an
+// earlier process) has never touched a.gatewayCapability in this process, so
+// without this call it would apply and verify the unfence using the
+// unresolved zero-value capability — the exact staleness bug already found
+// and fixed for Switch (see resolveGatewayCapability's own doc comment).
+func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.MigrationConfig) error {
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+
+	unfenceRP, err := deriveUnfenceRoutePatch(config)
+	if err != nil {
+		return fmt.Errorf("failed to build unfence route patch: %w", err)
+	}
+
+	applied, err := a.patchGatewayRoute(ctx, config, unfenceRP, "unfence")
+	if err != nil {
+		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
+	}
+	a.reporter.Success("Cleaned gateway CR applied")
+
+	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
+		return err
+	}
+
+	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
+}
+
+// VerifyFence runs the verify_fence transition: verifies the fence held by
+// checking that the source offsets of every topic the batch migrates
+// (config.MigrateTopics, already-promoted ones included) are stable across
+// detectUnroutedProducersDuration — an increasing offset after fencing means a
+// producer bypassing the gateway and writing directly to the source cluster. When detection is disabled
+// (detectUnroutedProducersDuration <= 0) the step succeeds immediately so the
+// FSM still records fence_verified. Mirrors migration.MigrationActions.VerifyFence,
+// except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
+// rather than a TBMConfig field — TBM threads per-run policy the same way
+// WaitForLags already threads LagThreshold.
+func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
+	if detectUnroutedProducersDuration <= 0 {
+		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		a.reporter.Detail("Detection disabled (spec.dynamicMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
+		tracing.MarkSkipped(ctx, "detection_disabled")
+		return nil
+	}
+
+	if err := a.detectUnroutedProducers(ctx, config.MigrateTopics, detectUnroutedProducersDuration); err != nil {
+		return err
+	}
+	a.reporter.Success("Source offsets stable — no unrouted producers detected")
+	return nil
+}
+
+// detectUnroutedProducers takes two source offset snapshots separated by the
+// given duration. If any partition's offset increases between snapshots, a
+// producer is writing directly to the source cluster, bypassing the fenced
+// gateway.
+func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
+	return offset.DetectUnroutedProducers(ctx, a.sourceOffset, a.reporter, topics, duration)
+}
+
+// Promote runs the promote transition: polls source/destination offsets for
+// config.Topics until each reaches exact zero lag, then promotes that
+// topic's mirror, confirming it reaches the terminal STOPPED status before
+// considering it done. Mirrors migration.MigrationActions.PromoteTopics.
+// restAuth is per-run authentication for the cluster-link REST surface — not
+// stored on TBMActions, mirroring how AAO's own PromoteTopics takes it as a
+// parameter rather than construction-time state.
+func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationConfig, restAuth clusterlink.Authenticator) error {
+	slog.Debug("topic promotion process started")
+
+	const maxPromoteRetries = 3
+
+	clusterLinkConfig := clusterlink.Config{
+		RestEndpoint: config.ClusterRestEndpoint,
+		ClusterID:    config.ClusterId,
+		LinkName:     config.ClusterLinkName,
+		Auth:         restAuth,
+		Topics:       config.Topics,
+	}
+
+	// Track which topics still need to reach the terminal STOPPED state.
+	// awaitingStop holds topics whose promote request was accepted
+	// (error_code 0) but which have not yet been confirmed STOPPED via
+	// ListMirrorTopics — a promote is fire-and-forget, so error_code 0 only
+	// means the request was enqueued, not that mirroring has actually stopped.
+	remaining := make(map[string]bool)
+	retryCount := make(map[string]int)
+	awaitingStop := make(map[string]bool)
+	for _, topic := range config.Topics {
+		remaining[topic] = true
+	}
+	// Resume seeding: topics reconcile classified AwaitStopped are already
+	// mid-promotion (PENDING_STOPPED) from an earlier run. Seed them into
+	// awaitingStop so the first pass confirms them via ListMirrorTopics and
+	// waits for STOPPED, rather than re-issuing a promote on an already-
+	// promoting mirror (which CC rejects → 3 retries → fatal). They still count
+	// toward remaining, so the switch stays blocked until they reach STOPPED.
+	for _, topic := range config.AwaitStopped {
+		if remaining[topic] {
+			awaitingStop[topic] = true
+		}
+	}
+	sweepFailures := 0
+	polls, batches, promoteErrors := 0, 0, 0
+	defer func() {
+		tracing.SetAttributes(ctx,
+			attribute.Int("kcp.polls", polls),
+			attribute.Int("kcp.batches", batches),
+			attribute.Int("kcp.promote_errors", promoteErrors))
+	}()
+
+	for {
+		polls++
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Confirm accepted promotions have actually reached STOPPED. Until a
+		// topic is verified STOPPED it stays in remaining, which keeps the
+		// workflow in the promote phase.
+		if len(awaitingStop) > 0 {
+			mirrorTopics, err := a.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
+			if err != nil {
+				return fmt.Errorf("failed to verify mirror topic status: %w", err)
+			}
+			statusByTopic := make(map[string]string, len(mirrorTopics))
+			for _, mt := range mirrorTopics {
+				statusByTopic[mt.MirrorTopicName] = mt.MirrorStatus
+			}
+			for topic := range awaitingStop {
+				status := statusByTopic[topic]
+				if status == clusterlink.MirrorStatusStopped {
+					a.reporter.Success("%s stopped", topic)
+					slog.Debug("mirror topic promotion confirmed stopped", "topic", topic)
+					delete(awaitingStop, topic)
+					delete(remaining, topic)
+				} else {
+					slog.Debug("mirror topic promotion still pending", "topic", topic, "status", status)
+				}
+			}
+		}
+
+		// config.Topics is empty whenever migplan.Reconcile's Result was a
+		// legitimate "nothing to migrate" outcome — remaining starts empty and
+		// this returns immediately, without ever touching clusterLinkService.
+		if len(remaining) == 0 {
+			slog.Debug("all topics promoted and confirmed stopped")
+			return nil
+		}
+
+		// In batch mode, don't start a new batch until the current one has
+		// fully drained to STOPPED — this makes each batch synchronous.
+		if a.promoteBatchSize > 0 && len(awaitingStop) > 0 {
+			a.reporter.Detail("Waiting for current batch of %d topic(s) to reach STOPPED...", len(awaitingStop))
+			slog.Debug("batch in flight, waiting for STOPPED before next batch",
+				"awaitingStop", len(awaitingStop), "pollInterval", a.promotePollInterval)
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+
+		candidates := make([]string, 0, len(remaining))
+		for topic := range remaining {
+			if awaitingStop[topic] {
+				continue
+			}
+			candidates = append(candidates, topic)
+		}
+		sort.Strings(candidates)
+
+		sourceOffsets, destinationOffsets, err := a.fetchSourceAndDestinationOffsets(ctx, candidates)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
+			}
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+		sweepFailures = 0
+
+		var topicsToPromote []string
+		for _, topic := range candidates {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
+			if lag == 0 {
+				topicsToPromote = append(topicsToPromote, topic)
+			}
+		}
+
+		if a.promoteBatchSize > 0 && len(topicsToPromote) > a.promoteBatchSize {
+			topicsToPromote = topicsToPromote[:a.promoteBatchSize]
+		}
+
+		if len(topicsToPromote) == 0 {
+			if len(awaitingStop) > 0 {
+				a.reporter.Detail("Waiting for %d promoted topic(s) to reach STOPPED...", len(awaitingStop))
+				slog.Debug("waiting for accepted promotions to reach STOPPED",
+					"awaitingStop", len(awaitingStop), "pollInterval", a.promotePollInterval)
+			} else {
+				a.reporter.Detail("Waiting for lag to reach zero (%d topics remaining)...", len(remaining))
+				slog.Debug("no topics at zero lag yet, waiting",
+					"remaining", len(remaining), "pollInterval", a.promotePollInterval)
+			}
+			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+
+		a.reporter.Success("%s confirmed at zero lag", color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
+		for _, topic := range topicsToPromote {
+			a.reporter.line(fmt.Sprintf("   %s %s  %s %s",
+				color.GreenString("↳"), color.WhiteString(topic), color.CyanString("lag:"), color.GreenString("0")))
+		}
+		a.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
+		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
+
+		batches++
+		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
+		if err != nil {
+			return fmt.Errorf("failed to promote mirror topics: %w", err)
+		}
+
+		for _, topic := range promoteResponse.Data {
+			if topic.ErrorCode != 0 {
+				promoteErrors++
+				retryCount[topic.MirrorTopicName]++
+				a.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
+					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
+				slog.Warn("topic promotion error",
+					"topic", topic.MirrorTopicName, "errorCode", topic.ErrorCode,
+					"errorMessage", topic.ErrorMessage, "attempt", retryCount[topic.MirrorTopicName])
+				if retryCount[topic.MirrorTopicName] >= maxPromoteRetries {
+					return fmt.Errorf("topic %s failed promotion after %d attempts: %s",
+						topic.MirrorTopicName, maxPromoteRetries, topic.ErrorMessage)
+				}
+			} else {
+				a.reporter.line(fmt.Sprintf("   %s %s promotion accepted (awaiting STOPPED)", color.GreenString("↳"), topic.MirrorTopicName))
+				slog.Debug("topic promotion accepted, awaiting stopped confirmation", "topic", topic.MirrorTopicName)
+				awaitingStop[topic.MirrorTopicName] = true
+			}
+		}
+
+		// Test-only intra-promote kill-point: topics were just accepted
+		// (error_code 0) but are not yet confirmed STOPPED — a real abrupt exit
+		// here leaves them PENDING_STOPPED. Returns a plain error (not
+		// ErrUnroutedProducers → handleStepFailure does not roll back), so the
+		// partial world is left intact for a resume. No-op in production.
+		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
+		}
+
+		slog.Debug("waiting for promotion to complete before next check", "pollInterval", a.promotePollInterval)
+		if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
+			return err
+		}
+	}
+}
+
+// Switch runs the switch transition: derives the switch RoutePatch from
+// config.SwitchoverYAML's rules fragment (see deriveSwitchRoutePatch) —
+// the migplan engine's own pre-computed artifact, captured at initialize
+// exactly like FenceYAML — patches it onto config.Route's rules subtree,
+// replacing it wholesale, then confirms the transition landed. Unlike
+// migration.SwitchGateway, there is no field-flip to derive here: migplan
+// already renders a full switchover rules block ahead of time, because TBM's
+// dynamic routes need a whole-subtree rules replacement, not a single
+// streamingDomain flip on a static route. There is no pod-UID capture or
+// compensating rollback on failure — a failure here just returns an error
+// and leaves the FSM at promoted; re-running execute-tbm retries switching.
+func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
+	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
+	// nothing to switch this run. Read the plan (config.SwitchoverYAML), never
+	// the live cluster. Deliberately NOT keyed on config.Topics — see Fence's
+	// identical guard for the full explanation: Topics is the promote set and
+	// can be empty (all-promoted batch) while a switch is still owed
+	// (config.SwitchoverYAML non-empty).
+	if config.SwitchoverYAML == "" {
+		a.reporter.Success("No topics to switch")
+		tracing.MarkSkipped(ctx, "no_switchover_in_plan")
+		return nil
+	}
+
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+
+	switchRP, err := deriveSwitchRoutePatch(config)
+	if err != nil {
+		return fmt.Errorf("failed to build switch route patch: %w", err)
+	}
+
+	applied, err := a.patchGatewayRoute(ctx, config, switchRP, "switchover")
+	if err != nil {
+		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
+	}
+	a.reporter.Success("Switchover gateway CR applied")
+
+	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
+		return err
+	}
+	if err := a.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
+		return err
+	}
+
+	a.reporter.Success("Gateway switchover complete")
+	return nil
+}

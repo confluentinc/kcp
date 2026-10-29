@@ -17,7 +17,7 @@ LD_FLAGS := -X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION
 # Build
 # ==============================================================================
 
-.PHONY: build-frontend build build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all
+.PHONY: build-frontend build build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows build-all build-lambda-scanner
 
 build-frontend: ## Build the frontend application
 	@echo "Building frontend..."
@@ -43,6 +43,19 @@ build-windows: ## Build for Windows amd64
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LD_FLAGS)" -o $(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 
 build-all: build-frontend build-linux build-linux-arm64 build-darwin build-darwin-arm64 build-windows ## Build for all platforms
+
+LAMBDA_ZIP := dist/kcp-lambda-scanner-linux-arm64.zip
+LAMBDA_BUILD_DIR := dist/lambda-scanner
+
+build-lambda-scanner: build-frontend ## Build the Lambda scanner zip (bootstrap + kcp, linux/arm64) in dist/
+	@rm -rf $(LAMBDA_BUILD_DIR) $(LAMBDA_ZIP)
+	@mkdir -p $(LAMBDA_BUILD_DIR)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LD_FLAGS)" -o $(LAMBDA_BUILD_DIR)/kcp $(MAIN_PATH)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(LAMBDA_BUILD_DIR)/bootstrap ./cmd/lambda-scanner
+	@cd $(LAMBDA_BUILD_DIR) && zip -q -9 ../$(notdir $(LAMBDA_ZIP)) bootstrap kcp
+	@rm -rf $(LAMBDA_BUILD_DIR)
+	@echo "built $(LAMBDA_ZIP) ($$(du -h $(LAMBDA_ZIP) | cut -f1))"
+	@if command -v shasum >/dev/null 2>&1; then shasum -a 256 $(LAMBDA_ZIP); else sha256sum $(LAMBDA_ZIP); fi
 
 # ==============================================================================
 # Install
@@ -90,13 +103,16 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
 
 test-tf-validation: build-frontend ## Run Terraform validation tests (requires terraform on PATH)
 	go test -tags=terraform_validation -timeout 15m $(GOTEST_FLAGS) ./internal/services/hcl/...
+
+examples: ## Regenerate the committed docs/assets/report-plan-examples/** reference outputs from the demo-scan.json fixture
+	UPDATE_EXAMPLES=1 go test ./internal/services/plan/ -run TestReportPlanExamples_UpToDate
 
 test-playwright: build ## Run Playwright browser tests
 	@cd cmd/ui/frontend && npx playwright test --reporter=list
@@ -129,6 +145,91 @@ test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 
 test-migration-teardown: ## Tear down migration E2E infrastructure
 	@bash integration-tests/migration/testdata/teardown.sh
+
+test-migration-hot-reload: test-migration-hot-reload-setup ## Run gateway hot-reload E2E (own cluster; needs a CP Enterprise licence)
+	@trap 'echo ""; echo "Tearing down hot-reload E2E infrastructure..."; bash integration-tests/migration-hot-reload/teardown.sh' EXIT; \
+	bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-setup: ## Set up the licensed hot-reload gateway cluster (separate Minikube profile)
+	@bash integration-tests/migration-hot-reload/setup.sh
+
+test-migration-hot-reload-run: ## Run the hot-reload E2E against an already-provisioned cluster (no teardown)
+	@bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-teardown: ## Tear down the hot-reload E2E cluster
+	@bash integration-tests/migration-hot-reload/teardown.sh
+
+test-migration-tbm: test-migration-tbm-setup ## Run TBM hot-reload E2E (own cluster; needs a CP Enterprise licence)
+	@trap 'echo ""; echo "Tearing down TBM E2E infrastructure..."; bash integration-tests/migration-tbm/teardown.sh' EXIT; \
+	bash integration-tests/migration-tbm/run.sh
+
+test-migration-tbm-setup: ## Set up the licensed dynamic-gateway TBM cluster (separate Minikube profile)
+	@bash integration-tests/migration-tbm/setup.sh
+
+test-migration-tbm-run: ## Run the TBM E2E against an already-provisioned cluster (no teardown)
+	@bash integration-tests/migration-tbm/run.sh
+
+test-migration-tbm-teardown: ## Tear down the TBM E2E cluster
+	@bash integration-tests/migration-tbm/teardown.sh
+
+test-idempotent-fsm: test-idempotent-fsm-setup ## Run the idempotent-FSM live resume E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static
+	@trap 'echo ""; echo "Tearing down idempotent-fsm E2E infrastructure..."; bash integration-tests/idempotent-fsm/teardown.sh' EXIT; \
+	bash integration-tests/idempotent-fsm/run.sh
+
+test-idempotent-fsm-setup: ## Set up the idempotent-fsm resume cluster (GATEWAY_MODE=dynamic default, or static for AAO)
+	@bash integration-tests/idempotent-fsm/setup.sh
+
+test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static picks it. Arg: a -test.run selector
+	@bash integration-tests/idempotent-fsm/run.sh "$(RUN)"
+
+test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, or static)
+	@bash integration-tests/idempotent-fsm/teardown.sh
+
+test-route-conversion: test-route-conversion-setup ## Run the d2s route-conversion live E2E (own cluster; needs a CP Enterprise licence + AWS creds)
+	@trap 'echo ""; echo "Tearing down route-conversion E2E infrastructure..."; bash integration-tests/route-conversion/teardown.sh' EXIT; \
+	bash integration-tests/route-conversion/run.sh
+
+test-route-conversion-setup: ## Set up the route-conversion cluster (Minikube profile kcp-e2e-route-conversion)
+	@bash integration-tests/route-conversion/setup.sh
+
+test-route-conversion-run: ## Run the route-conversion E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
+	@bash integration-tests/route-conversion/run.sh "$(RUN)"
+
+test-route-conversion-teardown: ## Tear down the route-conversion E2E cluster
+	@bash integration-tests/route-conversion/teardown.sh
+
+OTEL_LGTM_IMAGE ?= grafana/otel-lgtm:0.34.0
+OTEL_LGTM_NAME  ?= kcp-otel-lgtm
+
+otel-up: ## Start a local OTel backend with the kcp tracing dashboard (Grafana on :3000, OTLP on :4317/:4318)
+	docker run -d --rm --name $(OTEL_LGTM_NAME) -p 3000:3000 -p 4317:4317 -p 4318:4318 \
+	  -v $(CURDIR)/internal/tracing/grafana:/otel-lgtm/kcp-dashboards:ro \
+	  -v $(CURDIR)/internal/tracing/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/kcp.yaml:ro \
+	  -v $(CURDIR)/internal/tracing/grafana/tempo-config.yaml:/otel-lgtm/tempo-config.yaml:ro \
+	  $(OTEL_LGTM_IMAGE)
+	@echo "kcp tracing dashboard: http://localhost:3000/d/kcp-tracing (ready in ~30s). Send traces with:"
+	@echo "  KCP_TRACING_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 kcp ..."
+
+otel-down: ## Stop the local OTel backend
+	docker stop $(OTEL_LGTM_NAME)
+
+# GATEWAY_MODE picks the migration kind the tracing suite runs: dynamic (the
+# default) or static from integration-tests/tracing, convert (dynamic to static)
+# from integration-tests/tracing/convert. Each has its own Minikube profile.
+TRACING_SUITE = $(if $(filter convert,$(GATEWAY_MODE)),integration-tests/tracing/convert,integration-tests/tracing)
+
+test-tracing: test-tracing-setup ## Run the tracing smoke E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static|convert
+	@trap 'echo ""; echo "Tearing down tracing E2E infrastructure..."; bash $(TRACING_SUITE)/teardown.sh' EXIT; \
+	bash $(TRACING_SUITE)/run.sh
+
+test-tracing-setup: ## Set up a tracing smoke cluster (GATEWAY_MODE=dynamic default, static, or convert)
+	@bash $(TRACING_SUITE)/setup.sh
+
+test-tracing-run: ## Run the tracing smoke E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static|convert
+	@bash $(TRACING_SUITE)/run.sh "$(RUN)"
+
+test-tracing-teardown: ## Tear down a tracing smoke cluster (GATEWAY_MODE=dynamic|static|convert)
+	@bash $(TRACING_SUITE)/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
@@ -191,6 +292,17 @@ test-migrate-acls: build-frontend ## Run the hermetic native-ACL migration tests
 
 test-migrate-acls-live: build ## Run the live native-ACL + SA-naming integration matrix (env-gated; needs CC_*/MSK_* creds; no docker)
 	cd integration-tests/migrate && go test -tags integration -run ACLsLive -v ./...
+
+test-env-up-migplan: ## Start the migplan reconciliation-engine test env (source + dest cp-server + cluster link + ACTIVE mirrors)
+	bash integration-tests/migplan/setup.sh
+
+test-env-down-migplan: ## Stop the migplan reconciliation-engine test env
+	bash integration-tests/migplan/teardown.sh
+
+test-migplan: build-frontend ## Run the migplan reconciliation-engine E2E tests (live source + dest + cluster link; no gateway — TBR gateway apply deferred)
+	$(MAKE) test-env-up-migplan
+	go test -tags e2e -v -count=1 ./integration-tests/migplan/... ; \
+	  status=$$? ; $(MAKE) test-env-down-migplan ; exit $$status
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)

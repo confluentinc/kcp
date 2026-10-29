@@ -1,7 +1,6 @@
 package migration
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,15 +11,17 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/goccy/go-yaml"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // testInitialCR is a minimal live-read gateway CR with a route named
-// migration-route, so FenceGateway's cleanInitialCR + gateway.FenceRoutes can
-// derive a fenced CR from it in unit tests.
+// migration-route, so both capability detection's fence/switch CR splice
+// (deriveFencedCRYAML/deriveSwitchedCRYAML) and the write path's RoutePatch
+// derivation (deriveFenceRoutePatch/deriveSwitchRoutePatch) can derive a
+// fenced/switched result from it in unit tests.
 const testInitialCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
@@ -31,30 +32,41 @@ spec:
       endpoint: gateway:9595
 `
 
+// testFenceYAML, testSwitchoverYAML and testRollbackFenceYAML are what
+// migplan.Reconcile returns for a static route (see MigrationConfig's doc
+// comments), paired with testInitialCR's one route named migration-route: the
+// {fence: …} block, the whole switched {route: …} and the whole rolled-back
+// {route: …}.
+const (
+	testFenceYAML         = "fence:\n  scope: ALL\n  errorCode: BROKER_NOT_AVAILABLE\n"
+	testSwitchoverYAML    = "route:\n  name: migration-route\n  endpoint: gateway:9595\n  streamingDomain:\n    name: confluent-cloud\n    bootstrapServerId: SASL_PLAIN\n"
+	testRollbackFenceYAML = "route:\n  name: migration-route\n  endpoint: gateway:9595\n"
+)
+
+// testReconcileResult returns the migplan.Result Initialize expects to
+// receive, carrying testInitialCR's route and fragments so
+// ResolveGatewayCapability's fence/switch derivation succeeds against it.
+func testReconcileResult() *migplan.Result {
+	return &migplan.Result{
+		Route:          "migration-route",
+		PromoteTopics:  []string{"topic-a", "topic-b", "topic-c"},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+
+		RollbackFenceYAML: testRollbackFenceYAML,
+		RollbackAllowed:   true,
+	}
+}
+
 // ===========================================================================
 // Initialize tests
 // ===========================================================================
 
 func TestWorkflow_Initialize_Success(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("initial-yaml"), nil
-		},
-		// validateGatewayCRsFn left unset: the mock's default passes validation.
-	}
-
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{
-				{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"},
-				{MirrorTopicName: "topic-b", MirrorStatus: "ACTIVE"},
-				{MirrorTopicName: "topic-c", MirrorStatus: "ACTIVE"},
-			}, nil
-		},
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return map[string]string{"bootstrap.servers": "broker:9092"}, nil
-		},
-	}
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
@@ -64,434 +76,90 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
-		SwitchoverCrYAML:    []byte("switchover"),
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
 	require.NoError(t, err)
 
-	assert.Equal(t, "initial-yaml", string(config.InitialCrYAML))
-	assert.Len(t, config.ClusterLinkTopics, 3)
-	assert.Equal(t, "broker:9092", config.ClusterLinkConfigs["bootstrap.servers"])
+	assert.Equal(t, "migration-route", config.Route)
+	assert.Equal(t, testInitialCR, config.GatewayYAML)
+	assert.Equal(t, testFenceYAML, config.FenceYAML)
+	assert.Equal(t, testSwitchoverYAML, config.SwitchoverYAML)
+	assert.Len(t, config.Topics, 3)
 }
 
-// ===========================================================================
-// Gateway CR validation reporting
-//
-// Initialize used to print "✔ Gateway CRs validated" unconditionally, over a
-// validator that did nothing but log "not yet implemented". These tests pin the
-// reporter line to what was actually verified: a tick may only claim a check
-// that ran.
-// ===========================================================================
+// TestWorkflow_Initialize_RefusedResult proves Initialize refuses outright
+// when the migplan.Result it is handed already carries a refusal — mirroring
+// TBMActions.Initialize's own res.Refused check. None of the AAO-specific
+// preconditions below (gateway capability resolution, cluster-link config
+// listing) should run in this case.
+func TestWorkflow_Initialize_RefusedResult(t *testing.T) {
+	wf := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "my-gw"}
 
-// initializeWithValidation runs Initialize against a healthy cluster link with
-// the given validation outcome, returning what the reporter printed.
-func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, validationErr error) (string, error) {
-	t.Helper()
+	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1: blocked by X", "precondition Y: failed"}}
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, res)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reconcile plan refused")
+	assert.Contains(t, err.Error(), "topic t1: blocked by X")
+	assert.Contains(t, err.Error(), "precondition Y: failed")
+}
 
+// TestActions_Initialize_ThreadsReconcileResult proves the migplan.Result the
+// command layer computed live lands on config exactly as onInitialize used
+// to delegate — tested directly against MigrationActions.Initialize, with no
+// FSM involved, since Execute()'s canonicalWorkflow loop already exercises
+// the same call end-to-end (see TestOrchestrator_Execute_FullWorkflow).
+// TestActions_Initialize_ThreadsReconcileResult: Initialize copies every plan
+// field of the reconcile result onto the run's config, which starts empty, so
+// a missing copy leaves that field empty and fails here.
+func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("initial-yaml"), nil
-		},
-		validateGatewayCRsFn: func(_ context.Context, _, _ string, _, _ []byte, _ []string) (gateway.CRValidationResult, error) {
-			return result, validationErr
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			return []byte(testInitialCR), nil
 		},
 	}
 	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
-		},
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return map[string]string{}, nil
+		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
+			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
 		},
 	}
+	actions := NewMigrationActions(gw, cl)
 
-	wf := NewMigrationActions(gw, cl)
-	var out, errOut bytes.Buffer
-	wf.reporter = &reporter{out: &out, err: &errOut}
+	config := &MigrationConfig{MigrationId: "test-migration-1"}
+	res := testReconcileResult()
+	res.AwaitStopped = []string{"await-me"}
+	res.MigrateTopics = []string{"topic-a", "topic-b", "topic-c", "switch-only"}
+	res.RestoreOffsetSync = true
+	res.FencedAtStart = true
 
-	err := wf.Initialize(context.Background(), &MigrationConfig{
-		K8sNamespace:        "ns",
-		InitialCrName:       "my-gw",
-		ClusterRestEndpoint: "https://cluster",
-		ClusterId:           "lkc-123",
-		ClusterLinkName:     "link-1",
-		SwitchoverCrYAML:    []byte("switchover"),
-	}, "key", "secret")
-
-	return out.String() + errOut.String(), err
-}
-
-func TestWorkflow_Initialize_ReportsSecretsChecked(t *testing.T) {
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{SecretRefsChecked: 4}, nil)
-
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 	require.NoError(t, err)
-	assert.Contains(t, output, "Gateway CRs validated (4 secret reference(s) present in ns)")
+
+	assert.Equal(t, res.PromoteTopics, config.Topics)
+	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
+	assert.Equal(t, res.FenceYAML, config.FenceYAML)
+	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.True(t, config.RestoreOffsetSync, "RestoreOffsetSync")
+	assert.Equal(t, res.RollbackFenceYAML, config.RollbackFenceYAML)
+	assert.True(t, config.RollbackAllowed, "RollbackAllowed")
+	assert.True(t, config.FencedAtStart, "FencedAtStart")
+	assert.Equal(t, res.MigrateTopics, config.MigrateTopics)
+	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
+	assert.Equal(t, res.Route, config.Route)
 }
 
-func TestWorkflow_Initialize_ReportsSkippedSecretCheck(t *testing.T) {
-	// The honesty case: the static checks ran, the live one could not. A check
-	// that did not run gets ⚠️ and a Warn in kcp.log — NOT a green tick that an
-	// operator scanning output minutes before cutover will read as "verified".
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{
-		SecretCheckSkipped: "no permission to read secrets in namespace ns",
-	}, nil)
+// TestActions_Initialize_RefusedPlanFailsWithReasons proves a refused
+// reconcile plan is turned into a failed call, never silently accepted.
+func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
+	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	config := &MigrationConfig{MigrationId: "test-migration-1"}
+	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
-	require.NoError(t, err)
-	assert.Contains(t, output, "secret references were NOT checked: no permission to read secrets in namespace ns")
-	assert.NotContains(t, output, "✔ Gateway CRs validated", "a skipped check must not be reported under a success tick")
-}
-
-func TestWorkflow_Initialize_ReportsNoSecretReferences(t *testing.T) {
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{}, nil)
-
-	require.NoError(t, err)
-	assert.Contains(t, output, "Gateway CRs validated (no secret references)")
-}
-
-func TestWorkflow_Initialize_ValidationFailureIsNotReportedAsSuccess(t *testing.T) {
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{},
-		fmt.Errorf("1 problem(s) found:\n  - the fenced gateway CR contains no fence block"))
-
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gateway CR validation failed")
-	assert.Contains(t, err.Error(), "contains no fence block")
-	assert.NotContains(t, output, "Gateway CRs validated")
-}
-
-func TestWorkflow_Initialize_SurfacesValidationWarnings(t *testing.T) {
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{
-		SecretRefsChecked: 1,
-		Warnings:          []string{"the switchover gateway CR fences route(s) the migration does not fence (legacy-route)"},
-	}, nil)
-
-	require.NoError(t, err)
-	assert.Contains(t, output, "fences route(s) the migration does not fence (legacy-route)")
-	assert.Contains(t, output, "Gateway CRs validated")
-}
-
-func TestWorkflow_Initialize_WarningsSurfaceEvenWhenValidationFails(t *testing.T) {
-	// Warnings are context for diagnosing the failure, so they must not be
-	// swallowed by the early return.
-	output, err := initializeWithValidation(t, gateway.CRValidationResult{
-		Warnings: []string{"the fenced gateway CR has a fence block that is not on a route"},
-	}, fmt.Errorf("1 problem(s) found:\n  - something else"))
-
-	require.Error(t, err)
-	assert.Contains(t, output, "fence block that is not on a route")
-}
-
-func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) {
-	// The live secret lookup is namespace-scoped, and the identity check needs the
-	// target gateway name — both come from the migration config.
-	var gotNamespace, gotGateway string
-	var gotInitial, gotSwitchover []byte
-	var gotFenceRoutes []string
-
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("initial-yaml"), nil
-		},
-		validateGatewayCRsFn: func(_ context.Context, namespace, name string, initial, switchover []byte, fenceRoutes []string) (gateway.CRValidationResult, error) {
-			gotNamespace, gotGateway = namespace, name
-			gotInitial, gotSwitchover = initial, switchover
-			gotFenceRoutes = fenceRoutes
-			return gateway.CRValidationResult{}, nil
-		},
-	}
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
-		},
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return map[string]string{}, nil
-		},
-	}
-
-	wf := NewMigrationActions(gw, cl)
-	err := wf.Initialize(context.Background(), &MigrationConfig{
-		K8sNamespace:        "kcp",
-		InitialCrName:       "migration-gateway",
-		ClusterRestEndpoint: "https://cluster",
-		ClusterId:           "lkc-123",
-		ClusterLinkName:     "link-1",
-		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
-	}, "key", "secret")
-
-	require.NoError(t, err)
-	assert.Equal(t, "kcp", gotNamespace)
-	assert.Equal(t, "migration-gateway", gotGateway)
-	assert.Equal(t, "initial-yaml", string(gotInitial), "the live CR just fetched, not the stale config field")
-	assert.Equal(t, "switchover", string(gotSwitchover))
-	assert.Equal(t, []string{"migration-route"}, gotFenceRoutes)
-}
-
-func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return nil, fmt.Errorf("k8s unreachable")
-		},
-	}
-	cl := &mockClusterLinkService{}
-
-	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{
-		K8sNamespace:  "ns",
-		InitialCrName: "my-gw",
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.Error(t, err)
-	assert.Equal(t, "failed to get initial CR YAML: k8s unreachable", err.Error())
-}
-
-func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("yaml"), nil
-		},
-	}
-
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{
-				{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"},
-				{MirrorTopicName: "topic-b", MirrorStatus: "PAUSED"},
-			}, nil
-		},
-	}
-
-	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{
-		K8sNamespace:        "ns",
-		InitialCrName:       "my-gw",
-		ClusterRestEndpoint: "https://cluster",
-		ClusterId:           "lkc-123",
-		ClusterLinkName:     "link-1",
-		SwitchoverCrYAML:    []byte("switchover"),
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.Error(t, err)
-	assert.Equal(t, "1 mirror topics are not active: topic-b (status: PAUSED)", err.Error())
-}
-
-func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("yaml"), nil
-		},
-	}
-
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{
-				{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"},
-			}, nil
-		},
-		validateTopicsFn: func(topics []string, _ []string) error {
-			return fmt.Errorf("topic topic-x not found in cluster link")
-		},
-	}
-
-	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{
-		K8sNamespace:        "ns",
-		InitialCrName:       "my-gw",
-		ClusterRestEndpoint: "https://cluster",
-		ClusterId:           "lkc-123",
-		ClusterLinkName:     "link-1",
-		Topics:              []string{"topic-x"},
-		SwitchoverCrYAML:    []byte("switchover"),
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.Error(t, err)
-	assert.Equal(t, "failed to validate topics in cluster link: topic topic-x not found in cluster link", err.Error())
-}
-
-func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("yaml"), nil
-		},
-	}
-
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{
-				{MirrorTopicName: "orders", MirrorStatus: "ACTIVE"},
-				{MirrorTopicName: "payments", MirrorStatus: "ACTIVE"},
-				{MirrorTopicName: "users", MirrorStatus: "ACTIVE"},
-			}, nil
-		},
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return map[string]string{}, nil
-		},
-	}
-
-	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{
-		K8sNamespace:        "ns",
-		InitialCrName:       "my-gw",
-		ClusterRestEndpoint: "https://cluster",
-		ClusterId:           "lkc-123",
-		ClusterLinkName:     "link-1",
-		Topics:              nil, // empty — should discover all
-		SwitchoverCrYAML:    []byte("switchover"),
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.NoError(t, err)
-
-	require.Len(t, config.Topics, 3)
-
-	expected := map[string]bool{"orders": true, "payments": true, "users": true}
-	for _, topic := range config.Topics {
-		assert.True(t, expected[topic], "unexpected topic %q in discovered topics", topic)
-	}
-}
-
-// ===========================================================================
-// PauseConsumerOffsetSync precondition tests (U2)
-// ===========================================================================
-
-// makeOffsetSyncWorkflow builds a workflow with mocks that satisfy Initialize
-// up to the cluster-link config check. listConfigsFn is the seam under test.
-func makeOffsetSyncWorkflow(t *testing.T, listConfigsFn func(_ context.Context, _ clusterlink.Config) (map[string]string, error)) *MigrationActions {
-	t.Helper()
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
-			return []byte("yaml"), nil
-		},
-	}
-	cl := &mockClusterLinkService{
-		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
-		},
-		listConfigsFn: listConfigsFn,
-	}
-	return NewMigrationActions(gw, cl)
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-pause",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.NoError(t, err)
-	assert.True(t, config.PauseConsumerOffsetSync, "intent should be retained on config")
-	assert.False(t, config.PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-falsey",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "link-falsey")
-	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
-	assert.Contains(t, err.Error(), `"false"`)
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"other.key": "value"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-absent",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "link-absent")
-	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable config key", "error must distinguish absent key from false value")
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testing.T) {
-	// Cluster link reports enable=false. Without the flag, init must succeed
-	// regardless — the precondition only applies when the operator opted in.
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-offset-disabled",
-		PauseConsumerOffsetSync: false,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.NoError(t, err, "flag off must not assert offset-sync state")
-}
-
-// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition
-// covers the --skip-validate + --pause-consumer-offset-sync flow where:
-//  1. init runs with --skip-validate so the precondition was NOT checked at init time
-//  2. first execute calls DisableOffsetSync which sets enable=false and marker=true
-//  3. FSM transitions out of StateUninitialized, calling Initialize
-//
-// At step 3 the live config is "false" (kcp just set it) and the marker is
-// true, meaning kcp is the reason the value drifted. Initialize must NOT
-// refuse — that would wedge the migration mid-flight.
-func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:                "link-mid-flight",
-		PauseConsumerOffsetSync:        true,
-		PauseConsumerOffsetSyncFlipped: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
-}
-
-// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot
-// pins the defensive guard against the snapshot-clobbering bug. If Initialize
-// is ever called after DisableOffsetSync has run (i.e. Flipped=true), the live
-// configs reflect the post-disable state. Writing them to ClusterLinkConfigs
-// would clobber the pre-disable snapshot that RestoreOffsetSync needs to diff
-// against. The guard must keep the existing snapshot in that case.
-//
-// Today the CLI blocks the ordering hazard via mutual exclusion of
-// --skip-validate and --pause-consumer-offset-sync, but this test pins the
-// in-code defense in case a future caller reintroduces the ordering.
-func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		// Post-disable live state — toggle false, filters cleared.
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	preDisableSnapshot := map[string]string{
-		"consumer.offset.sync.enable":   "true",
-		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
-	}
-	config := &MigrationConfig{
-		ClusterLinkName:                "link-mid-flight",
-		PauseConsumerOffsetSync:        true,
-		PauseConsumerOffsetSyncFlipped: true,
-		ClusterLinkConfigs:             preDisableSnapshot,
-	}
-
-	err := wf.Initialize(context.Background(), config, "key", "secret")
-	require.NoError(t, err)
-
-	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],
-		"pre-disable toggle value must survive Initialize when Flipped=true")
-	assert.Equal(t, `{"groups":["app-*"]}`, config.ClusterLinkConfigs["consumer.offset.group.filters"],
-		"pre-disable filters value must survive Initialize when Flipped=true")
+	assert.Contains(t, err.Error(), "topic t1.order has replication lag")
+	assert.Empty(t, config.Route, "a refused plan must not mutate config")
 }
 
 // ===========================================================================
@@ -518,7 +186,7 @@ func TestWorkflow_CheckLags_ImmediatelyBelowThreshold(t *testing.T) {
 		Topics: []string{"topic-1", "topic-2"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 }
 
@@ -542,7 +210,7 @@ func TestWorkflow_CheckLags_NoTopics(t *testing.T) {
 		Topics: []string{},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 }
 
@@ -555,7 +223,7 @@ func TestWorkflow_CheckLags_NilOffsetServices(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
 }
@@ -584,7 +252,7 @@ func TestWorkflow_CheckLags_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
 
-	err := wf.CheckLags(ctx, config, 10, "key", "secret")
+	err := wf.CheckLags(ctx, config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -609,7 +277,7 @@ func TestWorkflow_CheckLags_DestinationAhead(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "negative lag (destination ahead) should be treated as 0 and pass threshold")
 }
 
@@ -662,7 +330,7 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
 	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
@@ -718,7 +386,7 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "retry should succeed")
 
 	finalCallCount := atomic.LoadInt64(&callCount)
@@ -774,7 +442,7 @@ func TestWorkflow_PromoteTopics_StuckPendingStoppedDoesNotSucceed(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	err := wf.PromoteTopics(ctx, config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err, "must not report success while topic is stuck in PENDING_STOPPED")
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -827,10 +495,68 @@ func TestWorkflow_PromoteTopics_WaitsForStoppedStatus(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
 		"expected PromoteTopics to poll mirror status until STOPPED was observed")
+}
+
+// Resume-from-PENDING_STOPPED: a topic reconcile classified AwaitStopped is
+// already mid-promotion, so the promote stage must WAIT for it to reach STOPPED
+// and never re-issue a promote on it (a re-promote of an already-promoting
+// mirror is rejected by CC → the loop would retry 3x then fail). Only the
+// genuinely migratable topic gets a promote request.
+func TestWorkflow_PromoteTopics_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	var promoted []string // PromoteTopics is synchronous — no locking needed
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoted = append(promoted, topicNames...)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 0})
+			}
+			return resp, nil
+		},
+		// Both mirrors PENDING_STOPPED for the first two polls, then STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			status := "PENDING_STOPPED"
+			if atomic.AddInt64(&listCalls, 1) >= 3 {
+				status = "STOPPED"
+			}
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "await-me", MirrorStatus: status},
+				{MirrorTopicName: "migrate-me", MirrorStatus: status},
+			}, nil
+		},
+	}
+
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 100}, nil },
+	}
+
+	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:              []string{"await-me", "migrate-me"},
+		AwaitStopped:        []string{"await-me"},
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	require.NoError(t, err)
+	assert.NotContains(t, promoted, "await-me",
+		"an AwaitStopped topic (already promoting on resume) must be waited on, never re-promoted")
+	assert.Contains(t, promoted, "migrate-me",
+		"the genuinely migratable topic must still be promoted")
 }
 
 // TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially verifies that when
@@ -914,7 +640,7 @@ func TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -959,7 +685,7 @@ func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "topic topic-1 failed promotion after 3 attempts: persistent error", err.Error())
 }
@@ -973,45 +699,65 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
+}
+
+// TestWorkflow_PromoteTopics_NoTopicsIsNoop asserts the plan-driven no-op
+// guard: when reconcile emitted no migratable topics, PromoteTopics returns
+// nil immediately, before even the nil-offset-service check, and never
+// touches the cluster link. Offset services are deliberately left nil (via
+// NewMigrationActions) — if the guard were missing or misplaced after the
+// nil check, this would fail with "source and destination offset services
+// are required" instead of nil.
+func TestWorkflow_PromoteTopics_NoTopicsIsNoop(t *testing.T) {
+	var promoteCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, _ []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoteCalls, 1)
+			return nil, nil
+		},
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			atomic.AddInt64(&promoteCalls, 1)
+			return nil, nil
+		},
+	}
+	wf := NewMigrationActions(&mockGatewayService{}, cl)
+	config := &MigrationConfig{Topics: nil}
+
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteCalls), "no topics to promote: cluster link must not be touched")
 }
 
 // ===========================================================================
 // FenceGateway / SwitchGateway tests
 // ===========================================================================
 
-// TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR is the behavioural
-// heart of the inline-fence change: FenceGateway no longer applies a
-// snapshotted fenced CR file — it derives the fenced CR at cutover from the
-// metadata-stripped initial CR by injecting a fence block onto the routes named
-// in config.FenceRoutes. The applied bytes must carry that fence.
+// TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR: FenceGateway
+// derives a RoutePatch from config.FenceYAML for config.Route; the patch must
+// carry that fence.
 func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
-	var applied []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
-			applied = yaml
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
-	require.NotNil(t, applied, "FenceGateway must apply a CR")
 
-	// Re-parse the applied bytes and confirm the fence landed on the named route.
-	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(applied, &obj))
-	routes := obj["spec"].(map[string]any)["routes"].([]any)
-	route := routes[0].(map[string]any)
-	assert.Equal(t, "migration-route", route["name"])
-	fence, ok := route["fence"].(map[string]any)
-	require.True(t, ok, "the named route must carry a fence block")
+	assert.Equal(t, "migration-route", gotRP.RouteName)
+	assert.Equal(t, "fence", gotRP.Field)
+	fence, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "fence patch value must be a map")
 	assert.Equal(t, "ALL", fence["scope"])
 	assert.Equal(t, "BROKER_NOT_AVAILABLE", fence["errorCode"])
 }
@@ -1019,11 +765,11 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return nil
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
 			if onProgress != nil {
 				onProgress(gateway.GatewayReadinessProgress{InitialPodCount: 3, PodsReady: 3, Elapsed: 2 * time.Second, RolloutDetected: true, Ready: true})
@@ -1033,7 +779,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1049,7 +795,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			unwantedCall = "GetGatewayPodUIDs"
 			return nil, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			unwantedCall = "WaitForGatewayPods"
 			return nil
 		},
@@ -1057,10 +803,10 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			acceptedCalled = true
 			return nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1071,7 +817,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	// keeps the lightweight readiness-only wait and never touches pod UIDs. The
 	// operator-acceptance wait, by contrast, now runs on every path — the
 	// Deployment-only wait cannot tell a no-op apply from a rejected one.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1088,17 +834,19 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1116,15 +864,15 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "getUIDs")
 			return oldUIDs, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "reconcile")
 			return nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "waitPods")
 			passedUIDs = initialPodUIDs
 			if onProgress != nil {
@@ -1132,7 +880,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			}
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1143,7 +891,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
 	// then wait for those old pods to actually terminate so no unfenced pod is
 	// still serving traffic when detection's first offset snapshot is taken.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}, DetectUnroutedProducersDuration: 10 * time.Second}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}, DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1155,13 +903,13 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 
 func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			return fmt.Errorf("k8s 403")
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+			return "", fmt.Errorf("k8s 403")
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1171,17 +919,17 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 
 func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(100 * time.Millisecond)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1190,17 +938,17 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 
 func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -1215,8 +963,10 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1224,7 +974,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1234,52 +984,166 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
 	assert.Equal(t, time.Duration(0), observedTimeout, "default rolloutTimeout should be 0 (no deadline)")
 }
 
+// TestWorkflow_FenceGateway_NoFenceYAMLIsNoop asserts the plan-driven no-op
+// guard: when reconcile emitted no fence artifact, FenceGateway returns nil
+// immediately and never touches the gateway (no capability resolution, no
+// patch, no wait). config carries no GatewayYAML/SwitchoverYAML either —
+// proving the guard fires before anything that would need them. Fence's
+// no-op signal is FenceYAML, deliberately NOT config.Topics — see
+// TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences below
+// for why a shared Topics-based guard would be wrong.
+func TestWorkflow_FenceGateway_NoFenceYAMLIsNoop(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{Topics: []string{"topic-a"}, FenceYAML: ""}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no fence artifact in plan: gateway must not be touched")
+}
+
+// TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences pins the
+// promoted-not-switched shape at the unit level: reconcile can return an empty
+// promote set (config.Topics == nil — every topic already promoted to
+// STOPPED) while a fence artifact is still present, because fence is a
+// whole-route action independent of per-topic promote status. Gating on
+// Topics here would silently skip a still-owed fence (and, on a real
+// cluster, the switch right after it) — this is the production bug this
+// guard rework fixes.
+func TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{
+		K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR,
+		Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML,
+		Topics: nil,
+	}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a non-empty fence artifact must still be applied even when there is nothing left to promote")
+}
+
 func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	var callOrder []string
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
-			callOrder = append(callOrder, fmt.Sprintf("apply:%s", string(yaml)))
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
+			callOrder = append(callOrder, "apply")
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
 			return nil
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"apply:switchover", "wait"}, callOrder, "apply (switchover YAML) must precede wait")
+	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply (derived switch route patch) must precede wait")
+	assert.Equal(t, "migration-route", gotRP.RouteName)
+	assert.Equal(t, "", gotRP.Field, "switch must whole-route replace so the fence is dropped, not overwrite a single field")
+	route, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be the route object")
+	domain, ok := route["streamingDomain"].(map[string]any)
+	require.True(t, ok, "the switched route must carry a streamingDomain")
+	assert.Equal(t, "confluent-cloud", domain["name"], "the patch must carry the target streaming domain")
+}
+
+// testFencedCaptureCR is a start-of-run CR a resumed run pulls: the route is
+// still fenced by the interrupted run and bound to the source domain.
+const testFencedCaptureCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      fence:
+        scope: ALL
+        errorCode: BROKER_NOT_AVAILABLE
+      streamingDomain:
+        name: source-kafka-cluster
+`
+
+// TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute: the switch replaces the
+// whole route with reconcile's switched route exactly as given. Reconcile has
+// already removed the fence from it, so the start-of-run CR — fenced on a
+// resume — plays no part.
+func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
+	config := &MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
+
+	rp, err := deriveSwitchRoutePatch(config)
+	require.NoError(t, err)
+
+	want, err := gateway.FragmentValue([]byte(testSwitchoverYAML), "route")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, rp,
+		"the switch must replace the whole route with reconcile's switched route, unchanged")
+}
+
+// TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute: the rollback
+// replaces the whole route with reconcile's rollback route exactly as given —
+// never the start-of-run CR, which on a resume is still fenced.
+func TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute(t *testing.T) {
+	config := &MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+
+	rp, err := deriveUnfenceRoutePatch(config)
+	require.NoError(t, err)
+
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
+	require.NoError(t, err)
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, rp,
+		"the rollback must replace the whole route with reconcile's rollback route, unchanged")
 }
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1314,17 +1178,19 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
@@ -1342,21 +1208,21 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1366,13 +1232,15 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 // failures distinguishable from operator rejections.
 func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1387,7 +1255,9 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
 			observedTimeout = timeout
 			return nil
@@ -1395,10 +1265,63 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, 15*time.Minute, observedTimeout)
+}
+
+// TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop asserts the plan-driven
+// no-op guard: when reconcile emitted no switchover artifact, SwitchGateway
+// returns nil immediately and never touches the gateway. Switch's no-op
+// signal is SwitchoverYAML, deliberately NOT config.Topics — see
+// TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches
+// below for why a shared Topics-based guard would be wrong.
+func TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{Topics: []string{"topic-a"}, SwitchoverYAML: ""}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no switchover artifact in plan: gateway must not be touched")
+}
+
+// TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches
+// pins the promoted-not-switched shape at the unit level: reconcile can
+// return an empty promote set (config.Topics == nil — every topic already
+// promoted to STOPPED) while a switchover artifact is still present and owed,
+// because switch is a whole-route action independent of per-topic promote
+// status.
+// Gating on Topics here is the exact production bug this guard rework
+// fixes: a kill right after the last topic's promote completes would
+// otherwise report the migration complete without ever switching the
+// gateway.
+func TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{
+		K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR,
+		Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML,
+		Topics: nil,
+	}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a non-empty switchover artifact must still be applied even when there is nothing left to promote")
 }
 
 // TestWorkflow_UnfenceGateway_OperatorRejection_Fails covers the rollback path:
@@ -1407,17 +1330,19 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte("apiVersion: v1\nkind: Gateway\n")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1430,21 +1355,21 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte("apiVersion: v1\nkind: Gateway\n")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1453,6 +1378,33 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 // ===========================================================================
 // VerifyFence / DetectUnroutedProducers tests
 // ===========================================================================
+
+// TestWorkflow_VerifyFence_WatchesAlreadyPromotedTopics: the fence check watches
+// every topic the run migrates, not just those still to promote. On a resume an
+// already-promoted topic's mirror no longer copies from the source, so a write
+// straight to its source would never reach the target.
+func TestWorkflow_VerifyFence_WatchesAlreadyPromotedTopics(t *testing.T) {
+	var calls int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if topic == "promoted" {
+				return map[int32]int64{0: 100 + atomic.AddInt64(&calls, 1)*10}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+	wf := NewMigrationActionsWithOffsets(&mockGatewayService{}, &mockClusterLinkService{}, sourceOffset, &mockOffsetProvider{})
+	config := &MigrationConfig{
+		Topics:                          []string{"active"},
+		MigrateTopics:                   []string{"active", "promoted"},
+		DetectUnroutedProducersDuration: time.Millisecond,
+	}
+
+	err := wf.VerifyFence(context.Background(), config)
+
+	require.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "promoted partition 0", "the already-promoted topic's source must be watched")
+}
 
 func TestWorkflow_VerifyFence_StableOffsets(t *testing.T) {
 	gw := &mockGatewayService{}
@@ -1467,7 +1419,7 @@ func TestWorkflow_VerifyFence_StableOffsets(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1", "topic-2"},
+		MigrateTopics:                   []string{"topic-1", "topic-2"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
@@ -1481,9 +1433,9 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 	// (see TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack).
 	var applyCalled bool
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
-			return nil
+			return configID, nil
 		},
 	}
 	cl := &mockClusterLinkService{}
@@ -1508,9 +1460,9 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, destOffset)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
-		InitialCrYAML:                   []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
+		GatewayYAML:                     "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n",
 		InitialCrName:                   "my-gw",
 		K8sNamespace:                    "ns",
 	}
@@ -1542,7 +1494,7 @@ func TestWorkflow_VerifyFence_NewPartitionBetweenSnapshots_IsViolation(t *testin
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, sourceOffset)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
@@ -1567,7 +1519,7 @@ func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: 0, // check disabled
 	}
 
@@ -1577,13 +1529,35 @@ func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
 		"offset providers should not be consulted when detection is disabled")
 }
 
+// TestWorkflow_VerifyFence_NothingToMigrate_SkipsTheWindow: a run that owes only
+// the offset-sync restore has no topic to watch, so the check returns at once
+// instead of waiting out the detection window over nothing.
+func TestWorkflow_VerifyFence_NothingToMigrate_SkipsTheWindow(t *testing.T) {
+	offsetProvider := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return map[string]map[int32]int64{}, nil
+		},
+	}
+	wf := NewMigrationActionsWithOffsets(&mockGatewayService{}, &mockClusterLinkService{}, offsetProvider, offsetProvider)
+	config := &MigrationConfig{
+		MigrateTopics:                   nil,
+		DetectUnroutedProducersDuration: time.Hour,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := wf.VerifyFence(ctx, config)
+
+	require.NoError(t, err, "with no topic to watch the check must not wait out the window")
+}
+
 func TestWorkflow_VerifyFence_NilOffsetServices(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationActions(gw, cl) // no offset providers
 	config := &MigrationConfig{
-		Topics:                          []string{"topic-1"},
+		MigrateTopics:                   []string{"topic-1"},
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
@@ -1644,68 +1618,48 @@ func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	err := wf.PromoteTopics(ctx, config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "PromoteTopics should not run unrouted-producer detection")
 	assert.True(t, promoted["topic-1"])
 }
 
-func TestWorkflow_UnfenceGateway_StripsServerMetadata(t *testing.T) {
-	var appliedYAML []byte
+// TestWorkflow_UnfenceGateway_PatchesRouteVerbatim proves unfenceGateway
+// restores config.Route to exactly the state captured in config.GatewayYAML —
+// a whole-route replace (Field == "") straight off the migplan-captured CR,
+// with no re-cleaning of its own (migplan already cleaned server-managed
+// metadata once, centrally — see migplan/gatewayfile.go's cleanGatewayDoc).
+func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T) {
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
-			appliedYAML = yaml
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
+			return configID, nil
 		},
 	}
-	cl := &mockClusterLinkService{}
-
-	wf := NewMigrationActions(gw, cl)
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		InitialCrYAML: []byte(`apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: my-gw
-  namespace: confluent
-  managedFields:
-  - manager: confluent-operator
-    operation: Apply
-  resourceVersion: "12345"
-  uid: abc-def-123
-  creationTimestamp: "2026-01-01T00:00:00Z"
-  generation: 3
-spec:
-  streamingDomains:
-  - name: source-kafka-cluster
-status:
-  phase: RUNNING
-`),
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testFencedCaptureCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
-	err := wf.unfenceGateway(context.Background(), config)
+	require.NoError(t, wf.unfenceGateway(context.Background(), config))
+	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
 	require.NoError(t, err)
-	require.NotNil(t, appliedYAML, "ApplyGatewayYAML should have been called")
-
-	yamlStr := string(appliedYAML)
-	assert.NotContains(t, yamlStr, "managedFields", "managedFields should be stripped")
-	assert.NotContains(t, yamlStr, "resourceVersion", "resourceVersion should be stripped")
-	assert.NotContains(t, yamlStr, "uid", "uid should be stripped")
-	assert.NotContains(t, yamlStr, "creationTimestamp", "creationTimestamp should be stripped")
-	assert.NotContains(t, yamlStr, "generation", "generation should be stripped")
-	assert.NotContains(t, yamlStr, "status", "status should be stripped")
-	assert.Contains(t, yamlStr, "streamingDomains", "spec should be preserved")
-	assert.Contains(t, yamlStr, "source-kafka-cluster", "spec values should be preserved")
+	assert.Equal(t, gateway.RoutePatch{RouteName: "migration-route", Value: want}, gotRP,
+		"unfence must replace the whole route with reconcile's rollback route, not the start-of-run CR")
 }
 
 func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 	var applyCalled, waitCalled bool
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
-			return nil
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitCalled = true
 			assert.True(t, applyCalled, "readiness wait must happen after the CR is applied")
 			assert.Equal(t, "confluent", namespace)
@@ -1717,9 +1671,11 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		InitialCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n"),
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testInitialCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1729,10 +1685,10 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 
 func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			return nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -1740,14 +1696,16 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
-		InitialCrName: "my-gw",
-		K8sNamespace:  "confluent",
-		InitialCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n"),
+		InitialCrName:     "my-gw",
+		K8sNamespace:      "confluent",
+		GatewayYAML:       testInitialCR,
+		Route:             "migration-route",
+		RollbackFenceYAML: testRollbackFenceYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed waiting for gateway readiness after unfence")
+	assert.Contains(t, err.Error(), "failed waiting for gateway readiness during unfence")
 	assert.Contains(t, err.Error(), "gateway pods did not converge")
 }
 
@@ -1839,7 +1797,7 @@ func TestWorkflow_CheckLags_ToleratesTransientSweepFailures(t *testing.T) {
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
 	assert.GreaterOrEqual(t, calls.Load(), int32(3), "expected the sweep to be retried on later ticks")
 }
@@ -1865,7 +1823,7 @@ func TestWorkflow_CheckLags_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
 	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")
@@ -1903,7 +1861,7 @@ func TestWorkflow_CheckLags_SweepFailureCounterResetsOnSuccess(t *testing.T) {
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "four non-consecutive failures must not abort")
 	assert.Equal(t, int32(6), calls.Load())
 }
@@ -1955,7 +1913,7 @@ func TestWorkflow_PromoteTopics_ToleratesTransientSweepFailures(t *testing.T) {
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
 	assert.True(t, promoted["topic-1"], "topic must still be promoted after tolerated failures")
 }
@@ -1981,7 +1939,7 @@ func TestWorkflow_PromoteTopics_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
 	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")

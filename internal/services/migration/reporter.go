@@ -11,7 +11,7 @@ import (
 )
 
 // reporter owns all user-facing terminal output for the migration flow so the
-// orchestrator, workflow and offset-sync bookends don't scatter raw
+// orchestrator, workflow and offset-sync steps don't scatter raw
 // fmt.Printf/Fprintf/color calls. It centralises the emoji, indentation and
 // colour conventions and the destination streams (stdout for progress, stderr
 // for soft-fail remediation notes), giving migration output a single owner and
@@ -61,15 +61,18 @@ func (r *reporter) section(msg string) {
 	r.mirror(msg)
 }
 
-// success prints an indented green-✔ line. The text may embed its own colour.
-func (r *reporter) success(format string, a ...any) {
+// Success prints an indented green-✔ line. The text may embed its own colour.
+// Exported so this reporter satisfies gateway.Reporter, letting
+// gateway.TransitionVerifier's shared apply/wait/verify logic report through
+// it without this package depending on gateway's own reporter shape.
+func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   %s %s\n", color.GreenString("✔"), msg)
 	r.mirror(msg)
 }
 
-// detail prints an indented ↳ progress line.
-func (r *reporter) detail(format string, a ...any) {
+// Detail prints an indented ↳ progress line. Exported — see Success.
+func (r *reporter) Detail(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   ↳ %s\n", msg)
 	r.mirror(msg)
@@ -82,11 +85,12 @@ func (r *reporter) warn(format string, a ...any) {
 	r.mirrorWarn(msg)
 }
 
-// remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
+// Remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
 // newlines for indented continuation lines; it is not indented on the first
-// line. Used by the offset-sync bookends, whose failures are surfaced as
-// operator guidance without aborting a successful migration.
-func (r *reporter) remediation(format string, a ...any) {
+// line. Used for offset-sync guidance printed on top of a run's own error
+// (the abort_fence rollback's restore, the failed-run pause reminder).
+// Exported — see Success.
+func (r *reporter) Remediation(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
 	r.mirrorWarn(msg)

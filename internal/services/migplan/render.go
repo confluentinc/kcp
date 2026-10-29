@@ -1,0 +1,249 @@
+package migplan
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/fatih/color"
+)
+
+// RenderView carries the display-only context RenderReport needs beyond the
+// Report itself: the route/target for the header, whether to expand per-topic
+// facts (--verbose), and the success-footer note (where artifacts went, or that
+// this was a dry-run).
+type RenderView struct {
+	Route        string
+	TargetDomain string
+	Verbose      bool
+	ArtifactNote string // shown in the success footer, e.g. "artifacts → ./out"
+	// Conversion renders a route conversion (spec.dynamicToStaticConversion): its topics are the cluster
+	// link's, each promoted one reads "promoted", and the footer counts link topics instead of
+	// topics to migrate.
+	Conversion bool
+}
+
+// RenderReport writes the topic-centric plan to w: a header, the route checks
+// (always every one), then the requested topics — blocked first, then ready,
+// then unchanged — and a Terraform-style counts footer. Colours match the
+// direct-API migration renderer (green ready, red blocked, faint unchanged,
+// yellow warnings). Colour is gated by fatih/color's process-global
+// color.NoColor, which the library initialises from os.Stdout's TTY status and
+// the NO_COLOR env var — it is NOT keyed off w. So a non-terminal stdout (piped
+// output, `go test`) yields plain text, but redirecting w to a file while stdout
+// stays a TTY would still emit ANSI; set color.NoColor if that matters.
+func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+	yellow := color.New(color.FgYellow)
+	faint := color.New(color.Faint)
+	bold := color.New(color.Bold)
+
+	if v.Route != "" {
+		if v.Conversion {
+			_, _ = fmt.Fprintln(w, bold.Sprintf("Conversion plan · route %q → static on %s", v.Route, v.TargetDomain))
+		} else {
+			_, _ = fmt.Fprintln(w, bold.Sprintf("Migration plan · route %q → %s", v.Route, v.TargetDomain))
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+
+	// Route checks — always every line, pass or fail.
+	_, _ = fmt.Fprintln(w, "Route checks")
+	failedGates := 0
+	for _, p := range r.Preconditions {
+		switch {
+		case p.Skipped:
+			// Advisory, never a refusal reason (OK is always true here) — but
+			// must not render as a plain "✓ passed" the way a real pass does,
+			// since that would claim a verification that never happened.
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprintf("%s — %s", p.Name, p.Detail))
+		case p.OK:
+			_, _ = fmt.Fprintf(w, "  %s %s\n", green.Sprint("✓"), p.Name)
+		default:
+			failedGates++
+			_, _ = fmt.Fprintf(w, "  %s %s\n", red.Sprint("✗"), red.Sprintf("%s — %s", p.Name, p.Detail))
+		}
+	}
+
+	// A failed gate stops the run before any topic is evaluated.
+	topicsEvaluated := len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged)+len(r.FailFast) > 0
+	if failedGates > 0 && !topicsEvaluated {
+		// No topic lines to attach warnings to, but a refusal's warnings can
+		// matter most (e.g. a route kcp left fenced): print them all.
+		for _, wn := range r.Warnings {
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+		}
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, red.Sprintf("Refused at route checks — %d failed. No topics evaluated, no artifacts.", failedGates))
+		return
+	}
+
+	// Topics — blocked first (what Omar must fix), then ready, then unchanged.
+	total := len(r.FailFast) + len(r.Migratable) + len(r.SwitchOnly) + len(r.AwaitStopped) + len(r.Unchanged)
+	switch {
+	case !v.Conversion:
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "Topics · %d requested\n", total)
+	case total > 0:
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "Link topics · %d\n", total)
+	}
+	// A conversion's settled topics are promoted mirrors already routed to the target.
+	unchangedWord := "unchanged"
+	if v.Conversion {
+		unchangedWord = "promoted"
+	}
+
+	width := 0
+	for _, group := range [][]reconcile.TopicVerdict{r.FailFast, r.Migratable, r.SwitchOnly, r.AwaitStopped, r.Unchanged} {
+		for _, tv := range group {
+			if len(tv.Topic) > width {
+				width = len(tv.Topic)
+			}
+		}
+	}
+
+	renderTopic := func(glyph string, col *color.Color, word string, tv reconcile.TopicVerdict, showReason bool) {
+		// The topic name is padded plain (no ANSI) so columns align; glyph and
+		// status word carry the colour.
+		_, _ = fmt.Fprintf(w, "  %s %-*s  %s\n", col.Sprint(glyph), width, tv.Topic, col.Sprint(word))
+		if showReason && tv.Reason != "" {
+			_, _ = fmt.Fprintf(w, "      %s %s\n", faint.Sprint("↳"), tv.Reason)
+		}
+		if v.Verbose {
+			_, _ = fmt.Fprintf(w, "      %s %s\n", faint.Sprint("↳"),
+				faint.Sprintf("source %s · mirror %s · target %s · routes %s", tv.S, tv.M, tv.T, tv.R))
+		}
+		for _, wn := range warningsForTopic(tv.Topic, r.Warnings) {
+			_, _ = fmt.Fprintf(w, "      %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+		}
+	}
+
+	for _, tv := range r.FailFast {
+		renderTopic("✗", red, "blocked", tv, true)
+	}
+	for _, tv := range r.Migratable {
+		renderTopic("+", green, "ready", tv, false)
+	}
+	for _, tv := range r.SwitchOnly {
+		renderTopic("→", green, "switch (resume)", tv, false)
+	}
+	for _, tv := range r.AwaitStopped {
+		renderTopic("~", yellow, "awaiting promotion", tv, false)
+	}
+	for _, tv := range r.Unchanged {
+		renderTopic("=", faint, unchangedWord, tv, false)
+	}
+
+	// Any warning that doesn't reference a listed topic (rare) → trailing note.
+	for _, wn := range unattachedWarnings(r) {
+		_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+	}
+
+	// Footer — Terraform-style counts, blocked shown only when there are any.
+	nMig, nBlk, nUnch := len(r.Migratable), len(r.FailFast), len(r.Unchanged)
+	var parts []string
+	if v.Conversion {
+		parts = conversionFooterParts(r, total)
+	} else {
+		parts = append(parts, fmt.Sprintf("%d to migrate", nMig))
+		if nBlk > 0 {
+			parts = append(parts, fmt.Sprintf("%d blocked", nBlk))
+		}
+		if n := len(r.SwitchOnly); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d to switch", n))
+		}
+		if n := len(r.AwaitStopped); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
+		}
+		parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
+		if r.RestoreOffsetSync {
+			parts = append(parts, "offset-sync restore")
+		}
+		if r.ConvertToStatic {
+			parts = append(parts, "route to static")
+		}
+	}
+
+	var outcome string
+	switch {
+	case r.Refused():
+		outcome = red.Sprint("(refused — no artifacts)")
+	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0 && !r.RestoreOffsetSync && !r.ConvertToStatic:
+		outcome = faint.Sprint("(nothing to do)")
+	default:
+		note := v.ArtifactNote
+		if note == "" {
+			note = "artifacts written"
+		}
+		outcome = green.Sprintf("(%s)", note)
+	}
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "Plan: %s  %s\n", strings.Join(parts, ", "), outcome)
+}
+
+// conversionFooterParts counts a conversion in its own terms: whether the route switches to
+// static, how many link topics were checked, and how many of them block it. An already-static
+// route (nothing checked, nothing to switch) says so.
+func conversionFooterParts(r reconcile.Report, linkTopics int) []string {
+	var parts []string
+	if r.ConvertToStatic {
+		parts = append(parts, "route to static")
+	}
+	switch {
+	case linkTopics == 1:
+		parts = append(parts, "1 link topic")
+	case linkTopics > 1:
+		parts = append(parts, fmt.Sprintf("%d link topics", linkTopics))
+	}
+	if n := len(r.FailFast); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d blocked", n))
+	}
+	if len(parts) == 0 {
+		if r.Refused() {
+			return []string{"0 link topics"}
+		}
+		return []string{"route already static on its target"}
+	}
+	return parts
+}
+
+// warningsForTopic returns the warnings whose text references topic by its
+// quoted name (how the reconcile core spells topics in warning messages).
+func warningsForTopic(topic string, warnings []string) []string {
+	needle := "\"" + topic + "\""
+	var out []string
+	for _, wn := range warnings {
+		if strings.Contains(wn, needle) {
+			out = append(out, wn)
+		}
+	}
+	return out
+}
+
+// unattachedWarnings returns warnings that reference none of the listed topics,
+// so nothing is silently dropped when a warning can't be attached to a line.
+func unattachedWarnings(r reconcile.Report) []string {
+	listed := make([]reconcile.TopicVerdict, 0, len(r.FailFast)+len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged))
+	listed = append(listed, r.FailFast...)
+	listed = append(listed, r.Migratable...)
+	listed = append(listed, r.SwitchOnly...)
+	listed = append(listed, r.AwaitStopped...)
+	listed = append(listed, r.Unchanged...)
+	var out []string
+	for _, wn := range r.Warnings {
+		attached := false
+		for _, tv := range listed {
+			if strings.Contains(wn, "\""+tv.Topic+"\"") {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			out = append(out, wn)
+		}
+	}
+	return out
+}

@@ -1,0 +1,563 @@
+package migplan
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/confluentinc/kcp/internal/types"
+	"go.opentelemetry.io/otel/attribute"
+	"k8s.io/client-go/kubernetes"
+)
+
+// defaultKafkaVersion mirrors the version the other migrate/scan admin builders
+// pin (internal/migrate/source.go, internal/sources/osk). The exact protocol
+// version is inert for topic listing; parity with the rest of KCP is what matters.
+const defaultKafkaVersion = "3.6.0"
+
+// Result is the reconciliation outcome for an in-code caller (e.g. the migration
+// state machine). On success it carries the three artifacts; on an infeasible
+// plan Refused is true, the three outputs are empty, and Reasons explains why.
+// A returned error is an I/O failure, NOT a refusal — a refusal is data.
+type Result struct {
+	Route          string   // the gateway route the fence/switchover rules apply to (the declared section's route.name)
+	PromoteTopics  []string // topics that must still reach STOPPED before switch (Migratable + AwaitStopped); exclude AwaitStopped before promoting. SwitchOnly topics are migrated but absent here
+	AwaitStopped   []string // subset of PromoteTopics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
+	FenceYAML      string   // dynamic: the whole rules: block, fenced; static: the {fence: …} block
+	SwitchoverYAML string   // dynamic: the whole rules: block, switched over; static: the whole switched {route: …}
+	Refused        bool     // true ⇔ infeasible; the three above are empty
+	Reasons        []string // why, when Refused (failed checks + blocked topics)
+
+	// RestoreOffsetSync is reconcile.Report.RestoreOffsetSync: a static run
+	// must set the link's consumer offset sync back to the manifest's baseline
+	// after the switch. Can be true with no topic left to migrate.
+	RestoreOffsetSync bool
+
+	// RollbackFenceYAML is the route as a pre-promote rollback leaves it: the
+	// start-of-run route with kcp's fence for this batch taken out (dynamic:
+	// the whole rules: block; static: the whole {route: …}). RollbackAllowed
+	// is false once any topic in the batch is promoted or promoting, and then
+	// the run must not roll back at all.
+	RollbackFenceYAML string
+	RollbackAllowed   bool
+
+	// FencedAtStart is true when the start-of-run route already carries kcp's
+	// fence for this migration, left by an earlier, interrupted run.
+	FencedAtStart bool
+
+	// MigrateTopics is every topic this run migrates, already-promoted ones
+	// included: the topics the fence check watches for producers writing
+	// straight to the source.
+	MigrateTopics []string
+
+	// NothingToDo is reconcile.Plan.NothingToDo: not refused, no topic left to
+	// migrate and no offset-sync restore owed, so the run executes nothing.
+	NothingToDo bool
+
+	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
+	// server-managed metadata (managedFields, resourceVersion, uid,
+	// creationTimestamp, generation, status — see migplan/gatewayfile.go's
+	// cleanGatewayDoc). Set on both success and refusal (the pull precedes the
+	// checks). A caller can re-pull the CR just before mutating it and diff
+	// against this directly to detect drift since the plan was computed — once
+	// cleaned, the whole document is stable enough to diff as-is.
+	GatewayYAML string
+
+	// Report is the full per-topic report, for rendering/diagnostics (the CLI
+	// uses it). In-code callers can ignore it and use the fields above.
+	Report reconcile.Report
+
+	// Mode describes the artifact shape ("dynamic",
+	// "static" or "convert"), mirroring reconcile.Plan.Mode; it is cross-checked
+	// against the declared type by the caller. It tells a caller how to
+	// interpret the artifacts (see reconcile.Plan.Mode): whole
+	// rules: blocks for dynamic; a {fence: …} block and whole {route: …}
+	// documents for static; whole rules: blocks for the fence and rollback and
+	// a whole {route: …} (the route converted to static) for the switchover
+	// under convert. Each applies to the named route, never as the whole CR.
+	Mode string
+}
+
+// reconcileOptions holds the dependencies Reconcile builds by default but lets
+// a caller override: the gateway source, the secrets provider and the
+// report's destination.
+type reconcileOptions struct {
+	gateway GatewayConfigSource    // nil ⇒ pull the live CR from spec.gateway
+	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
+	out     io.Writer              // nil ⇒ os.Stdout
+}
+
+// Option customises Reconcile. Production and the state machine pass none.
+type Option func(*reconcileOptions)
+
+// WithGatewaySource overrides the gateway source. Tests use it to feed a static
+// gateway fixture (NewGatewayFile) so the whole composition can be exercised
+// without reaching Kubernetes; production pulls the live CR.
+func WithGatewaySource(s GatewayConfigSource) Option {
+	return func(o *reconcileOptions) { o.gateway = s }
+}
+
+// WithSecretExistenceChecker overrides the secret-existence provider. Tests
+// use it to inject a fake so the static-route path can be exercised without
+// a live cluster; production builds a real K8s-backed checker.
+func WithSecretExistenceChecker(s SecretExistenceChecker) Option {
+	return func(o *reconcileOptions) { o.secrets = s }
+}
+
+// WithOutput redirects the plan report (default os.Stdout), so a caller can
+// capture, quiet, or relocate it.
+func WithOutput(w io.Writer) Option {
+	return func(o *reconcileOptions) { o.out = w }
+}
+
+// Reconcile is the single in-code entry point: given the parsed manifest, it
+// derives the selector from the declared migration section's route, pulls the live Gateway CR named in
+// spec.gateway, reads live source/target/link state, runs the engine, renders
+// the plan report, and returns the Result. It opens the cluster connections and
+// closes them before returning. err is an I/O failure only; a refusal is
+// Result.Refused.
+//
+// The engine owns its own narrative: every caller (the command, the migration
+// state machine) gets the report shown without rendering it themselves, and
+// consumes the returned Result for the machine-facing outputs. The gateway
+// source and the report destination are injectable (WithGatewaySource /
+// WithOutput) for testing without live Kubernetes; both default to production.
+func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option) (res *Result, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "migplan.reconcile")
+	defer func() {
+		if res != nil {
+			span.SetAttributes(
+				attribute.String("kcp.route.mode", res.Mode),
+				attribute.Bool("kcp.refused", res.Refused),
+				attribute.Bool("kcp.nothing_to_do", res.NothingToDo),
+				attribute.Int("kcp.topics.migrate", len(res.MigrateTopics)),
+			)
+		}
+		tracing.End(span, err)
+	}()
+	o := reconcileOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	in, err := buildReconcileInput(g)
+	if err != nil {
+		return nil, err
+	}
+
+	// A route conversion builds its providers through the same function
+	// verify_fence uses (BuildConvertProviders), so the two read the live world
+	// through identical wiring (decision 22). Only the gateway source stays
+	// injectable here, for testing.
+	if in.Type == reconcile.TypeDynamicToStatic {
+		p, closer, err := buildConvertProviders(g, o.gateway)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = closer.Close() }()
+		engine := NewReconciliationEngine(p.Gateway, p.Source, p.Target, p.Link, o.secrets).
+			WithGroupListers(p.SourceGroups, p.TargetGroups)
+		return runAndRender(ctx, engine, in, g, o)
+	}
+
+	gw := o.gateway
+	if gw == nil {
+		gw, err = buildGatewaySource(g, in.Route)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	link, err := buildLinkStatusProvider(g)
+	if err != nil {
+		return nil, err
+	}
+
+	src, srcCloser, err := buildSourceTopicLister(g)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = srcCloser.Close() }()
+
+	tgt, tgtCloser, err := buildTargetTopicLister(g)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tgtCloser.Close() }()
+
+	secrets := o.secrets
+	if secrets == nil {
+		secrets, err = buildSecretExistenceChecker(g)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return runAndRender(ctx, NewReconciliationEngine(gw, src, tgt, link, secrets), in, g, o)
+}
+
+// runAndRender runs engine on in, renders the report and returns the Result.
+func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcile.ReconcileInput, g *manifest.GatewayMigration, o reconcileOptions) (*Result, error) {
+	plan, err := engine.Run(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	res := newResult(plan)
+	// The route the artifacts apply to — where the caller grafts the rules.
+	res.Route = in.Route
+
+	// The engine renders its own report so no caller has to.
+	out := o.out
+	if out == nil {
+		out = os.Stdout
+	}
+	RenderReport(out, res.Report, RenderView{
+		Route:        g.Spec.DeclaredRoute().Name,
+		TargetDomain: g.Spec.DeclaredRoute().TargetStreamingDomain,
+		ArtifactNote: "plan ready",
+		Conversion:   in.Type == reconcile.TypeDynamicToStatic,
+	})
+	return res, nil
+}
+
+func newResult(plan *reconcile.Plan) *Result {
+	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+	if plan.Artifacts != nil {
+		r.PromoteTopics = plan.Artifacts.PromoteTopics
+		r.AwaitStopped = plan.Artifacts.AwaitStopped
+		r.FenceYAML = string(plan.Artifacts.FenceRules)
+		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
+		r.RollbackFenceYAML = string(plan.Artifacts.RollbackFenceRules)
+		r.RollbackAllowed = plan.Artifacts.RollbackAllowed
+		r.FencedAtStart = plan.Artifacts.FencedAtStart
+		r.MigrateTopics = plan.Artifacts.MigrateTopics
+	}
+	if r.Refused {
+		for _, p := range plan.Report.Preconditions {
+			if !p.OK {
+				r.Reasons = append(r.Reasons, p.Name+": "+p.Detail)
+			}
+		}
+		for _, tv := range plan.Report.FailFast {
+			r.Reasons = append(r.Reasons, tv.Topic+": "+tv.Reason)
+		}
+	}
+	return r
+}
+
+// buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
+// read from Kubernetes by namespace + cr-name via the existing gateway service,
+// using the manifest's kubeconfig (see manifest.GatewayMigration.KubeconfigPath
+// for its default).
+func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConfigSource, error) {
+	kubeconfig, err := g.KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	svc := gateway.NewK8sService(kubeconfig)
+	return NewGatewayLive(svc, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName, route), nil
+}
+
+// buildSecretExistenceChecker wires the live Secret-existence check from
+// spec.gateway.namespace, using the same kubeconfig resolution
+// buildGatewaySource does. gateway.K8sService itself does not expose a
+// clientset (each of its methods builds one internally, ad hoc, from its own
+// kubeConfigPath — see internal/services/gateway/gateway.go), so this
+// mirrors that same gateway.RESTConfig + kubernetes.NewForConfig
+// pattern directly rather than hand-rolling a new one. Built unconditionally
+// (mirroring every other provider builder here) even for a dynamic-route
+// manifest, which will simply never invoke it — see engine.go's Run.
+func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceChecker, error) {
+	kubeconfig, err := g.KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	config, err := gateway.RESTConfig(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("building kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("building kubernetes clientset: %w", err)
+	}
+	return NewK8sSecretChecker(clientset, g.Spec.Gateway.Namespace), nil
+}
+
+// buildReconcileInput maps the manifest's declared migration section onto the
+// engine-owned ReconcileInput: the declared type, the route, and — for the two
+// migrations — exactly one topicGroup entry. A conversion carries no topic
+// selection.
+func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
+	t := g.Spec.MigrationType()
+	if t == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+	}
+	section := "spec." + t.SectionKey()
+	r := g.Spec.DeclaredRoute()
+	if r.Name == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.route.name: required", section)
+	}
+	if r.TargetStreamingDomain == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.route.targetStreamingDomain: required", section)
+	}
+	pause, baseline := g.Spec.DeclaredOffsetSync()
+	in := reconcile.ReconcileInput{
+		Route:           r.Name,
+		TargetDomain:    r.TargetStreamingDomain,
+		TargetClusterID: g.Spec.Target.ClusterID,
+
+		PauseConsumerOffsetSync:   pause,
+		OffsetSyncBaselineEnabled: baseline != manifest.OffsetSyncBaselineDisabled,
+	}
+
+	switch t {
+	case manifest.MigrationTypeDynamicToStatic:
+		in.Type = reconcile.TypeDynamicToStatic
+		return in, nil
+	case manifest.MigrationTypeStatic:
+		in.Type = reconcile.TypeStatic
+	case manifest.MigrationTypeDynamic:
+		in.Type = reconcile.TypeDynamic
+	}
+
+	tgs := g.Spec.DeclaredTopicGroup()
+	if len(tgs) != 1 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.topicGroup: exactly one entry is required, got %d", section, len(tgs))
+	}
+	tg := tgs[0]
+	if tg.Topics != nil {
+		in.Topics = *tg.Topics
+	}
+	if tg.TopicPatterns != nil {
+		in.TopicPatterns = *tg.TopicPatterns
+	}
+	if len(in.Topics) == 0 && len(in.TopicPatterns) == 0 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("%s.topicGroup[0]: at least one of topics / topicPatterns is required", section)
+	}
+	return in, nil
+}
+
+// buildLinkStatusProvider mirrors lagcheck.buildLagCheckConfig: the destination
+// REST leg (whichever auth form the manifest resolves) drives the cluster-link
+// service. Topics is empty ⇒ the provider reports every mirror on the link.
+func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, error) {
+	if g.Spec.Target.Kafka == nil {
+		return nil, fmt.Errorf("spec.target.kafka: required")
+	}
+	restCreds, err := g.RestCredentials()
+	if err != nil {
+		return nil, fmt.Errorf("resolving destination REST credentials: %w", err)
+	}
+	httpClient, err := restCreds.HTTPClient()
+	if err != nil {
+		return nil, fmt.Errorf("building destination REST client: %w", err)
+	}
+	svc := clusterlink.NewConfluentCloudService(httpClient)
+	cfg := clusterlink.Config{
+		RestEndpoint: g.Spec.Target.Kafka.RestEndpoint,
+		ClusterID:    g.Spec.Target.ClusterID,
+		LinkName:     g.Spec.ClusterLink.Name,
+		Auth:         restCreds.Authenticator(),
+		Topics:       []string{}, // empty ⇒ all mirrors
+	}
+	return NewClusterLinkStatus(svc, cfg), nil
+}
+
+// sourceConn resolves the source Kafka leg from the manifest, following the
+// same auth resolution as `kcp migration execute`.
+func sourceConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
+	creds, errs := g.SourceCredentials()
+	if len(errs) > 0 {
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.source.credentials", errs)
+	}
+	return types.MigrateConn(g.Spec.Source.BootstrapServers, creds), nil
+}
+
+// targetConn resolves the destination KAFKA leg (not the REST leg — they may
+// differ).
+func targetConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
+	if g.Spec.Target.Kafka == nil {
+		return types.KafkaSourceConn{}, fmt.Errorf("spec.target.kafka: required")
+	}
+	creds, errs := g.DestinationKafkaCredentials()
+	if len(errs) > 0 {
+		return types.KafkaSourceConn{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
+	}
+	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
+
+	// Backward-compat parity with migration execute: a Confluent Cloud destination
+	// that supplies neither ca_cert nor an explicit tls signal must still dial
+	// SASL_SSL, not cleartext SASL_PLAINTEXT — the destination is a managed
+	// cluster, always TLS. (A source may legitimately be plaintext.)
+	if sp := conn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
+		sp.UseTLS = true
+	}
+	return conn, nil
+}
+
+// adminAuth resolves conn's auth into the shared admin option, and the IAM
+// region when the auth is IAM.
+func adminAuth(conn types.KafkaSourceConn) (string, client.AdminOption, error) {
+	authType, err := conn.GetSelectedAuthType()
+	if err != nil {
+		return "", nil, fmt.Errorf("determining auth type: %w", err)
+	}
+	region := ""
+	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
+		region = conn.AuthMethod.IAM.Region
+	}
+	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving auth option: %w", err)
+	}
+	return region, authOpt, nil
+}
+
+// buildSourceTopicLister builds the source-cluster topic lister. The returned
+// io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildSourceTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := sourceConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTargetTopicLister builds the destination-cluster topic lister. The
+// returned io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Closer, error) {
+	conn, err := targetConn(g)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buildTopicLister(conn)
+}
+
+// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
+// The encryption-in-transit arg is inert (the auth option determines TLS). The
+// returned io.Closer is the admin itself; the caller owns closing it.
+func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	admin, err := client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, defaultKafkaVersion, authOpt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting to cluster: %w", err)
+	}
+	return NewKafkaTopicLister(admin), admin, nil
+}
+
+// buildGroupLister opens a consumer-group client for conn (pinned at Kafka
+// 3.8.0 for ListGroups v5 — see client.NewConsumerGroupClient) and wraps its
+// strict listing as a GroupLister. The returned io.Closer is the client; the
+// caller owns closing it.
+func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error) {
+	region, authOpt, err := adminAuth(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	cg, err := client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
+	}
+	return NewKafkaGroupLister(cg), cg, nil
+}
+
+// BuildReconcileInput is buildReconcileInput for callers outside this package:
+// the d2s state machine re-runs the route preconditions after the fence against
+// the same input reconcile used.
+func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
+	return buildReconcileInput(g)
+}
+
+// BuildConvertProviders builds a route conversion's providers from the manifest
+// the way Reconcile builds its own: the live gateway CR pull for the declared route name,
+// the cluster-link status from the destination REST leg, a topic lister and a
+// consumer-group lister on each cluster. The returned io.Closer closes every
+// client it opened; the caller owns it. On an error nothing is left open and
+// the closer is nil.
+func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
+	return buildConvertProviders(g, nil)
+}
+
+// buildConvertProviders is BuildConvertProviders with an optional gateway
+// source: nil builds the live CR pull, anything else is used as is (Reconcile's
+// test seam, WithGatewaySource).
+func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource) (ConvertProviders, io.Closer, error) {
+	var opened closers
+	fail := func(err error) (ConvertProviders, io.Closer, error) {
+		_ = opened.Close()
+		return ConvertProviders{}, nil, err
+	}
+
+	if gw == nil {
+		var err error
+		if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name); err != nil {
+			return fail(err)
+		}
+	}
+	link, err := buildLinkStatusProvider(g)
+	if err != nil {
+		return fail(err)
+	}
+	src, srcCloser, err := buildSourceTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcCloser)
+	tgt, tgtCloser, err := buildTargetTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtCloser)
+	srcConn, err := sourceConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, srcGroupsCloser)
+	tgtConn, err := targetConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, tgtGroupsCloser)
+
+	return ConvertProviders{
+		Gateway:      gw,
+		Source:       src,
+		Target:       tgt,
+		Link:         link,
+		SourceGroups: srcGroups,
+		TargetGroups: tgtGroups,
+	}, opened, nil
+}
+
+// closers closes several clients as one: in reverse order of opening, every one
+// of them, with the errors joined.
+type closers []io.Closer
+
+func (c closers) Close() error {
+	var errs []error
+	for i := len(c) - 1; i >= 0; i-- {
+		errs = append(errs, c[i].Close())
+	}
+	return errors.Join(errs...)
+}

@@ -57,7 +57,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
     --use-unauthenticated
 
-  # Scan connectors for an OSK cluster (auto-detected from non-ARN format)
+  # Scan connectors for an Apache Kafka cluster (auto-detected from non-ARN format)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url https://connect.example.com:8083 \
@@ -71,7 +71,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --state-file kcp-state.json \
     --connect-rest-url http://connect:8083 \
     --cluster-id my-cluster \
-    --source-type osk \
+    --source-type apache-kafka \
     --use-unauthenticated
 
   # Scan with Jolokia metrics collection
@@ -81,7 +81,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --cluster-id my-cluster \
     --use-unauthenticated \
     --metrics jolokia --metrics-duration 5m --metrics-interval 10s \
-    --credentials-file osk-credentials.yaml`,
+    --credentials-file apache-kafka-credentials.yaml`,
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
@@ -92,12 +92,12 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
-	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
+	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and Apache Kafka cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'apache-kafka'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = Apache Kafka).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(optionalFlags)
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
@@ -281,11 +281,12 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 	var oskClusterID string
 
 	if sourceType != "" {
-		// Validate explicit source type
-		if sourceType != "msk" && sourceType != "osk" {
-			return nil, fmt.Errorf("invalid source-type: %s (must be 'msk' or 'osk')", sourceType)
+		// "apache-kafka" is the user-facing value; normalize to the internal "osk" token.
+		normalizedSourceType, err := types.ParseSourceTypeFlag(sourceType)
+		if err != nil {
+			return nil, err
 		}
-		detectedSourceType = types.SourceType(sourceType)
+		detectedSourceType = normalizedSourceType
 	} else {
 		// Auto-detect from cluster ID format
 		if strings.HasPrefix(clusterID, "arn:") {

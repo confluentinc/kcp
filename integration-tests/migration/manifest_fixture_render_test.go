@@ -1,7 +1,8 @@
 package migration_test
 
 import (
-	"strconv"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,35 +15,54 @@ import (
 // baselineOpts is the manifest shape every converted e2e scenario starts from:
 // a plaintext CFK source, a CFK destination on SASL/PLAIN over a self-signed CA,
 // and a plain-HTTP REST endpoint. Values mirror what setup.sh emits into .env.
+// The credential paths are placeholders good enough for structural validation;
+// tests that RESOLVE credentials call withRenderedCreds to point them at real
+// files.
 func baselineOpts() manifestOpts {
 	return manifestOpts{
-		MetadataName:    "e2e-baseline",
-		SourceBootstrap: "source-kafka.confluent.svc.cluster.local:9071",
-		DestBootstrap:   "destination-kafka.confluent.svc.cluster.local:9071",
-		DestClusterID:   "abc123def456",
-		RestEndpoint:    "http://destination-kafka.confluent.svc.cluster.local:8090",
-		ClusterLinkName: "e2e-link-baseline",
-		APIKey:          "testuser",
-		APISecret:       "testpassword",
-		Namespace:       "confluent",
-		GatewayName:     "migration-gateway-baseline",
-		FenceRoutes:     []string{"migration-route"},
-		SwitchoverCR:    "/workspace/gateway-switchover-baseline.yaml",
-		KubePath:        "/workspace/kubeconfig",
+		MetadataName:      "e2e-baseline",
+		SourceBootstrap:   "source-kafka.confluent.svc.cluster.local:9071",
+		DestBootstrap:     "destination-kafka.confluent.svc.cluster.local:9071",
+		DestClusterID:     "abc123def456",
+		RestEndpoint:      "http://destination-kafka.confluent.svc.cluster.local:8090",
+		ClusterLinkName:   "e2e-link-baseline",
+		APIKey:            "testuser",
+		APISecret:         "testpassword",
+		Namespace:         "confluent",
+		GatewayName:       "migration-gateway-baseline",
+		FenceRoutes:       []fenceRouteOpts{{Name: "migration-route", SwitchoverDomainName: "destination-kafka-cluster"}},
+		KubePath:          "/workspace/kubeconfig",
+		SourceCredPath:    "/workspace/source-creds.yaml",
+		DestKafkaCredPath: "/workspace/dest-kafka-creds.yaml",
+		LinkCredPath:      "/workspace/link-creds.yaml",
 	}
+}
+
+// withRenderedCreds writes the three credentials files into a temp dir and points
+// opts' path fields at them, so the rendered manifest resolves every leg — the
+// local-filesystem equivalent of what writeManifestToPod does in the pod.
+func withRenderedCreds(t *testing.T, opts manifestOpts) manifestOpts {
+	t.Helper()
+	files, err := renderCredentialFiles(opts)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
+	opts.SourceCredPath = write("source-creds.yaml", files.Source)
+	opts.DestKafkaCredPath = write("dest-kafka-creds.yaml", files.DestKafka)
+	opts.LinkCredPath = write("link-creds.yaml", files.Link)
+	return opts
 }
 
 // TestRenderGatewayMigration_ParsesValidatesAndResolves is the guard that moves
 // "the fixture is a valid manifest" from minute 30 of a Minikube run to a
-// millisecond.
-//
-// Resolving the three credential legs is not belt-and-braces: CredentialsRef
-// keeps an inline block as raw bytes, so a typo'd auth key (dash instead of
-// underscore) passes both the strict decode and Validate() with zero errors and
-// only fails when a leg is resolved. These are the same three resolvers
-// cmd_migration_init.go and cmd_migration_execute.go call.
+// millisecond. It resolves all three credential legs from the rendered files —
+// the same three resolvers cmd_migration_init.go and cmd_migration_execute.go call.
 func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
-	rendered, err := renderGatewayMigration(baselineOpts())
+	rendered, err := renderGatewayMigration(withRenderedCreds(t, baselineOpts()))
 	require.NoError(t, err, "rendering the fixture must not fail")
 
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
@@ -53,17 +73,56 @@ func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 	require.Empty(t, srcErrs, "spec.source.credentials must resolve")
 
 	_, dstErrs := g.DestinationKafkaCredentials()
-	require.Empty(t, dstErrs, "spec.target.kafka.credentials must resolve")
+	require.Empty(t, dstErrs, "spec.target.kafka.clusterCredentials must resolve")
 
 	_, restErr := g.RestCredentials()
-	require.NoError(t, restErr, "the derived destination REST leg must resolve")
+	require.NoError(t, restErr, "the cluster-link REST leg must resolve from clusterLink.linkCredentials")
+}
+
+// TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll is a regression
+// test for a real bug found via live e2e testing: this suite's ten scenarios
+// share one source/destination Kafka pair, so a match-all topicPatterns
+// resolves (per spec.staticMigration.topicGroup's real semantics) against every OTHER
+// scenario's topics too — not just this one's — tripping an all-or-nothing
+// refusal. A fenceRouteOpts entry with Topics set must render an explicit
+// topics: list instead, scoped to only the given names.
+func TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll(t *testing.T) {
+	opts := baselineOpts()
+	opts.FenceRoutes[0].Topics = []string{"e2e-test-topic-baseline"}
+	opts = withRenderedCreds(t, opts)
+
+	rendered, err := renderGatewayMigration(opts)
+	require.NoError(t, err)
+	g, err := manifest.ParseGatewayMigration([]byte(rendered))
+	require.NoError(t, err)
+
+	require.Len(t, g.Spec.DeclaredTopicGroup(), 1)
+	entry := g.Spec.DeclaredTopicGroup()[0]
+	assert.Nil(t, entry.TopicPatterns, "an explicit topics list must not also carry a match-all pattern")
+	require.NotNil(t, entry.Topics)
+	assert.Equal(t, []string{"e2e-test-topic-baseline"}, *entry.Topics)
+}
+
+// TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic is a regression test:
+// spec.staticMigration.route.name and .targetStreamingDomain read FenceRoutes[0]
+// directly, and an unguarded `index .FenceRoutes 0` turns an empty slice into a
+// template execution error instead of the tolerant empty output the old
+// `range`-based rendering gave every field. No scenario populates an empty
+// FenceRoutes today, but the render must degrade gracefully rather than fail
+// with an opaque "index out of range" if one ever does.
+func TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic(t *testing.T) {
+	opts := baselineOpts()
+	opts.FenceRoutes = nil
+
+	_, err := renderGatewayMigration(opts)
+	require.NoError(t, err, "an empty FenceRoutes must not fail template rendering")
 }
 
 // TestRenderGatewayMigration_TopologyMatchesOpts guards against a transposition
 // in the template — two fields of the same YAML type swapped still parses,
 // validates and resolves, so nothing above would catch it.
 func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
-	opts := baselineOpts()
+	opts := withRenderedCreds(t, baselineOpts())
 
 	rendered, err := renderGatewayMigration(opts)
 	require.NoError(t, err)
@@ -81,15 +140,24 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.RestEndpoint, g.Spec.Target.Kafka.RestEndpoint)
 
 	assert.Equal(t, opts.ClusterLinkName, g.Spec.ClusterLink.Name)
+	assert.Equal(t, []string{opts.DestBootstrap}, g.Spec.ClusterLink.BootstrapServers)
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
-	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, opts.FenceRoutes, g.Spec.Gateway.Fence.Routes)
-	assert.Equal(t, opts.SwitchoverCR, g.Spec.Gateway.CRs.Switchover)
+	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CrName)
+	assert.Equal(t, opts.FenceRoutes[0].Name, g.Spec.DeclaredRoute().Name)
+	assert.Equal(t, opts.FenceRoutes[0].SwitchoverDomainName, g.Spec.DeclaredRoute().TargetStreamingDomain)
+	require.Len(t, g.Spec.DeclaredTopicGroup(), len(opts.FenceRoutes))
+	for i := range opts.FenceRoutes {
+		got := g.Spec.DeclaredTopicGroup()[i]
+		// The id is derived from the live CR at init, not carried in the
+		// manifest, and a match-all pattern selects every active mirror topic.
+		require.NotNil(t, got.TopicPatterns)
+		assert.Equal(t, []string{".*"}, *got.TopicPatterns)
+	}
 
 	// The destination Kafka leg carries the API key/secret and the only
 	// load-bearing insecure-skip in the suite (CFK's cert is signed by the
-	// self-signed CA setup.sh creates). The REST leg derives from it.
+	// self-signed CA setup.sh creates).
 	dst, errs := g.DestinationKafkaCredentials()
 	require.Empty(t, errs)
 	require.NotNil(t, dst.SASLPlain)
@@ -98,18 +166,19 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.True(t, dst.InsecureSkipTLSVerify,
 		"the destination Kafka leg must skip verification — CFK's cert is signed by a self-signed CA")
 
+	// The cluster-link REST leg is its own file, reusing the same key/secret.
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
-	assert.Equal(t, opts.APIKey, rest.APIKey, "REST api_key must derive from sasl_plain.username")
-	assert.Equal(t, opts.APISecret, rest.APISecret, "REST api_secret must derive from sasl_plain.password")
+	assert.Equal(t, opts.APIKey, rest.APIKey, "REST api_key comes from linkCredentials")
+	assert.Equal(t, opts.APISecret, rest.APISecret, "REST api_secret comes from linkCredentials")
 
 	// The source is plaintext, so insecure-skip is meaningless there and is
-	// deliberately not written on that block.
+	// deliberately not written on that leg.
 	src, errs := g.SourceCredentials()
 	require.Empty(t, errs)
 	require.NotNil(t, src.UnauthenticatedPlaintext)
 	assert.False(t, src.InsecureSkipTLSVerify,
-		"the plaintext source block must not carry a meaningless insecure-skip")
+		"the plaintext source leg must not carry a meaningless insecure-skip")
 }
 
 // TestRenderGatewayMigration_OmitsZeroPolicy pins that a scenario with no policy
@@ -120,14 +189,14 @@ func TestRenderGatewayMigration_OmitsZeroPolicy(t *testing.T) {
 	rendered, err := renderGatewayMigration(baselineOpts())
 	require.NoError(t, err)
 
-	assert.NotContains(t, rendered, "defaultPolicies:", "a scenario with no policy must render no policy block")
+	assert.NotContains(t, rendered, "policies:", "a scenario with no policy must render no policy block")
 	assert.NotContains(t, rendered, "lagThreshold")
 	assert.NotContains(t, rendered, "detectUnroutedProducersDuration")
 
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, manifest.DefaultPolicies{}, g.Spec.DefaultPolicies, "an omitted policy block must parse to the zero DefaultPolicies")
+	assert.Equal(t, manifest.StaticPolicies{}, g.Spec.StaticMigration.Policies, "an omitted policy block must parse to the zero StaticPolicies")
 }
 
 // TestRenderGatewayMigration_PolicyRoundTrips covers the per-scenario policy the
@@ -150,40 +219,42 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
 
-	assert.Equal(t, 1, g.Spec.DefaultPolicies.PromoteBatchSize)
-	assert.Equal(t, 10*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
+	assert.Equal(t, 1, g.Spec.StaticMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Second, g.Spec.StaticMigration.Policies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.StaticMigration.Policies.ConsumerOffsetSyncDrainDuration)
 	// lagThreshold stays omitted at zero even when siblings are set.
-	assert.Equal(t, 0, g.Spec.DefaultPolicies.LagThreshold)
+	assert.Equal(t, 0, g.Spec.StaticMigration.Policies.LagThreshold)
 }
 
-// TestRenderGatewayMigration_PauseConsumerOffsetSync covers the 6 init sites that
-// appended --pause-consumer-offset-sync. It is drift-compared at execute, so an
-// omitted-vs-false slip would surface as a spec-change refusal mid-suite.
+// TestRenderGatewayMigration_PauseConsumerOffsetSync: a manifest rendered with
+// the offset-sync pause carries spec.staticMigration.consumerOffsetSync.pause and its declared
+// baseline, and validates.
 func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	opts := baselineOpts()
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 
 	rendered, err := renderGatewayMigration(opts)
 	require.NoError(t, err)
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.True(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
+	pause, baseline := g.Spec.DeclaredOffsetSync()
+	assert.True(t, pause)
+	assert.Equal(t, "enabled", baseline)
 }
 
-// TestRenderGatewayMigration_CredentialValuesCannotInjectYAML is the abuse case
-// for the one hazard this renderer introduces: it substitutes secrets into a YAML
-// document as TEXT, before the parser sees it. A value carrying a newline, a
+// TestRenderCredentialFiles_ValuesCannotInjectYAML is the abuse case for the
+// hazard the renderer introduces: it substitutes secrets into YAML credentials
+// files as TEXT, before the parser sees them. A value carrying a newline, a
 // ": ", or a leading indicator can restructure the document; an embedded quote or
 // backslash can close the scalar early.
 //
-// Containment is observable as "parses back byte-exact". The "/\\ and non-ASCII
-// cases are what force the escaping to be generic rather than a list of the
-// handful of characters that happen to be enumerated here — an allowlist would
-// pass its own test while leaving the two characters that actually terminate a
-// double-quoted scalar unhandled.
-func TestRenderGatewayMigration_CredentialValuesCannotInjectYAML(t *testing.T) {
+// Containment is observable as "resolves back byte-exact". The "/\\ and non-ASCII
+// cases force the escaping to be generic rather than a list of the handful of
+// characters enumerated here — an allowlist would pass its own test while leaving
+// the two characters that actually terminate a double-quoted scalar unhandled.
+func TestRenderCredentialFiles_ValuesCannotInjectYAML(t *testing.T) {
 	nasty := map[string]string{
 		"newline and a forged key": "pass\nusername: attacker",
 		"colon space":              "pass: word",
@@ -204,7 +275,7 @@ func TestRenderGatewayMigration_CredentialValuesCannotInjectYAML(t *testing.T) {
 			opts := baselineOpts()
 			opts.APISecret = secret
 
-			rendered, err := renderGatewayMigration(opts)
+			rendered, err := renderGatewayMigration(withRenderedCreds(t, opts))
 			require.NoError(t, err)
 
 			g, err := manifest.ParseGatewayMigration([]byte(rendered))
@@ -224,21 +295,15 @@ func TestRenderGatewayMigration_CredentialValuesCannotInjectYAML(t *testing.T) {
 	}
 }
 
-// TestRenderGatewayMigration_RefusesCredentialsKcpCannotDecode is the other half
-// of the escaping contract, and it is not theoretical: strconv.Quote is a valid
-// YAML 1.2 double-quoted scalar, but kcp does not read these values with YAML's
-// top-level parser. CredentialsRef hands the inline block's raw node bytes to a
-// nested decode, and that path does not implement the \xNN / \uNNNN escapes —
-// it fails with "found unknown escape character" or "could not find end
-// character of double-quoted text".
-//
-// The values are fail-closed, so this is robustness rather than a vulnerability.
-// It still matters: the natural trigger is a copy-pasted secret carrying a BOM or
-// a zero-width character, and the resulting error points at "column 13" with the
-// source excerpt correctly stripped — so there is no context, and the instinct
-// when debugging it is to disable the stripper or dump the manifest, either of
-// which WOULD leak. Refusing at render time is what keeps that from happening.
-func TestRenderGatewayMigration_RefusesCredentialsKcpCannotDecode(t *testing.T) {
+// TestRenderCredentialFiles_RefusesValuesKcpCannotDecode is the other half of the
+// escaping contract, and it is not theoretical: strconv.Quote is a valid YAML 1.2
+// double-quoted scalar, but goccy's decode does not implement the \xNN / \uNNNN
+// escapes. The values are fail-closed, so this is robustness rather than a
+// vulnerability — but the natural trigger is a copy-pasted secret carrying a BOM
+// or zero-width character, whose error points at a bare column number with the
+// source excerpt stripped; the debugging instinct is to disable the stripper or
+// dump the file, either of which WOULD leak. Refusing at render time prevents it.
+func TestRenderCredentialFiles_RefusesValuesKcpCannotDecode(t *testing.T) {
 	unreadable := map[string]string{
 		"BOM":                "\ufeffpass",
 		"control char":       "pass\x01word",
@@ -253,35 +318,29 @@ func TestRenderGatewayMigration_RefusesCredentialsKcpCannotDecode(t *testing.T) 
 			opts := baselineOpts()
 			opts.APISecret = secret
 
-			_, err := renderGatewayMigration(opts)
+			_, err := renderCredentialFiles(opts)
 			require.Error(t, err,
-				"rendering must refuse a value kcp cannot decode rather than emit a manifest that dies mid-run")
+				"rendering must refuse a value kcp cannot decode rather than emit a file that dies mid-run")
 			assert.NotContains(t, err.Error(), secret,
 				"the refusal must name the problem without echoing the credential")
 		})
 	}
 }
 
-// TestRenderGatewayMigration_NeverOptsIntoInterpolation pins that the fixture
-// stays literal. The suite structurally cannot reach environment variables —
-// runKCP sets no cmd.Env, kubectl exec forwards no client environment, and
-// kcp-runner.yaml declares no env: block — so an `interpolate: true` here would
-// turn a credential containing "${" into an undefined-variable hard error rather
-// than a password.
-//
-// Asserted on the PARSED value rather than on the rendered text, because the
-// template's own explanatory comment mentions the key by name.
-func TestRenderGatewayMigration_NeverOptsIntoInterpolation(t *testing.T) {
+// TestRenderCredentialFiles_NeverInterpolated pins that the fixture stays
+// literal. There is no environment-variable substitution anywhere in the
+// credentials-loading path, so a credential containing "${" must resolve to
+// itself rather than an undefined-variable hard error.
+func TestRenderCredentialFiles_NeverInterpolated(t *testing.T) {
 	opts := baselineOpts()
 	opts.APISecret = "${MSK_PASSWORD}"
 
-	rendered, err := renderGatewayMigration(opts)
+	rendered, err := renderGatewayMigration(withRenderedCreds(t, opts))
 	require.NoError(t, err)
 
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.False(t, g.Interpolate, "the e2e fixture must never opt in to ${ENV_VAR} resolution")
 
 	dst, errs := g.DestinationKafkaCredentials()
 	require.Empty(t, errs)
@@ -290,96 +349,64 @@ func TestRenderGatewayMigration_NeverOptsIntoInterpolation(t *testing.T) {
 		"a credential that looks like a variable reference must stay literal")
 }
 
-// TestRenderGatewayMigration_ParseErrorDoesNotEchoCredentials covers the leak
-// path a fixture bug opens: goccy annotates every decode error with a few lines
-// of the offending document, so a typo near the password line puts the secret
-// into the error — and this test's own require.NoError would then print it into
-// CI output.
-//
-// kcp strips those excerpts centrally (yamlsafe.StripSourceExcerpt), but this is a
-// new call site, so the property is asserted here rather than assumed.
-func TestRenderGatewayMigration_ParseErrorDoesNotEchoCredentials(t *testing.T) {
-	const secret = "sup3rs3cr3t-e2e-value"
-
-	opts := baselineOpts()
-	opts.APISecret = secret
-	rendered, err := renderGatewayMigration(opts)
-	require.NoError(t, err)
-
-	// Corrupt the line directly above the password so the parser fails with the
-	// credential inside its context window.
-	broken := strings.Replace(rendered,
-		`username: "testuser"`,
-		`username "testuser"`, 1)
-	require.NotEqual(t, rendered, broken, "the corruption must actually apply")
-
-	_, parseErr := manifest.ParseGatewayMigration([]byte(broken))
-	require.Error(t, parseErr, "the corrupted document must fail to parse")
-	assert.NotContains(t, parseErr.Error(), secret,
-		"a parse error must never echo a credential value — it would land in CI output and kcp.log")
-}
-
-// TestManifestForLog_RedactsCredentialsButKeepsTopology covers the leak path
-// t.Logf opens. The suite logs the manifest to make a failed run diagnosable, and
-// test output is CI output.
-func TestManifestForLog_RedactsCredentialsButKeepsTopology(t *testing.T) {
+// TestManifestForLog_RedactsCredentialFileSecrets covers the leak path t.Logf
+// opens: the suite logs the credential files it writes to the pod to make a
+// failed run diagnosable, and test output is CI output.
+func TestManifestForLog_RedactsCredentialFileSecrets(t *testing.T) {
 	opts := baselineOpts()
 	opts.APIKey = "e2e-key-value"
 	opts.APISecret = "e2e-secret-value"
 
-	rendered, err := renderGatewayMigration(opts)
+	files, err := renderCredentialFiles(opts)
 	require.NoError(t, err)
 
-	logged := manifestForLog(rendered)
+	for _, body := range []string{files.DestKafka, files.Link} {
+		logged := manifestForLog(body)
+		assert.NotContains(t, logged, opts.APIKey, "the API key must not reach the log")
+		assert.NotContains(t, logged, opts.APISecret, "the API secret must not reach the log")
+	}
 
-	assert.NotContains(t, logged, opts.APIKey, "the API key must not reach the log")
-	assert.NotContains(t, logged, opts.APISecret, "the API secret must not reach the log")
-
-	// Still useful for debugging: the topology has to survive.
-	assert.Contains(t, logged, opts.SourceBootstrap)
-	assert.Contains(t, logged, opts.ClusterLinkName)
-	assert.Contains(t, logged, opts.DestClusterID)
-	assert.Contains(t, logged, opts.FenceRoutes[0])
+	// Non-secret keys survive, so a logged file stays diagnosable.
+	assert.Contains(t, manifestForLog(files.DestKafka), "tls: true")
 }
 
 // TestManifestForLog_RedactsByKeyPathNotValue is what forces key-path redaction.
-// A value-substring implementation passes the test above and then silently
-// destroys the topology whenever a credential happens to share a value with a
-// topology field — and, worse, leaks any credential field added later that nobody
-// remembered to pass in.
+// A value-substring implementation would destroy a non-secret line whenever a
+// credential happened to share its value — and, worse, leak any credential field
+// added later that nobody remembered to pass in.
 func TestManifestForLog_RedactsByKeyPathNotValue(t *testing.T) {
 	opts := baselineOpts()
-	// The secret is deliberately identical to the namespace.
-	opts.APISecret = opts.Namespace
+	// The secret is deliberately identical to a non-secret token in the file.
+	opts.APISecret = "true"
 
-	rendered, err := renderGatewayMigration(opts)
+	files, err := renderCredentialFiles(opts)
 	require.NoError(t, err)
-	logged := manifestForLog(rendered)
+	logged := manifestForLog(files.DestKafka)
 
-	assert.Contains(t, logged, "namespace: "+strconv.Quote(opts.Namespace),
-		"redaction must key off the field path, not the value — the namespace is not a secret")
-	assert.NotContains(t, logged, `password: "`+opts.APISecret+`"`,
+	assert.Contains(t, logged, "tls: true",
+		"redaction must key off the field path, not the value — tls is not a secret")
+	assert.NotContains(t, logged, `password: "true"`,
 		"the password line must still be redacted")
 }
 
 // TestPodWriteCommand_TransportsOverStdinAtMode0600 pins the three properties that
-// keep the secret-bearing manifest out of the process table and off a
-// group-readable file.
+// keep a secret-bearing file out of the process table and off a group-readable
+// file.
 func TestPodWriteCommand_TransportsOverStdinAtMode0600(t *testing.T) {
 	const podPath = "/workspace/gateway-migration-baseline.yaml"
 	argv := podWriteCommand("minikube", "confluent", "kcp-runner", podPath)
 
-	// 1. Stdin transport. Without -i the manifest would have to travel as an
-	//    argument, putting the destination password in the container's process
-	//    table and in the host kubectl command line.
-	assert.Contains(t, argv, "-i", "the manifest must travel over stdin, not argv")
+	// 1. Stdin transport. Without -i the content would have to travel as an
+	//    argument, putting a secret in the container's process table and in the
+	//    host kubectl command line.
+	assert.Contains(t, argv, "-i", "the content must travel over stdin, not argv")
 	assert.Contains(t, argv, "exec")
 
 	// 2. umask before the redirect. `cat >` does not change an existing file's
 	//    mode, and a chmod afterwards would leave a window at 0644.
 	joined := strings.Join(argv, " ")
 	assert.Contains(t, joined, "umask 077",
-		"the manifest is secret-bearing and must be created 0600")
+		"credential-bearing files must be created 0600")
 	assert.Contains(t, joined, `rm -f "$1"`,
 		"a re-render must not inherit the mode of a previous create")
 

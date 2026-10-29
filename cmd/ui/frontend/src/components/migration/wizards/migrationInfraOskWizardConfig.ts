@@ -23,8 +23,8 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
 
   return {
     id: 'migration-infra-osk-wizard',
-    title: 'OSK Migration Infrastructure Wizard',
-    description: 'Configure your migration infrastructure for OSK to Confluent Cloud migration',
+    title: 'Apache Kafka Migration Infrastructure Wizard',
+    description: 'Configure your migration infrastructure for Apache Kafka to Confluent Cloud migration',
     apiEndpoint: '/assets/migration',
     initial: 'destination_type',
 
@@ -354,7 +354,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
       jump_cluster_networking_inputs: {
         meta: {
           title: 'Private Migration | Jump Cluster - Configuration',
-          description: 'Enter configuration details for your jump cluster networking. All fields are required for OSK sources.',
+          description: 'Enter configuration details for your jump cluster networking. All fields are required for Apache Kafka sources.',
           schema: {
             type: 'object',
             properties: {
