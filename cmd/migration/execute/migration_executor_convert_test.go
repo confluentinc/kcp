@@ -94,12 +94,12 @@ func newConvertWorld(groups ...string) *convertWorld {
 }
 
 // CommittedOffsets is the source fetcher (groupoffsets.GroupOffsetFetcher).
-func (w *convertWorld) CommittedOffsets(string) (groupoffsets.Offsets, error) {
+func (w *convertWorld) CommittedOffsets(context.Context, string) (groupoffsets.Offsets, error) {
 	return groupoffsets.Offsets{"orders": {0: {Offset: 5}}}, nil
 }
 
 // CommitGroupOffsets is the destination committer (groupoffsets.GroupCommitter).
-func (w *convertWorld) CommitGroupOffsets(group string, offsets groupoffsets.Offsets) error {
+func (w *convertWorld) CommitGroupOffsets(_ context.Context, group string, offsets groupoffsets.Offsets) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.commits == nil {

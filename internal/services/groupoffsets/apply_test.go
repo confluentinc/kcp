@@ -14,7 +14,7 @@ import (
 
 type commitFunc func(group string, offsets Offsets) error
 
-func (f commitFunc) CommitGroupOffsets(g string, o Offsets) error { return f(g, o) }
+func (f commitFunc) CommitGroupOffsets(_ context.Context, g string, o Offsets) error { return f(g, o) }
 
 // commitLog is a CommitterFactory that records every commit and how many committers it built and released.
 type commitLog struct {

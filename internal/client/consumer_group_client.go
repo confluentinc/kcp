@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -81,20 +83,58 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 // and a caller making a safety decision from the listing must not get a partial
 // one. It errors if any broker fails or refuses. It refreshes the broker list
 // first: the client's is from its last metadata read, so a broker added or
-// replaced since would go unasked and its groups would be missing.
-func (c *ConsumerGroupClient) ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error) {
-	if err := c.client.RefreshMetadata(); err != nil {
-		return nil, fmt.Errorf("refreshing the broker list before listing consumer groups: %w", err)
+// replaced since would go unasked and its groups would be missing. A connection error retries the whole listing
+// (internal/retry), after closing the connections of the brokers that failed; a broker's refusal is not retried.
+func (c *ConsumerGroupClient) ListGroupsAllBrokers(ctx context.Context) ([]types.ConsumerGroupListing, error) {
+	var out []types.ConsumerGroupListing
+	var failed []*sarama.Broker
+	err := retry.Do(ctx, "kafka.list_groups", func(context.Context) error {
+		if err := c.client.RefreshMetadata(); err != nil {
+			return fmt.Errorf("refreshing the broker list before listing consumer groups: %w", err)
+		}
+		results := c.listGroupsPerBroker()
+		failed = failed[:0]
+		for _, r := range results {
+			if r.err != nil {
+				failed = append(failed, r.broker)
+			}
+		}
+		var err error
+		out, err = mergeListings(results, true)
+		return err
+	}, retry.WithBeforeRetry(func() { closeBrokers(failed) }))
+	return out, err
+}
+
+// onBroker runs op, which asks one broker and returns it, with retry.Do. Before each retry it closes the broker
+// the failed attempt asked, so the next attempt opens a fresh connection: sarama fails every request on a
+// connection that broke until the broker is closed.
+func onBroker(ctx context.Context, operation string, op func() (*sarama.Broker, error)) error {
+	var asked *sarama.Broker
+	return retry.Do(ctx, operation, func(context.Context) error {
+		var err error
+		asked, err = op()
+		return err
+	}, retry.WithBeforeRetry(func() { closeBrokers([]*sarama.Broker{asked}) }))
+}
+
+// closeBrokers closes each broker's connection so the next request on it reconnects. A close's own error is not
+// a result: a broker that never connected, or is already closed, answers ErrNotConnected.
+func closeBrokers(brokers []*sarama.Broker) {
+	for _, b := range brokers {
+		if b != nil {
+			_ = b.Close()
+		}
 	}
-	return mergeListings(c.listGroupsPerBroker(), true)
 }
 
 // brokerListing is one broker's answer to ListGroups: a response, or the error
 // that stopped it.
 type brokerListing struct {
-	addr string
-	resp *sarama.ListGroupsResponse
-	err  error
+	broker *sarama.Broker
+	addr   string
+	resp   *sarama.ListGroupsResponse
+	err    error
 }
 
 // listGroupsPerBroker asks every known broker for the groups it coordinates.
@@ -102,7 +142,7 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 	var out []brokerListing
 	for _, b := range c.client.Brokers() {
 		if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-			out = append(out, brokerListing{addr: b.Addr(), err: fmt.Errorf("connecting: %w", err)})
+			out = append(out, brokerListing{broker: b, addr: b.Addr(), err: fmt.Errorf("connecting: %w", err)})
 			continue
 		}
 		resp, err := b.ListGroups(&sarama.ListGroupsRequest{Version: 5})
@@ -110,7 +150,7 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 			slog.Debug("⏭️ broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
 			resp, err = b.ListGroups(&sarama.ListGroupsRequest{Version: 4})
 		}
-		out = append(out, brokerListing{addr: b.Addr(), resp: resp, err: err})
+		out = append(out, brokerListing{broker: b, addr: b.Addr(), resp: resp, err: err})
 	}
 	return out
 }
@@ -234,12 +274,15 @@ const committedTopicsWorkers = 8
 
 // CommittedTopics returns, for each group, the sorted topics it has committed an
 // offset on. A conversion checks only these topics, so a failure to read any
-// group is an error: skipping it would leave its topics unverified.
-func (c *ConsumerGroupClient) CommittedTopics(groups []string) (map[string][]string, error) {
-	return committedTopics(c.admin, groups, committedTopicsWorkers)
+// group is an error: skipping it would leave its topics unverified. Each group's fetch is retried (see
+// retryGroupOp).
+func (c *ConsumerGroupClient) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
+	return committedTopics(ctx, c.admin, groups, committedTopicsWorkers, c.resetCoordinator)
 }
 
-func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[string][]string, error) {
+// committedTopics fetches each group's committed topics on workers goroutines. reset, if set, is called with
+// the group before each retry of that group's fetch.
+func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string, workers int, reset func(group string)) (map[string][]string, error) {
 	if workers < 1 {
 		workers = 1
 	}
@@ -252,6 +295,9 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	results := make(chan result, len(groups))
 	// failed stops the run once any group fails: the call returns an error
 	// either way, so fetching the rest of a large cluster's groups is wasted.
+	// stop ends the fetches in flight, so they stop retrying too.
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
 	var failed atomic.Bool
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -262,9 +308,13 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 				if failed.Load() {
 					continue
 				}
-				topics, err := committedTopicsOf(f, g)
+				topics, err := committedTopicsOf(runCtx, f, g, resetFor(reset, g))
 				if err != nil {
+					if failed.Load() && ctx.Err() == nil && errors.Is(err, context.Canceled) {
+						continue // stopped by an earlier failure, which is the one to report
+					}
 					failed.Store(true)
+					stop()
 				}
 				results <- result{group: g, topics: topics, err: err}
 			}
@@ -302,6 +352,14 @@ func committedTopics(f groupOffsetFetcher, groups []string, workers int) (map[st
 	return out, nil
 }
 
+// resetFor binds reset to group, or returns nil when reset is nil.
+func resetFor(reset func(group string), group string) func() {
+	if reset == nil {
+		return nil
+	}
+	return func() { reset(group) }
+}
+
 // CommittedOffset is one partition's committed position and the metadata string the committing client
 // stored with it (Kafka Streams keeps per-partition stream time there). Both are carried to the destination.
 type CommittedOffset struct {
@@ -311,11 +369,12 @@ type CommittedOffset struct {
 
 // committedOffsetsOf fetches every committed offset of one group, with its metadata: topic -> partition ->
 // committed offset. A partition counts only if its committed offset is >= 0 (-1 means a subscription with no
-// commit), so a topic with no commit is absent. Any block-level error fails the whole fetch; a coordinator that
-// is not ready, for the whole fetch or any partition, is retried (see retryWhileCoordinatorNotReady).
-func committedOffsetsOf(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
+// commit), so a topic with no commit is absent. Any block-level error fails the fetch. A connection error, or a
+// coordinator that moved, is unavailable or is still loading, is retried (see retryGroupOp); reset, if set, runs
+// before each retry.
+func committedOffsetsOf(ctx context.Context, f groupOffsetFetcher, group string, reset func()) (map[string]map[int32]CommittedOffset, error) {
 	var out map[string]map[int32]CommittedOffset
-	err := retryWhileCoordinatorNotReady(nil, func() error {
+	err := retryGroupOp(ctx, "kafka.committed_offsets", reset, func() error {
 		var err error
 		out, err = fetchCommittedOffsets(f, group)
 		return err
@@ -347,8 +406,8 @@ func fetchCommittedOffsets(f groupOffsetFetcher, group string) (map[string]map[i
 }
 
 // committedTopicsOf is the topics of committedOffsetsOf, sorted.
-func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
-	offsets, err := committedOffsetsOf(f, group)
+func committedTopicsOf(ctx context.Context, f groupOffsetFetcher, group string, reset func()) ([]string, error) {
+	offsets, err := committedOffsetsOf(ctx, f, group, reset)
 	if err != nil {
 		return nil, err
 	}
@@ -362,34 +421,34 @@ func committedTopicsOf(f groupOffsetFetcher, group string) ([]string, error) {
 
 // CommittedOffsets returns one group's committed offsets and their metadata, topic -> partition -> committed
 // offset, offsets >= 0 only.
-func (c *ConsumerGroupClient) CommittedOffsets(group string) (map[string]map[int32]CommittedOffset, error) {
-	return committedOffsetsOf(c.admin, group)
+func (c *ConsumerGroupClient) CommittedOffsets(ctx context.Context, group string) (map[string]map[int32]CommittedOffset, error) {
+	return committedOffsetsOf(ctx, c.admin, group, func() { c.resetCoordinator(group) })
 }
 
-// coordinatorBackoffs is the wait before each retry of a group read or commit whose coordinator is not ready:
-// about ten seconds in all, which rides out a coordinator moving or (re)loading __consumer_offsets, as a freshly
-// built cluster does on its first group request. It is a var so tests can shorten it.
-var coordinatorBackoffs = []time.Duration{
-	250 * time.Millisecond, 500 * time.Millisecond, time.Second,
-	2 * time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second,
-}
-
-// retryWhileCoordinatorNotReady runs op, and again after each of coordinatorBackoffs while it fails only
-// because the group's coordinator is not ready (coordinatorNotReady); it returns op's last error. beforeRetry,
-// if set, runs before each retry.
-func retryWhileCoordinatorNotReady(beforeRetry func(), op func() error) error {
-	err := op()
-	for _, wait := range coordinatorBackoffs {
-		if err == nil || !coordinatorNotReady(err) {
-			return err
-		}
-		time.Sleep(wait)
-		if beforeRetry != nil {
-			beforeRetry()
-		}
-		err = op()
+// retryGroupOp runs op with retry.Do: a connection error, or a coordinator that moved, is not available yet or
+// is still loading (coordinatorNotReady, as when a freshly built cluster loads __consumer_offsets), is retried
+// within the retry budget. reset, if set, runs before each retry.
+func retryGroupOp(ctx context.Context, operation string, reset func(), op func() error) error {
+	opts := []retry.Option{retry.WithRetryable(func(err error) bool {
+		return retry.Retryable(err) || coordinatorNotReady(err)
+	})}
+	if reset != nil {
+		opts = append(opts, retry.WithBeforeRetry(reset))
 	}
-	return err
+	return retry.Do(ctx, operation, func(context.Context) error { return op() }, opts...)
+}
+
+// resetCoordinator closes the connection to group's coordinator and looks the coordinator up again, so the next
+// attempt neither reuses a connection the broker reset nor asks a broker that no longer coordinates the group.
+// sarama fails every request on a connection that broke until the broker is closed; its coordinator lookup
+// opens it again. The close's own error is not a result: a broker already closed answers ErrNotConnected.
+func (c *ConsumerGroupClient) resetCoordinator(group string) {
+	if b, err := c.client.Coordinator(group); err == nil {
+		_ = b.Close()
+	}
+	if err := c.client.RefreshCoordinator(group); err != nil {
+		slog.Warn("⚠️ could not look up the coordinator again before retrying", "group", group, "error", err)
+	}
 }
 
 // buildGroupCommit builds the admin commit for one group: OffsetCommit v7 (a bare request is v0), generation
@@ -443,11 +502,11 @@ func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) 
 }
 
 // CommitGroupOffsets writes one group's offsets to this cluster as a single admin commit (see
-// buildGroupCommit). A coordinator that moved or is still loading is retried; anything else, including a
-// group that has live members (UNKNOWN_MEMBER_ID) or a credential without READ on the group or topic, is an
-// error naming the group, topic and partition, and is not retried.
-func (c *ConsumerGroupClient) CommitGroupOffsets(group string, offsets map[string]map[int32]CommittedOffset) error {
-	return retryWhileCoordinatorNotReady(func() { _ = c.client.RefreshCoordinator(group) }, func() error {
+// buildGroupCommit). A connection error, or a coordinator that moved or is still loading, is retried (see
+// retryGroupOp). Anything else, including a group that has live members (UNKNOWN_MEMBER_ID) or a credential
+// without READ on the group or topic, is an error naming the group, topic and partition, and is not retried.
+func (c *ConsumerGroupClient) CommitGroupOffsets(ctx context.Context, group string, offsets map[string]map[int32]CommittedOffset) error {
+	return retryGroupOp(ctx, "kafka.commit_offsets", func() { c.resetCoordinator(group) }, func() error {
 		coordinator, err := c.client.Coordinator(group)
 		if err != nil {
 			return fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)
@@ -479,8 +538,17 @@ type groupDescriber interface {
 // DESCRIBE does not: on open-source Kafka it shows every group but not their offsets, and on MSK IAM it
 // neither implies nor is needed for a complete listing, so a "cluster DESCRIBE" probe can pass while the
 // listing is empty.
-func (c *ConsumerGroupClient) CanDescribeAnyGroup() (bool, error) {
-	return canDescribeAnyGroup(c.admin, fmt.Sprintf("__kcp_probe_group_%x", time.Now().UnixNano()))
+//
+// A connection error is retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanDescribeAnyGroup(ctx context.Context) (bool, error) {
+	group := fmt.Sprintf("__kcp_probe_group_%x", time.Now().UnixNano())
+	var ok bool
+	err := retry.Do(ctx, "kafka.probe_describe_group", func(context.Context) error {
+		var err error
+		ok, err = canDescribeAnyGroup(c.admin, group)
+		return err
+	}, retry.WithBeforeRetry(func() { c.resetCoordinator(group) }))
+	return ok, err
 }
 
 // canDescribeAnyGroup asks DescribeGroups about group, which must not exist. The denial can arrive as the
@@ -522,21 +590,31 @@ type metadataFetcher interface {
 // describe the name is told UNKNOWN_TOPIC_OR_PARTITION, one that may not is told TOPIC_AUTHORIZATION_FAILED.
 // The group probe cannot see this: a credential that may describe every group can still be unable to
 // describe some topics.
-func (c *ConsumerGroupClient) CanDescribeAnyTopic() (bool, error) {
-	return c.canDescribeAnyTopicNamed(fmt.Sprintf("__kcp_probe_topic_%x", time.Now().UnixNano()))
+//
+// A connection error is retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanDescribeAnyTopic(ctx context.Context) (bool, error) {
+	topic := fmt.Sprintf("__kcp_probe_topic_%x", time.Now().UnixNano())
+	var ok bool
+	err := onBroker(ctx, "kafka.probe_describe_topic", func() (*sarama.Broker, error) {
+		b, allowed, err := c.canDescribeAnyTopicNamed(topic)
+		ok = allowed
+		return b, err
+	})
+	return ok, err
 }
 
-// canDescribeAnyTopicNamed asks one broker directly. It deliberately does not go through the client's
-// metadata refresh, whose sarama default allows auto-creating a missing topic.
-func (c *ConsumerGroupClient) canDescribeAnyTopicNamed(topic string) (bool, error) {
+// canDescribeAnyTopicNamed asks one broker directly, and returns it. It deliberately does not go through the
+// client's metadata refresh, whose sarama default allows auto-creating a missing topic.
+func (c *ConsumerGroupClient) canDescribeAnyTopicNamed(topic string) (*sarama.Broker, bool, error) {
 	b := c.client.LeastLoadedBroker()
 	if b == nil {
-		return false, fmt.Errorf("no broker available to probe topic describe access")
+		return nil, false, fmt.Errorf("no broker available to probe topic describe access")
 	}
 	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-		return false, fmt.Errorf("connecting to %s to probe topic describe access: %w", b.Addr(), err)
+		return b, false, fmt.Errorf("connecting to %s to probe topic describe access: %w", b.Addr(), err)
 	}
-	return canDescribeAnyTopic(b, topic)
+	ok, err := canDescribeAnyTopic(b, topic)
+	return b, ok, err
 }
 
 // canDescribeAnyTopic requests metadata for exactly topic, which must not exist, with auto-creation off.
@@ -591,10 +669,17 @@ func commitProbeNames() (group, topic string) {
 // written and no group is created (verified live on cp-server with StandardAuthorizer before this was built).
 // UNKNOWN_TOPIC_OR_PARTITION means allowed; GROUP_AUTHORIZATION_FAILED or TOPIC_AUTHORIZATION_FAILED means
 // denied, as does a coordinator lookup the broker refuses for the group. Any other answer is an error: a probe
-// that could not be asked is neither allowed nor denied.
-func (c *ConsumerGroupClient) CanCommitAnyOffsets() (bool, error) {
+// that could not be asked is neither allowed nor denied. A connection error is retried (internal/retry) on a
+// fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) CanCommitAnyOffsets(ctx context.Context) (bool, error) {
 	group, topic := commitProbeNames()
-	return c.canCommitAnyOffsetsNamed(group, topic)
+	var ok bool
+	err := retry.Do(ctx, "kafka.probe_commit", func(context.Context) error {
+		var err error
+		ok, err = c.canCommitAnyOffsetsNamed(group, topic)
+		return err
+	}, retry.WithBeforeRetry(func() { c.resetCoordinator(group) }))
+	return ok, err
 }
 
 func (c *ConsumerGroupClient) canCommitAnyOffsetsNamed(group, topic string) (bool, error) {
@@ -633,19 +718,26 @@ func canCommitAnyOffsets(s offsetCommitSender, group, topic string) (bool, error
 // PartitionCounts returns the partition count of each named topic that exists on the cluster. A topic the
 // broker says does not exist is left out of the map, not an error: a conversion reads a missing count as
 // "no copy on this cluster". Like the topic probe it asks one broker directly with auto-creation off,
-// because the client's own metadata refresh defaults to creating a missing topic.
-func (c *ConsumerGroupClient) PartitionCounts(topics []string) (map[string]int, error) {
+// because the client's own metadata refresh defaults to creating a missing topic. A connection error is
+// retried (internal/retry) on a fresh connection; a denial is a result, never retried.
+func (c *ConsumerGroupClient) PartitionCounts(ctx context.Context, topics []string) (map[string]int, error) {
 	if len(topics) == 0 {
 		return map[string]int{}, nil
 	}
-	b := c.client.LeastLoadedBroker()
-	if b == nil {
-		return nil, fmt.Errorf("no broker available to read partition counts")
-	}
-	if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
-		return nil, fmt.Errorf("connecting to %s to read partition counts: %w", b.Addr(), err)
-	}
-	return partitionCounts(b, topics)
+	var counts map[string]int
+	err := onBroker(ctx, "kafka.partition_counts", func() (*sarama.Broker, error) {
+		b := c.client.LeastLoadedBroker()
+		if b == nil {
+			return nil, fmt.Errorf("no broker available to read partition counts")
+		}
+		if err := b.Open(c.client.Config()); err != nil && !errors.Is(err, sarama.ErrAlreadyConnected) {
+			return b, fmt.Errorf("connecting to %s to read partition counts: %w", b.Addr(), err)
+		}
+		var err error
+		counts, err = partitionCounts(b, topics)
+		return b, err
+	})
+	return counts, err
 }
 
 // partitionCounts requests metadata for exactly topics, with auto-creation off. Any per-topic error other
