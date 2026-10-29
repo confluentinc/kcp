@@ -36,7 +36,7 @@ func TestVerifyFence_ACleanPassHandsTheSecondSnapshotOn(t *testing.T) {
 	assert.Equal(t, 1, w.gathers, "the facts are gathered afresh after the fence")
 	assert.Equal(t, 2, w.src.lists, "a fresh source listing for each snapshot")
 	assert.Equal(t, []time.Duration{10 * time.Second}, w.waits, "the policy's window, waited once")
-	assert.Equal(t, 1, w.dst.groupLists, "the destination is listed again after the wait")
+	assert.Equal(t, 1, w.dst.groupLists, "the destination is listed again after snapshot 1")
 	assert.Empty(t, w.rendered.String(), "nothing is rendered when nothing refuses")
 }
 
@@ -212,12 +212,44 @@ func TestVerifyFence_ReadFailuresAreErrorsNotRefusals(t *testing.T) {
 	})
 }
 
-func TestVerifyFence_AZeroWindowIsAnError(t *testing.T) {
-	w := cleanWorld()
+func verifyWithPolicy(t *testing.T, w *world, p Policy) (*D2SActions, error) {
+	t.Helper()
+	color.NoColor = true
 	a := NewD2SActions(&mockGatewayService{}, w.deps())
 	a.reporter = quietReporter()
+	return a, a.VerifyFence(context.Background(), testConfig(), p)
+}
 
-	err := a.VerifyFence(context.Background(), testConfig(), Policy{Workers: 2})
+func TestVerifyFence_AZeroWindowSkipsTheDirectCommitCheck(t *testing.T) {
+	w := cleanWorld()
+	w.src.rounds = append(w.src.rounds, groupoffsets.Snapshot{
+		"orders-app": {"orders": {0: {Offset: 6}}},
+	})
+
+	a, err := verifyWithPolicy(t, w, Policy{Workers: 2})
+
+	require.NoError(t, err, "a commit that would have been caught is not looked for")
+	assert.Equal(t, w.src.rounds[0], a.handoff, "snapshot 1, restricted to the in-scope groups, is what sync copies")
+	assert.Equal(t, 1, w.gathers, "the facts are still gathered after the fence")
+	assert.Equal(t, 1, w.src.lists, "only the first snapshot lists the source")
+	assert.Empty(t, w.waits, "no detection window is waited")
+	assert.Equal(t, 1, w.dst.groupLists, "split-brain is still re-checked")
+}
+
+func TestVerifyFence_AZeroWindowStillRefusesOnSplitBrain(t *testing.T) {
+	w := cleanWorld()
+	w.dst.groups = []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Stable"}}
+
+	a, err := verifyWithPolicy(t, w, Policy{Workers: 2})
+
+	require.ErrorIs(t, err, ErrVerifyRefused)
+	assert.Nil(t, a.handoff)
+}
+
+func TestVerifyFence_ANegativeWindowIsAnError(t *testing.T) {
+	w := cleanWorld()
+
+	_, err := verifyWithPolicy(t, w, Policy{DetectUnroutedCommitsDuration: -time.Second, Workers: 2})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "detection window")

@@ -21,19 +21,12 @@ import (
 // KindMigration and is discriminated only by kind.
 const KindGatewayMigration = "GatewayMigration"
 
-// minDetectUnroutedProducersDuration mirrors the retired flag's documented
-// minimum: a shorter window cannot span a producer's metadata refresh, so a
-// clean result would mean "we did not look long enough", not "nothing found".
-const minDetectUnroutedProducersDuration = 10 * time.Second
+// minDetectionWindow is the shortest detection window: a shorter one cannot span a producer's
+// metadata refresh or two default auto-commit intervals, so a clean result proves nothing.
+const minDetectionWindow = 10 * time.Second
 
-// DefaultDetectUnroutedCommitsDuration and DefaultOffsetSyncConcurrency are the
-// built-in values a route conversion uses when the matching DynamicToStaticPolicies
-// field is 0. Unlike detectUnroutedProducersDuration, 0 never means "skip": the
-// conversion's rogue-commit check is a safety check and cannot be skipped.
-const (
-	DefaultDetectUnroutedCommitsDuration = 30 * time.Second
-	DefaultOffsetSyncConcurrency         = 8
-)
+// DefaultOffsetSyncConcurrency applies when OffsetSyncConcurrency is 0.
+const DefaultOffsetSyncConcurrency = 8
 
 // GatewayMigration is the declarative form of a `kcp migration` run: the
 // topology, the cluster link, the gateway CRs, and the execute-time policy that
@@ -150,10 +143,10 @@ func ParseKind(data []byte) (string, error) {
 func wrongKindError(got, want string) error {
 	switch got {
 	case KindMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migration resources`), but %q was expected — `kcp migration execute`, `lag-check` and `reconcile` read a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration resources`), but %q was expected — `kcp migration cutover execute` and `lag-check` read a %s file",
 			KindMigration, want, KindGatewayMigration)
 	case KindGatewayMigration:
-		return fmt.Errorf("this is a %q manifest (used by `kcp migration execute`, `lag-check` and `reconcile`), but %q was expected — `kcp migration resources` reads a %s file",
+		return fmt.Errorf("this is a %q manifest (used by `kcp migration cutover execute` and `lag-check`), but %q was expected — `kcp migration resources` reads a %s file",
 			KindGatewayMigration, want, KindMigration)
 	default:
 		return fmt.Errorf("unsupported kind %q (expected %q)", got, want)
@@ -335,7 +328,7 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
 // end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
 // already uses — including a custom ca_cert on sasl_plain (the destination leg
-// dials through the mapper; see cmd/migration/execute's destinationConn).
+// dials through the mapper; see cmd/migration/cutover/execute's destinationConn).
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(

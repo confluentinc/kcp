@@ -285,7 +285,7 @@
                   "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
                 }
               },
-              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag.",
               "required": [
                 "lagThreshold"
               ],
@@ -397,7 +397,7 @@
                   "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
                 }
               },
-              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag.",
               "required": [
                 "lagThreshold"
               ],
@@ -443,7 +443,7 @@
                 },
                 "detectUnroutedCommitsDuration": {
                   "type": "string",
-                  "description": "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) uses 30s; this check cannot be skipped. When set the minimum is 10s.",
+                  "description": "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) skips the check. When set the minimum is 10s.",
                   "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
                 },
                 "offsetSyncConcurrency": {
@@ -460,7 +460,7 @@
                   "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
                 }
               },
-              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag.",
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag.",
               "additionalProperties": false
             }
           },

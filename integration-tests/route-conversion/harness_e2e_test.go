@@ -14,13 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Lines kcp prints that the tests assert on (cmd/migration/execute,
+// Lines kcp prints that the tests assert on (cmd/migration/cutover/execute,
 // internal/services/migration/d2s, internal/services/migplan).
 const (
 	killPointLine      = "kill-point"
 	completedLine      = "✅ Route conversion completed: %s"
 	nothingToDoSuffix  = " — nothing to do: the route is already static on its target domain"
 	watchingLine       = "Watching committed offsets for %s"
+	commitsCleanLine   = "no direct commits detected"
+	commitsSkippedLine = "Detection disabled (spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration=0)"
 	fenceAppliedLine   = "Fenced gateway CR applied"
 	idleGroupWarning   = "exist on the destination with committed offsets but no members"
 	gatewayUnfenced    = "Gateway unfenced — traffic restored to pre-fence state"

@@ -33,7 +33,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoteAccepted, "migration", "execute", "--migration-yaml", mani)
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoteAccepted, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err1, "the run interrupted mid-batch must exit non-zero")
 	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
 
@@ -41,7 +41,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 	e.snapshot(t, ctx, "after-interrupt", "AFTER the mid-batch interrupt (expect fenced, 2 STOPPED, 3 ACTIVE)", topics)
 
 	stop := e.produceToSource(t, promoted)
-	out2, err2 := e.runKCP(t, "kcp-run-2-resume-detects.log", "", "migration", "execute", "--migration-yaml", mani)
+	out2, err2 := e.runKCP(t, "kcp-run-2-resume-detects.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	sent := stop()
 	require.Positive(t, sent, "the producer must have written to the promoted topics' source")
 	require.Error(t, err2, "the resume must fail: a producer is writing straight to a promoted topic's source")
@@ -55,7 +55,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 		require.Falsef(t, e.isSwitchedToTarget(t, cr, tp), "%s must not be switched", tp)
 	}
 
-	out3, err3 := e.runKCP(t, "kcp-run-3-resume.log", "", "migration", "execute", "--migration-yaml", mani)
+	out3, err3 := e.runKCP(t, "kcp-run-3-resume.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err3, "with the producer stopped, a plain re-run must complete the migration")
 	require.Contains(t, strings.ToLower(out3), "migration complete")
 

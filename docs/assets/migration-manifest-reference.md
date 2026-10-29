@@ -1,6 +1,6 @@
 # Migration manifest reference
 
-`kcp migration execute` runs a cutover described by a single YAML manifest,
+`kcp migration cutover execute` runs a cutover described by a single YAML manifest,
 `gateway-static-migration.yaml`, `gateway-dynamic-migration.yaml` or
 `gateway-route-conversion.yaml`: it fences the route in the Confluent Gateway,
 promotes the mirror topics on the cluster link in batches, and switches
@@ -10,7 +10,7 @@ all at once on a static route (`spec.staticMigration`), topic by topic on a
 dynamic route (`spec.dynamicMigration`), or a
 [conversion of a dynamic route to static](#converting-a-dynamic-route-to-static-specdynamictostaticconversion)
 (`spec.dynamicToStaticConversion`) once every topic on the cluster link is
-migrated. `kcp migration lag-check`
+migrated. `kcp migration cutover lag-check`
 reads the same manifest to show replication lag on the cluster link. This page
 is the field-by-field reference for that manifest, followed by fully-annotated
 [example manifests](#example-manifests).
@@ -77,7 +77,7 @@ CLI flag can override for a single run, without editing the file.
   `detectUnroutedProducersDuration` at all; it has its own
   `detectUnroutedCommitsDuration` instead (see
   [What it does](#what-it-does)): it watches for consumers committing to the
-  source directly, and that check can't be turned off.
+  source directly, and like the producer check it is **off by default**.
 - **What is fenced.** A static route is fenced and switched as a whole — the
   topic selection only decides which mirrors are promoted and lag-checked. A
   dynamic route fences and switches only the selected topics.
@@ -293,7 +293,7 @@ static, a non-empty plural `streamingDomains` ⇒ dynamic. A route with both or
 neither is refused, as is a route whose mode disagrees with the declared
 section. On a static route the **bootstrap server id** is **derived** from the
 target domain's declaration in the live CR, not written in the manifest.
-`kcp migration execute` runs the workflow that matches the declared type: a
+`kcp migration cutover execute` runs the workflow that matches the declared type: a
 whole-route cutover for `staticMigration`, topic by topic for
 `dynamicMigration`.
 
@@ -385,9 +385,10 @@ and the cluster link:
    `security.cluster.<targetStreamingDomain>` auth, no fence kcp didn't write,
    no route-level fence) or the warnings about topics outside the link; those
    run before the fence. It then takes two snapshots of every source group's
-   committed offsets, `detectUnroutedCommitsDuration` apart (`30s` by default;
-   it can't be skipped). A change means a client is committing to the source directly,
-   bypassing the gateway, and the run fails.
+   committed offsets, `detectUnroutedCommitsDuration` apart, but only when it
+   is set (minimum `10s`; the default, `0s`, skips the check and the first
+   snapshot is the one synced). A change means a client is committing to the
+   source directly, bypassing the gateway, and the run fails.
 3. **Sync offsets.** kcp writes the in-scope groups' committed offsets, with
    their metadata, to the destination. It refuses the whole sync if an offset
    is past its destination partition's high-water mark.
@@ -403,7 +404,7 @@ on every gateway pod, as in a migration.
 ### What clients see
 
 - **A pause.** Every topic on the route is blocked from the fence to the
-  switch: about `detectUnroutedCommitsDuration` plus two gateway reloads.
+  switch: about `detectUnroutedCommitsDuration` (if set) plus two gateway reloads.
   Producers retry (give them a `delivery.timeout.ms` longer than that);
   consumers fetch nothing and can't commit.
 - **A rejoin, and possibly a re-read.** After the switch, consumers' group
@@ -431,7 +432,7 @@ on every gateway pod, as in a migration.
 | A group commits on a topic that is not on the link | Migrate that topic; or delete the group's stale offsets on it (`kafka-consumer-groups --delete-offsets`), or the group; or stop or move the application outside this route that owns it. |
 | An in-scope group has members on the destination | Stop the destination members first. |
 | A credential can't list every group, describe every topic, or write offsets | Grant what the refusal names, then re-run. |
-| The route has a fence kcp didn't write | Find out what it is for first. If it is an unfinished topic-based migration batch's, finish that batch (rerun `kcp migration execute` on its manifest): removing its fence would send producers back to a source topic the link no longer mirrors. Otherwise remove it: the conversion would drop it. |
+| The route has a fence kcp didn't write | Find out what it is for first. If it is an unfinished topic-based migration batch's, finish that batch (rerun `kcp migration cutover execute` on its manifest): removing its fence would send producers back to a source topic the link no longer mirrors. Otherwise remove it: the conversion would drop it. |
 | The route has a route-level fence | Remove it: the static route would enforce it. |
 | Committed offsets changed after the fence | A client commits to the source directly. Send it through the gateway, then re-run. |
 
@@ -455,7 +456,7 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
 ## Policies
 
 Optional. Each declared section has its own `policies` block, and every field
-in it is a default that a matching `kcp migration execute` flag can override
+in it is a default that a matching `kcp migration cutover execute` flag can override
 for a single run; the block is re-read fresh from the manifest on every
 `execute`, never fixed once. A field a section does not have is rejected by the
 strict decode, and a policy **flag** the declared type does not have is an error
@@ -484,7 +485,7 @@ command-line flags do accept a plain `0`). Negative values are rejected.
 | `consumerOffsetSyncDrainDuration` | duration | `0s`    | `--consumer-offset-sync-drain-duration` | `staticMigration` only. Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `consumerOffsetSync.pause` is set. `0s` means no wait.                                           |
 | `hotReloadTimeout`                | duration | `0s`    | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0s` uses the built-in 90s budget rather than waiting forever. |
 | `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the gateway default (`9180`).                                                                                                                                 |
-| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` uses the built-in `30s` (this check can never be skipped); minimum `10s` when set. |
+| `detectUnroutedCommitsDuration`   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the gateway. `0s` skips the check; minimum `10s` when set. |
 | `offsetSyncConcurrency`           | int      | `0`     | `--offset-sync-concurrency`             | `dynamicToStaticConversion` only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. |
 
 ## Credentials
@@ -603,10 +604,10 @@ tables above:
 
 | Command                   | Flag                                                                                                                                                                                             | Required                            | Notes                                                                                                                                    |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
+| `kcp migration cutover execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
 |                           | `--dry-run`                                                                                                                                                                                      | no                                  | Run only the reconcile step and print the plan; change nothing. Exits non-zero if the plan is refused.                                   |
 |                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port`, `--detect-unrouted-commits-duration`, `--offset-sync-concurrency` | no                                  | Per-run overrides of the matching field in the declared section's `policies`, for this run only. A flag the declared type does not have is an error, including under `--dry-run`. |
-| `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
+| `kcp migration cutover lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 |                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds. Values outside `1`-`60` are clamped to that range.                                                                                                      |
 
 Every path in the manifest resolves relative to the **process working
@@ -670,7 +671,7 @@ Key rules, beyond required/optional per field above:
   parse error.
 - No `policies` field may be negative;
   `detectUnroutedProducersDuration` and `detectUnroutedCommitsDuration`, if
-  greater than zero, must be at least `10s`.
+  greater than zero, must be at least `10s` (`0` skips the check).
 
 Rules that need the contents of a credentials file run when that file is read,
 not when the manifest is parsed: the `iam`-needs-an-`msk`-source rule, the
@@ -678,7 +679,7 @@ rejection of `iam` on the destination, and the credentials file's own
 validation. `execute` (including `--dry-run`) reads the source, destination and
 REST credentials files; `lag-check` reads only the REST one.
 
-`kcp migration execute --dry-run` performs the same validation `execute` would (manifest structure, credentials, the effective policy, and the reconcile preconditions against the live gateway CR, clusters and cluster link) and prints a reconcile plan, but takes no actions and runs no migration steps — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
+`kcp migration cutover execute --dry-run` performs the same validation `execute` would (manifest structure, credentials, the effective policy, and the reconcile preconditions against the live gateway CR, clusters and cluster link) and prints a reconcile plan, but takes no actions and runs no migration steps — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
 
 ## Field reference
 
@@ -762,4 +763,4 @@ branch of the kcp repository on GitHub
 gives autocomplete and inline validation when it can reach GitHub. The schema
 covers structure and types but does not enforce every rule — for example the
 `10s` minimum and the `host:port` format are not checked by it — so `kcp
-migration execute --dry-run` is the authoritative check.
+migration cutover execute --dry-run` is the authoritative check.

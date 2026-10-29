@@ -705,17 +705,17 @@ func TestMigrationE2E(t *testing.T) {
 
 	t.Cleanup(func() { stopProducer(t, cfg) })
 
-	// --- Step 2: kcp migration execute (runs the full cutover in one call) ---
+	// --- Step 2: kcp migration cutover execute (runs the full cutover in one call) ---
 	t.Run("execute", func(t *testing.T) {
 		executeArgs := []string{
-			"migration", "execute",
+			"migration", "cutover", "execute",
 			"--migration-yaml", manifestPath,
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
-		require.NoError(t, err, "kcp migration execute failed")
+		require.NoError(t, err, "kcp migration cutover execute failed")
 
 		// execute's success narrative names metadata.name as the migration
 		// id, and require.NoError above implies switched (Execute returns nil
@@ -809,14 +809,14 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 		logStart = podFileLineCount(t, cfg, logPath)
 
 		executeArgs := []string{
-			"migration", "execute",
+			"migration", "cutover", "execute",
 			"--migration-yaml", manifestPath,
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
-		require.NoError(t, err, "kcp migration execute failed")
+		require.NoError(t, err, "kcp migration cutover execute failed")
 
 		// require.NoError above implies switched (Execute returns nil only
 		// once every canonicalWorkflow step has succeeded); execute's success
@@ -940,7 +940,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	var executeStdout string
 	t.Run("execute_with_flag", func(t *testing.T) {
 		executeArgs := []string{
-			"migration", "execute",
+			"migration", "cutover", "execute",
 			"--migration-yaml", manifestPath,
 		}
 
@@ -948,7 +948,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 		executeStdout = stdout
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
-		require.NoError(t, err, "kcp migration execute failed")
+		require.NoError(t, err, "kcp migration cutover execute failed")
 
 		// require.NoError above implies switched;
 		// pause_and_restore_ran_and_final_state_restored below proves the pause and
@@ -1049,7 +1049,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 		writeManifestToPod(t, cfg, manifestPath, opts)
 
 		executeArgs := []string{
-			"migration", "execute",
+			"migration", "cutover", "execute",
 			"--migration-yaml", manifestPath,
 		}
 
@@ -1059,7 +1059,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 		executeStdout = stdout
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
-		require.NoError(t, err, "kcp migration execute failed")
+		require.NoError(t, err, "kcp migration cutover execute failed")
 
 		// require.NoError above implies switched; config_restored_to_true
 		// below proves the restore (the live cluster link's config.enable
@@ -1133,7 +1133,7 @@ func TestMigrationE2E_PauseOffsetSync_CompletesWhenLinkStartsDisabled(t *testing
 	writeManifestToPod(t, cfg, manifestPath, opts)
 
 	executeArgs := []string{
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	}
 
@@ -1195,7 +1195,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 	t.Logf("Gateway pods before execute: %d pods", len(podUIDsBefore))
 
 	executeArgs := []string{
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	}
 
@@ -1309,7 +1309,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 
 	executeArgs := []string{
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	}
 
@@ -1393,7 +1393,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 	})
 
 	executeArgs := []string{
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	}
 
@@ -1527,7 +1527,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T)
 	writeManifestToPod(t, cfg, manifestPath, opts)
 
 	executeArgs := []string{
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	}
 

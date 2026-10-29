@@ -136,7 +136,7 @@ in `integration-tests/schema-registry/`.
 
 #### Migration tests
 
-Tests the full migration lifecycle (`kcp migration init` → `execute`) against a real
+Tests the full migration lifecycle (`kcp migration cutover execute`) against a real
 CFK (Confluent for Kubernetes) cluster in Minikube.
 
 **Prerequisites:**

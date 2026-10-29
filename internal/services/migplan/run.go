@@ -379,7 +379,7 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 }
 
 // sourceConn resolves the source Kafka leg from the manifest, following the
-// same auth resolution as `kcp migration execute`.
+// same auth resolution as `kcp migration cutover execute`.
 func sourceConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	creds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
@@ -400,7 +400,7 @@ func targetConn(g *manifest.GatewayMigration) (types.KafkaSourceConn, error) {
 	}
 	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
 
-	// Backward-compat parity with migration execute: a Confluent Cloud destination
+	// Backward-compat parity with migration cutover execute: a Confluent Cloud destination
 	// that supplies neither ca_cert nor an explicit tls signal must still dial
 	// SASL_SSL, not cleartext SASL_PLAINTEXT — the destination is a managed
 	// cluster, always TLS. (A source may legitimately be plaintext.)

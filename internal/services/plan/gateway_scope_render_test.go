@@ -13,7 +13,7 @@ func TestPlan_MixedAuthFallsBackFromGateway(t *testing.T) {
 	if !strings.Contains(md, "Your clients use mTLS and SASL/SCRAM, so this plan uses a Cluster Linking cutover without the Gateway instead.") {
 		t.Errorf("missing fallback sentence")
 	}
-	for _, bad := range []string{"Give each authentication type its own Gateway route", "kcp migration execute"} {
+	for _, bad := range []string{"Give each authentication type its own Gateway route", "kcp migration cutover execute"} {
 		if strings.Contains(md, bad) {
 			t.Errorf("mixed-auth plan must not contain %q", bad)
 		}

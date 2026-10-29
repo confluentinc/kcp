@@ -165,7 +165,7 @@ func TestPolicies_DecodeFromYAMLPerSection(t *testing.T) {
 		require.Empty(t, g.Validate())
 		p := g.Spec.DynamicToStaticConversion.Policies
 		assert.Equal(t, 5*time.Minute, p.RolloutTimeout)
-		assert.Equal(t, 45*time.Second, p.EffectiveDetectUnroutedCommitsDuration())
+		assert.Equal(t, 45*time.Second, p.DetectUnroutedCommitsDuration)
 		assert.Equal(t, 3, p.EffectiveOffsetSyncConcurrency())
 	})
 }
@@ -178,7 +178,7 @@ func TestPolicies_OmittedIsZeroValued(t *testing.T) {
 
 func TestDynamicToStaticPolicies_Defaults(t *testing.T) {
 	var p DynamicToStaticPolicies
-	assert.Equal(t, DefaultDetectUnroutedCommitsDuration, p.EffectiveDetectUnroutedCommitsDuration())
+	assert.Zero(t, p.DetectUnroutedCommitsDuration, "an omitted commits window skips the check")
 	assert.Equal(t, DefaultOffsetSyncConcurrency, p.EffectiveOffsetSyncConcurrency())
 }
 

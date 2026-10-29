@@ -91,7 +91,7 @@ type CommonPolicies struct {
 // StaticPolicies are the execute-time knobs of a static (all-at-once)
 // migration. Every value is optional and zero carries meaning: 0 promotes all
 // at once / imposes no deadline / skips the check. Each is a default that
-// `kcp migration execute` can override with a per-policy flag for one run.
+// `kcp migration cutover execute` can override with a per-policy flag for one run.
 type StaticPolicies struct {
 	LagThreshold     int `yaml:"lagThreshold,omitempty" json:"lagThreshold,omitempty"`
 	PromoteBatchSize int `yaml:"promoteBatchSize,omitempty" json:"promoteBatchSize,omitempty"`
@@ -126,25 +126,14 @@ type DynamicPolicies struct {
 type DynamicToStaticPolicies struct {
 	// RolloutTimeout bounds the gateway rollout. 0 means no deadline.
 	RolloutTimeout time.Duration `yaml:"rolloutTimeout,omitempty" json:"rolloutTimeout,omitempty"`
-	// DetectUnroutedCommitsDuration is the wait between the two committed-offset
-	// snapshots taken after fencing, to catch a consumer that bypasses the
-	// gateway and commits to the source directly. Its own field, not a reuse of
-	// detectUnroutedProducersDuration, because that field's 0 means "skip the
-	// check" and this check can never be skipped. 0 uses the built-in 30s; when
-	// set the minimum is 10s (two default auto-commit intervals).
+	// DetectUnroutedCommitsDuration is the gap between the two post-fence committed-offset snapshots,
+	// to catch a consumer committing to the source directly. 0 SKIPS the check; minimum 10s.
+	// Separate from detectUnroutedProducersDuration, which watches log-end offsets.
 	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
 	// OffsetSyncConcurrency is how many workers, each with its own broker
 	// connection, read and write consumer-group offsets. 0 uses the built-in 8.
 	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
 	CommonPolicies        `yaml:",inline"`
-}
-
-// EffectiveDetectUnroutedCommitsDuration resolves 0 to the built-in default.
-func (p DynamicToStaticPolicies) EffectiveDetectUnroutedCommitsDuration() time.Duration {
-	if p.DetectUnroutedCommitsDuration == 0 {
-		return DefaultDetectUnroutedCommitsDuration
-	}
-	return p.DetectUnroutedCommitsDuration
 }
 
 // EffectiveOffsetSyncConcurrency resolves 0 to the built-in default.
@@ -264,7 +253,7 @@ func (s GatewaySpec) DeclaredOffsetSync() (pause bool, baseline string) {
 }
 
 // ValidatePolicies validates the declared section's policies. It is exported
-// because `kcp migration execute` re-validates after applying command-line
+// because `kcp migration cutover execute` re-validates after applying command-line
 // overrides, which can introduce a value the manifest itself never carried.
 // With no (or several) sections declared it returns nil: Validate reports that.
 func (s GatewaySpec) ValidatePolicies() []error {
@@ -322,7 +311,7 @@ func (p DynamicPolicies) LogArgs() []any {
 func (p DynamicToStaticPolicies) LogArgs() []any {
 	return append([]any{
 		"rollout_timeout", p.RolloutTimeout,
-		"detect_unrouted_commits_duration", p.EffectiveDetectUnroutedCommitsDuration(),
+		"detect_unrouted_commits_duration", p.DetectUnroutedCommitsDuration,
 		"offset_sync_concurrency", p.EffectiveOffsetSyncConcurrency(),
 	}, p.logArgs()...)
 }
@@ -362,10 +351,10 @@ func validateDetectProducers(path string, d time.Duration) []error {
 	switch {
 	case d < 0:
 		return []error{fmt.Errorf("%s.detectUnroutedProducersDuration: must not be negative (0 skips the check)", path)}
-	case d > 0 && d < minDetectUnroutedProducersDuration:
+	case d > 0 && d < minDetectionWindow:
 		return []error{fmt.Errorf(
 			"%s.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
-			path, minDetectUnroutedProducersDuration)}
+			path, minDetectionWindow)}
 	}
 	return nil
 }
@@ -395,11 +384,11 @@ func (p DynamicToStaticPolicies) Validate(path string) []error {
 	errs := validateRollout(path, p.RolloutTimeout)
 	switch d := p.DetectUnroutedCommitsDuration; {
 	case d < 0:
-		errs = append(errs, fmt.Errorf("%s.detectUnroutedCommitsDuration: must not be negative (0 uses the built-in %s)", path, DefaultDetectUnroutedCommitsDuration))
-	case d > 0 && d < minDetectUnroutedProducersDuration:
+		errs = append(errs, fmt.Errorf("%s.detectUnroutedCommitsDuration: must not be negative (0 skips the check)", path))
+	case d > 0 && d < minDetectionWindow:
 		errs = append(errs, fmt.Errorf(
-			"%s.detectUnroutedCommitsDuration: must be at least %s when set (0 uses the built-in %s) — a shorter window can miss a consumer on default auto-commit settings",
-			path, minDetectUnroutedProducersDuration, DefaultDetectUnroutedCommitsDuration))
+			"%s.detectUnroutedCommitsDuration: must be at least %s when set (0 skips the check) — a shorter window can miss a consumer on default auto-commit settings",
+			path, minDetectionWindow))
 	}
 	if p.OffsetSyncConcurrency < 0 {
 		errs = append(errs, fmt.Errorf("%s.offsetSyncConcurrency: must not be negative (0 uses the built-in %d)", path, DefaultOffsetSyncConcurrency))

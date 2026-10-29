@@ -53,11 +53,11 @@ its flag, without editing the manifest. A flag that does not apply to the declar
 type is an error. Every flag can also be set through an upper-case environment variable
 named after it (--lag-threshold is LAG_THRESHOLD), which overrides the manifest in the same way.
 
-If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
+If a run is interrupted at any step, simply re-run 'kcp migration cutover execute' — it resumes
 from the live state.
 
 The manifest's fields, validation rules and a fully-annotated example are documented in the
-[Migration manifest reference](../../migration-manifest-reference.md).`
+[Migration manifest reference](../../../migration-manifest-reference.md).`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to the live
 // dependencies both branches share.
@@ -74,11 +74,11 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
 		Example: `  # Run (or resume) the cutover
-  kcp migration execute --migration-yaml gateway-static-migration.yaml
+  kcp migration cutover execute --migration-yaml gateway-static-migration.yaml
 
   # Override a policy default for this run only (a flag that does not apply to
   # the declared migration type is an error)
-  kcp migration execute --migration-yaml gateway-static-migration.yaml --detect-unrouted-producers-duration 60s`,
+  kcp migration cutover execute --migration-yaml gateway-static-migration.yaml --detect-unrouted-producers-duration 60s`,
 		SilenceErrors: true,
 		// A runtime failure mid-cutover (e.g. a source-connect error) must not
 		// bury the error under Cobra's usage block.
@@ -104,7 +104,7 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override policies.consumerOffsetSyncDrainDuration (staticMigration only): wait after fencing before disabling the link's consumer offset sync. Has no effect unless consumerOffsetSync.pause is set. 0 means no wait.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override policies.hotReloadTimeout (all migration types): max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
 	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override policies.gatewayConfigPort (all migration types): port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses the manifest's policies.gatewayConfigPort; 0 means the gateway default (9180).")
-	cmd.Flags().DurationVar(&detectUnroutedCommitsDurationOverride, "detect-unrouted-commits-duration", 0, "Override policies.detectUnroutedCommitsDuration (dynamicToStaticConversion only): window between the two committed-offset snapshots taken after fencing a route conversion, to catch a consumer committing to the source directly. 0 uses the built-in 30s; minimum 10s when set.")
+	cmd.Flags().DurationVar(&detectUnroutedCommitsDurationOverride, "detect-unrouted-commits-duration", 0, "Override policies.detectUnroutedCommitsDuration (dynamicToStaticConversion only): window between the two committed-offset snapshots taken after fencing a route conversion, to catch a consumer committing to the source directly. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().IntVar(&offsetSyncConcurrencyOverride, "offset-sync-concurrency", 0, "Override policies.offsetSyncConcurrency (dynamicToStaticConversion only): number of workers (each with its own broker connection) reading and writing consumer-group offsets during a route conversion. 0 uses the built-in 8.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
@@ -408,7 +408,7 @@ func overrideCommon(cmd *cobra.Command, p *manifest.CommonPolicies) {
 }
 
 // tracerName is the instrumentation scope of this package's spans.
-const tracerName = "kcp/cmd/migration/execute"
+const tracerName = "kcp/cmd/migration/cutover/execute"
 
 // commandContext is the command's context, which carries the command's root
 // span. A command run outside cobra's Execute — as the executor tests do — has
