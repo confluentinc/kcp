@@ -233,3 +233,18 @@ func TestDo_RecordsTheAttemptCountWhenAWaitFails(t *testing.T) {
 	step := tracingtest.Find(t, tracingtest.Spans(rec), "step.verify_fence")
 	assert.Contains(t, step.Attributes(), attribute.Int("kcp.retry.attempts", 2))
 }
+
+func TestDo_AGiveUpInsideACallStopsTheOuterRetryAtOnce(t *testing.T) {
+	useFakeClock(t)
+	outerCalls := 0
+
+	err := Do(context.Background(), "outer", func(ctx context.Context) error {
+		outerCalls++
+		return Do(ctx, "inner", func(context.Context) error { return reset })
+	})
+
+	var gave *GaveUpError
+	require.ErrorAs(t, err, &gave)
+	assert.Equal(t, "inner", gave.Operation, "the error is the inner call's give-up, not a second one from the outer call")
+	assert.Equal(t, 1, outerCalls, "the outer call is not retried: it would run the inner budget again, and again")
+}

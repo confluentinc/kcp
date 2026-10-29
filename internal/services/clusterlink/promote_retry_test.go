@@ -3,6 +3,7 @@ package clusterlink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +20,8 @@ import (
 
 // promoteAPI is a cluster-link REST API with mirror topics in a status map. onPromote decides each promote
 // request's fate; it is called with the request number (from 1) and the topics asked for. Every promote
-// request's topics are recorded.
+// request's topics are recorded. onGet, if set, decides each mirror status read's fate in place of answering
+// from the status map.
 type promoteAPI struct {
 	t         *testing.T
 	mu        sync.Mutex
@@ -26,6 +29,7 @@ type promoteAPI struct {
 	posts     [][]string
 	gets      int
 	onPromote func(api *promoteAPI, n int, topics []string, w http.ResponseWriter)
+	onGet     func(api *promoteAPI, w http.ResponseWriter)
 }
 
 func (a *promoteAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +47,10 @@ func (a *promoteAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.onPromote(a, len(a.posts), req.MirrorTopicNames, w)
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/mirrors"):
 		a.gets++
+		if a.onGet != nil {
+			a.onGet(a, w)
+			return
+		}
 		writeMirrors(a.t, w, a.status)
 	default:
 		a.t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -209,4 +217,39 @@ func TestPromoteMirrorTopics_ReadsTheStatusAgainAfterASecondUnansweredRequest(t 
 	assert.Equal(t, [][]string{{"orders", "users"}, {"users"}}, api.posts)
 	assert.Equal(t, 2, api.gets, "the mirror status is read after each unanswered request")
 	assert.ElementsMatch(t, []string{"orders", "users"}, promoted(resp))
+}
+
+func TestPromoteMirrorTopics_SendsNothingMoreWhenTheStatusReadFails(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		resetConnection(t, w) // unanswered: kcp cannot know whether orders was promoted
+	}
+	api.onGet = func(a *promoteAPI, w http.ResponseWriter) {
+		resetConnection(t, w) // and the status read that would tell it fails as well
+	}
+
+	resp, err := runPromote(t, api, []string{"orders"})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "reading mirror status after a promote request went unanswered")
+	assert.Len(t, api.posts, 1, "a promote whose status cannot be read is not sent again: it may already have been accepted")
+	assert.Positive(t, api.gets)
+}
+
+func TestPromoteMirrorTopics_ReadsTheStatusBeforeEveryResendUntilItRunsOutOfBudget(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		resetConnection(t, w) // never answered, never accepted: orders stays active
+	}
+
+	resp, err := runPromote(t, api, []string{"orders"})
+
+	var gave *retry.GaveUpError
+	require.True(t, errors.As(err, &gave), "err = %v, want it to give up once the budget runs out", err)
+	assert.Nil(t, resp)
+	assert.Greater(t, len(api.posts), 1, "the promote was resent while the budget lasted")
+	assert.Equal(t, len(api.posts)-1, api.gets, "the mirror status is read before each resend, never after the first request alone")
 }

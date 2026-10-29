@@ -633,3 +633,64 @@ func TestGetMany_RetriesALeaderLookupThatRanOutOfBrokers(t *testing.T) {
 		t.Fatalf("ListOffsets requests = %d, want 1 (sent by the retry)", n)
 	}
 }
+
+// A sweep whose partitions fail two ways at once, one leader's connection reset and another leader's login
+// refused, returns at once with the login failure: retrying the sweep cannot fix the login.
+func TestGetMany_AResetAndAFailedLoginInOneSweepReturnsTheLoginFailureAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	rec := tracingtest.Install(t)
+	const resetTopic, loginTopic = "reset-topic", "login-topic"
+	ln := testsupport.NewCutListener(t)
+	resetLeader := sarama.NewMockBrokerListener(t, 1, ln)
+	loginLeader := sarama.NewMockBroker(t, 2)
+	sasl := func(auth sarama.MockResponse) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{
+			"ApiVersionsRequest":      sarama.NewMockApiVersionsResponse(t),
+			"SaslHandshakeRequest":    sarama.NewMockSaslHandshakeResponse(t).SetEnabledMechanisms([]string{sarama.SASLTypePlaintext}),
+			"SaslAuthenticateRequest": auth,
+			"MetadataRequest": sarama.NewMockMetadataResponse(t).
+				SetBroker(resetLeader.Addr(), resetLeader.BrokerID()).SetBroker(loginLeader.Addr(), loginLeader.BrokerID()).
+				SetController(resetLeader.BrokerID()).
+				SetLeader(resetTopic, 0, resetLeader.BrokerID()).SetLeader(loginTopic, 0, loginLeader.BrokerID()),
+			"OffsetRequest": sarama.NewMockOffsetResponse(t).
+				SetOffset(resetTopic, 0, sarama.OffsetNewest, 4242).SetOffset(loginTopic, 0, sarama.OffsetNewest, 4242),
+		}
+	}
+	resetLeader.SetHandlerByMap(sasl(sarama.NewMockSaslAuthenticateResponse(t)))
+	loginLeader.SetHandlerByMap(sasl(sarama.NewMockSaslAuthenticateResponse(t).SetError(sarama.ErrSASLAuthenticationFailed)))
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	cfg.Net.SASL.Enable = true
+	cfg.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+	cfg.Net.SASL.User = "u"
+	cfg.Net.SASL.Password = "p"
+	client, err := sarama.NewClient([]string{resetLeader.Addr()}, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client against mock broker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		resetLeader.Close()
+		loginLeader.Close()
+	})
+	svc := NewOffsetService(client)
+	if _, err := svc.GetMany(t.Context(), []string{resetTopic}); err != nil {
+		t.Fatalf("first sweep, which reads only the topic whose leader accepts the login: %v", err)
+	}
+
+	ln.Cut() // the next request to the reset leader fails on its established connection
+
+	_, err = svc.GetMany(t.Context(), []string{resetTopic, loginTopic})
+
+	var gave *retry.GaveUpError
+	if err == nil || errors.As(err, &gave) {
+		t.Fatalf("err = %v, want the failed login returned without retries", err)
+	}
+	if !errors.Is(err, sarama.ErrSASLAuthenticationFailed) {
+		t.Fatalf("err = %v, want it to wrap ErrSASLAuthenticationFailed, not the reset", err)
+	}
+	sweeps := tracingtest.FindAll(tracingtest.Spans(rec), "offset.get_many")
+	if attempts, ok := tracingtest.Attr(sweeps[len(sweeps)-1], "kcp.retry.attempts"); ok {
+		t.Fatalf("kcp.retry.attempts = %v, want unset: the sweep is not retried", attempts)
+	}
+}

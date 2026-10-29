@@ -1162,3 +1162,32 @@ func TestCommittedTopics_APermanentFailureStopsTheOtherFetchesRetrying(t *testin
 	assert.Contains(t, err.Error(), "denied for g2", "the error must be g2's, not g1's stopped retries")
 	assert.NotErrorIs(t, err, context.Canceled)
 }
+
+func TestOnBroker_ClosesTheBrokerThatFailedBeforeRetrying(t *testing.T) {
+	retrytest.Fast(t)
+	mb := sarama.NewMockBroker(t, 1)
+	defer mb.Close()
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	cfg.ApiVersionsRequest = false
+	failed := sarama.NewBroker(mb.Addr())
+	require.NoError(t, failed.Open(cfg))
+	connected, err := failed.Connected()
+	require.NoError(t, err)
+	require.True(t, connected, "the broker is connected before the first attempt fails on it")
+	calls := 0
+	var connectedAtRetry bool
+
+	err = onBroker(context.Background(), "kafka.partition_counts", func() (*sarama.Broker, error) {
+		calls++
+		if calls == 1 {
+			return failed, fmt.Errorf("reading partition counts: %w", connReset)
+		}
+		connectedAtRetry, _ = failed.Connected()
+		return nil, nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.False(t, connectedAtRetry, "the broker the first attempt asked is closed before the retry: sarama fails every request on a connection that broke until it is closed")
+}
