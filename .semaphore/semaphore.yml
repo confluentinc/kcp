@@ -20,7 +20,7 @@ global_job_config:
     commands:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
-      - sem-version go 1.25.12
+      - sem-version go 1.26.10
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -219,7 +219,7 @@ blocks:
           value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
       prologue:
         commands:
-          - sem-version go 1.25.12
+          - sem-version go 1.26.10
           - export "GOPATH=$(go env GOPATH)"
           - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
           - export "PATH=${GOPATH}/bin:${PATH}"
@@ -238,6 +238,12 @@ blocks:
         - name: 'trivy scan'
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+        # Scans the compiled linux binary (see `make trivy-binary`). Unlike `trivy fs`
+        # it sees the Go stdlib the binary was built with.
+        - name: 'trivy binary scan'
+          commands:
+            - make trivy-binary TRIVY_FLAGS="--db-repository=$TRIVY_DB_REPOSITORIES"
 
   - name: 'docs build'
     dependencies: ['resolve go dependencies']
