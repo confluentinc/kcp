@@ -49,11 +49,12 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 ## Topic pool
 
-`setup.sh` seeds `tbm-topic-001..095`, all mirrored. Promotion is irreversible,
+`setup.sh` seeds `tbm-topic-001..100`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `001..005`, `011..085` and `091..095`: drift refused (operator stopped
+in `001..005`, `011..085` and `091..100`: drift refused (operator stopped
 mid-switch) `001..005` (static only), a terminating gateway pod refused until
-the gateway settles `091..095` (static only, never promotes), rollback when a resume fails before its own fence step
+the gateway settles `091..095` (static only, never promotes), a resume after
+every gateway pod restarts `096..100` (dynamic only), rollback when a resume fails before its own fence step
 `011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
 and through a rollback `026..030` (dynamic only), unrouted-producer detection
@@ -143,6 +144,11 @@ test, `TestDrift_TerminatingPodRefusesUntilSettled`, kills a run after the
 fence and runs `--dry-run` straight away: the fence's rollout reports complete
 while the replaced pod still terminates, so the pod check refuses with the
 rollout-in-progress hint, and the same dry-run passes once the gateway settles.
+A third, `TestDrift_GatewayPodRestartRerunProceeds` (dynamic only), kills a run
+after promote, deletes every gateway pod and waits for the replacements. They
+must report the CR's configId at boot, so `--dry-run` passes the pod check and
+the re-run completes. The runner's Role grants `delete` on pods for this test
+alone.
 
 **The settle wait.** On a hot-reload-off (static) gateway, a rollout reports
 complete while the replaced pod terminates for up to its grace period, and

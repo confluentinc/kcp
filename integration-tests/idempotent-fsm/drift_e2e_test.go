@@ -164,6 +164,78 @@ func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	t.Logf("\n✅ RESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
 }
 
+// TestDrift_GatewayPodRestartRerunProceeds pins that a restarted hot-reload
+// gateway pod doesn't deadlock a resume. Run 1 is killed after promote, so
+// the fence and the topics on the target both count as done, and a "cannot
+// tell" verdict would refuse. Every gateway pod is then deleted. If a pod
+// that boots reported no configId until the next hot-reload, the pod check
+// would refuse, and a refusal never writes, so nothing would set one. The
+// replacement pods must report the CR's configId at boot: the dry-run passes
+// the pod check, and the re-run completes. Dynamic only. Slice
+// tbm-topic-096..100.
+func TestDrift_GatewayPodRestartRerunProceeds(t *testing.T) {
+	e := newEnv()
+	if e.mode != "dynamic" {
+		t.Skip("hot-reload gateways only: the static gateway has no configId to report")
+	}
+	topics := e.topicRange(96, 100)
+	runResumeScenario(t, e, cpPromoted, "drift-pod-restart", topics, func(t *testing.T, ctx context.Context) {
+		e.restartGatewayPods(t, ctx)
+
+		out, err := e.runKCP(t, "kcp-run-dry-run-after-restart.log", "", "migration", "execute", "--migration-yaml", e.manifestPath("drift-pod-restart.yaml"), "--dry-run")
+		require.NoError(t, err, "the dry-run must pass: the restarted pods report the CR's configId")
+		require.Contains(t, out, "✓ gateway pods serve the CR", "the pod check must pass, not be skipped")
+		require.NotContains(t, out, "nothing to compare", "no restarted pod may report a missing configId")
+	})
+}
+
+// restartGatewayPods deletes every gateway pod and waits until the
+// Deployment's replacements are all Ready, none of the deleted pods is
+// listed, and none is terminating.
+func (e *env) restartGatewayPods(t *testing.T, ctx context.Context) {
+	t.Helper()
+	cs := kubeClient(t)
+	selector := metav1.ListOptions{LabelSelector: "app=" + e.gateway}
+	before, err := cs.CoreV1().Pods(e.namespace).List(ctx, selector)
+	require.NoError(t, err, "list the gateway pods")
+	require.NotEmpty(t, before.Items, "the gateway must have pods to restart")
+	old := map[string]bool{}
+	for _, p := range before.Items {
+		old[string(p.UID)] = true
+		require.NoErrorf(t, cs.CoreV1().Pods(e.namespace).Delete(ctx, p.Name, metav1.DeleteOptions{}), "delete gateway pod %s", p.Name)
+	}
+	want := len(before.Items)
+
+	var last string
+	replaced := func() bool {
+		pods, err := cs.CoreV1().Pods(e.namespace).List(ctx, selector)
+		if err != nil {
+			last = "list the gateway pods: " + err.Error()
+			return false
+		}
+		ready := 0
+		for _, p := range pods.Items {
+			if old[string(p.UID)] || p.DeletionTimestamp != nil {
+				last = "gateway pod " + p.Name + " is still listed or terminating"
+				return false
+			}
+			for _, c := range p.Status.Conditions {
+				if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+					ready++
+				}
+			}
+		}
+		last = fmt.Sprintf("%d of %d replacement pods Ready", ready, want)
+		return ready == want && len(pods.Items) == want
+	}
+	deadline := time.Now().Add(3 * time.Minute)
+	for !replaced() {
+		require.Falsef(t, time.Now().After(deadline), "the gateway pods must be replaced within 3m (last seen: %s)", last)
+		time.Sleep(2 * time.Second)
+	}
+	t.Logf("\n🔁 GATEWAY PODS RESTARTED ▸ %d pod(s) deleted and replaced; every replacement Ready", want)
+}
+
 // The CFK operator, as e2e_install_operator installs it
 // (integration-tests/lib/cp-e2e-env.sh): Helm release confluent-operator, its
 // pods labelled app=confluent-operator.

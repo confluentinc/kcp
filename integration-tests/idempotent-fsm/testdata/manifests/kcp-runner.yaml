@@ -52,7 +52,9 @@ rules:
   verbs: ["get", "list", "patch"]
 - apiGroups: [""]
   resources: ["pods"]
-  verbs: ["get", "list"]
+  # delete is for TestDrift_GatewayPodRestartRerunProceeds, which restarts
+  # the gateway pods; kcp itself only reads them.
+  verbs: ["get", "list", "delete"]
 - apiGroups: [""]
   # proxy is how ensureGatewayCapability reaches each gateway pod's /config
   # endpoint through the API server when the gateway has no REST endpoint of
