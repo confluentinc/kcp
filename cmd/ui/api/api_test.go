@@ -13,7 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // mockReportService satisfies the ReportService interface for testing.
