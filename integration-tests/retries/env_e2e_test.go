@@ -1,6 +1,6 @@
 //go:build e2e
 
-// Package retries_e2e proves `kcp migration execute` rides out a cluster disappearing
+// Package retries_e2e proves `kcp migration cutover execute` rides out a cluster disappearing
 // from its side: a source Kafka, a destination Kafka or the destination's REST endpoint
 // that resets or stops answering mid-run. A blip shorter than the retry budget must be
 // recovered with the run completing and the world correct; an outage longer than the

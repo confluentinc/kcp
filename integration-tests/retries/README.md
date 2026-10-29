@@ -1,10 +1,10 @@
 # Retries — live E2E
 
-Proves `kcp migration execute` rides out a cluster disappearing from its side, against a
+Proves `kcp migration cutover execute` rides out a cluster disappearing from its side, against a
 **live Confluent Gateway** (dynamic route, hot reload), a real cluster link, a source
 Kafka and a destination Kafka (Minikube profile `kcp-e2e-retries`).
 
-Each test drives the real `kcp migration execute` from the runner pod and, timed to a step
+Each test drives the real `kcp migration cutover execute` from the runner pod and, timed to a step
 kcp prints (for example "Verifying fence"), makes the source Kafka, the destination Kafka
 or the destination's REST endpoint disappear from kcp's point of view. A **blip** shorter
 than the retry budget (2 minutes) must be recovered: the run completes, the world is

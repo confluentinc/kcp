@@ -40,7 +40,7 @@ const stepWait = 3 * time.Minute
 const detectProducers = "    policies:\n      detectUnroutedProducersDuration: 10s\n"
 
 func executeArgs(manifest string) []string {
-	return []string{"migration", "execute", "--migration-yaml", manifest}
+	return []string{"migration", "cutover", "execute", "--migration-yaml", manifest}
 }
 
 // requireCompleted asserts a run exited cleanly and said it completed.

@@ -3,7 +3,7 @@
 # (kcp-e2e-retries, see state.sh): a source CP Kafka (PLAINTEXT) and a destination CP
 # Kafka (SASL_SSL) linked by one ClusterLink with mirror topics, a dynamic-route
 # Confluent Gateway (hot reload), and a runner pod that can inject network faults
-# (NET_ADMIN + iptables). The suite drives the real `kcp migration execute` from the
+# (NET_ADMIN + iptables). The suite drives the real `kcp migration cutover execute` from the
 # runner pod and makes the source, the destination or the destination REST endpoint
 # disappear from kcp's side while it runs.
 #

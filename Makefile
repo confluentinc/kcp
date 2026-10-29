@@ -198,7 +198,7 @@ test-route-conversion-run: ## Run the route-conversion E2E against an already-pr
 test-route-conversion-teardown: ## Tear down the route-conversion E2E cluster
 	@bash integration-tests/route-conversion/teardown.sh
 
-test-retries: test-retries-setup ## Run the retries live E2E: kcp migration execute through clusters that disappear mid-run (own cluster; needs a CP Enterprise licence + AWS creds)
+test-retries: test-retries-setup ## Run the retries live E2E: kcp migration cutover execute through clusters that disappear mid-run (own cluster; needs a CP Enterprise licence + AWS creds)
 	@trap 'echo ""; echo "Tearing down retries E2E infrastructure..."; bash integration-tests/retries/teardown.sh' EXIT; \
 	bash integration-tests/retries/run.sh
 

@@ -1,7 +1,7 @@
 # Dynamic-mode gateway for the TBM hot-reload suite. setup.sh renders this into
 # .rendered/ (placeholder substitution) and applies the initial CR; the engine
 # (migplan.Reconcile) pulls it live and renders fence/switchover route edits,
-# which `kcp migration execute` patches onto the route with a fresh
+# which `kcp migration cutover execute` patches onto the route with a fresh
 # spec.configId (hot reload, no pod roll).
 #
 # Why passthrough on BOTH legs even though destination-kafka is SASL_SSL:

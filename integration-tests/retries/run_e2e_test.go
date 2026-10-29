@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// liveRun is one `kcp migration execute` the test watches while it runs, so a fault can
+// liveRun is one `kcp migration cutover execute` the test watches while it runs, so a fault can
 // be timed to a step: the test waits for a line kcp prints (a step banner such as
 // "Verifying fence") and acts the moment it appears.
 type liveRun struct {
