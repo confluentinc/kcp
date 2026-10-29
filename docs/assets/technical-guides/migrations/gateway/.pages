@@ -1,3 +1,4 @@
 title: Gateway
 nav:
   - Overview: index.md
+  - Static migration: static-migration.md

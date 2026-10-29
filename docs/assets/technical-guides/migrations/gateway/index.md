@@ -113,7 +113,7 @@ Once every topic on the cluster link has been migrated, the route is still dynam
 
 ## Next steps
 
-Detailed guides for each workflow are coming. Until then:
+- [Migrate with a static route](static-migration.md): the step-by-step guide for an all-at-once migration. Guides for the other two workflows are coming; until then:
 
 - [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html): the Gateway's own documentation for dynamic routes and fencing.
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md): every manifest field, with annotated examples for [static](../../../gateway-examples/gateway-static-migration.yaml), [dynamic](../../../gateway-examples/gateway-dynamic-migration.yaml) and [conversion](../../../gateway-examples/gateway-route-conversion.yaml) manifests.
