@@ -93,7 +93,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-retries test-retries-setup test-retries-run test-retries-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -187,6 +187,19 @@ test-route-conversion-run: ## Run the route-conversion E2E against an already-pr
 
 test-route-conversion-teardown: ## Tear down the route-conversion E2E cluster
 	@bash integration-tests/route-conversion/teardown.sh
+
+test-retries: test-retries-setup ## Run the retries live E2E: kcp migration execute through clusters that disappear mid-run (own cluster; needs a CP Enterprise licence + AWS creds)
+	@trap 'echo ""; echo "Tearing down retries E2E infrastructure..."; bash integration-tests/retries/teardown.sh' EXIT; \
+	bash integration-tests/retries/run.sh
+
+test-retries-setup: ## Set up the retries cluster (Minikube profile kcp-e2e-retries)
+	@bash integration-tests/retries/setup.sh
+
+test-retries-run: ## Run the retries E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector. One run uses up the cluster's topics
+	@bash integration-tests/retries/run.sh "$(RUN)"
+
+test-retries-teardown: ## Tear down the retries E2E cluster
+	@bash integration-tests/retries/teardown.sh
 
 OTEL_LGTM_IMAGE ?= grafana/otel-lgtm:0.34.0
 OTEL_LGTM_NAME  ?= kcp-otel-lgtm
