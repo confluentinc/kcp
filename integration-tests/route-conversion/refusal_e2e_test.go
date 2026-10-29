@@ -186,7 +186,7 @@ func TestRefusal_DirectCommitDuringTheWindow(t *testing.T) {
 				committed <- fmt.Errorf("kcp's fence was not on the route when the window opened")
 				return
 			}
-			committed <- gc.CommitGroupOffsets(seeds[1].group, offsets{e.topic(3): {0: client.CommittedOffset{Offset: 9}}})
+			committed <- gc.CommitGroupOffsets(ctx, seeds[1].group, offsets{e.topic(3): {0: client.CommittedOffset{Offset: 9}}})
 		})
 	}
 
