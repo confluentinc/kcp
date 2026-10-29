@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -387,4 +388,11 @@ func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 
 	require.NoError(t, err)
 	rec.assertAltered(t, offsetSyncEnableKey, "false")
+}
+
+// The retry budget runs from the first failure, so a call can spend one request timeout on the attempt that
+// fails first, then the whole budget, then one more request timeout on the last attempt it starts inside it.
+func TestOffsetSyncCallTimeout_LeavesRoomForTheRetries(t *testing.T) {
+	assert.GreaterOrEqual(t, offsetSyncCallTimeout, retry.Budget+2*clusterlink.RequestTimeout,
+		"the timeout must not cut a retried AlterConfigs short")
 }

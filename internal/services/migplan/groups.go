@@ -39,12 +39,12 @@ type GroupLister interface {
 // strictGroupClient is the slice of client.ConsumerGroupClient the lister
 // needs; the real client satisfies it.
 type strictGroupClient interface {
-	ListGroupsAllBrokers() ([]types.ConsumerGroupListing, error)
-	CommittedTopics(groups []string) (map[string][]string, error)
-	CanDescribeAnyGroup() (bool, error)
-	CanDescribeAnyTopic() (bool, error)
-	CanCommitAnyOffsets() (bool, error)
-	PartitionCounts(topics []string) (map[string]int, error)
+	ListGroupsAllBrokers(ctx context.Context) ([]types.ConsumerGroupListing, error)
+	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
+	CanDescribeAnyGroup(ctx context.Context) (bool, error)
+	CanDescribeAnyTopic(ctx context.Context) (bool, error)
+	CanCommitAnyOffsets(ctx context.Context) (bool, error)
+	PartitionCounts(ctx context.Context, topics []string) (map[string]int, error)
 }
 
 var _ GroupLister = (*KafkaGroupLister)(nil)
@@ -59,28 +59,28 @@ func NewKafkaGroupLister(c strictGroupClient) *KafkaGroupLister {
 	return &KafkaGroupLister{client: c}
 }
 
-func (l *KafkaGroupLister) ListGroups(context.Context) ([]types.ConsumerGroupListing, error) {
-	return l.client.ListGroupsAllBrokers()
+func (l *KafkaGroupLister) ListGroups(ctx context.Context) ([]types.ConsumerGroupListing, error) {
+	return l.client.ListGroupsAllBrokers(ctx)
 }
 
-func (l *KafkaGroupLister) CommittedTopics(_ context.Context, groups []string) (map[string][]string, error) {
-	return l.client.CommittedTopics(groups)
+func (l *KafkaGroupLister) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
+	return l.client.CommittedTopics(ctx, groups)
 }
 
-func (l *KafkaGroupLister) CanDescribeAnyGroup(context.Context) (bool, error) {
-	return l.client.CanDescribeAnyGroup()
+func (l *KafkaGroupLister) CanDescribeAnyGroup(ctx context.Context) (bool, error) {
+	return l.client.CanDescribeAnyGroup(ctx)
 }
 
-func (l *KafkaGroupLister) CanDescribeAnyTopic(context.Context) (bool, error) {
-	return l.client.CanDescribeAnyTopic()
+func (l *KafkaGroupLister) CanDescribeAnyTopic(ctx context.Context) (bool, error) {
+	return l.client.CanDescribeAnyTopic(ctx)
 }
 
-func (l *KafkaGroupLister) CanCommitAnyOffsets(context.Context) (bool, error) {
-	return l.client.CanCommitAnyOffsets()
+func (l *KafkaGroupLister) CanCommitAnyOffsets(ctx context.Context) (bool, error) {
+	return l.client.CanCommitAnyOffsets(ctx)
 }
 
-func (l *KafkaGroupLister) PartitionCounts(_ context.Context, topics []string) (map[string]int, error) {
-	return l.client.PartitionCounts(topics)
+func (l *KafkaGroupLister) PartitionCounts(ctx context.Context, topics []string) (map[string]int, error) {
+	return l.client.PartitionCounts(ctx, topics)
 }
 
 // listingGap turns a listing credential's group-describe access into the reason a
