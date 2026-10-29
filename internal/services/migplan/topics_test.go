@@ -5,8 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-
-	"github.com/confluentinc/kcp/internal/client"
 )
 
 // fakeTopicAdmin's topics map is name -> the broker's IsInternal flag.
@@ -16,15 +14,15 @@ type fakeTopicAdmin struct {
 	err       error
 }
 
-func (f *fakeTopicAdmin) ListTopicInternalFlags() (map[string]bool, error) {
+func (f *fakeTopicAdmin) ListTopicInternalFlags(context.Context) (map[string]bool, error) {
 	return f.topics, f.err
 }
 
-func (f *fakeTopicAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {
+func (f *fakeTopicAdmin) ClusterID(context.Context) (string, error) {
 	if f.err != nil {
-		return nil, f.err
+		return "", f.err
 	}
-	return &client.ClusterKafkaMetadata{ClusterID: f.clusterID}, nil
+	return f.clusterID, nil
 }
 
 func TestKafkaTopicListerSorted(t *testing.T) {
