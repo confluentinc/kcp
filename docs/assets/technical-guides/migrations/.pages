@@ -1,3 +1,4 @@
 title: Migrations
 nav:
+  - gateway
   - Transactions: transactions.md
