@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 )
 
@@ -551,9 +552,11 @@ func padLeftStyled(styled string, width int, visibleLen int) string {
 
 // --- Commands ---
 
+// fetchCmd reads the mirror topics once. A failed read is shown in the view and the next poll tries again, so
+// the request is not retried: a retry would hold up the view and write its warnings over it.
 func fetchCmd(svc clusterlink.Service, cfg clusterlink.Config) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(retry.WithoutRetries(context.Background()), 15*time.Second)
 		defer cancel()
 		topics, err := svc.ListMirrorTopics(ctx, cfg)
 		return fetchResultMsg{topics: topics, err: err}

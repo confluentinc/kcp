@@ -10,6 +10,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-msk-iam-sasl-signer-go/signer"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -308,8 +309,9 @@ type ClusterKafkaMetadata struct {
 type KafkaAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
 	ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error)
-	ListTopicInternalFlags() (map[string]bool, error)
+	ListTopicInternalFlags(ctx context.Context) (map[string]bool, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
+	ClusterID(ctx context.Context) (string, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
 	Close() error
@@ -363,8 +365,20 @@ func (k *KafkaAdminClient) ListTopicsWithNonDefaultConfigs() (map[string]sarama.
 // response; unlike ListTopicsWithConfigs (which reports them like any other
 // topic, and whose output scan depends on), this exposes the flag so a caller
 // that wants user topics only can drop them by the broker's word rather than by
-// a name prefix. It sends no DescribeConfigs request.
-func (k *KafkaAdminClient) ListTopicInternalFlags() (map[string]bool, error) {
+// a name prefix. It sends no DescribeConfigs request. A connection error is
+// retried (internal/retry) after closing the controller's connection.
+func (k *KafkaAdminClient) ListTopicInternalFlags(ctx context.Context) (map[string]bool, error) {
+	var flags map[string]bool
+	err := retry.Do(ctx, "kafka.list_topics", func(context.Context) error {
+		var err error
+		flags, err = k.listTopicInternalFlagsOnce()
+		return err
+	}, retry.WithBeforeRetry(k.closeController))
+	return flags, err
+}
+
+// listTopicInternalFlagsOnce is one attempt of ListTopicInternalFlags.
+func (k *KafkaAdminClient) listTopicInternalFlagsOnce() (map[string]bool, error) {
 	controller, err := k.admin.Controller()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get controller: %w", err)
@@ -490,13 +504,37 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}, nil
 }
 
+// ClusterID reads the cluster's own id, as GetClusterKafkaMetadata does, retrying a connection error
+// (internal/retry) after closing the controller's connection. Migration paths call it; scan keeps
+// GetClusterKafkaMetadata's single attempt.
+func (k *KafkaAdminClient) ClusterID(ctx context.Context) (string, error) {
+	var id string
+	err := retry.Do(ctx, "kafka.cluster_id", func(context.Context) error {
+		md, err := k.GetClusterKafkaMetadata()
+		if err != nil {
+			return err
+		}
+		id = md.ClusterID
+		return nil
+	}, retry.WithBeforeRetry(k.closeController))
+	return id, err
+}
+
+// closeController closes the controller's connection so the next request reconnects: sarama fails every
+// request on a connection that broke until the broker is closed. A close's own error is not a result.
+func (k *KafkaAdminClient) closeController() {
+	if b, err := k.admin.Controller(); err == nil {
+		_ = b.Close()
+	}
+}
+
 // getClusterIDFromBroker establishes a connection to a specific broker and retrieves the cluster ID
 func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string, error) {
 	// Create a new broker connection
 	brokerConn := sarama.NewBroker(broker.Addr())
 	err := brokerConn.Open(k.saramaConfig)
 	if err != nil {
-		return "", fmt.Errorf("failed to open broker connection: %v", err)
+		return "", fmt.Errorf("failed to open broker connection: %w", err)
 	}
 	defer func() { _ = brokerConn.Close() }()
 
@@ -505,7 +543,7 @@ func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string
 	metadata, err := brokerConn.GetMetadata(metadataReq)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get metadata: %v", err)
+		return "", fmt.Errorf("failed to get metadata: %w", err)
 	}
 
 	if metadata.ClusterID == nil {
