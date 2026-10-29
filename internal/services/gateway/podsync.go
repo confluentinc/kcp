@@ -130,7 +130,9 @@ func checkPodSync(ctx context.Context, clientset kubernetes.Interface, probe pod
 		namespace, gatewayName, generation, observedText, orNone(crConfigID), onOff(hotReload))
 
 	// Step 1: the operator has caught up. It comes first because step 2 or 3
-	// is chosen from spec.hotReload, which is not in force until it has.
+	// is chosen from spec.hotReload, which is not in force until it has. CFK
+	// does not bump observedGeneration on a rejected spec, so this is also
+	// where a rejection of the current spec refuses.
 	if !haveObserved {
 		return r.verdict(PodsOutOfSync, "the operator has not reported status.observedGeneration for this CR"), nil
 	}
@@ -138,16 +140,12 @@ func checkPodSync(ctx context.Context, clientset kubernetes.Interface, probe pod
 		return r.verdict(PodsOutOfSync, fmt.Sprintf("the operator has not caught up with the CR: status.observedGeneration is %d, metadata.generation is %d",
 			observed, generation)), nil
 	}
-	rej, undecided, err := currentFatalCondition(cr, gatewayName)
+	rej, err := currentFatalCondition(cr, gatewayName)
 	if err != nil {
 		return PodSync{}, err
 	}
 	if rej != nil {
-		detail := fmt.Sprintf("the operator rejected the CR: %s (reason %s, condition %s)", rej.Message, rej.Reason, rej.ConditionType)
-		if undecided {
-			detail += "; kcp could not tell whether this condition is left over from an earlier spec"
-		}
-		return r.verdict(PodsOutOfSync, detail), nil
+		return r.verdict(PodsOutOfSync, fmt.Sprintf("the operator rejected the CR: %s (reason %s, condition %s)", rej.Message, rej.Reason, rej.ConditionType)), nil
 	}
 
 	if !hotReload {

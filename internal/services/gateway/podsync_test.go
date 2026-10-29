@@ -115,14 +115,17 @@ func TestCheckPodSync(t *testing.T) {
 				withGatewayConditionAt("ready", "False", "ApplyFailed", "secretRef not found", 3, time.Now())),
 			wantVerdict: PodsOutOfSync,
 			wantDetail:  "the operator rejected the CR: secretRef not found (reason ApplyFailed, condition ready)",
-			notEvidence: []string{"could not tell"},
 		},
 		{
-			name: "a rejection judged current for lack of evidence says so",
-			cr: newGatewayCR(gw, ns, 3, 3, true,
-				withGatewayCondition("ready", "False", "ApplyFailed", "secretRef not found")),
-			wantVerdict: PodsOutOfSync,
-			wantDetail:  "the operator rejected the CR: secretRef not found (reason ApplyFailed, condition ready); kcp could not tell whether this condition is left over from an earlier spec",
+			// Live on CFK 0.1838.0: a spec fixed 11s after its rejection was
+			// applied (observedGeneration caught up), and CFK left the
+			// ApplyFailed behind. It must not refuse a healthy gateway.
+			name: "hot reload off: a leftover rejection without its own generation is ignored once the operator has caught up",
+			cr: newGatewayCR(gw, ns, 8, 8, true,
+				withGatewayConditionAtTime("ready", "False", "ApplyFailed", "secretRef missing-secret-d not found", time.Now())),
+			objects:     []runtime.Object{settled(), pod("gw-0", true), pod("gw-1", true)},
+			wantVerdict: PodsInSync,
+			wantDetail:  "the gateway Deployment has finished rolling out and no gateway pod is terminating",
 		},
 		{
 			name:        "hot reload off: settled Deployment is in sync",

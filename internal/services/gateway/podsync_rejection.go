@@ -1,74 +1,36 @@
 package gateway
 
 import (
-	"encoding/json"
 	"fmt"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// lastSpecWriteTime returns the newest managedFields time of any write to the
-// CR, other than a status-subresource write, by a manager that owns a spec
-// field: the closest evidence, without a kcp apply to time against, of when
-// the spec last changed. Entries that own only metadata are skipped, since CFK
-// writes metadata and an annotation edit would otherwise make a current
-// rejection look stale. An entry's time also moves when a manager that owns a
-// spec field edits only its metadata; that case is not told apart. It reports
-// false when no such entry carries a time.
-func lastSpecWriteTime(cr *unstructured.Unstructured) (time.Time, bool) {
-	var newest time.Time
-	found := false
-	for _, entry := range cr.GetManagedFields() {
-		if entry.Subresource == "status" || entry.Time == nil || !ownsSpecField(entry) {
-			continue
-		}
-		if !found || entry.Time.After(newest) {
-			newest = entry.Time.Time
-			found = true
-		}
-	}
-	return newest, found
-}
-
-// ownsSpecField reports whether a managedFields entry's field set includes
-// anything under spec. An entry without a readable field set is not counted.
-func ownsSpecField(entry metav1.ManagedFieldsEntry) bool {
-	if entry.FieldsV1 == nil {
-		return false
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(entry.FieldsV1.Raw, &fields); err != nil {
-		return false
-	}
-	_, ok := fields["f:spec"]
-	return ok
-}
-
 // currentFatalCondition returns the first status=False condition with a fatal
-// reason that is still current, or nil when there is none. Unlike
-// findGatewayRejection there is no kcp apply to time against, so each
-// condition is judged by, in order:
+// reason that is tied to the CR's current generation by its own
+// observedGeneration, or nil when there is none. It runs only once
+// status.observedGeneration has caught up with metadata.generation.
 //
-//  1. its own observedGeneration, when present: current iff it equals the CR's
-//     generation.
-//  2. otherwise, its lastTransitionTime against lastSpecWriteTime: stale iff
-//     it is more than gatewayClockSkewTolerance before the last spec write.
-//  3. otherwise it is current, and undecided is true: it was judged current
-//     only for lack of evidence.
-func currentFatalCondition(cr *unstructured.Unstructured, gatewayName string) (rej *GatewayRejectedError, undecided bool, err error) {
+// A fatal condition without its own observedGeneration is not counted. CFK
+// sets none, leaves ApplyFailed behind after a later spec applies, and does
+// not bump status.observedGeneration on a rejected spec (verified live on CFK
+// 0.1838.0), so the caught-up observedGeneration is the evidence that the
+// current spec was applied. Unlike findGatewayRejection there is no kcp apply
+// to time against, and a lastTransitionTime rule would refuse a healthy
+// gateway whose spec was fixed soon after a rejection, with nothing short of
+// another spec write to clear it.
+func currentFatalCondition(cr *unstructured.Unstructured, gatewayName string) (*GatewayRejectedError, error) {
 	conditions, found, err := unstructured.NestedSlice(cr.Object, "status", "conditions")
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to read gateway status.conditions: %w", err)
+		return nil, fmt.Errorf("failed to read gateway status.conditions: %w", err)
 	}
 	if !found {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	generation := cr.GetGeneration()
 	observed, _, _ := unstructured.NestedInt64(cr.Object, "status", "observedGeneration")
-	lastWrite, haveWrite := lastSpecWriteTime(cr)
 
 	for _, raw := range conditions {
 		condition, ok := raw.(map[string]any)
@@ -82,18 +44,9 @@ func currentFatalCondition(cr *unstructured.Unstructured, gatewayName string) (r
 		if !isFatalGatewayConditionReason(reason) {
 			continue
 		}
-
-		condUndecided := false
-		if condGen, ok, err := unstructured.NestedInt64(condition, "observedGeneration"); err == nil && ok {
-			if condGen != generation {
-				continue
-			}
-		} else if ltt, ok := parseConditionTransitionTime(condition); ok && haveWrite {
-			if ltt.Before(lastWrite.Add(-gatewayClockSkewTolerance)) {
-				continue
-			}
-		} else {
-			condUndecided = true
+		condGen, ok, err := unstructured.NestedInt64(condition, "observedGeneration")
+		if err != nil || !ok || condGen != generation {
+			continue
 		}
 
 		message, _ := condition["message"].(string)
@@ -105,17 +58,7 @@ func currentFatalCondition(cr *unstructured.Unstructured, gatewayName string) (r
 			Message:            message,
 			Generation:         generation,
 			ObservedGeneration: observed,
-		}, condUndecided, nil
+		}, nil
 	}
-	return nil, false, nil
-}
-
-// parseConditionTransitionTime reads a condition's RFC3339 lastTransitionTime.
-func parseConditionTransitionTime(condition map[string]any) (time.Time, bool) {
-	raw, ok := condition["lastTransitionTime"].(string)
-	if !ok {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339, raw)
-	return t, err == nil
+	return nil, nil
 }

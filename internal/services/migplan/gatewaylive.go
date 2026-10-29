@@ -57,7 +57,7 @@ func (g *GatewayLive) Load(ctx context.Context) (*reconcile.GatewayConfig, error
 	if err != nil {
 		return nil, fmt.Errorf("reading gateway CR %q in namespace %q: %w", g.crName, g.namespace, err)
 	}
-	// The pod check reads status, generation and managedFields, so it gets the
+	// The pod check reads status and generation, so it gets the
 	// CR before cleanGatewayDoc strips them.
 	var sync reconcile.GatewaySync
 	if g.podCheck != nil {
