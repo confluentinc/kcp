@@ -4,7 +4,7 @@
 # destination CP Kafka (SASL_SSL) linked by one ClusterLink, plus a Confluent
 # Gateway — dynamic-mode (hot reload) or static-mode (rollout), per GATEWAY_MODE.
 # The engine (migplan.Reconcile) reads the live gateway CR; the harness drives clean
-# kcp migration execute runs with tracing on and checks the trace each writes. The
+# kcp migration cutover execute runs with tracing on and checks the trace each writes. The
 # topology is the idempotent-fsm suite's, copied so that suite stays untouched.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied

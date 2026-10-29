@@ -17,7 +17,7 @@ import (
 // commandWithRootSpan is a command whose context carries a root span, as the
 // root hook leaves it in a real run.
 func commandWithRootSpan() (*cobra.Command, trace.Span) {
-	ctx, root := otel.Tracer("test").Start(context.Background(), "kcp migration execute")
+	ctx, root := otel.Tracer("test").Start(context.Background(), "kcp migration cutover execute")
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetContext(ctx)

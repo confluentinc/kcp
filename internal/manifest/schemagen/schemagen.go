@@ -207,7 +207,7 @@ func GenerateGateway() ([]byte, error) {
 
 	for _, sec := range []*jsonschema.Schema{static, dynamic, conv} {
 		policy := sec.Properties["policies"]
-		d[policy] = "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration execute` flag."
+		d[policy] = "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag."
 		set := func(name, text string) {
 			if p, ok := policy.Properties[name]; ok {
 				d[p] = text

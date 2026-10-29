@@ -334,7 +334,7 @@ func TestReconcileConvert_ForeignFenceAdviceCoversAnUnfinishedBatch(t *testing.T
 	if strings.Contains(pc.Detail, "so remove them first") {
 		t.Errorf("detail = %q must not tell the operator to just remove the fence", pc.Detail)
 	}
-	for _, want := range []string{"topic-based migration batch", "kcp migration execute"} {
+	for _, want := range []string{"topic-based migration batch", "kcp migration cutover execute"} {
 		if !strings.Contains(pc.Detail, want) {
 			t.Errorf("detail = %q, want it to contain %q", pc.Detail, want)
 		}

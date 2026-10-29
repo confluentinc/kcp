@@ -388,7 +388,7 @@ func TestLagCheck_SendsConfiguredAuthOnWire(t *testing.T) {
 }
 
 // TestLagCheck_WorksBeforeExecuteHasEverRun — lag-check needs only the
-// manifest, so it works before `kcp migration execute` has ever run.
+// manifest, so it works before `kcp migration cutover execute` has ever run.
 func TestLagCheck_WorksBeforeExecuteHasEverRun(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, nil))
 	_, _, err := buildLagCheckConfig(g)

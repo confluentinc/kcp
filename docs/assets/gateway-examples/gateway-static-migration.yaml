@@ -3,8 +3,8 @@
 # A STATIC migration (all-at-once, AAO): every selected topic cuts over together
 # across a STATIC Gateway route.
 #
-#   kcp migration execute --migration-yaml gateway-static-migration.yaml
-#   kcp migration lag-check --migration-yaml gateway-static-migration.yaml
+#   kcp migration cutover execute --migration-yaml gateway-static-migration.yaml
+#   kcp migration cutover lag-check --migration-yaml gateway-static-migration.yaml
 #
 # The migration type is declared by which section of spec is present: exactly one
 # of staticMigration, dynamicMigration or dynamicToStaticConversion. kcp checks
@@ -117,7 +117,7 @@ spec:
       baseline: enabled
 
     # OPTIONAL, and read FRESH on every execute, so a change takes effect on the
-    # next run. Each value is a DEFAULT: `kcp migration execute` can override any
+    # next run. Each value is a DEFAULT: `kcp migration cutover execute` can override any
     # of them for a single run with the matching flag (e.g.
     # --detect-unrouted-producers-duration 60s), no edit needed.
     policies:

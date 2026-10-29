@@ -124,7 +124,7 @@ func newProvider(ctx context.Context, c config, res *resource.Resource) (*sdktra
 }
 
 // StartRoot opens the command's root span, named after the command path
-// ("kcp migration execute"), and returns ctx carrying it. It returns ctx
+// ("kcp migration cutover execute"), and returns ctx carrying it. It returns ctx
 // unchanged when tracing is off.
 func StartRoot(ctx context.Context, name string) context.Context {
 	if active == nil {

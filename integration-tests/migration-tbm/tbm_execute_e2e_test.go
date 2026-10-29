@@ -88,7 +88,7 @@ func runKCP(t *testing.T, manifestPath string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kcpBinary(),
-		"migration", "execute",
+		"migration", "cutover", "execute",
 		"--migration-yaml", manifestPath,
 	)
 	out, err := cmd.CombinedOutput()

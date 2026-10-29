@@ -91,7 +91,7 @@ type CommonPolicies struct {
 // StaticPolicies are the execute-time knobs of a static (all-at-once)
 // migration. Every value is optional and zero carries meaning: 0 promotes all
 // at once / imposes no deadline / skips the check. Each is a default that
-// `kcp migration execute` can override with a per-policy flag for one run.
+// `kcp migration cutover execute` can override with a per-policy flag for one run.
 type StaticPolicies struct {
 	LagThreshold     int `yaml:"lagThreshold,omitempty" json:"lagThreshold,omitempty"`
 	PromoteBatchSize int `yaml:"promoteBatchSize,omitempty" json:"promoteBatchSize,omitempty"`
@@ -239,7 +239,7 @@ func (s GatewaySpec) DeclaredOffsetSync() (pause bool, baseline string) {
 }
 
 // ValidatePolicies validates the declared section's policies. It is exported
-// because `kcp migration execute` re-validates after applying command-line
+// because `kcp migration cutover execute` re-validates after applying command-line
 // overrides, which can introduce a value the manifest itself never carried.
 // With no (or several) sections declared it returns nil: Validate reports that.
 func (s GatewaySpec) ValidatePolicies() []error {

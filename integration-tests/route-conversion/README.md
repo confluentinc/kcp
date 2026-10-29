@@ -6,7 +6,7 @@ Gateway** (dynamic route, hot reload), a real cluster link and real clients
 finished topic-based migration is converted to a static route on the
 destination, with the consumer groups' committed offsets copied across.
 
-Each test drives the real `kcp migration execute`, optionally stopping it with
+Each test drives the real `kcp migration cutover execute`, optionally stopping it with
 the killpoint seams (`KCP_TEST_CANCEL_AFTER=<state>` for an abrupt exit after
 a state, `KCP_TEST_FAIL_AT=<event>` for a step failure), inspects the live
 world it leaves (gateway CR, mirror states, offsets on both clusters), and
