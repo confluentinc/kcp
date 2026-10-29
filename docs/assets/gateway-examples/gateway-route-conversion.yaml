@@ -60,8 +60,8 @@ spec:
     policies:
       # The wait between the two committed-offset snapshots taken after the
       # fence, to catch a consumer committing to the source directly. Every topic
-      # on the route is blocked for at least this long. 0s = the built-in 30s;
-      # never skipped; min 10s when set.
+      # on the route is blocked for at least this long. 0s = skip the check;
+      # min 10s when set.
       detectUnroutedCommitsDuration: 30s
       offsetSyncConcurrency: 0 # workers reading and writing offsets; 0 = built-in 8
       rolloutTimeout: 10m # 0 = no deadline

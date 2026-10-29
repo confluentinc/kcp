@@ -22,15 +22,7 @@ type convertServices struct {
 // convertServicesFunc builds a conversion's services from the manifest.
 type convertServicesFunc func(g *manifest.GatewayMigration) (convertServices, error)
 
-// runConvertBranch drives a route conversion (spec.dynamicToStaticConversion) through d2s.D2SOrchestrator.
-// Its siblings are runStaticBranch and runDynamicBranch; the live reconcile that produced reconcileResult ran
-// once, in runMigrationExecute. It builds its own services rather than calling buildExecutorServices, which
-// always builds both offset providers and the cluster-link client, neither of which a conversion uses.
-//
-// Every policy is read from g.Spec.DynamicToStaticConversion.Policies, the effective policy after applyPolicyOverrides. A
-// conversion reads detectUnroutedCommitsDuration and offsetSyncConcurrency (resolved to their defaults), and
-// the rollout and hot-reload timeouts and the gateway config port like every branch; lagThreshold and
-// promoteBatchSize are AAO/TBM-only.
+// Skips buildExecutorServices: a conversion uses neither its offset providers nor the link client.
 func runConvertBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
@@ -68,7 +60,7 @@ func runConvertBranch(
 
 	orchestrator := d2s.NewD2SOrchestrator(config, actions)
 	if err := orchestrator.Execute(ctx, reconcileResult, d2s.Policy{
-		DetectUnroutedCommitsDuration: policy.EffectiveDetectUnroutedCommitsDuration(),
+		DetectUnroutedCommitsDuration: policy.DetectUnroutedCommitsDuration,
 		Workers:                       policy.EffectiveOffsetSyncConcurrency(),
 	}); err != nil {
 		return fmt.Errorf("failed to execute route conversion: %w", err)
