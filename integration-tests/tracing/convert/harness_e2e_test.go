@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Lines kcp prints that the tests assert on (cmd/migration/execute,
+// Lines kcp prints that the tests assert on (cmd/migration/cutover/execute,
 // internal/services/migration/d2s, internal/services/migplan).
 const (
 	completedLine     = "✅ Route conversion completed: %s"

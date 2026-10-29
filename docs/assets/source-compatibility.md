@@ -47,8 +47,8 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp iac migration-infra generate` - Type 4             | Yes                     | N/A                                    | AWS only                    |
 | `kcp iac migration-infra generate` - Type 5             | Yes                     | Yes                                    | AWS only - Requires IAM JAR |
 | `kcp iac target-infra generate`                         | N/A                     | N/A                                    | N/A                         |
-| `kcp migration lag-check`                               | Yes                     | No                                     | Yes                         |
-| `kcp migration execute`                                 | Yes                     | No                                     | Yes                         |
+| `kcp migration cutover lag-check`                               | Yes                     | No                                     | Yes                         |
+| `kcp migration cutover execute`                                 | Yes                     | No                                     | Yes                         |
 | `kcp migration resources create`                        | Yes                     | No                                     | Yes                         |
 | `kcp migration resources validate`                      | Yes                     | No                                     | Yes                         |
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |

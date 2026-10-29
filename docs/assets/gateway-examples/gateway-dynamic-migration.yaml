@@ -4,7 +4,7 @@
 # DYNAMIC Gateway route, promoting mirror topics at zero lag. Run one manifest
 # per batch of topics; each batch's topicGroup selects only that batch.
 #
-#   kcp migration execute --migration-yaml gateway-dynamic-migration.yaml
+#   kcp migration cutover execute --migration-yaml gateway-dynamic-migration.yaml
 #
 # Everything outside spec.dynamicMigration is identical to
 # gateway-static-migration.yaml, which documents every shared field. The
