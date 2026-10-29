@@ -23,8 +23,8 @@ func main() {
 		tmpRoot: "/tmp",
 		logger:  logger,
 	}
-	if err := runtimeLoop(os.Getenv("AWS_LAMBDA_RUNTIME_API"), h); err != nil {
-		logger.Error("runtime loop failed", "error", err)
-		os.Exit(1)
-	}
+	// runtimeLoop only returns on a runtime API error.
+	err := runtimeLoop(os.Getenv("AWS_LAMBDA_RUNTIME_API"), h)
+	logger.Error("runtime loop failed", "error", err)
+	os.Exit(1)
 }

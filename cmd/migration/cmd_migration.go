@@ -4,6 +4,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/migration/execute"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
 	"github.com/confluentinc/kcp/cmd/migration/reconcile"
+	"github.com/confluentinc/kcp/cmd/migration/resources"
 
 	"github.com/spf13/cobra"
 )
@@ -11,7 +12,7 @@ import (
 func NewMigrationCmd() *cobra.Command {
 	migrationCmd := &cobra.Command{
 		Use:   "migration",
-		Short: "Commands for migrating using the Confluent Gateway.",
+		Short: "Commands for migrating clients using the Confluent Gateway and Kafka resources directly.",
 		Long: `Execute end-to-end Kafka migrations to Confluent Cloud using Cluster Linking and the Confluent Gateway.
 
 The migration runs as a fixed sequence of steps:
@@ -44,6 +45,7 @@ The manifest these commands read is documented in the [Migration manifest refere
 		execute.NewMigrationExecuteCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
 		reconcile.NewMigrationReconcileCmd(),
+		resources.NewMigrationResourcesCmd(),
 	)
 
 	return migrationCmd

@@ -11,11 +11,10 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/confluentinc/kcp/cmd/create_asset"
 	"github.com/confluentinc/kcp/cmd/discover"
 	"github.com/confluentinc/kcp/cmd/docs"
 	"github.com/confluentinc/kcp/cmd/healthcheck"
-	"github.com/confluentinc/kcp/cmd/migrate"
+	"github.com/confluentinc/kcp/cmd/iac"
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
@@ -154,13 +153,12 @@ func init() {
 	RootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Enable verbose logging to console")
 
 	RootCmd.AddCommand(
-		create_asset.NewCreateAssetCmd(),
+		iac.NewIacCmd(),
 		scan.NewScanCmd(),
 		report.NewReportCmd(),
 		ui.NewUICmd(),
 		discover.NewDiscoverCmd(),
 		healthcheck.NewHealthcheckCmd(),
-		migrate.NewMigrateCmd(),
 		migration.NewMigrationCmd(),
 		state.NewStateCmd(),
 		version.NewVersionCmd(),
