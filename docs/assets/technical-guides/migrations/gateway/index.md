@@ -14,7 +14,7 @@ A third workflow, the **dynamic-to-static conversion**, closes out a topic-based
 !!! important "Kubernetes and CFK only"
     kcp orchestrates Gateway migrations only when the Gateway runs on Kubernetes and is managed by Confluent for Kubernetes (CFK). kcp reads and updates the Gateway custom resource through the Kubernetes API, so a Gateway started directly from its Docker image, or by any other means, can't be migrated with `kcp migration cutover execute`. The Gateway images are published on Docker Hub as [`cpc-gateway`](https://hub.docker.com/r/confluentinc/cpc-gateway), [`confluent-gateway`](https://hub.docker.com/r/confluentinc/confluent-gateway) and [`confluent-gateway-for-cloud`](https://hub.docker.com/r/confluentinc/confluent-gateway-for-cloud).
 
-This page introduces the three. Each gets a detailed guide of its own; the field-by-field manifest syntax is in the [migration manifest reference](../../../migration-manifest-reference.md).
+This page introduces the three. Each gets a detailed guide of its own; the field-by-field manifest syntax is in the [migration manifest reference](../../../migration-assets/cutover/overview.md).
 
 !!! note "How kcp picks the workflow"
     You declare the workflow in the migration manifest by including exactly one of `spec.staticMigration`, `spec.dynamicMigration` or `spec.dynamicToStaticConversion`. kcp reads the live Gateway resource on every run and refuses to continue if the route's mode doesn't match what you declared. A static migration can only run on a static route, and a topic-based migration only on a dynamic one.
@@ -116,5 +116,5 @@ Once every topic on the cluster link has been migrated, the route is still dynam
 Detailed guides for each workflow are coming. Until then:
 
 - [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html): the Gateway's own documentation for dynamic routes and fencing.
-- [Migration manifest reference](../../../migration-manifest-reference.md): every manifest field, with annotated examples for [static](../../../gateway-examples/gateway-static-migration.yaml), [dynamic](../../../gateway-examples/gateway-dynamic-migration.yaml) and [conversion](../../../gateway-examples/gateway-route-conversion.yaml) manifests.
+- [Migration manifest reference](../../../migration-assets/cutover/overview.md): every manifest field, with annotated examples for [static](../../../gateway-examples/gateway-static-migration.yaml), [dynamic](../../../gateway-examples/gateway-dynamic-migration.yaml) and [conversion](../../../gateway-examples/gateway-route-conversion.yaml) manifests.
 - [Migrate transactional workloads](../transactions.md): find the topics that must move together before you plan batches.

@@ -284,4 +284,4 @@ Treat the output as the shape of your cutover schedule:
 ## Related content
 
 - [Source compatibility](../../source-compatibility.md)
-- [Migration manifest reference](../../migration-manifest-reference.md)
+- [Migration manifest reference](../../migration-assets/cutover/overview.md)

@@ -7,6 +7,5 @@ nav:
 - Source Compatibility: source-compatibility.md
 - command-reference
 - apache-kafka-configuration
-- Migration Manifest Reference: migration-manifest-reference.md
 - migration-assets
 - technical-guides
