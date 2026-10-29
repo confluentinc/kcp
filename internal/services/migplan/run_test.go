@@ -243,7 +243,7 @@ func TestBuildGatewaySource_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig(t *testi
 	g.Spec.Gateway.Namespace = "confluent"
 	g.Spec.Gateway.CrName = "my-gateway"
 
-	src, err := buildGatewaySource(g, "migration-route")
+	src, err := buildGatewaySource(g, "migration-route", false)
 	require.NoError(t, err)
 	_, err = src.Load(context.Background())
 
@@ -410,4 +410,29 @@ func TestBuildReconcileInput_NoDeclaredTypeErrors(t *testing.T) {
 	g.Spec.DynamicMigration = nil
 	_, err := buildReconcileInput(g)
 	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
+}
+
+// TestBuildGatewaySourcePodCheck: the pod check is wired only when asked for,
+// on the manifest's /config port. BuildConvertProviders (d2s verify_fence)
+// passes false through buildConvertProviders; it dials Kafka, so it cannot run
+// here and that one-line call is the thing to read.
+func TestBuildGatewaySourcePodCheck(t *testing.T) {
+	homeWithFakeKubeconfig(t)
+	g := gm("migration-route", "cc", nil)
+	g.Spec.DynamicMigration.Policies.GatewayConfigPort = 9999
+	g.Spec.Gateway.Namespace = "confluent"
+	g.Spec.Gateway.CrName = "my-gateway"
+
+	with, err := buildGatewaySource(g, "migration-route", true)
+	require.NoError(t, err)
+	live, ok := with.(*GatewayLive)
+	require.True(t, ok)
+	assert.NotNil(t, live.podCheck)
+	assert.Equal(t, 9999, live.podPort)
+
+	without, err := buildGatewaySource(g, "migration-route", false)
+	require.NoError(t, err)
+	live, ok = without.(*GatewayLive)
+	require.True(t, ok)
+	assert.Nil(t, live.podCheck)
 }

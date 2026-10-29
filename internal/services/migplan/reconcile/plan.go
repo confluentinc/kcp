@@ -76,6 +76,9 @@ type PreconditionResult struct {
 	// a plain "✓ passed" the way a real pass is shown, since that would
 	// claim a verification that never happened.
 	Skipped bool
+	// Evidence is what was observed, one fact per line, shown under a failed
+	// or skipped check.
+	Evidence []string
 }
 
 type Report struct {

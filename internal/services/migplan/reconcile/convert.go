@@ -31,6 +31,12 @@ const convertTargetCheckName = "conversion target is static"
 func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors []LinkMirror, partitions PartitionCounts, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
 
+	return applyGatewaySync(reconcileConvert(in, gw, sourceTopics, targetTopics, mirrors, partitions, offsetSyncEnabled, ids, groups), gw)
+}
+
+func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
+	mirrors []LinkMirror, partitions PartitionCounts, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
+
 	report := Report{}
 
 	// This strategy is the dynamic-to-static conversion only; any other

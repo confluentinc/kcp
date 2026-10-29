@@ -63,6 +63,12 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  # Only the drift test (drift_e2e_test.go) uses this, to stop the CFK
+  # operator so a gateway CR change never reaches the pods. kcp shares this
+  # service account but never scales anything.
+  resources: ["deployments/scale"]
+  verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

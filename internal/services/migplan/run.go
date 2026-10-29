@@ -159,7 +159,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	// through identical wiring (decision 22). Only the gateway source stays
 	// injectable here, for testing.
 	if in.Type == reconcile.TypeDynamicToStatic {
-		p, closer, err := buildConvertProviders(g, o.gateway)
+		p, closer, err := buildConvertProviders(g, o.gateway, true)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +171,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 
 	gw := o.gateway
 	if gw == nil {
-		gw, err = buildGatewaySource(g, in.Route)
+		gw, err = buildGatewaySource(g, in.Route, true)
 		if err != nil {
 			return nil, err
 		}
@@ -258,14 +258,19 @@ func newResult(plan *reconcile.Plan) *Result {
 // buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
 // read from Kubernetes by namespace + cr-name via the existing gateway service,
 // using the manifest's kubeconfig (see manifest.GatewayMigration.KubeconfigPath
-// for its default).
-func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConfigSource, error) {
+// for its default). podCheck also checks the gateway pods against the CR it
+// read, on the manifest's /config port.
+func buildGatewaySource(g *manifest.GatewayMigration, route string, podCheck bool) (GatewayConfigSource, error) {
 	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {
 		return nil, err
 	}
 	svc := gateway.NewK8sService(kubeconfig)
-	return NewGatewayLive(svc, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName, route), nil
+	live := NewGatewayLive(svc, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName, route)
+	if podCheck {
+		live.WithPodCheck(svc, g.Spec.DeclaredCommonPolicies().GatewayConfigPort)
+	}
+	return live, nil
 }
 
 // buildSecretExistenceChecker wires the live Secret-existence check from
@@ -488,13 +493,13 @@ func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 // client it opened; the caller owns it. On an error nothing is left open and
 // the closer is nil.
 func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
-	return buildConvertProviders(g, nil)
+	return buildConvertProviders(g, nil, false)
 }
 
 // buildConvertProviders is BuildConvertProviders with an optional gateway
 // source: nil builds the live CR pull, anything else is used as is (Reconcile's
-// test seam, WithGatewaySource).
-func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource) (ConvertProviders, io.Closer, error) {
+// test seam, WithGatewaySource). podCheck adds the pod check to the live pull.
+func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource, podCheck bool) (ConvertProviders, io.Closer, error) {
 	var opened closers
 	fail := func(err error) (ConvertProviders, io.Closer, error) {
 		_ = opened.Close()
@@ -503,7 +508,7 @@ func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource)
 
 	if gw == nil {
 		var err error
-		if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name); err != nil {
+		if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name, podCheck); err != nil {
 			return fail(err)
 		}
 	}

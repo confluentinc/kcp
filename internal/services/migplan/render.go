@@ -59,15 +59,19 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 			// must not render as a plain "✓ passed" the way a real pass does,
 			// since that would claim a verification that never happened.
 			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprintf("%s — %s", p.Name, p.Detail))
+			renderEvidence(w, faint, p.Evidence)
 		case p.OK:
 			_, _ = fmt.Fprintf(w, "  %s %s\n", green.Sprint("✓"), p.Name)
 		default:
 			failedGates++
 			_, _ = fmt.Fprintf(w, "  %s %s\n", red.Sprint("✗"), red.Sprintf("%s — %s", p.Name, p.Detail))
+			renderEvidence(w, faint, p.Evidence)
 		}
 	}
 
-	// A failed gate stops the run before any topic is evaluated.
+	// A gate that fails before topic evaluation leaves no topics to list. The
+	// pod check fails after topics are evaluated, so its refusal still shows
+	// them below.
 	topicsEvaluated := len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged)+len(r.FailFast) > 0
 	if failedGates > 0 && !topicsEvaluated {
 		// No topic lines to attach warnings to, but a refusal's warnings can
@@ -182,6 +186,13 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "Plan: %s  %s\n", strings.Join(parts, ", "), outcome)
+}
+
+// renderEvidence prints what a check observed, one line each, under it.
+func renderEvidence(w io.Writer, faint *color.Color, evidence []string) {
+	for _, line := range evidence {
+		_, _ = fmt.Fprintf(w, "      %s %s\n", faint.Sprint("↳"), faint.Sprint(line))
+	}
 }
 
 // conversionFooterParts counts a conversion in its own terms: whether the route switches to
