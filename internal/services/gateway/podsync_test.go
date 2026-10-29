@@ -318,6 +318,21 @@ func TestCheckPodSync(t *testing.T) {
 			wantEvidence: []string{"pod gw-2: configId kcp-old"},
 		},
 		{
+			name:    "hot reload on: a terminating not-Ready pod is out of sync with the re-run hint",
+			cr:      hotReloadOn("kcp-a"),
+			objects: []runtime.Object{pod("gw-1", true), terminating(pod("gw-0", false))},
+			// gw-0 keeps its open connections until its grace period ends, and
+			// is not probed, so a matching gw-1 must not make this in sync.
+			probe:       perPodProber(map[string]string{"gw-1": "kcp-a"}, "kcp-old"),
+			wantVerdict: PodsOutOfSync,
+			wantDetail:  "gateway pod gw-0 is still terminating and may still serve the previous config to its open connections",
+			wantEvidence: []string{
+				"pod gw-0: terminating, not Ready, not checked",
+				"pod gw-1: configId kcp-a",
+				"A replaced gateway pod is still terminating (1 pod(s)). If it completes, re-run.",
+			},
+		},
+		{
 			name:         "no Ready pod is out of sync",
 			cr:           hotReloadOn("kcp-a"),
 			objects:      []runtime.Object{pod("gw-1", false)},

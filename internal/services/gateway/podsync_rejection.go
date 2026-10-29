@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,14 +10,18 @@ import (
 )
 
 // lastSpecWriteTime returns the newest managedFields time of any write to the
-// CR other than a status-subresource write: the closest evidence, without a
-// kcp apply to time against, of when the spec last changed. It reports false
-// when no such entry carries a time.
+// CR, other than a status-subresource write, by a manager that owns a spec
+// field: the closest evidence, without a kcp apply to time against, of when
+// the spec last changed. Entries that own only metadata are skipped, since CFK
+// writes metadata and an annotation edit would otherwise make a current
+// rejection look stale. An entry's time also moves when a manager that owns a
+// spec field edits only its metadata; that case is not told apart. It reports
+// false when no such entry carries a time.
 func lastSpecWriteTime(cr *unstructured.Unstructured) (time.Time, bool) {
 	var newest time.Time
 	found := false
 	for _, entry := range cr.GetManagedFields() {
-		if entry.Subresource == "status" || entry.Time == nil {
+		if entry.Subresource == "status" || entry.Time == nil || !ownsSpecField(entry) {
 			continue
 		}
 		if !found || entry.Time.After(newest) {
@@ -25,6 +30,20 @@ func lastSpecWriteTime(cr *unstructured.Unstructured) (time.Time, bool) {
 		}
 	}
 	return newest, found
+}
+
+// ownsSpecField reports whether a managedFields entry's field set includes
+// anything under spec. An entry without a readable field set is not counted.
+func ownsSpecField(entry metav1.ManagedFieldsEntry) bool {
+	if entry.FieldsV1 == nil {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(entry.FieldsV1.Raw, &fields); err != nil {
+		return false
+	}
+	_, ok := fields["f:spec"]
+	return ok
 }
 
 // currentFatalCondition returns the first status=False condition with a fatal

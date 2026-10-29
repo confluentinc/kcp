@@ -209,7 +209,9 @@ func checkRolledOut(ctx context.Context, clientset kubernetes.Interface, namespa
 // checkPodsReportConfigID is step 3, hot reload on: every Ready pod's GET
 // /config is compared with the CR's spec.configId. Terminating pods that are
 // still Ready are probed, because they still serve traffic; not-Ready pods
-// are not, because they have nothing meaningful to report.
+// are not, because they have nothing meaningful to report. A terminating pod
+// that is not Ready still serves its open connections until its grace period
+// ends, with a config kcp cannot read, so it makes the pods out of sync.
 func checkPodsReportConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName, crConfigID string, r *podSyncReport) (PodSync, error) {
 	pods, err := listGatewayPods(ctx, clientset, namespace, gatewayName)
 	if err != nil {
@@ -221,8 +223,14 @@ func checkPodsReportConfigID(ctx context.Context, clientset kubernetes.Interface
 		result ProbeResult
 	}
 	var results []probed
+	var terminatingNotReady []string
 	for _, pod := range pods {
 		if !isPodReady(&pod) {
+			if pod.DeletionTimestamp != nil {
+				terminatingNotReady = append(terminatingNotReady, pod.Name)
+				r.observe("pod %s: terminating, not Ready, not checked", pod.Name)
+				continue
+			}
 			r.observe("pod %s: not Ready, not checked", pod.Name)
 			continue
 		}
@@ -234,6 +242,13 @@ func checkPodsReportConfigID(ctx context.Context, clientset kubernetes.Interface
 		r.observe("pod %s: %s", pod.Name, probeEvidence(result))
 	}
 
+	if len(terminatingNotReady) > 0 {
+		// The grace period bounds the hint, as in step 2.
+		r.observe("A replaced gateway pod is still terminating (%d pod(s)). If it completes, re-run.",
+			len(terminatingNotReady))
+		return r.verdict(PodsOutOfSync, fmt.Sprintf("gateway pod %s is still terminating and may still serve the previous config to its open connections",
+			terminatingNotReady[0])), nil
+	}
 	if len(results) == 0 {
 		return r.verdict(PodsOutOfSync, "no gateway pod is Ready, so none can be checked"), nil
 	}

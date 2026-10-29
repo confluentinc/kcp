@@ -17,12 +17,25 @@ func withManagedFields(entries ...metav1.ManagedFieldsEntry) gatewayCROption {
 	}
 }
 
+// managedWrite is a write by manager that owns a spec field.
 func managedWrite(manager, subresource string, at time.Time) metav1.ManagedFieldsEntry {
+	return managedWriteOf(manager, subresource, at, `{"f:spec":{"f:configId":{}}}`)
+}
+
+// metadataWrite is a write by manager that owns only metadata fields, as an
+// annotation or label edit, or CFK's own non-status writes, record.
+func metadataWrite(manager string, at time.Time) metav1.ManagedFieldsEntry {
+	return managedWriteOf(manager, "", at, `{"f:metadata":{"f:annotations":{"f:note":{}}}}`)
+}
+
+func managedWriteOf(manager, subresource string, at time.Time, fields string) metav1.ManagedFieldsEntry {
 	return metav1.ManagedFieldsEntry{
 		Manager:     manager,
 		Operation:   metav1.ManagedFieldsOperationUpdate,
 		Subresource: subresource,
 		Time:        &metav1.Time{Time: at},
+		FieldsType:  "FieldsV1",
+		FieldsV1:    &metav1.FieldsV1{Raw: []byte(fields)},
 	}
 }
 
@@ -65,6 +78,14 @@ func TestCurrentFatalCondition(t *testing.T) {
 			opts: []gatewayCROption{
 				withGatewayConditionAtTime("ready", "False", "ApplyFailed", msg, t0.Add(time.Hour)),
 				withManagedFields(managedWrite("kcp", "", t0), managedWrite("cfk", "status", t0.Add(2*time.Hour))),
+			},
+			wantRejected: true,
+		},
+		{
+			name: "metadata-only writes are not spec writes",
+			opts: []gatewayCROption{
+				withGatewayConditionAtTime("ready", "False", "ApplyFailed", msg, t0.Add(time.Hour)),
+				withManagedFields(managedWrite("kcp", "", t0), metadataWrite("cfk", t0.Add(2*time.Hour))),
 			},
 			wantRejected: true,
 		},
@@ -129,6 +150,22 @@ func TestLastSpecWriteTime(t *testing.T) {
 
 	t.Run("false for only status entries", func(t *testing.T) {
 		cr := newGatewayCR("gw", "ns", 1, 1, false, withManagedFields(managedWrite("c", "status", t0)))
+		_, ok := lastSpecWriteTime(cr)
+		assert.False(t, ok)
+	})
+
+	t.Run("skips entries that own no spec field", func(t *testing.T) {
+		cr := newGatewayCR("gw", "ns", 1, 1, false, withManagedFields(
+			managedWrite("a", "", t0),
+			metadataWrite("b", t0.Add(time.Hour)),
+		))
+		got, ok := lastSpecWriteTime(cr)
+		require.True(t, ok)
+		assert.True(t, got.Equal(t0))
+	})
+
+	t.Run("false for only metadata entries", func(t *testing.T) {
+		cr := newGatewayCR("gw", "ns", 1, 1, false, withManagedFields(metadataWrite("b", t0)))
 		_, ok := lastSpecWriteTime(cr)
 		assert.False(t, ok)
 	})
