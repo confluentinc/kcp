@@ -357,8 +357,8 @@ func TestClusterLinkCutover_GatewayMediatedUsesKcpMigration(t *testing.T) {
 	for _, want := range []string{
 		"Deploy the Confluent Gateway with Confluent for Kubernetes and route your clients through it",
 		"`GatewayMigration` manifest",
-		"`kcp migration lag-check --migration-yaml <your-gateway-migration.yaml>`",
-		"`kcp migration execute --migration-yaml <your-gateway-migration.yaml>`",
+		"`kcp migration cutover lag-check --migration-yaml <your-gateway-migration.yaml>`",
+		"`kcp migration cutover execute --migration-yaml <your-gateway-migration.yaml>`",
 		"`--dry-run`",
 		"point it at the **Confluent Gateway**",
 		"**Backing out:** before `execute`, you can back out by leaving clients on the source. Once `execute` promotes the mirror topics, rolling back needs a new cluster link in the other direction.",
@@ -412,7 +412,7 @@ func TestConnectorsStep_StartCueMatchesCutoverStyle(t *testing.T) {
 	}
 	gw := base
 	gw.Plan.Switchover.GatewayMediated = true
-	if out := renderSteps(gw); !strings.Contains(out, "after `kcp migration execute` promotes the mirror topics") {
+	if out := renderSteps(gw); !strings.Contains(out, "after `kcp migration cutover execute` promotes the mirror topics") {
 		t.Errorf("gateway-mediated start cue wrong, got:\n%s", out)
 	}
 }
@@ -895,7 +895,7 @@ func TestClusterLinkCutover_GatewaySCRAMStoreAndOrder(t *testing.T) {
 	if strings.Contains(out, "HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault") {
 		t.Errorf("SCRAM plan must not offer Azure Key Vault as a store:\n%s", out)
 	}
-	d, r, g, e := strings.Index(out, "Deploy the Confluent Gateway with Confluent for Kubernetes.\n"), strings.Index(out, "port 9599"), strings.Index(out, "Route your clients through the Gateway: "), strings.Index(out, "`kcp migration execute")
+	d, r, g, e := strings.Index(out, "Deploy the Confluent Gateway with Confluent for Kubernetes.\n"), strings.Index(out, "port 9599"), strings.Index(out, "Route your clients through the Gateway: "), strings.Index(out, "`kcp migration cutover execute")
 	if d < 0 || r < d || g < r || e < g {
 		t.Errorf("want deploy < register < route < execute, got %d %d %d %d", d, r, g, e)
 	}

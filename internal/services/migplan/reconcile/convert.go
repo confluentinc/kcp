@@ -98,7 +98,7 @@ func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	base, _ := ParseRules(rc.Rules)
 	if foreign := base.ForeignFences(); len(foreign) > 0 {
 		report.Preconditions = append(report.Preconditions, fail("route has no fence kcp didn't write", fmt.Sprintf(
-			"route %q's rules.fencing has %d entr(ies) kcp didn't write (%s); the conversion drops the rules tree, so they must go first — but find out what each is for before removing it: if one is an unfinished topic-based migration batch, finish that batch (rerun kcp migration execute on its manifest) instead, since removing its fence would send producers back to a source topic the link no longer mirrors",
+			"route %q's rules.fencing has %d entr(ies) kcp didn't write (%s); the conversion drops the rules tree, so they must go first — but find out what each is for before removing it: if one is an unfinished topic-based migration batch, finish that batch (rerun kcp migration cutover execute on its manifest) instead, since removing its fence would send producers back to a source topic the link no longer mirrors",
 			rc.Name, len(foreign), renderFences(foreign))))
 	} else {
 		report.Preconditions = append(report.Preconditions, pass("route has no fence kcp didn't write"))

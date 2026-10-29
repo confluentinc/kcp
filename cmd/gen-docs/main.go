@@ -51,10 +51,12 @@ var commandOrder = map[string][]string{
 		"connectors",
 	},
 	"kcp migration": {
-		"init",
+		"cutover",
+		"resources",
+	},
+	"kcp migration cutover": {
 		"execute",
 		"lag-check",
-		"list",
 	},
 	"kcp scan": {
 		"clusters",

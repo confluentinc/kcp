@@ -72,7 +72,7 @@ func (e *env) runAndCheckTrace(t *testing.T, r tracedRun) {
 	traceFile := filepath.Join(dir, "kcp-traces.jsonl")
 
 	e.snapshot(t, ctx, "before", "BEFORE — pristine (expect mirrors ACTIVE)", topics)
-	out, err := e.runKCP(t, "kcp-execute.log", traceFile, r.label, "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCP(t, "kcp-execute.log", traceFile, r.label, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err)
 	require.Contains(t, strings.ToLower(out), "migration complete")
 	e.snapshot(t, ctx, "after", "AFTER execute (expect mirrors STOPPED, route → destination-domain)", topics)
@@ -91,7 +91,7 @@ func (e *env) runAndCheckTrace(t *testing.T, r tracedRun) {
 	}
 	require.Len(t, traces, 1, "the whole run is one trace")
 
-	root := byName["kcp migration execute"]
+	root := byName["kcp migration cutover execute"]
 	require.Len(t, root, 1)
 	assert.Empty(t, strings.Trim(root[0].parentID, "0"), "the command span is the root")
 	assert.Equal(t, "kcp", root[0].resource["service.name"])

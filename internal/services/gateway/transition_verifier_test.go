@@ -14,7 +14,7 @@ import (
 // mockService implements the full gateway.Service interface with configurable
 // func fields for the methods PatchCR/PatchConfigIDOnly drive; every other
 // method is a no-op returning zero values, modeled on
-// cmd/migration/execute/cmd_migration_execute_tbm_test.go's
+// cmd/migration/cutover/execute/migration_dependencies_test.go's
 // stubGatewayServiceImpl.
 type mockService struct {
 	patchGatewayRouteFn              func(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)

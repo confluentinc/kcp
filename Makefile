@@ -75,7 +75,7 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint trivy pre-commit-install
+.PHONY: fmt lint trivy trivy-binary pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
@@ -85,6 +85,16 @@ lint: ## Run Go linters (golangci-lint)
 
 trivy: ## Run Trivy vulnerability scan
 	trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 .
+
+# Scans the compiled linux binary. Unlike `trivy fs` it sees the Go stdlib the binary
+# is built with. Same gate as the Docker Hub promote (fixable HIGH/CRITICAL only).
+# One arch is enough: the stdlib and module versions are identical across arches.
+# Needs the frontend built first (make build-frontend). TRIVY_FLAGS adds extra flags.
+trivy-binary: ## Build the linux binary and run the Trivy gate on it
+	@mkdir -p trivy-scan
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o trivy-scan/kcp .
+	go version trivy-scan/kcp
+	trivy rootfs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(TRIVY_FLAGS) trivy-scan/
 
 pre-commit-install: ## Install git pre-commit hooks
 	git config --local core.hooksPath .githooks

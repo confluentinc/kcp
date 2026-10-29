@@ -193,7 +193,7 @@ func (o *MigrationOrchestrator) CurrentState() string {
 
 // Execute runs the full migration workflow, always from StateUninitialized
 // (see NewMigrationOrchestrator). res is the migplan.Result the command layer
-// (cmd/migration/execute) computes live via migplan.Reconcile on every
+// (cmd/migration/cutover/execute) computes live via migplan.Reconcile on every
 // invocation — not only the first — and is now non-nil on every call;
 // onInitialize consumes it directly.
 func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) (err error) {

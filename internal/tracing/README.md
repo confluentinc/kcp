@@ -1,7 +1,7 @@
 # kcp tracing
 
 kcp can record an OpenTelemetry **trace** of each command it runs: a tree of timed operations (spans) showing what the
-command did and where the time went. It is built for measuring `kcp migration execute` — every state-machine step, the
+command did and where the time went. It is built for measuring `kcp migration cutover execute` — every state-machine step, the
 work inside each step, and any rollback — and is available to every command.
 
 Tracing is **off** unless switched on. When off, nothing is created, written or sent.
@@ -54,7 +54,7 @@ container) with the **kcp tracing** dashboard already loaded. No login, no Explo
 ```bash
 make otel-up                       # prints the dashboard URL; Grafana is ready in ~30s
 KCP_TRACING_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
-  kcp migration execute --migration-yaml migration.yaml
+  kcp migration cutover execute --migration-yaml migration.yaml
 ```
 
 Open **http://localhost:3000/d/kcp-tracing**.
@@ -133,7 +133,7 @@ Stop it with Ctrl-C once it logs `Started watching file` and a few seconds pass;
 ## Labelling runs
 
 ```bash
-OTEL_RESOURCE_ATTRIBUTES=run=600-topics-batch-50 KCP_TRACING_ENABLED=true kcp migration execute ...
+OTEL_RESOURCE_ATTRIBUTES=run=600-topics-batch-50 KCP_TRACING_ENABLED=true kcp migration cutover execute ...
 ```
 
 The label is on every span's resource, so runs can be told apart and compared in Tempo.
@@ -145,10 +145,10 @@ time spent waiting on purpose can be separated from time spent waiting on a clus
 `kcp.*`. **Attributes never carry topic, group or pod names** — only counts, sizes, durations and modes. (A failed span
 records kcp's error message, which may name topics, as the terminal output does.)
 
-### Every `kcp migration execute`
+### Every `kcp migration cutover execute`
 
 ```
-kcp migration execute                       root span, one per command
+kcp migration cutover execute                       root span, one per command
 ├─ migplan.reconcile                        kcp.route.mode, kcp.refused, kcp.nothing_to_do, kcp.topics.migrate
 │  └─ clusterlink.list_mirror_topics        (its link-status read)
 ├─ migration.build_services                 client setup

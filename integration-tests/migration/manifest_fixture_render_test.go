@@ -60,7 +60,7 @@ func withRenderedCreds(t *testing.T, opts manifestOpts) manifestOpts {
 // TestRenderGatewayMigration_ParsesValidatesAndResolves is the guard that moves
 // "the fixture is a valid manifest" from minute 30 of a Minikube run to a
 // millisecond. It resolves all three credential legs from the rendered files —
-// the same three resolvers cmd_migration_init.go and cmd_migration_execute.go call.
+// the same three resolvers `kcp migration cutover execute` calls.
 func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 	rendered, err := renderGatewayMigration(withRenderedCreds(t, baselineOpts()))
 	require.NoError(t, err, "rendering the fixture must not fail")

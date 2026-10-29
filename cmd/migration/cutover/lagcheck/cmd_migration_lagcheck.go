@@ -36,7 +36,7 @@ Press q (or ctrl+c) to quit, p to toggle partition details, r to refresh, +/- to
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
 comes from the migration manifest, so this command works before
-'kcp migration execute' has ever run. The credentials are the cluster-link REST leg
+'kcp migration cutover execute' has ever run. The credentials are the cluster-link REST leg
 (spec.clusterLink.linkCredentials), honoured in whatever form the manifest resolves —
 api_key, basic, bearer, or mtls. lag-check never dials the source or destination Kafka
 legs directly.
@@ -44,7 +44,7 @@ legs directly.
 It always shows every mirror topic on the link; the declared migration's topicGroup does not narrow the view.
 
 Before the view opens, kcp reads the cluster link (15s timeout); if that fails, the command exits with an error.`,
-		Example:       `  kcp migration lag-check --migration-yaml gateway-static-migration.yaml`,
+		Example:       `  kcp migration cutover lag-check --migration-yaml gateway-static-migration.yaml`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
 		SilenceUsage: true,

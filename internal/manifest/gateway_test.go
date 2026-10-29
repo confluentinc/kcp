@@ -703,7 +703,7 @@ func TestParseKind_ErrorsOnMalformedYAML(t *testing.T) {
 }
 
 // TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage — pointing
-// `kcp migration execute` at a kcp migration resources manifest must say so, not produce a
+// `kcp migration cutover execute` at a kcp migration resources manifest must say so, not produce a
 // field-by-field unknown-key dump.
 func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing.T) {
 	_, err := ParseGatewayMigration(readFixture(t, "valid_cc.yaml"))
@@ -711,7 +711,7 @@ func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing
 	msg := err.Error()
 	assert.Contains(t, msg, KindMigration)
 	assert.Contains(t, msg, KindGatewayMigration)
-	for _, cmd := range []string{"execute", "lag-check", "reconcile"} {
+	for _, cmd := range []string{"execute", "lag-check"} {
 		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
 	}
 	assert.NotContains(t, msg, "unknown field", "a wrong-kind file must not produce an unknown-field dump")
@@ -722,7 +722,7 @@ func TestParse_RejectsGatewayMigrationKindWithAUsefulMessage(t *testing.T) {
 	require.Error(t, err)
 	msg := err.Error()
 	assert.Contains(t, msg, KindGatewayMigration)
-	for _, cmd := range []string{"execute", "lag-check", "reconcile"} {
+	for _, cmd := range []string{"execute", "lag-check"} {
 		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
 	}
 	assert.NotContains(t, msg, "unknown field")
