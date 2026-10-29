@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +28,7 @@ func (r *recorder) setup(do func(item string) error) func() (worker, error) {
 	return func() (worker, error) {
 		r.setups.Add(1)
 		return worker{
-			do: func(item string) error {
+			do: func(_ context.Context, item string) error {
 				r.mu.Lock()
 				r.handled = append(r.handled, item)
 				r.mu.Unlock()
@@ -117,7 +121,7 @@ func TestForEach_ASetupFailureStopsTheRunAndReleasesStartedWorkers(t *testing.T)
 		if calls.Add(1) == 2 {
 			return worker{}, boom
 		}
-		return worker{do: func(string) error { return nil }, release: func() { released.Add(1) }}, nil
+		return worker{do: func(context.Context, string) error { return nil }, release: func() { released.Add(1) }}, nil
 	}
 
 	err := forEach(context.Background(), names(10), 3, setup)
@@ -136,4 +140,35 @@ func TestForEach_ACancelledContextStopsTheRun(t *testing.T) {
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Less(t, len(r.handled), 5)
+}
+
+var connReset = &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}
+
+func TestForEach_RetriesAWorkerWhoseClientCouldNotConnect(t *testing.T) {
+	retrytest.Fast(t)
+	setups := 0
+	var done []string
+
+	err := forEach(context.Background(), []string{"a", "b"}, 1, func() (worker, error) {
+		setups++
+		if setups < 3 {
+			return worker{}, fmt.Errorf("connecting to the source cluster: %w", connReset)
+		}
+		return worker{do: func(_ context.Context, item string) error { done = append(done, item); return nil }}, nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, setups)
+	assert.Equal(t, []string{"a", "b"}, done)
+}
+
+func TestForEach_AWorkerThatCannotLogInFailsAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	setups := 0
+	denied := errors.New("SASL authentication failed")
+
+	err := forEach(context.Background(), []string{"a"}, 1, func() (worker, error) { setups++; return worker{}, denied })
+
+	require.ErrorIs(t, err, denied)
+	assert.Equal(t, 1, setups)
 }

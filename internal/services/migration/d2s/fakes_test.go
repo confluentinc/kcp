@@ -101,7 +101,7 @@ func (s *fakeSource) fetchers() groupoffsets.FetcherFactory {
 	}
 }
 
-func (s *fakeSource) CommittedOffsets(group string) (groupoffsets.Offsets, error) {
+func (s *fakeSource) CommittedOffsets(_ context.Context, group string) (groupoffsets.Offsets, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.fetchErr != nil {
@@ -190,7 +190,7 @@ func (d *fakeDestination) committers() groupoffsets.CommitterFactory {
 	}
 }
 
-func (d *fakeDestination) CommitGroupOffsets(group string, offsets groupoffsets.Offsets) error {
+func (d *fakeDestination) CommitGroupOffsets(_ context.Context, group string, offsets groupoffsets.Offsets) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.commitErr[group]; err != nil {

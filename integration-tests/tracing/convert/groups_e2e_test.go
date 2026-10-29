@@ -86,7 +86,7 @@ func (e *env) seedGroups(t *testing.T, seeds ...seed) []seed {
 	t.Helper()
 	gc := e.groupClient(t, sourceCluster)
 	for _, s := range seeds {
-		require.NoErrorf(t, gc.CommitGroupOffsets(s.group, s.offsets), "seed group %s on the source", s.group)
+		require.NoErrorf(t, gc.CommitGroupOffsets(t.Context(), s.group, s.offsets), "seed group %s on the source", s.group)
 	}
 	return seeds
 }
@@ -98,7 +98,7 @@ func (e *env) sourceOffsets(t *testing.T, group string) offsets {
 	var got offsets
 	err := retryWhileCoordinatorLoads(func() error {
 		var err error
-		got, err = gc.CommittedOffsets(group)
+		got, err = gc.CommittedOffsets(t.Context(), group)
 		return err
 	})
 	require.NoErrorf(t, err, "read %s's offsets on the source", group)
@@ -209,7 +209,7 @@ func (e *env) requireNoDestOffsets(t *testing.T, seeds []seed, why string) {
 // still leaving is retried until the deadline.
 func (e *env) deleteAllGroups(t *testing.T, c cluster) {
 	t.Helper()
-	listing, err := e.groupClient(t, c).ListGroupsAllBrokers()
+	listing, err := e.groupClient(t, c).ListGroupsAllBrokers(t.Context())
 	require.NoErrorf(t, err, "list the %s's groups", c)
 	admin := e.admin(t, c)
 	deadline := time.Now().Add(90 * time.Second)
@@ -226,7 +226,7 @@ func (e *env) deleteAllGroups(t *testing.T, c cluster) {
 			require.NoErrorf(t, err, "delete group %s on the %s", l.GroupID, c)
 		}
 	}
-	after, err := e.groupClient(t, c).ListGroupsAllBrokers()
+	after, err := e.groupClient(t, c).ListGroupsAllBrokers(t.Context())
 	require.NoError(t, err)
 	var left []string
 	for _, l := range after {
