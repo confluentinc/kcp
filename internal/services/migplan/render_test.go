@@ -346,3 +346,23 @@ func TestRenderReport_ConversionAlreadyStatic(t *testing.T) {
 		t.Errorf("an already-static route lists no topics; got:\n%s", out)
 	}
 }
+
+func TestRenderReportShowsCheckEvidence(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{
+			{Name: "gateway pods serve the CR", Detail: "a pod differs", Evidence: []string{"p-0: 41", "p-1: 42"}},
+		},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "cc"})
+	out := buf.String()
+	for _, line := range []string{"      ↳ p-0: 41", "      ↳ p-1: 42"} {
+		if !strings.Contains(out, line) {
+			t.Errorf("missing evidence line %q; got:\n%s", line, out)
+		}
+	}
+	if strings.Index(out, "↳ p-0: 41") < strings.Index(out, "gateway pods serve the CR") {
+		t.Errorf("evidence must render under its check; got:\n%s", out)
+	}
+}

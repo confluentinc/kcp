@@ -57,11 +57,12 @@ else
 fi
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-tbm-link}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
-# Each kill-point test promotes a disjoint 5-topic slice in 031..085 (see the
-# *_test.go files); promotion is irreversible, so all must exist AND be mirrored.
-# The pool runs 001..085, all mirrored; 001..030 are unused headroom.
-SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-85}"   # tbm-topic-001..085 on source
-MIRRORED_COUNT="${MIRRORED_COUNT:-85}"           # 001..085 all mirrored on the link
+# Each kill-point test promotes a disjoint 5-topic slice in 001..005,
+# 011..085 or 091..100 (see the *_test.go files); promotion is irreversible, so
+# all must exist AND be mirrored. The pool runs 001..100, all mirrored;
+# 006..010 and 086..090 are unused headroom.
+SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-100}"  # tbm-topic-001..100 on source
+MIRRORED_COUNT="${MIRRORED_COUNT:-100}"          # 001..100 all mirrored on the link
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —
 # the input for the "exists on target but is not a mirror" halt, which verdict.go
 # classifies only when a topic is onSource && MirrorNone && onTarget.

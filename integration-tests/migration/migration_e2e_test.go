@@ -138,9 +138,17 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 	}
 }
 
-// runKCP executes the kcp binary inside the runner pod via kubectl exec.
+// runKCP executes the kcp binary inside the runner pod via kubectl exec. An
+// execute run first waits for the gateway to settle (waitGatewaySettled).
 func runKCP(t *testing.T, cfg envConfig, args ...string) (string, string, error) {
 	t.Helper()
+
+	for _, a := range args {
+		if a == "execute" {
+			waitGatewaySettled(t, cfg)
+			break
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -160,6 +168,45 @@ func runKCP(t *testing.T, cfg envConfig, args ...string) (string, string, error)
 
 	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+// waitGatewaySettled waits until the scenario's gateway Deployment has rolled
+// out and no gateway pod is terminating. This suite's gateways have hot reload
+// off, so a rollout reports complete while the replaced pod still terminates
+// for up to its grace period, and kcp's pod check refuses in that window. The
+// tests run executes back to back, so each waits here first.
+func waitGatewaySettled(t *testing.T, cfg envConfig) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "kubectl",
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"rollout", "status", "deploy/"+cfg.GatewayName, "--timeout=2m",
+	).CombinedOutput()
+	require.NoError(t, err, "gateway %s rollout must complete before kcp runs:\n%s", cfg.GatewayName, out)
+
+	var terminating string
+	for {
+		out, err := exec.CommandContext(ctx, "kubectl",
+			"--context", cfg.KubeContext,
+			"-n", cfg.Namespace,
+			"get", "pods", "-l", "app="+cfg.GatewayName,
+			"-o", `jsonpath={range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{" "}{end}`,
+		).CombinedOutput()
+		require.NoError(t, err, "list gateway %s pods:\n%s", cfg.GatewayName, out)
+		terminating = strings.TrimSpace(string(out))
+		if terminating == "" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("gateway %s pods still terminating before kcp runs: %s", cfg.GatewayName, terminating)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // readPodFile reads a file from inside the runner pod.
@@ -1495,6 +1542,8 @@ func TestMigrationE2E_PauseOffsetSync_DriftDuringRunStillCompletes(t *testing.T)
 		// restored-to-true assertion would fail. The 10s unrouted-producer
 		// window (verify_fence, between pause and restore) guarantees that.
 		const driftDelay = 3 * time.Second
+		// Settle first, so runKCP's own wait can't delay execute past the drift.
+		waitGatewaySettled(t, cfg)
 		driftErr := make(chan error, 1)
 		go func() {
 			time.Sleep(driftDelay)

@@ -34,6 +34,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // kcpBinary is the in-pod path run.sh copies the linux kcp binary to.
@@ -384,8 +385,76 @@ type testSeam struct {
 	effect string // what it does to the run, for the logs
 }
 
-// runKCPWith runs kcp with seam (nil for a normal run) in its environment.
+// runKCPWith runs kcp with seam (nil for a normal run) in its environment,
+// once the gateway has settled (waitForGatewaySettled).
 func (e *env) runKCPWith(t *testing.T, reportName string, seam *testSeam, args ...string) (string, error) {
+	t.Helper()
+	e.waitForGatewaySettled(t, context.Background())
+	return e.execKCP(t, reportName, seam, args...)
+}
+
+// runKCPUnsettled is a normal run that doesn't wait for the gateway to
+// settle first, for the test that pins kcp's refusal while it hasn't.
+func (e *env) runKCPUnsettled(t *testing.T, reportName string, args ...string) (string, error) {
+	t.Helper()
+	return e.execKCP(t, reportName, nil, args...)
+}
+
+// settleTimeout bounds waitForGatewaySettled's wait.
+const settleTimeout = 2 * time.Minute
+
+// waitForGatewaySettled waits until the gateway Deployment reports a complete
+// rollout and no gateway pod is terminating. On a hot-reload-off gateway the
+// rollout reports complete while a replaced pod still terminates, and kcp's
+// pod check refuses until it's gone, so a test that resumes straight after an
+// interrupted run waits here first. It doesn't wait for the operator to
+// observe the CR, so it returns while the operator is stopped. Static only; a
+// no-op on dynamic, whose gateway hot-reloads without replacing pods.
+func (e *env) waitForGatewaySettled(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if e.mode != "static" {
+		return
+	}
+	cs := kubeClient(t)
+	var last string
+	settled := func() bool {
+		dep, err := cs.AppsV1().Deployments(e.namespace).Get(ctx, e.gateway, metav1.GetOptions{})
+		if err != nil {
+			last = "read the gateway Deployment: " + err.Error()
+			return false
+		}
+		s := dep.Status
+		if s.ObservedGeneration < dep.Generation || s.UpdatedReplicas != s.Replicas || s.AvailableReplicas != s.Replicas || s.Replicas == 0 {
+			last = fmt.Sprintf("Deployment %s rolling out: generation %d observed %d, %d replicas, %d updated, %d available",
+				dep.Name, dep.Generation, s.ObservedGeneration, s.Replicas, s.UpdatedReplicas, s.AvailableReplicas)
+			return false
+		}
+		pods, err := cs.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app=" + e.gateway})
+		if err != nil {
+			last = "list the gateway pods: " + err.Error()
+			return false
+		}
+		for _, p := range pods.Items {
+			if p.DeletionTimestamp != nil {
+				last = "gateway pod " + p.Name + " is terminating"
+				return false
+			}
+		}
+		return true
+	}
+	start := time.Now()
+	deadline := start.Add(settleTimeout)
+	for !settled() {
+		require.Falsef(t, time.Now().After(deadline), "the gateway must settle within %s before the next kcp run (last seen: %s)", settleTimeout, last)
+		time.Sleep(2 * time.Second)
+	}
+	if waited := time.Since(start); waited >= time.Second {
+		t.Logf("\n⏳ GATEWAY SETTLED ▸ waited %s for the rollout to complete and no gateway pod to be terminating", waited.Round(time.Second))
+	}
+}
+
+// execKCP runs kcp with seam (nil for a normal run) in its environment.
+func (e *env) execKCP(t *testing.T, reportName string, seam *testSeam, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), executeTimeout)
 	defer cancel()
