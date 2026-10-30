@@ -51,11 +51,11 @@ func runUnfencingRollback(t *testing.T, name, step, reason string) {
 }
 
 func TestRollback_FailAtVerifyFence(t *testing.T) {
-	runUnfencingRollback(t, "verify", d2s.EventVerifyFence, "Verifying fence failed — removing fence")
+	runUnfencingRollback(t, "verify", d2s.EventVerifyFence, "Verifying fence failed — attempting to remove the fence")
 }
 
 func TestRollback_FailAtSyncOffsets(t *testing.T) {
-	runUnfencingRollback(t, "sync", d2s.EventSyncOffsets, "Syncing committed offsets failed — removing fence")
+	runUnfencingRollback(t, "sync", d2s.EventSyncOffsets, "Syncing committed offsets failed — attempting to remove the fence")
 }
 
 // A failed switch is past the point where unfencing is safe: the fence stays,
@@ -100,7 +100,7 @@ func TestRollback_FailAtFenceOnRerunRemovesEarlierFence(t *testing.T) {
 
 	out, err = e.execute(t, "kcp-run-2-fails.log", mani, failAt(d2s.EventFence), nil)
 	requireFailedAt(t, out, err, d2s.EventFence)
-	require.Contains(t, out, "Fencing route failed — removing fence")
+	require.Contains(t, out, "Fencing route failed — attempting to remove the fence")
 	require.Contains(t, out, gatewayUnfenced)
 	e.snapshot(t, ctx, "after-rollback", "AFTER run 2's rollback (expect the earlier fence gone)", seeds)
 	e.requirePostTBM(t, ctx, "the earlier run's fence must be removed")

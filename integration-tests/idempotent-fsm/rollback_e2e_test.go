@@ -43,7 +43,7 @@ func TestRollback_OnResume_LiftsTheFence(t *testing.T) {
 	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
-	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	require.Contains(t, out2, "attempting to remove the fence to restore traffic", "nothing is promoted, so the run rolls back")
 	require.NotContains(t, out2, "keeping the fence")
 
 	e.snapshot(t, ctx, "after-rollback", "AFTER the resume's rollback (expect unfenced, route → source, mirrors ACTIVE)", topics)
@@ -92,7 +92,7 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
 	require.Contains(t, out2, "keeping the fence", "part of the batch is promoted, so the run must not roll back")
-	require.NotContains(t, out2, "removing fence")
+	require.NotContains(t, out2, "attempting to remove the fence")
 
 	e.snapshot(t, ctx, "after-failure", "AFTER the resume's failure (expect still fenced, route → source)", topics)
 	cr = e.readCR(t, ctx)
@@ -160,7 +160,7 @@ func TestRollback_OnResume_FailureBeforeTheFenceStep_LiftsTheFence(t *testing.T)
 	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-resume-fails.log", failBeforeFenceStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err2, "the resume's failed step must fail the run")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the failure must be the hook's")
-	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	require.Contains(t, out2, "attempting to remove the fence to restore traffic", "nothing is promoted, so the run rolls back")
 	require.NotContains(t, out2, "keeping the fence")
 
 	e.snapshot(t, ctx, "after-rollback", "AFTER the resume's rollback (expect unfenced, route → source, mirrors ACTIVE; static: offset sync on)", topics)

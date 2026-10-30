@@ -128,7 +128,7 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 	out, err := e.runKCPFailingAt(t, "kcp-run-1-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err, "the failed step must fail the run")
 	require.Contains(t, out, killpoint.FailEnvVar, "the failure must be the hook's")
-	require.Contains(t, out, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	require.Contains(t, out, "attempting to remove the fence to restore traffic", "nothing is promoted, so the run rolls back")
 
 	e.snapshot(t, ctx, "after-rollback", "AFTER the rollback (expect kcp's fence gone, the operator's fence kept, mirrors ACTIVE)", topics)
 	cr := e.readCR(t, ctx)

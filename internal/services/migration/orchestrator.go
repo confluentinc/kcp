@@ -339,7 +339,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		o.reporter.warn("%s — keeping the fence: %s", reason, rollbackForbiddenReason)
 		return stepFailure
 	}
-	o.reporter.warn("%s — removing fence to restore traffic", reason)
+	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
 	path := RollbackPathAbortFence
 	if !thisRunsFence {
@@ -507,9 +507,9 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	definiteRejection := errors.As(stepFailure, &rejected)
 
 	if definiteRejection {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; restoring the initial gateway CR", rejected.Reason)
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to restore the initial gateway CR", rejected.Reason)
 	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — restoring the initial gateway CR")
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to restore the initial gateway CR")
 	}
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {

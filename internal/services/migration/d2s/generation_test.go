@@ -96,7 +96,7 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t 
 	assert.Zero(t, w.src.lists, "no snapshot is taken")
 	require.Len(t, patches, 1, "the fence only: no unfence")
 	assert.Contains(t, run.out.String(), changedCR(6, 7).Summary("fence applied, not verified"))
-	assert.NotContains(t, run.out.String(), "removing fence")
+	assert.NotContains(t, run.out.String(), "attempting to remove the fence")
 	assert.Equal(t, StateFenced, run.state())
 }
 
@@ -142,7 +142,7 @@ func TestD2SOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing
 	require.Error(t, err)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 1, "the refused fence only: the earlier run's rollback is skipped")
-	assert.NotContains(t, run.out.String(), "removing fence")
+	assert.NotContains(t, run.out.String(), "attempting to remove the fence")
 	assert.Contains(t, run.out.String(), "Stopping with no gateway write — an earlier run's fence applied.")
 }
 

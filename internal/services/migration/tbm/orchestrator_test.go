@@ -153,7 +153,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Unrouted producers detected — attempting to remove the fence to restore traffic",
 		"the rollback banner names detection as the reason, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(), "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
@@ -250,7 +250,7 @@ func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) 
 	assert.Equal(t, 1, applyCount, "the fence only — no rollback patch")
 	assert.Equal(t, StateFenced, orchestrator.fsm.Current(), "the FSM stays where the failure left it")
 	assert.Contains(t, out.String(), "keeping the fence", "the run must say it is not unfencing")
-	assert.NotContains(t, out.String(), "removing fence", "nothing is unfenced")
+	assert.NotContains(t, out.String(), "attempting to remove the fence", "nothing is unfenced")
 }
 
 // TestTBMOrchestrator_Execute_FailureHookFailsTheStep: with the test-only
@@ -323,7 +323,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers, "a fetch failure is not a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
-	assert.Contains(t, out.String(), "Verifying fence failed — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Verifying fence failed — attempting to remove the fence to restore traffic",
 		"the rollback banner names the failed step, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(),
 		"a halting error while fenced and pre-promote must abort_fence back to initialized")
@@ -977,7 +977,7 @@ func TestTBMOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBa
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
 			assert.Equal(t, 1, patches, "the rollback only: this run never reached its own fence")
-			assert.Contains(t, out, "removing fence to restore traffic")
+			assert.Contains(t, out, "attempting to remove the fence to restore traffic")
 			assert.Contains(t, out, "Gateway unfenced")
 		})
 	}
@@ -991,7 +991,7 @@ func TestTBMOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_Noth
 
 	require.Error(t, err)
 	assert.Equal(t, 0, patches, "nothing is fenced, so nothing is patched")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 }
 
 // TestTBMOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
@@ -1012,7 +1012,7 @@ func TestTBMOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t 
 
 	require.Error(t, err)
 	assert.Equal(t, 1, patches, "this run's fence only: no rollback from promote onwards")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, state)
 }
 
@@ -1063,7 +1063,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence(t *testing.T) 
 	require.NoError(t, ferr)
 	assert.Equal(t, "rules", patches[1].Field)
 	assert.Equal(t, want, patches[1].Value, "the removal sets the rules to reconcile's rollback target")
-	assert.Contains(t, out, "removing it")
+	assert.Contains(t, out, "attempting to remove it")
 	assert.Contains(t, out, "Fence removed")
 	assert.Equal(t, StateLagsOk, state, "the fence transition never completed")
 }
@@ -1131,7 +1131,7 @@ func TestTBMOrchestrator_Execute_PromoteFails_KeepsTheFence(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 promote boom")
 	assert.Equal(t, 1, patches, "the fence only: no rollback patch")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, state)
 }
 
@@ -1144,7 +1144,7 @@ func TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "k8s API unavailable")
 	assert.Equal(t, 2, patches, "the fence and the failed switch: no rollback patch")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StatePromoted, state)
 }
 
@@ -1315,7 +1315,7 @@ func TestTBMOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing
 	require.Error(t, err)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 1, "the refused fence only: the earlier run's rollback is skipped")
-	assert.NotContains(t, out.String(), "removing fence")
+	assert.NotContains(t, out.String(), "attempting to remove the fence")
 	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
 }
 

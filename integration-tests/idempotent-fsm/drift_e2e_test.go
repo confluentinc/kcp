@@ -74,7 +74,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	require.Error(t, err2, "the switch must fail: the operator never observes it")
 	require.Contains(t, out2, "Switchover gateway CR applied", "run 2 must reach the switch and patch the CR")
 	require.Contains(t, out2, "to be observed by the operator", "the switch must fail waiting for the operator")
-	require.NotContains(t, out2, "removing fence", "past promote there is no rollback")
+	require.NotContains(t, out2, "attempting to remove the fence", "past promote there is no rollback")
 	cr = e.readCR(t, ctx)
 	for _, tp := range topics {
 		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched in the CR", tp)
@@ -159,7 +159,7 @@ func TestDrift_TBMStalledSwitchRerunIsRefused(t *testing.T) {
 	}, "migration", "cutover", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s", "--hot-reload-timeout", "45s")
 	require.Error(t, err1, "the switch must fail: the operator never observes it")
 	require.Contains(t, out1, "Switchover gateway CR applied", "the run must reach the switch and patch the CR")
-	require.NotContains(t, out1, "removing fence", "past promote there is no rollback")
+	require.NotContains(t, out1, "attempting to remove the fence", "past promote there is no rollback")
 	cr := e.readCR(t, ctx)
 	for _, tp := range topics {
 		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched in the CR", tp)
@@ -235,7 +235,7 @@ func TestDrift_UnfenceStalledRerunIsRefused(t *testing.T) {
 	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-unfence-stalls.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s")
 	require.Error(t, err2, "the run must fail: its verify_fence step fails, and the operator never observes the rollback's unfence")
 	require.Contains(t, out2, killpoint.FailEnvVar, "the step failure must be the hook's")
-	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	require.Contains(t, out2, "attempting to remove the fence to restore traffic", "nothing is promoted, so the run rolls back")
 	cr = e.readCR(t, ctx)
 	for _, tp := range topics {
 		require.Falsef(t, e.isFenced(t, cr, tp), "%s must be unfenced in the CR: the rollback's unfence landed", tp)

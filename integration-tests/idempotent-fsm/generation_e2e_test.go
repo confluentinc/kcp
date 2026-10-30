@@ -40,7 +40,7 @@ func TestGeneration_CRChangedBeforePromoteStopsWithNoWrite(t *testing.T) {
 	require.Error(t, err1, "run 1 must exit non-zero: the CR changed under it")
 	require.Contains(t, out1, "changed since kcp last knew it", "run 1 must name the CR change")
 	require.Contains(t, out1, "Stopping with no gateway write — fence applied, not promoted")
-	require.NotContains(t, out1, "removing fence", "run 1 must not roll the fence back with a write")
+	require.NotContains(t, out1, "attempting to remove the fence", "run 1 must not roll the fence back with a write")
 
 	e.snapshot(t, ctx, "after-run-1", "AFTER run 1 (expect fenced, every mirror ACTIVE, generation = the change's)", topics)
 	gen, _ := e.crGenerations(t, ctx)
