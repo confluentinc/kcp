@@ -41,7 +41,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 **Access**
 
 - Credentials for the source, the destination Apache Kafka® listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
-- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy`, and a cluster-scoped `get` on the Gateway custom resource definition (CRD). For the full Role, see [Permissions](permissions.md).
+- A Kubernetes identity that can read and patch the Gateway CR, read its Deployment, and list its pods. With hot reload on, it also needs `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway custom resource definition (CRD). For the full Role, see [Permissions](permissions.md).
 
 ## How the cutover works
 

@@ -146,9 +146,9 @@ kcp can't tell when a GitOps controller reverts its fence, so consider pausing s
 
 `--dry-run` runs reconcile and stops there, and exits non-zero if the plan is refused. It makes no Gateway write, link configuration write, promote, or capability probe.
 
-Reads it performs: the Gateway CR, topic lists and cluster IDs on both clusters, the link's state, mirrors, and configurations, and for a static migration the staged Secrets. A conversion also lists groups, describes topics, reads offsets and partition counts, and sends one write probe: an offset commit for a group and topic that don't exist, to test the destination credential. It creates nothing.
+Reads it performs: the Gateway CR, the Gateway's Deployment and pods (and, with hot reload on, each pod's `/config`), topic lists and cluster IDs on both clusters, the link's state, mirrors, and configurations, and for a static migration the staged Secrets. A conversion also lists groups, describes topics, reads offsets and partition counts, and sends one write probe: an offset commit for a group and topic that don't exist, to test the destination credential. It creates nothing.
 
-Because it stops there, a passing `--dry-run` doesn't exercise the Kubernetes patch permissions, the hot-reload prerequisites, or the link write permission. See [Permissions](permissions.md) for what to grant ahead of a real run.
+Because it stops there, a passing `--dry-run` doesn't exercise the Kubernetes patch permissions, the cluster-scoped hot-reload grant, or the link write permission. See [Permissions](permissions.md) for what to grant ahead of a real run.
 
 ## Related content
 

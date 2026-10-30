@@ -57,7 +57,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 - Credentials for the source, the destination Apache Kafka® listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
 - The source and destination credentials must be able to list every consumer group and describe every topic. A credential that sees only part of a cluster would hide a group or topic from kcp's checks. The destination credential must also be able to write consumer group offsets (`READ` on the groups and the topics). On an MSK IAM source, that means `kafka-cluster:DescribeGroup` and `kafka-cluster:DescribeTopic` on every group and topic resource.
-- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy`, and a cluster-scoped `get` on the Gateway custom resource definition (CRD). See [Permissions](permissions.md) for the full Role and the Kafka grants.
+- A Kubernetes identity that can read and patch the Gateway CR, read its Deployment, and list its pods. With hot reload on, it also needs `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway custom resource definition (CRD). See [Permissions](permissions.md) for the full Role and the Kafka grants.
 
 ## How a conversion works
 
