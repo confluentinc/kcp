@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -55,6 +56,11 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		}
 		if facts == nil || facts.Link == nil {
 			return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
+		}
+		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
+		// would roll back); it stops the run with no further gateway write.
+		if observed := facts.Gateway.Generation; observed > 0 && a.gatewayGeneration > 0 && observed != a.gatewayGeneration {
+			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gatewayGeneration, Observed: observed}
 		}
 		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
 		view = v
