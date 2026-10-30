@@ -259,6 +259,12 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			cancel()
 			return ctx.Err()
 		}
+
+		// Test-only hold seam: pause after the configured checkpoint until the
+		// release file appears. No-op in production.
+		if err := killpoint.HoldAfter(ctx, o.fsm.Current()); err != nil {
+			return err
+		}
 	}
 
 	o.reporter.complete("✅ Migration complete!")

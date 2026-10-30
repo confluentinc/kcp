@@ -148,6 +148,12 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 			cancel()
 			return ctx.Err()
 		}
+
+		// Test-only hold seam: pause after the configured checkpoint until the
+		// release file appears. No-op in production.
+		if err := killpoint.HoldAfter(ctx, o.fsm.Current()); err != nil {
+			return err
+		}
 	}
 
 	o.reporter.complete("✅ Route conversion complete!")
