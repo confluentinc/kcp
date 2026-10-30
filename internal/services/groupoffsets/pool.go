@@ -67,16 +67,7 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 
 	jobs := make(chan string)
 	for i := 0; i < n; i++ {
-		var w worker
-		// Each worker's client build (a full metadata fetch, and any retries) is its own span, so the
-		// time spent connecting is separate from the time spent on groups.
-		openCtx, open := tracing.Start(runCtx, tracerName, "groupoffsets.open_client", attribute.Int("kcp.worker", i))
-		err := retry.Do(openCtx, "kafka.open_client", func(context.Context) error {
-			var err error
-			w, err = setup()
-			return err
-		})
-		tracing.End(open, err)
+		w, err := openWorker(runCtx, i, setup)
 		if err != nil {
 			fail(fmt.Sprintf("<worker %d>", i), fmt.Errorf("starting worker: %w", err))
 			break
@@ -119,4 +110,19 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 		return fmt.Errorf("%s: %w (and %d more failed)", keys[0], failures[keys[0]], len(keys)-1)
 	}
 	return ctx.Err()
+}
+
+// openWorker builds worker i inside its own groupoffsets.open_client span (a full metadata fetch, and any
+// retries), so the time spent connecting is separate from the time spent on groups. The pool builds its
+// workers one after another, before handing out any group: a phase's connection cost is the sum of its
+// open_client spans.
+func openWorker(ctx context.Context, i int, setup func() (worker, error)) (w worker, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.open_client", attribute.Int("kcp.worker", i))
+	defer func() { tracing.End(span, err) }()
+	err = retry.Do(ctx, "kafka.open_client", func(context.Context) error {
+		var err error
+		w, err = setup()
+		return err
+	})
+	return w, err
 }

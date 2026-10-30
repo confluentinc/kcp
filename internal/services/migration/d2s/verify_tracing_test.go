@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -102,4 +103,40 @@ func TestTracing_D2S_SplitBrainRefusalEndsItsSpanWithError(t *testing.T) {
 
 	s := tracingtest.Find(t, tracingtest.Spans(rec), "d2s.check_split_brain")
 	assert.Equal(t, codes.Error, s.Status().Code)
+}
+
+func TestTracing_D2S_ARefusedCheckEndsItsSpanWithError(t *testing.T) {
+	for _, tc := range []struct {
+		name, span string
+		edit       func(*world)
+		inScope    int64 // -1: the group rule did not pass, so no count is recorded
+	}{
+		{"the route checks refuse", "d2s.gather_facts", func(w *world) { w.facts.Link.OffsetSyncEnabled = true }, -1},
+		{"a link topic is not promoted", "d2s.check_link_scope", func(w *world) {
+			w.facts.Link.LinkMirrors[0].State = reconcile.MirrorActive
+			w.facts.Link.LinkMirrors[0].Status = "ACTIVE"
+		}, -1},
+		{"an in-scope group is active on the destination", "d2s.check_link_scope", func(w *world) {
+			w.facts.TargetGroupListing = []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Stable"}}
+		}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := tracingtest.Install(t)
+			w := cleanWorld()
+			tc.edit(w)
+
+			_, err := verify(t, w)
+			require.ErrorIs(t, err, ErrVerifyRefused)
+
+			s := tracingtest.Find(t, tracingtest.Spans(rec), tc.span)
+			assert.Equal(t, codes.Error, s.Status().Code)
+			n, has := tracingtest.Attr(s, "kcp.groups.in_scope")
+			if tc.inScope < 0 {
+				assert.False(t, has, "no in-scope count when the group rule did not pass")
+			} else {
+				require.True(t, has, "a refusal after the group rule passed still records the in-scope count")
+				assert.Equal(t, tc.inScope, n.AsInt64())
+			}
+		})
+	}
 }

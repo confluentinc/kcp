@@ -193,6 +193,11 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 		assert.Equalf(t, verify[0].spanID, byName[name][0].parentID, "%s is a child of step.verify_fence", name)
 	}
 	assert.Equal(t, strconv.Itoa(r.groups), byName["d2s.check_link_scope"][0].attrs["kcp.groups.in_scope"], "every seeded group is in scope")
+	for _, name := range []string{"groupoffsets.open_client", "groupoffsets.list_groups", "d2s.gather_facts", "d2s.check_link_scope", "d2s.check_split_brain"} {
+		for _, s := range byName[name] {
+			assert.Falsef(t, s.failed, "span %s has error status", name)
+		}
+	}
 
 	counts := map[string]int{}
 	for n, ss := range byName {

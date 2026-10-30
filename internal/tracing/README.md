@@ -191,8 +191,8 @@ kcp migration cutover execute                       root span, one per command
 | `d2s.gather_facts` | Dynamic-to-static verify_fence: re-gathering the facts and re-checking the route and credentials |
 | `groupoffsets.list_groups` | A consumer-group listing in verify_fence; `kcp.cluster` (`source` or `destination`), `kcp.groups` |
 | `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers`; one `groupoffsets.open_client` per worker |
-| `groupoffsets.open_client` | One worker's client build, including its full metadata fetch and any retries; `kcp.worker` |
-| `d2s.check_link_scope` | The link and group checks; `kcp.groups.in_scope` |
+| `groupoffsets.open_client` | One worker's client build, including its full metadata fetch and any retries; `kcp.worker`. A phase builds its workers one after another before handing out any group, so its connection cost is the sum of its `open_client` spans |
+| `d2s.check_link_scope` | The link and group checks; `kcp.groups.in_scope` once the group rule passes (also on a later split-brain refusal) |
 | `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.list_groups`, `groupoffsets.snapshot` |
 | `d2s.check_split_brain` | The second split-brain check, after the destination's `groupoffsets.list_groups` |
 | `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers`; `groupoffsets.apply` has one `groupoffsets.open_client` per worker |

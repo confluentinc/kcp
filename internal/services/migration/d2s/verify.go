@@ -106,10 +106,13 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		report.FailFast = scope.FailFast
 		report.Preconditions = append(report.Preconditions, scope.Preconditions...)
 		report.Warnings = append(report.Warnings, scope.Warnings...)
+		// The in-scope groups exist once the group rule passed, so a later refusal (split brain) keeps the count.
+		if scope.InScopeGroups != nil {
+			tracing.SetAttributes(ctx, attribute.Int("kcp.groups.in_scope", len(scope.InScopeGroups)))
+		}
 		if scope.Refused() {
 			return a.refuse(config, report)
 		}
-		tracing.SetAttributes(ctx, attribute.Int("kcp.groups.in_scope", len(scope.InScopeGroups)))
 		return nil
 	}); err != nil {
 		return err
