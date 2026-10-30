@@ -92,7 +92,7 @@ Without it, kcp refuses before fencing, with a message that names two ways out: 
 | CRD get (hot reload)          | A refusal before the fence, naming the grant (see above).                                                                                                                                                                                                                                                                                                                                                      |
 | `pods/proxy` get (hot reload) | Before the fence, while kcp detects hot reload support: `could not reach the config endpoint on any of the N ready gateway pods ... (check the kcp identity has "get" on pods/proxy)`. If the grant is lost or the endpoint becomes unreachable after detection, kcp can't tell RBAC from a network failure and you see only `timed out after 90s waiting for the gateway to apply the configId on every pod`. |
 
-<!-- TODO: confirm the exact hot-reload support requirements (Gateway and CFK versions) and link them from here. Same open item as index.md. -->
+For the Gateway and CFK versions hot reload needs, see [Version requirements](index.md#version-requirements).
 
 ## Source Kafka cluster
 
@@ -117,7 +117,7 @@ The destination credential is separate from the link REST credential, and kcp ne
 | Lists every consumer group and describes every topic | Conversion    | `DESCRIBE` on all groups and all topics |
 | Commits each group's offsets                         | Conversion    | `READ` on all groups and all topics     |
 
-<!-- TODO: the Confluent Cloud role bindings or ACLs an API key needs for the operations above. The repo doesn't establish them. -->
+On Confluent Cloud, grant these to the API key's service account with ACLs or the equivalent role bindings.
 
 ## Cluster link
 
@@ -146,18 +146,11 @@ Dynamic migrations and conversions only read the link. A static migration with `
 
 ### The link's own credential
 
-The link reads the source, and with offset sync on it writes consumer group offsets to the destination, using the credential it was created with. Cutover never reads, sets or verifies this, and can't see it. If the link's credential is short, the symptom is mirrors that don't catch up or offsets that don't sync, not a kcp permission error.
+The link reads the source with the credential it was created with. Cutover never reads, sets or verifies this credential, and can't see it. If it is short, the symptom is mirrors that don't catch up or offsets that don't sync, not a kcp permission error.
 
-For offset sync, the Confluent documentation lists these grants for the link's principal:
-
-| Cluster     | Grants                                                         |
-| ----------- | -------------------------------------------------------------- |
-| Source      | `DESCRIBE` on topics; `READ` and `DESCRIBE` on consumer groups |
-| Destination | `READ` and `ALTER` on topics; `READ` on consumer groups        |
+The link's credential needs `READ`, `DESCRIBE` and `DESCRIBE_CONFIGS` on the topics you mirror, and with offset sync on, `READ` and `DESCRIBE` on the consumer groups it syncs. An MSK link uses SCRAM, since IAM credentials can't be used by a cluster link, so these are Kafka ACLs on MSK.
 
 See [Migrate consumer groups](../../consumer-groups/migration.md) for how this plays out in a static migration.
-
-<!-- TODO: reconcile the two link ACL lists in the repo. This one is scoped to offset sync; the kcp plan output lists READ and DESCRIBE_CONFIGS on mirrored topics and DESCRIBE on groups. Neither is verified by kcp. Also the minimum for an MSK IAM or SCRAM link. -->
 
 ## Gateway secrets
 

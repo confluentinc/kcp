@@ -4,6 +4,10 @@ Transactional workloads can only be migrated all at once. When a producer writes
 
 This guide walks through a transactional migration end to end: finding the topics that must move together, checking that the route and cluster link are ready, running the cutover, and confirming that your transactional clients came across intact. It builds on [Migrate with a static route](../migrations/gateway/static-migration.md), which covers the mechanics of the cutover itself, and on [Discover transactional workloads](discovery.md), which covers discovery.
 
+<!-- prettier-ignore -->
+!!! warning "Cluster Linking and transactions"
+    Confluent's Cluster Linking documentation lists [mirroring topics that contain transactions as unsupported](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html#ak-transactions-such-as-exactly-once-semantics-not-supported-on-mirror-topics). A static migration moves transactional topics over a cluster link, so confirm your plan with Confluent before you rely on this path.
+
 ## Prerequisites and limitations
 
 **Route and migration type**
@@ -17,19 +21,16 @@ This guide walks through a transactional migration end to end: finding the topic
 - Every topic in every transaction group is a mirror topic on the cluster link and is selected in the manifest's `topicGroup`. Include consumed input topics of read-process-write groups as well as the topics written to.
 
 !!! important "The whole route moves"
-    A static migration flips the entire route, so every topic that clients reach through it moves to Confluent Cloud in the same cutover, not only the ones in your transaction groups. Topic selection decides which mirrors kcp promotes and lag-checks. A topic on the route that isn't mirrored and promoted is unreachable after the switch.
-
-<!-- TODO: confirm what happens to a topic on the route that is NOT selected / not mirrored when the route flips. Static guide says "selection only decides which mirrors are promoted and lag-checked". Is the right guidance "select every topic on the route", or can an unselected topic stay on the source somehow? Wording of the callout above depends on this. -->
+    A static migration flips the entire route, so every topic clients reach through it moves to Confluent Cloud in the same cutover, not only the ones in your transaction groups. No topic on the route can stay on the source. Topic selection decides only which mirrors kcp promotes and lag-checks. After the switch, a mirrored topic you didn't select is still a read-only mirror on the destination, so producers can't write to it, and a topic that isn't mirrored doesn't exist there. Select every topic clients use on the route.
 
 **Clients**
 
 - Every producer and consumer connects through the Gateway, including the transactional ones. The fence only blocks traffic that goes through it.
 - Transactional clients aren't only the ones you wrote. Kafka Streams applications and Kafka Connect workers running in exactly-once mode produce inside transactions too, so count them when you check the route.
 - Transactional producers can reach the destination with the credentials and `transactional.id` they use today. Nothing about the `transactional.id` needs to change.
+- On the destination, transactional producers need `WRITE` and `DESCRIBE` on their `transactional.id`, as well as `WRITE` on their topics.
 - Consumers of transactional topics use `isolation.level=read_committed`, as they do today. They keep it after the switch.
 - KIP-848 consumers (`group.protocol=consumer`) work on a static route.
-
-<!-- TODO: does the destination's transaction coordinator need anything special for a transactional.id that has never been used on that cluster (ACLs: TransactionalId WRITE/DESCRIBE on Confluent Cloud)? Confirm and list the ACLs/role bindings clients need on the destination before cutover. -->
 
 **Cluster link**
 
@@ -137,10 +138,9 @@ Confirm the transactional clients, not only that they reconnected:
 - `read_committed` consumers are reading new data and their lag is falling.
 - Each transaction group is consistent: a record in one topic of a group has its counterpart in the others.
 - If you paused offset sync, the link is back at your [`consumerOffsetSync.baseline`](../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline).
+- `kcp migration cutover lag-check` shows every selected mirror `STOPPED`, and re-running `kcp migration cutover execute --dry-run` reports nothing to do.
 
-<!-- TODO: concrete verification commands. e.g. a kafka-console-consumer --isolation-level read_committed check against the destination, or a ccloud/kcp command to list open transactions. Want me to capture something from the e2e rig? -->
-
-<!-- TODO: failback. The Confluent active-passive guide covers reverse-and-start / truncate-and-restore. Is there a supported way back after the switch for transactional topics (reverse link), or is the answer "none"? -->
+Once promote starts, a migration only moves forward. kcp doesn't move clients back to the source after that point, so validate with `--dry-run` and `lag-check` before the window.
 
 ## Related content
 

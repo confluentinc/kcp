@@ -17,18 +17,15 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 - The route uses the `host` broker identification strategy, which requires TLS between clients and the Gateway. kcp doesn't check this; the Gateway rejects a dynamic route that doesn't.
 - The destination is one of the two bound domains, and the route already carries `security.cluster.<domain>` authentication for both. `PLAIN` and `OAUTHBEARER` are supported on a dynamic route; SCRAM is not.
 - kcp adds and removes its own fence and routing rules in `rules`. Any fence or routing rule you authored stays in place. See [Resuming](#if-a-run-stops).
-
-<!-- TODO: minimum CFK / operator / Gateway versions for dynamic routes (hot reload vs. rollout verification). Same open item as index.md. -->
+- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](index.md#version-requirements).
 
 **Cluster link**
 
 - A cluster link from the source to the destination already exists, and every topic you select is a mirror topic on it. `kcp migration cutover` never creates either; use [`kcp migration resources create`](../../../migration-assets/README.md) to set them up.
 - A dynamic route uses **one cluster link**. Every batch on the route migrates over that link, and the later [conversion](dynamic-to-static-conversion.md) uses it to decide which topics and consumer groups to move. `spec.clusterLink` takes a single link, and kcp doesn't check whether another manifest names a different link for the same route. Don't spread one route's batches across several links: topics on the others fall outside the conversion's scope, and a consumer group that commits on one of them refuses the conversion. Add every batch's topics to the same link instead.
 - If you plan to [convert the route to static](dynamic-to-static-conversion.md) afterwards, keep the cluster link and the source topics until the conversion is done, and create the link without a `cluster.link.prefix`. The conversion reads the link to find what to move, copies consumer group offsets from the source topics, and refuses a link whose mirrors are named differently on the destination.
-- Consumer offset sync must be **off** for the link. kcp refuses to run otherwise. Consumer groups stay coordinated by the source while the route is dynamic, so the link has no offsets to sync for them.
+- Consumer offset sync must be **off** for the link. kcp refuses to run otherwise. Consumer groups stay coordinated by the source while the route is dynamic, so the link has no offsets to sync for them. `kcp migration resources create` turns offset sync on by default. Set [`consumerOffsetSync.enable: false`](../../../migration-assets/manifest-reference.md#consumeroffsetsync) in its manifest to create the link with sync off. For an existing link, set `consumer.offset.sync.enable=false` in the link's configuration.
 - Mirror lag must be at or below [`lagThreshold`](../../../migration-assets/cutover/policies.md#policies-lagthreshold) (default `0`, fully caught up) before kcp fences the batch. After the fence, kcp waits for each mirror to reach exactly zero lag before it promotes.
-
-<!-- TODO: cluster link prerequisites. How should users turn consumer offset sync off: in the link config at creation, or with a kcp/ccloud command? Link to the right docs. -->
 
 **Clients**
 
@@ -45,9 +42,9 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 - The point of no return is the start of promote. After it kcp never rolls back; a failure leaves the batch's fence up until you re-run and the batch completes.
 - `Ctrl-C` leaves the fence in place. Re-run `execute` to continue.
 - Topic auto-creation isn't supported on a dynamic route, and some consumer group admin APIs are unavailable, so tools such as `kafka-consumer-groups` don't work against it.
-- A migration leaves the route dynamic. Finish the job with a [conversion](index.md#converting-a-dynamic-route-to-static).
-
-<!-- TODO: anything else users hit? e.g. cluster.link.prefix on the link, Schema Registry / schema linking, ACLs on the destination. -->
+- A migration leaves the route dynamic. Finish the job with a [conversion](dynamic-to-static-conversion.md).
+- Create the cluster link without `cluster.link.prefix`. kcp expects each mirror topic to have the same name on both clusters.
+- Cutover doesn't migrate schemas. Move them before the cutover, for example with [`kcp iac schemas generate`](../../../command-reference/iac/schemas/generate.md).
 
 **Access**
 
@@ -120,11 +117,9 @@ spec:
           coordination:
             # Pinned to the source for the life of the migration.
             group: source-kafka-cluster
-          conditions:
-            # First match wins. Every topic starts on the source; kcp prepends
-            # a condition per migrated batch, ahead of this one.
-            - topicPatterns: [".*"]
-              streamingDomain: source-kafka-cluster
+          # Topics that match no condition go here. Every topic starts on the
+          # source; kcp adds a condition per migrated batch.
+          default: source-kafka-cluster
         fencing: []
       security:
         client:
@@ -147,7 +142,7 @@ spec:
 
 kcp checks the route on every run, before anything is fenced, and `--dry-run` reports it. It needs exactly two bound domains, `coordination.group` set to the source, and the manifest's `targetStreamingDomain` to be one of the two. Routing conditions must compile as anchored full-match regular expressions.
 
-<!-- TODO: the catch-all condition stands in for a default route. The CFK CRD models the fallback as `unmatchedTopics`, the Gateway as `routing.default`, and the two are mutually exclusive. Confirm which to recommend for a user-authored CR, and link the Gateway docs for dynamic routes, swap authentication and secret stores. -->
+To build the route yourself, see the CFK documentation for [routes](https://docs.confluent.io/operator/current/gateway/co-gateway-deploy.html#configure-routes), [routing rules](https://docs.confluent.io/operator/current/gateway/co-gateway-deploy.html#configure-routing-rules-early-access), [authentication swapping](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#configure-authentication-swapping) and [secret stores](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#secret-store-configuration), and [Migrate Topics with Topic-Based Routing](https://docs.confluent.io/operator/current/gateway/co-gateway-topic-based-routing.html).
 
 ### 2. Plan the batches
 
@@ -233,8 +228,6 @@ A run is refused, with nothing changed, when:
 - the cluster link doesn't mirror from `spec.source`, or `spec.target.clusterId` doesn't match the destination;
 - a selected topic isn't on the source, isn't on the cluster link, exists on the destination without being a mirror, or has a mirror in a failed or paused state.
 
-<!-- TODO: sample dry-run output (success and a refusal). Want me to capture it from the e2e rig? -->
-
 ### 5. Watch the lag
 
 ```bash
@@ -253,8 +246,6 @@ kcp migration cutover execute --migration-yaml migration.yaml
 
 Any policy can be overridden for a single run with its flag, for example `--detect-unrouted-producers-duration 60s`. See the [command reference](../../../command-reference/migration/cutover/execute.md).
 
-<!-- TODO: sample output of a successful run. -->
-
 When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running a completed batch reconciles to nothing to do.
 
 ### If a run stops
@@ -271,32 +262,29 @@ Resume with a manifest that resolves to the **same topics**. kcp recognises the 
 
 ## Run the next batch
 
-After a batch completes, the route is still dynamic with the same two bound domains. Its `rules` now have one routing condition for the batch, ahead of the catch-all, and an empty fencing list:
+After a batch completes, the route is still dynamic with the same two bound domains. Its `rules` now have one routing condition for the batch and an empty fencing list:
 
 ```yaml
 rules:
   routing:
     coordination:
       group: source-kafka-cluster
+    default: source-kafka-cluster
     conditions:
       - topics: ["t1.order", "t1.inventory"]
         streamingDomain: confluent-cloud
-      - topicPatterns: [".*"]
-        streamingDomain: source-kafka-cluster
   fencing: []
 ```
 
 For the next batch, write a new manifest with the next topics and run it the same way. kcp prepends one condition per batch, so the list grows, up to a size cap on the whole `rules` block. If the cap is hit, kcp refuses with a message to migrate a smaller batch.
 
-Validate each batch before starting the next: confirm its clients are producing and consuming against Confluent Cloud, and its mirrors are `STOPPED`.
+Validate each batch before starting the next: confirm its clients are producing and consuming against Confluent Cloud, and its mirrors are `STOPPED` (`kcp migration cutover lag-check` shows each mirror's status). Re-running `kcp migration cutover execute --dry-run` on the batch's manifest reports nothing to do.
 
 ## After the last batch
 
-When every topic on the cluster link has been promoted, the route is still dynamic and consumer groups are still coordinated by the source. Run a [conversion](index.md#converting-a-dynamic-route-to-static) to make the route static and move group coordination to the destination. KIP-848 consumers only come onto the migrated route once it is static.
+When every topic on the cluster link has been promoted, the route is still dynamic and consumer groups are still coordinated by the source. Run a [conversion](dynamic-to-static-conversion.md) to make the route static and move group coordination to the destination. KIP-848 consumers only come onto the migrated route once it is static.
 
 - The source cluster stays on the route until the conversion. Decommission it after, once you are sure nothing connects to it directly.
-
-<!-- TODO: link the conversion guide when it exists (currently only the manifest reference: ../../../migration-assets/cutover/route-conversion.md). Post-batch verification commands (e.g. kcp or ccloud commands to confirm mirrors are STOPPED). -->
 
 ## Related content
 

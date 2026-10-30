@@ -31,6 +31,12 @@ Resuming moves forward, and rolling back is only possible early on. Until the **
 
 Run `kcp migration cutover execute --dry-run` at any point to see the plan and any refusals without changing anything.
 
+## Version requirements
+
+- **Gateway 1.4.0 or later.** kcp v0.11.0 and later support Gateway 1.4.0 onwards. For a Gateway on 1.3.x, upgrade the Gateway first or use kcp v0.10.x.
+- **CFK 3.4.0 or later.** Dynamic routing is Early Access in Gateway 1.4 and CFK 3.4. See the [CFK release notes](https://docs.confluent.io/operator/current/release-notes.html).
+- **Hot reload.** If the Gateway CR sets `spec.hotReload.enabled: true`, the operator's Gateway CRD must also declare `spec.configId`. kcp checks this before the fence. If the field is missing, kcp refuses and names the ways to proceed, one of which is setting `spec.hotReload.enabled: false` for the duration of the migration. See [Verifying the Gateway applied a change](limitations.md#verifying-the-gateway-applied-a-change).
+
 ## Static routes (all-at-once)
 
 A static route binds all of its traffic to one streaming domain. A static migration fences the route as a whole, promotes every selected mirror topic, and flips the route to the destination in a single cutover.
@@ -78,8 +84,7 @@ The Gateway side of this, including the routing rules and fencing, is documented
 - A fence can't stop clients connected to the source directly. The check for producers that bypass the Gateway (`detectUnroutedProducersDuration`) is off by default in kcp.
 - All members of a consumer group must connect through the route, or the group splits across two coordinators.
 - A topic-based migration leaves the route dynamic. Finish the job with a conversion.
-
-<!-- TODO: minimum CFK / operator versions required for dynamic routes. -->
+- Dynamic routes need Gateway 1.4.0 and CFK 3.4.0 or later. See [Version requirements](#version-requirements).
 
 ## Converting a dynamic route to static
 
@@ -109,7 +114,10 @@ Once every topic on the cluster link has been migrated, the route is still dynam
 | KIP-848 consumers                                         | Static migration (dynamic routes don't support them) |
 | The smallest pause per step                               | Dynamic migration                   |
 
-<!-- TODO: guidance on moving between modes for a route that is already live. -->
+kcp changes a route's mode in one direction only: dynamic to static, with a [conversion](dynamic-to-static-conversion.md). It doesn't make a static route dynamic. To run a topic-based migration on a route that is static today, change the route yourself before the first batch: bind both domains, pin `coordination.group` to the source, and set `routing.default` to the source. Two things to check first:
+
+- A dynamic route needs the `host` broker identification strategy and client TLS. If the static route uses something else, the change affects how clients connect, so plan it as a separate change ahead of the migration.
+- KIP-848 consumers and transactional producers can't use a dynamic route. If the route has any, use a static migration instead.
 
 ## Next steps
 

@@ -16,8 +16,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 - The route to convert is **dynamic**: it binds exactly two streaming domains, the source and the destination, and sets `rules.routing.coordination.group` to the source.
 - The destination is one of the two bound domains, its binding carries a `bootstrapServerId`, and the route already carries `security.cluster.<domain>` authentication for it. This is already true if you ran a [dynamic migration](dynamic-migration.md) on the route.
 - The route carries no fence kcp didn't write, and no route-level fence. A fence left by an unfinished dynamic migration batch is the usual cause of a refusal. See [Refusals](#refusals).
-
-<!-- TODO: minimum CFK / operator / Gateway versions for conversions (hot reload vs. rollout verification). Same open item as index.md. -->
+- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](index.md#version-requirements).
 
 **Cluster link**
 
@@ -49,15 +48,11 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 - `Ctrl-C` leaves the fence in place. Re-run `execute` to continue.
 - A conversion needs at least one promoted topic on the link. It closes a topic-based migration rather than replacing one.
 
-<!-- TODO: anything else users hit? e.g. a Gateway route that was dynamic from the start (no dynamic migration run on it), Schema Registry / schema linking, ACLs on the destination. -->
-
 **Access**
 
 - Credentials for the source, the destination Kafka listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
 - The source and destination credentials must be able to **list every consumer group and describe every topic**. A credential that sees only part of a cluster would hide a group or topic from kcp's checks. The destination credential must also be able to **write consumer group offsets** (`READ` on the groups and the topics). On an MSK IAM source, that means `kafka-cluster:DescribeGroup` and `kafka-cluster:DescribeTopic` on every group and topic resource.
-- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role.
-
-<!-- TODO: confirm the destination-side permissions for Confluent Cloud (which role binding gives list-all-groups, describe-all-topics and offset write on a CC cluster?). -->
+- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role and the Kafka grants.
 
 ## How a conversion works
 
@@ -156,8 +151,6 @@ kcp migration cutover execute --migration-yaml migration.yaml --dry-run
 
 A dry run validates the manifest and credentials, then reads the live Gateway CR, both clusters and the cluster link and prints the plan: the route checks, the link's topics and the consumer groups in scope. It changes nothing and exits non-zero if the plan is refused. Run it until it passes.
 
-<!-- TODO: sample dry-run output (success and a refusal). Want me to capture it from the e2e rig? -->
-
 #### Refusals
 
 A run is refused, with nothing changed, when:
@@ -186,8 +179,6 @@ kcp migration cutover execute --migration-yaml migration.yaml
 
 Any policy can be overridden for a single run with its flag, for example `--detect-unrouted-commits-duration 60s`. See the [command reference](../../../command-reference/migration/cutover/execute.md).
 
-<!-- TODO: sample output of a successful run. -->
-
 When it finishes, kcp prints `Route conversion completed: <metadata.name>`. Re-running a finished conversion reconciles to nothing to do.
 
 ### If a run stops
@@ -206,13 +197,48 @@ A killed run leaves the fence up and kcp has no signal handler, so the route kee
 
 After a conversion, the route is static and bound to the destination, with no `rules`:
 
-<!-- TODO: show the resulting route YAML (mirror of "Run the next batch" in dynamic-migration.md). Confirm what happens to the source's `security.cluster.<source>` entry and the CR's top-level `streamingDomains` entry for the source: kept, and should the user remove them? -->
+```yaml
+routes:
+  - name: migration-route
+    endpoint: bootstrap.gw.example.local:9595
+    brokerIdentificationStrategy:
+      type: host
+      pattern: "broker$(nodeId).gw.example.local"
+    mode: static
+    # Bound to the destination only. streamingDomains and rules are gone.
+    streamingDomain:
+      name: confluent-cloud
+      bootstrapServerId: SASL_PLAIN
+    security:
+      client:
+        authentication:
+          type: none
+        tls:
+          secretRef: client-tls
+      cluster:
+        # Kept by the conversion. Unused now that the route doesn't bind the source.
+        source-kafka-cluster:
+          auth: passthrough
+        confluent-cloud:
+          auth: swap
+          secretStore: file-store
+          authentication:
+            type: plain
+            jaasConfigPassThrough:
+              secretRef: plain-jaas
+```
 
-- Confirm clients rejoined their groups on Confluent Cloud, are producing and consuming, and resumed from the copied offsets.
+kcp leaves the source's `security.cluster` entry on the route and the source's entry in the CR's `spec.streamingDomains`. Neither carries traffic. Remove them when you decommission the source, and keep the top-level domain while any other route still uses it.
+
+- Confirm clients rejoined their groups on Confluent Cloud, are producing and consuming, and resumed from the copied offsets. To compare a group on both clusters, see [Migrate consumer groups](../../consumer-groups/migration.md#after-the-cutover).
+- Re-running `kcp migration cutover execute --dry-run` reports nothing to do.
 - Consumer group coordination is now on the destination. KIP-848 consumers (`group.protocol=consumer`) can connect through the route. Switching a consumer to the new protocol is a client change that kcp doesn't make.
+- Transactional producers, like KIP-848 consumers, can use the route now that it is static.
 - The source cluster is no longer on the route. Decommission it on your own schedule, once you are sure nothing connects to it directly.
 
-<!-- TODO: what to do with the cluster link after a conversion (delete it, or keep it for rollback)? Post-conversion verification commands (e.g. kcp or ccloud commands to confirm groups and offsets on the destination). Anything on rollback after the switch (reverse link)? Should this page say anything about transactional workloads on the converted route (the transactions guide says they need a static migration)? -->
+Once the conversion finishes, kcp no longer needs the cluster link. Delete it when you no longer need it.
+
+Once the switch happens, a conversion only moves forward. kcp doesn't move clients back to the source after that point, so validate with `--dry-run` before the window.
 
 ## Related content
 

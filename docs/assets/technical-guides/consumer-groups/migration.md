@@ -16,23 +16,19 @@ This guide explains how consumer groups move on each Gateway migration type, wha
 
 Consumer groups on a dynamic route are a stage, not a destination. A topic-based migration moves topics, and the groups keep working because the source still coordinates them. The groups themselves only move when you [convert the route to static](#groups-on-a-dynamic-route). If you'd rather move groups in one step, use a static migration.
 
-<!-- TODO: confirm whether a group that reads topics from more than one route (some migrated, some not) has any supported path, or whether the answer is "split the application or migrate both routes together". -->
-
 ## Prerequisites and limitations
 
 **All route types**
 
-- Every member of every group connects through the Gateway. A member that connects to the source directly while the rest of the group connects through the route splits the group across two coordinators, and both halves can process the same partitions. The fence can't block a client that bypasses the Gateway, so stop such clients and restart them on the route.
+- Every member of every group connects through the Gateway. A member that connects to the source directly while the rest of the group connects through the route splits the group across two coordinators, and both halves can process the same partitions. The fence can't block a client that bypasses the Gateway, so stop such clients and restart them on the route. A member that reaches the source through another route on the Gateway counts the same way. kcp migrates one route per run, so once this route moves, that member is on a different coordinator. Move every member of a group onto the route before you migrate it.
 - Every topic a group has committed offsets on is a mirror topic on the cluster link. Offsets are only ever synced or copied for the link's topics, because the destination rejects offset commits for a topic it doesn't have.
 - Consumers can reach the destination with the credentials they use today, and have `READ` on their groups and topics there.
-
-<!-- TODO: confirm and list the destination ACLs / Confluent Cloud role bindings a consumer needs before cutover (DeveloperRead on the group and topic?). -->
 
 **Static migration**
 
 - Consumer offset sync is **on** for the link, and `consumer.offset.group.filters` includes every group you are moving. The Confluent default for the filter is no groups. A link created with `kcp migration resources create` defaults to an include-all filter when sync is on.
 - kcp doesn't check either setting for a static route. A group that isn't in the filter has no committed offsets on the destination, and its consumers start from `auto.offset.reset` there.
-- No consumer of a group you are moving runs against the destination before the cutover. The cluster link can overwrite the destination's offsets for a filtered group that is used there, and a group that is active on the destination can leave a mirror topic stuck in `PENDING_MIRROR` during promote. See [Migrate from a non-Confluent cluster to Confluent Cloud](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html).
+- No consumer of a group you are moving runs against the destination before the cutover. The cluster link can overwrite the destination's offsets for a filtered group that is used there, and a group that is active on the destination can leave a mirror topic stuck in `PENDING_MIRROR` during promote. Setting `consumerOffsetSync.pause: true` disables offset sync before promote, which avoids the stuck mirror. See [Migrate from a non-Confluent cluster to Confluent Cloud](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html).
 
 **Dynamic migration and conversion**
 
@@ -41,14 +37,13 @@ Consumer groups on a dynamic route are a stage, not a destination. A topic-based
 - Share groups aren't supported on a dynamic route.
 - The cluster link and the **source topics stay** until the conversion is done. While the route is dynamic, committed offsets for migrated topics are still stored on the source, and the source rejects commits for a topic it no longer has. The conversion also reads the link to decide which groups are in scope. See [Convert a dynamic route to static](../migrations/gateway/dynamic-to-static-conversion.md#prerequisites-and-limitations).
 
+<!-- prettier-ignore -->
 !!! note "Coordination on the destination isn't supported by kcp"
-The Gateway can coordinate groups on the destination for the whole life of a dynamic migration, by setting `coordination.group` to the destination. kcp doesn't run migrations that way. It pins coordination to the source and moves it once, in the conversion. See [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html) for the Gateway's own sequence.
+    The Gateway can coordinate groups on the destination for the whole life of a dynamic migration, by setting `coordination.group` to the destination. kcp doesn't run migrations that way. It pins coordination to the source and moves it once, in the conversion. See [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html) for the Gateway's own sequence.
 
 **Cluster link permissions**
 
-For offset sync to work, the link's credentials need `DESCRIBE` on topics and `READ` and `DESCRIBE` on consumer groups on the source, and `READ` and `ALTER` on topics and `READ` on consumer groups on the destination. See [Cluster Linking active-passive manual switchover](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/dr-manual-switch-active-passive.html#set-up-privileges-for-the-cluster-link).
-
-<!-- TODO: confirm these are still the minimum for a link whose source is MSK (IAM / SCRAM) as opposed to Confluent Platform, and name the MSK IAM actions. -->
+The link reads the source with the credential it was created with. It needs `READ`, `DESCRIBE` and `DESCRIBE_CONFIGS` on the topics you mirror, and with offset sync on, `READ` and `DESCRIBE` on the consumer groups it syncs. An MSK link uses SCRAM, since IAM credentials can't be used by a cluster link, so these are Kafka ACLs on MSK. See [Permissions](../migrations/gateway/permissions.md#the-links-own-credential).
 
 ## Audit your groups
 
@@ -64,11 +59,6 @@ Look for:
 - **Groups with members outside the Gateway.** Find them before the fence does. A consumer that bypasses the Gateway keeps committing to the source after the switch.
 - **Empty and stale groups.** A group with no members still has committed offsets, and is in scope. Delete groups nobody owns, or their stale offsets, rather than carry them across.
 - **Groups that already exist on the destination.** A conversion refuses an in-scope group with live members on the destination, and warns about one without members because its offsets are overwritten. On a static migration, look yourself.
-- **Groups past offset retention.** A group that has been empty longer than the source's `offsets.retention.minutes` (seven days by default in Apache Kafka) has already lost its committed offsets there, so there is nothing to sync or copy for it.
-
-<!-- TODO: confirm the offsets.retention.minutes default on MSK. -->
-
-<!-- TODO: the Confluent doc says that during promote a group already active on the destination can leave a mirror topic in PENDING_MIRROR, with two mitigations (no committed source offsets for the group before promote, or exclude the group from the offset sync filter). Confirm how that plays out through a kcp static migration, where promote is the point of no return. -->
 
 ## Static migration: groups move with the cutover
 
@@ -92,7 +82,7 @@ The link's offset sync is configured on the link, not in the migration manifest:
 
 Sync is asynchronous, so the destination's offsets always trail the source's by up to one interval. Anything a consumer processed since the last sync is read again after the switch. See [What your consumers see](#what-your-consumers-see).
 
-<!-- TODO: how to confirm offset sync is actually working before the window (a command that shows a group's committed offsets on the destination moving). Capture from the e2e rig? -->
+To check offset sync is working before the window, describe a group on the destination twice, one sync interval apart, while it consumes on the source. Its committed offsets should move. The commands are in [After the cutover](#after-the-cutover).
 
 ### What the cutover does with offset sync
 
@@ -114,14 +104,11 @@ staticMigration:
     consumerOffsetSyncDrainDuration: 60s # two sync intervals at the 30s default
 ```
 
-Pausing is optional. The drain exists to reduce duplicate processing. The pause is meant to stop the link overwriting offsets that consumers commit through the Gateway; the Gateway's migration sequence gives the same instruction for the same reason.
+Pausing is optional. It stops the link writing offsets to the destination from just before promote, which matters in two cases. A group whose consumers commit on the destination while the link still syncs it would have those commits overwritten. And a group already active on the destination can leave a mirror topic stuck during promote. Turn it on if either could apply to your groups. The drain runs while the route is fenced, so it lengthens the pause clients see rather than shortening it.
 
+<!-- prettier-ignore -->
 !!! note "Pausing clears the link's group filters"
-Disabling `consumer.offset.sync.enable` clears `consumer.offset.group.filters` on the link, and the restore sets only `consumer.offset.sync.enable` back to your baseline. After a pause the link is `enabled` with an empty filter. This has no effect on the migration, because offset sync stops for every promoted mirror topic. It only matters if you reuse the link afterwards while it still has unpromoted mirror topics. In that case, set the filter again yourself.
-
-<!-- TODO: kcp's pause rationale isn't recorded in the repo (the commits and code comments say only "reduce duplicate processing" for the drain). Confirm the overwrite rationale with whoever wrote #300, and whether the pause shortens the window in any way: it runs while the route is fenced, so it adds to the fence time rather than reducing it. -->
-
-<!-- TODO: before the manifest rewrite (#453) kcp snapshotted the link's consumer.offset.* configs at init and restored the filters after the switch. The restore no longer does. Deliberate, or a regression to raise? -->
+    Disabling `consumer.offset.sync.enable` clears `consumer.offset.group.filters` on the link, and the restore sets only `consumer.offset.sync.enable` back to your baseline. Because kcp keeps no state between runs, it has no record of the filters to put back. After a pause the link is `enabled` with an empty filter. This has no effect on the migration, because offset sync stops for every promoted mirror topic. It only matters if you reuse the link afterwards while it still has unpromoted mirror topics. In that case, set the filter again yourself.
 
 For a manual alternative that needs no pause, the Cluster Linking migration guide stops the consumers on the source, waits at least one `consumer.offset.sync.ms`, removes their group from the filter, checks the offsets arrived, and restarts them on the destination.
 
@@ -152,8 +139,7 @@ What is in scope, and what kcp checks, is covered in full in [Convert a dynamic 
 - **Refusals.** A group with a committed offset on a topic that isn't on the link, and an in-scope group with members on the destination. See [Refusals](../migrations/gateway/dynamic-to-static-conversion.md#refusals).
 - **Direct commits.** kcp takes two snapshots of every source group's committed offsets, [`detectUnroutedCommitsDuration`](../../migration-assets/cutover/policies.md#policies-detectunroutedcommitsduration) apart. If any changed, a consumer commits to the source directly, and kcp unfences the route and stops. This check can't be turned off.
 - **Offset sync.** kcp refuses if the offsets in the sync are past a destination partition's high-water mark. You don't turn link offset sync back on for a conversion.
-
-<!-- TODO: confirm which permissions the destination credential needs on Confluent Cloud to write group offsets (role binding). Same open item as the conversion guide. -->
+- **Permissions.** kcp's destination credential needs `READ` on every group and topic to write their offsets. See [Permissions](../migrations/gateway/permissions.md#destination-kafka-cluster).
 
 ## What your consumers see
 
@@ -162,8 +148,6 @@ All three paths share one client experience at the switch.
 - **A pause.** From the fence to the switch, consumers on the route fetch nothing and can't commit. A static migration pauses the whole route. A dynamic batch pauses only the batch's topics. A conversion pauses the whole route for about `detectUnroutedCommitsDuration` plus two Gateway reloads.
 - **A rejoin.** After the switch the coordinator is on the destination, which doesn't know the consumers' members. Each consumer's first commit or heartbeat there fails, so it rejoins its group and resumes from the destination's committed offset. Consumers handle this in the client library. No configuration changes.
 - **Possibly a re-read.** A consumer re-reads whatever it processed after the last committed offset the destination holds. On a static migration that is bounded by the sync interval and the drain. On a conversion it is up to one poll for a consumer that commits after every batch, and up to the backlog the fence built for one that auto-commits. Nothing is skipped. Design consumers to be idempotent, as you would for any at-least-once consumer.
-
-<!-- TODO: confirm the static-migration rejoin behaviour matches the conversion's (the conversion guide documents it; has it been observed on a static route with offset sync?). Capture from the e2e rig? -->
 
 ## After the cutover
 
@@ -181,9 +165,9 @@ kafka-consumer-groups --bootstrap-server <source-bootstrap> --command-config sou
 kafka-consumer-groups --bootstrap-server <destination-bootstrap> --command-config destination.properties --describe --group <group>
 ```
 
-<!-- TODO: Confluent Cloud equivalent (confluent kafka consumer group describe / lag). Concrete verification output from the e2e rig? -->
+Both commands work against Confluent Cloud, with a cluster API key in `destination.properties`.
 
-<!-- TODO: failback. The Confluent active-passive guide covers consumers on the original cluster resuming from offsets after a failback. Is there a supported way to send groups back after the switch, on any path, or is the answer "none"? -->
+Once promote starts (the switch, for a conversion), a migration only moves forward. kcp doesn't move clients back to the source after that point, so validate with `--dry-run` and `lag-check` before the window.
 
 ## Related content
 
@@ -192,6 +176,5 @@ kafka-consumer-groups --bootstrap-server <destination-bootstrap> --command-confi
 - [Migrate with a dynamic route](../migrations/gateway/dynamic-migration.md)
 - [Convert a dynamic route to static](../migrations/gateway/dynamic-to-static-conversion.md)
 - [Migration manifest reference](../../migration-assets/cutover/overview.md)
-- [Migrate transactional workloads with a static route](../transactions/migration.md)
 - [Cluster Linking active-passive manual switchover](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/dr-manual-switch-active-passive.html)
 - [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html)

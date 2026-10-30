@@ -57,9 +57,7 @@ How kcp confirms that a change took effect depends on `spec.hotReload.enabled` o
 
 **Operator acceptance.** kcp waits for `status.observedGeneration` to reach the CR's generation. A `False` condition whose reason ends in `Failed` is treated as a rejection once it has persisted for 30 seconds, and conditions older than the current generation are ignored, which guards against stale conditions.
 
-`--dry-run` doesn't run these checks. See [Permissions](permissions.md).
-
-<!-- TODO: minimum Gateway and CFK versions for hot reload. Same open item as index.md. -->
+`--dry-run` doesn't run these checks. See [Permissions](permissions.md). For the Gateway and CFK versions, see [Version requirements](index.md#version-requirements).
 
 ## What to confirm yourself
 
