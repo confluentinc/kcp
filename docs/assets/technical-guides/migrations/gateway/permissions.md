@@ -179,7 +179,7 @@ A conversion probes its Kafka credentials during reconcile, so `--dry-run` finds
 | Source or destination credential can't describe every topic | `DESCRIBE` on all topics (an ACL on `*`; with MSK IAM, the `DescribeTopic` action on every topic)          |
 | Destination credential can't write consumer group offsets   | `READ` on all consumer groups and all topics (ACLs on `*`)                                                 |
 
-The offset-write probe commits an offset for a group and topic that don't exist and reads the authorization error. It is verified to create nothing on the authorizers seen so far, and if the broker unexpectedly accepts it kcp tells you to delete the stray group.
+The offset-write probe commits an offset for a group and topic that don't exist and reads the authorization error. The probe doesn't create a group. If a broker accepts it anyway, kcp tells you which group to delete.
 
 ## Related content
 
