@@ -1,9 +1,9 @@
-# Example manifests
+# Example Cutover Manifests
 
-One fully-annotated, ready-to-copy manifest per migration type — every field,
-with comments. Each is also available as a plain file under
-`gateway-examples/` (a link downloads the raw file rather than opening it
-in-browser).
+This page has one fully annotated, ready-to-copy manifest per migration type,
+with comments on every field. Each is also available as a plain file under
+`gateway-examples/`. Each file link downloads the raw file rather than opening it
+in the browser.
 
 ## Static migration
 
@@ -25,7 +25,7 @@ in-browser).
 
 A route conversion declares `spec.dynamicToStaticConversion` in place of a
 migration section (see
-[Converting a dynamic route to static](route-conversion.md)).
+[Route Conversion Settings in the Migration Manifest](route-conversion.md)).
 [`gateway-route-conversion.yaml`](../../gateway-examples/gateway-route-conversion.yaml)
 
 ```yaml

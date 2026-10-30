@@ -1,6 +1,8 @@
-# Migrate with a static route
+# Migrate With a Static Gateway Route
 
-A static migration moves all topics on the route to Confluent Cloud in a single cutover, with no client configuration changes. Your applications already connect to the Confluent Gateway. A static route binds all of its traffic to one cluster, so cutting over means pausing the route, promoting the mirror topics on the cluster link, and repointing the route at the destination. Clients reconnect to the same Gateway address and land on Confluent Cloud.
+A static migration moves all topics on the route to Confluent Cloud in a single cutover, with no client configuration changes.
+
+Your applications already connect to the Confluent Gateway. A static route binds all of its traffic to one cluster, so cutting over means pausing the route, promoting the mirror topics on the cluster link, and repointing the route at the destination. Clients reconnect to the same Gateway address and land on Confluent Cloud.
 
 This guide walks through the prerequisites, the migration manifest, and a cutover run. For how static migrations compare with topic-based ones, see [Gateway migrations](index.md).
 
@@ -8,50 +10,50 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 
 **Gateway**
 
-- The Gateway runs on Kubernetes and is managed by Confluent for Kubernetes (CFK). kcp reads and patches the Gateway custom resource, so a Gateway started any other way can't be migrated.
-- The route to migrate is **static**: it has a single `streamingDomain` bound to the source cluster.
-- The destination is already declared on the Gateway CR as a streaming domain with exactly one bootstrap server id, and the route already carries `security.cluster.<destination>` authentication for it, with its secret store and Secrets present. The cutover is a pure `streamingDomain` flip, so no secret or auth change happens during it. See [Stage the destination on the Gateway](#1-stage-the-destination-on-the-gateway).
+- The Gateway runs on Kubernetes and is managed by Confluent for Kubernetes (CFK). kcp reads and patches the Gateway custom resource (CR), so a Gateway started any other way can't be migrated.
+- The route to migrate is static: it has a single `streamingDomain` bound to the source cluster.
+- The destination is already declared on the Gateway CR as a streaming domain with exactly one bootstrap server ID, and the route already carries `security.cluster.<destination>` authentication for it, with its secret store and Secrets present. The cutover is a pure `streamingDomain` flip, so no secret or auth change happens during it. See [Stage the destination on the Gateway](#1-stage-the-destination-on-the-gateway).
 - The route carries no fence of its own. kcp refuses a route with a fence it didn't add.
 - Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](index.md#version-requirements).
 
 **Cluster link**
 
-- A cluster link from the source to the destination already exists, and every topic you select is a mirror topic on it. `kcp migration cutover` never creates either; use [`kcp migration resources create`](../../../migration-assets/README.md) to set them up.
+- A cluster link from the source to the destination already exists, and every topic you select is a mirror topic on it. `kcp migration cutover` never creates either. To set them up, use [`kcp migration resources create`](../../../migration-assets/README.md).
 - Consumer offset sync should be on for the link, so committed offsets reach the destination. kcp doesn't check this. A link created with `kcp migration resources create` has offset sync on for every group by default. See [`spec.clusterLink`](../../../migration-assets/manifest-reference.md#specclusterlink).
 - Mirror lag must be at or below [`lagThreshold`](../../../migration-assets/cutover/policies.md#policies-lagthreshold) (default `0`, fully caught up) before kcp fences the route.
 
 **Clients**
 
 - Every producer and consumer connects through the Gateway. The fence only blocks traffic that goes through it, so a producer writing to the source directly keeps writing.
-- Producers use `acks=1` or `acks=all`. Fenced clients get a retriable error and buffer; with `acks=0` they never see it and their records are dropped.
+- Producers use `acks=1` or `acks=all`. Fenced clients get an error they can retry, and they buffer in the meantime. With `acks=0`, producers never see the error, and their records are dropped.
 - Consumer groups move with the cutover. KIP-848 consumers (`group.protocol=consumer`) and [transactional workloads](../../transactions/discovery.md) are supported on a static route.
 
 **Limitations**
 
-- The **whole route** pauses, not only the topics you select. Topic selection decides which mirrors are promoted and lag-checked.
+- The whole route pauses, not only the topics you select. Topic selection decides which mirrors are promoted and lag-checked.
 - A manifest migrates one route and one topic group per run.
-- The point of no return is the start of promote. After it kcp never rolls back; a failure leaves the fence up until you re-run and the migration completes.
-- `Ctrl-C` leaves the fence in place. Re-run `execute` to continue.
-- There is no per-topic staging. If you need to move topics in stages, use a [topic-based migration](index.md#dynamic-routes-topic-based).
+- The point of no return is the start of promote. After it, kcp never rolls back. A failure leaves the fence up until you re-run and the migration completes.
+- Ctrl+C leaves the fence in place. Re-run `execute` to continue.
+- A static migration has no per-topic staging. If you need to move topics in stages, use a [topic-based migration](index.md#dynamic-routes-topic-based).
 - Create the cluster link without `cluster.link.prefix`. kcp expects each mirror topic to have the same name on both clusters.
 - Cutover doesn't migrate schemas. Move them before the cutover, for example with [`kcp iac schemas generate`](../../../command-reference/iac/schemas/generate.md).
 
 **Access**
 
-- Credentials for the source, the destination Kafka listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
-- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role.
+- Credentials for the source, the destination Apache Kafka® listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
+- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy`, and a cluster-scoped `get` on the Gateway custom resource definition (CRD). For the full Role, see [Permissions](permissions.md).
 
 ## How the cutover works
 
-kcp keeps no state between runs. Each run reconciles the manifest against the live Gateway, both clusters and the cluster link, and continues from wherever they already are. On a static route the stages are:
+kcp keeps no state between runs. Each run reconciles the manifest against the live Gateway, both clusters, and the cluster link, and continues from wherever they already are. On a static route the stages are:
 
 1. **Check lag.** Every selected mirror topic must be within [`lagThreshold`](../../../migration-assets/cutover/policies.md#policies-lagthreshold).
-2. **Fence.** kcp adds a route-level fence (`scope: ALL`, `errorCode: BROKER_NOT_AVAILABLE`) and waits for every Gateway pod to apply it. Clients get retriable errors and buffer.
-3. **Pause offset sync** _(optional)_. If [`consumerOffsetSync.pause`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-pause) is set, kcp waits [`consumerOffsetSyncDrainDuration`](../../../migration-assets/cutover/policies.md#policies-consumeroffsetsyncdrainduration), then disables the link's offset sync. Pausing keeps the link from writing offsets to the destination during promote. See [Migrate consumer groups](../../consumer-groups/migration.md#what-the-cutover-does-with-offset-sync) for when to use it.
+2. **Fence.** kcp adds a route-level fence (`scope: ALL`, `errorCode: BROKER_NOT_AVAILABLE`) and waits for every Gateway pod to apply it. Clients get errors they can retry, and they buffer in the meantime.
+3. **Pause offset sync (optional).** If [`consumerOffsetSync.pause`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-pause) is set, kcp waits [`consumerOffsetSyncDrainDuration`](../../../migration-assets/cutover/policies.md#policies-consumeroffsetsyncdrainduration), then disables the link's offset sync. Pausing keeps the link from writing offsets to the destination during promote. For when to use it, see [Migrate consumer groups](../../consumer-groups/migration.md#what-the-cutover-does-with-offset-sync).
 4. **Verify the fence.** If [`detectUnroutedProducersDuration`](../../../migration-assets/cutover/policies.md#policies-detectunroutedproducersduration) is set, kcp reads the source's partition offsets, waits that duration, and reads them again. If any offset advanced, a producer is still writing to the source directly, and kcp aborts and unfences the route instead of promoting.
-5. **Promote.** kcp promotes the mirror topics, in batches of [`promoteBatchSize`](../../../migration-assets/cutover/policies.md#policies-promotebatchsize), and waits for each to stop mirroring. **Point of no return.**
+5. **Promote.** kcp promotes the mirror topics, in batches of [`promoteBatchSize`](../../../migration-assets/cutover/policies.md#policies-promotebatchsize), and waits for each to stop mirroring. This is the point of no return.
 6. **Switch.** kcp flips the route's `streamingDomain` to the destination and removes the fence.
-7. **Restore offset sync** _(if paused)_. kcp sets the link's consumer offset sync back to the state you declared in [`consumerOffsetSync.baseline`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline), the state it was in before the migration.
+7. **Restore offset sync (if paused).** kcp sets the link's consumer offset sync back to the state you declared in [`consumerOffsetSync.baseline`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline), the state it was in before the migration.
 
 A failure before promote removes the fence and restores offset sync, so traffic returns to the source.
 
@@ -59,7 +61,7 @@ A failure before promote removes the fence and restores offset sync, so traffic 
 
 ### 1. Stage the destination on the Gateway
 
-The route starts bound to the source. The destination is declared next to it, with swap authentication staged on the route, so the switch needs no further change. This is the part of the CR that matters for a static migration; the rest is your normal Gateway configuration.
+The route starts bound to the source. The destination is declared next to it, with swap authentication staged on the route, so the switch needs no further change. This is the part of the CR that matters for a static migration. The rest is your normal Gateway configuration.
 
 ```yaml
 apiVersion: platform.confluent.io/v1beta1
@@ -111,11 +113,11 @@ spec:
 
 kcp checks this staging on every run, before anything is fenced, and `--dry-run` reports it.
 
-To build the route yourself, see the CFK documentation for [routes](https://docs.confluent.io/operator/current/gateway/co-gateway-deploy.html#configure-routes), [authentication swapping](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#configure-authentication-swapping) and [secret stores](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#secret-store-configuration).
+To build the route yourself, see the CFK documentation for [routes](https://docs.confluent.io/operator/current/gateway/co-gateway-deploy.html#configure-routes), [authentication swapping](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#configure-authentication-swapping), and [secret stores](https://docs.confluent.io/operator/current/gateway/co-gateway-security.html#secret-store-configuration).
 
 ### 2. Write the migration manifest
 
-The manifest declares the migration with [`spec.staticMigration`](../../../migration-assets/cutover/overview.md#declaring-the-migration-type). Every credentials field is a path to a credentials file, and the manifest holds no secrets. Paths resolve relative to the working directory you run kcp from.
+The manifest declares the migration with [`spec.staticMigration`](../../../migration-assets/cutover/overview.md#declare-the-migration-type). Every credentials field is a path to a credentials file, and the manifest holds no secrets. Paths resolve relative to the working directory you run kcp from.
 
 ```yaml
 apiVersion: kcp.confluent.io/v1alpha1
@@ -168,12 +170,12 @@ spec:
 
 Notes on the choices above:
 
-- `topicGroup` takes literal [`topics`](../../../migration-assets/cutover/migrations.md#topicgroup-topics), anchored [`topicPatterns`](../../../migration-assets/cutover/migrations.md#topicgroup-topicpatterns), or both (the union). There is no default; to migrate everything, write `topicPatterns: ['.*']`.
-- [`detectUnroutedProducersDuration`](../../../migration-assets/cutover/policies.md#policies-detectunroutedproducersduration) is **off by default**. Turn it on if you can't rule out producers bypassing the Gateway.
+- `topicGroup` takes literal [`topics`](../../../migration-assets/cutover/migrations.md#topicgroup-topics), anchored [`topicPatterns`](../../../migration-assets/cutover/migrations.md#topicgroup-topicpatterns), or both (the union), and has no default. To migrate everything, write `topicPatterns: ['.*']`.
+- [`detectUnroutedProducersDuration`](../../../migration-assets/cutover/policies.md#policies-detectunroutedproducersduration) is off by default. If you can't rule out producers bypassing the Gateway, turn it on.
 - [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout) defaults to no deadline, so a rollout that never converges waits indefinitely with traffic already fenced. Set one.
 - [`consumerOffsetSync.baseline`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline) is the offset sync state to restore after the switch. Set it to what the link has now, normally `enabled`.
 
-The complete annotated manifest is [`gateway-static-migration.yaml`](../../../gateway-examples/gateway-static-migration.yaml). Every field, validation rule and policy default is in the [migration manifest reference](../../../migration-assets/cutover/overview.md).
+The complete annotated manifest is [`gateway-static-migration.yaml`](../../../gateway-examples/gateway-static-migration.yaml). Every field, validation rule, and policy default is in the [migration manifest reference](../../../migration-assets/cutover/overview.md).
 
 ### 3. Dry run
 
@@ -181,7 +183,7 @@ The complete annotated manifest is [`gateway-static-migration.yaml`](../../../ga
 kcp migration cutover execute --migration-yaml migration.yaml --dry-run
 ```
 
-A dry run validates the manifest and credentials, then reads the live Gateway CR, both clusters and the cluster link and prints the plan: each precondition and a verdict per topic. It changes nothing and exits non-zero if the plan is refused. Run it until it passes.
+A dry run validates the manifest and credentials, then reads the live Gateway CR, both clusters, and the cluster link, and prints the plan: each precondition and a verdict per topic. It changes nothing and exits non-zero if the plan is refused. Run it until it passes.
 
 ### 4. Watch the lag
 
@@ -199,7 +201,7 @@ Schedule a window. Clients are paused from the fence until the switch.
 kcp migration cutover execute --migration-yaml migration.yaml
 ```
 
-Any policy can be overridden for a single run with its flag, for example `--detect-unrouted-producers-duration 60s`. See the [command reference](../../../command-reference/migration/cutover/execute.md).
+You can override any policy for a single run with its flag, for example `--detect-unrouted-producers-duration 60s`. See the [command reference](../../../command-reference/migration/cutover/execute.md).
 
 When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running a completed migration reconciles to nothing to do.
 
@@ -211,19 +213,19 @@ When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running 
 | After the fence, before promote                      | kcp removes the fence and restores offset sync. Traffic returns to the source. | Fix the cause (for example an unrouted producer) and re-run. |
 | During or after promote                              | The fence stays. Rolling back would split promoted topics from their clients.  | Fix the cause and re-run `execute`. It rolls forward.        |
 | Switch reached the CR but wasn't confirmed           | The new route is in the CR, but kcp couldn't confirm every pod applied it.     | Check the Gateway (operator acceptance, pods) before anything else. A re-run reads only the CR, sees the route bound to the destination and reports nothing to do. |
-| `Ctrl-C` or lost connection                          | The fence stays.                                                               | Re-run `execute`.                                            |
+| Ctrl+C or lost connection                            | The fence stays.                                                               | Re-run `execute`.                                            |
 
 Don't change the manifest's topic selection between an interrupted run and its resume unless you mean to.
 
 ## After the cutover
 
 - Confirm clients reconnected and are producing and consuming against Confluent Cloud.
-- The source cluster is no longer on the route. Decommission it on your own schedule, once you are sure nothing connects to it directly.
+- The source cluster is no longer on the route. Decommission it on your own schedule, after you are sure nothing connects to it directly.
 - If you paused offset sync, confirm the link is back at your [`consumerOffsetSync.baseline`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline).
 - `kcp migration cutover lag-check` shows every selected mirror `STOPPED`, and re-running `kcp migration cutover execute --dry-run` reports nothing to do.
 - To compare a consumer group on both clusters, see [Migrate consumer groups](../../consumer-groups/migration.md#after-the-cutover).
 
-Once promote starts, a migration only moves forward. kcp doesn't move clients back to the source after that point, so validate with `--dry-run` and `lag-check` before the window.
+After promote starts, a migration only moves forward. kcp doesn't move clients back to the source after that point, so validate with `--dry-run` and `lag-check` before the window.
 
 ## Related content
 

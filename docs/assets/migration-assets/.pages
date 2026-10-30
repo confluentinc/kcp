@@ -3,6 +3,6 @@ nav:
   - Overview: README.md
   - cutover
   - Resources:
-    - Manifest reference: manifest-reference.md
+    - Manifest Reference: manifest-reference.md
     - examples
     - credentials

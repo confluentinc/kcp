@@ -1,11 +1,11 @@
 title: Cutover
 nav:
   - Overview: overview.md
-  - Running a cutover: running-a-cutover.md
+  - Run a Cutover: running-a-cutover.md
   - Connections: connections.md
   - Migrations: migrations.md
-  - Route conversion: route-conversion.md
+  - Route Conversion: route-conversion.md
   - Policies: policies.md
   - Credentials: credentials.md
-  - Validation and field reference: validation-and-field-reference.md
+  - Validation and Field Reference: validation-and-field-reference.md
   - Examples: examples.md

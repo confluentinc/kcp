@@ -1,11 +1,13 @@
-# Discover transactional workloads
+# Discover Transactional Workloads
 
-Most topics in a Kafka cluster are independent of one another. You can move `clickstream` to Confluent Cloud today and `user-profiles` next month, and neither will notice. Transactional workloads are the exception. When a producer writes to several topics inside one Kafka transaction, those writes commit or abort together, and downstream consumers reading with `isolation.level=read_committed` rely on that all-or-nothing behavior. If you cut those topics over on different days, a single transaction ends up split across two clusters, and the guarantee the application was built on is gone.
+This guide walks you through finding the transactional workloads on your source cluster before you plan a migration, so you know which topics must move to Confluent Cloud together.
 
-This guide walks through finding those workloads before you plan a migration. You will run a small standalone utility, `txn-discovery`, against your source cluster, let it watch for a while, and get back a list of **transaction groups**: sets of topics that must move together. Everything it doesn't put in a group can be migrated one topic at a time.
+Most topics in an Apache Kafka® cluster are independent of one another. You can move `clickstream` to Confluent Cloud today and `user-profiles` next month, and neither notices. Transactional workloads are the exception. When a producer writes to several topics inside one Kafka transaction, those writes commit or abort together, and downstream consumers reading with `isolation.level=read_committed` rely on that all-or-nothing behavior. If you cut those topics over on different days, a single transaction ends up split across two clusters, and the guarantee the application was built on is gone.
+
+To find them, you run a small standalone utility, `txn-discovery`, against your source cluster, let it watch for a while, and get back a list of *transaction groups*: sets of topics that must move together. You can migrate everything it doesn't put in a group one topic at a time.
 
 !!! warning "Proof of concept"
-    `txn-discovery` is an exploratory utility that lives in the KCP repository under `utils/transaction-discovery`. It is not part of the `kcp` binary and its output is not consumed by any `kcp` command yet. Treat the results as input to your own migration planning, and review them before acting on them.
+    `txn-discovery` is an exploratory utility that lives in the KCP repository under `utils/transaction-discovery`. It is not part of the `kcp` binary, and no `kcp` command reads its output. Treat the results as input to your own migration planning, and review them before acting on them.
 
 ## Prerequisites and considerations
 
@@ -16,7 +18,7 @@ This guide walks through finding those workloads before you plan a migration. Yo
 
 **Access**
 
-- A principal that can read internal topics. The exact ACLs are listed in [Grant permissions](#grant-permissions).
+- A principal that can read internal topics. For the exact access control lists (ACLs), see [Grant permissions](#grant-permissions).
 - Network access from the machine running the utility to the source brokers.
 
 **Build tooling**
@@ -25,7 +27,7 @@ This guide walks through finding those workloads before you plan a migration. Yo
 
 **Time**
 
-- The utility reports what it *observed*, so it needs to run long enough to see your transactional workloads. Plan for anywhere from a few minutes (to try it out) up to a week (to catch infrequent jobs). See [Choose an observation window](#choose-an-observation-window).
+- The utility reports what it observed, so it needs to run long enough to see your transactional workloads. Plan for anywhere from a few minutes (to try it out) up to a week (to catch infrequent jobs). See [Choose an observation window](#choose-an-observation-window).
 
 ## What this guide covers
 
@@ -40,9 +42,9 @@ This guide walks through finding those workloads before you plan a migration. Yo
 
 Kafka records every transaction in an internal topic called `__transaction_state`. Each time a producer with a `transactional.id` adds partitions to a transaction, the transaction coordinator logs it, and that log is the one place that knows which topics a given transaction touched.
 
-`txn-discovery` reads `__transaction_state` from the earliest offset and keeps going for the length of the window. From each record it works out the transaction's **footprint**: the set of topics it wrote to, recorded against its `transactional.id`.
+`txn-discovery` reads `__transaction_state` from the earliest offset and keeps going for the length of the window. From each record it works out the transaction's *footprint*: the set of topics it wrote to, recorded against its `transactional.id`.
 
-Grouping then comes down to one rule: *topics that appear in the same transaction belong together*, and the rule is transitive. Take four topics, `A` to `D`:
+Grouping then comes down to one rule: topics that appear in the same transaction belong together, and the rule is transitive. Take four topics, `A` to `D`:
 
 - One transaction writes to `A` and `B`.
 - Another writes to `B` and `C`.
@@ -50,18 +52,18 @@ Grouping then comes down to one rule: *topics that appear in the same transactio
 
 `A` and `B` are coupled, `B` and `C` are coupled, so all three form one group. `D` stands alone. Internal topics (anything starting with `__`) are left out before grouping. Every exactly-once application commits to `__consumer_offsets`, and keeping it in would chain every unrelated workload into one enormous group.
 
-### Recovering topics a transaction only reads
+### Topics a transaction only reads
 
-A transaction's footprint only lists topics it *writes*. That's a problem for consume-transform-produce applications, the Kafka Streams and exactly-once consumer-plus-producer pattern. Such an application reads from an input topic, writes results to an output topic, and commits the consumed offsets as part of the same transaction. The footprint shows the output topic, but the input topic is invisible, even though moving the output without its input breaks the exactly-once chain at cutover.
+A transaction's footprint only lists topics it writes. That's a problem for consume-transform-produce applications, the Kafka Streams and exactly-once consumer-plus-producer pattern. Such an application reads from an input topic, writes results to an output topic, and commits the consumed offsets as part of the same transaction. The footprint shows the output topic, but the input topic is invisible, even though moving the output without its input breaks the exactly-once chain at cutover.
 
 To close that gap, the utility has two ways of finding the consumed inputs:
 
-| Mechanism                  | Flag                       | How it works                                                                                                                                          | Limits                                                                               |
-| -------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Consumer-group enrichment  | `--enrich-consumer-groups` | Lists consumer groups and their committed offsets, and ties a group to a transaction through the Kafka Streams `transactional.id` / `group.id` naming. | Relies on the naming convention, so it mostly covers Kafka Streams.                  |
-| `__consumer_offsets` tail  | `--tail-consumer-offsets`  | Watches transactional offset commits and ties each one to its transaction by producer ID.                                                             | Needs read access to an internal topic, and only sees commits made during the window. |
+| Mechanism                  | Flag                       | How it works                                                                                                                                                            | Limits                                                                               |
+| -------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Consumer-group enrichment  | `--enrich-consumer-groups` | Lists consumer groups and their committed offsets, and ties a group to a transaction through the Kafka Streams naming convention for `transactional.id` and `group.id`. | Relies on the naming convention, so it mostly covers Kafka Streams.                  |
+| `__consumer_offsets` tail  | `--tail-consumer-offsets`  | Watches transactional offset commits and ties each one to its transaction by producer ID.                                                                               | Needs read access to an internal topic, and only sees commits made during the window. |
 
-Both are on by default. The producer ID match is exact and makes no assumptions about naming, so it also covers hand-written consumer-plus-producer applications. Where `__consumer_offsets` can't be read, the utility falls back to the naming heuristic and says so.
+Both are on by default. The producer ID match is exact and makes no assumptions about naming, so it also covers hand-written consumer-plus-producer applications. If the utility can't read `__consumer_offsets`, it falls back to the naming heuristic and says so.
 
 ## Build the utility
 
@@ -88,7 +90,7 @@ The utility only reads. Give the principal it connects as the following ACLs:
 | Topic `__consumer_offsets`  | `READ`     | Recovering consumed inputs by producer ID.                                        |
 | Consumer groups (all)       | `DESCRIBE` | Recovering consumed inputs through the Kafka Streams naming convention.           |
 
-If you can't grant the last two, turn those sources off with `--tail-consumer-offsets=false` and `--enrich-consumer-groups=false`. Discovery still works from `__transaction_state` alone, but consumed input topics won't be recovered, so read-process-write groups will be incomplete.
+If you can't grant the last two, turn those sources off with `--tail-consumer-offsets=false` and `--enrich-consumer-groups=false`. Discovery still works from `__transaction_state` alone, but the utility doesn't recover consumed input topics, so read-process-write groups are incomplete.
 
 !!! tip
     If the first run fails with an authorization error, check these ACLs first.
@@ -99,7 +101,7 @@ Pick the invocation that matches how your cluster authenticates. Passing the pas
 
 === "SASL/SCRAM over TLS (typical MSK)"
 
-    MSK uses a public CA, so no `--ca-cert` is needed.
+    MSK uses a public certificate authority (CA), so you don't need `--ca-cert`.
 
     ```bash
     export TXN_DISCOVERY_PASSWORD='<password>'
@@ -139,7 +141,7 @@ Before it starts observing, the utility checks that it can read `__transaction_s
 
 ### Choose an observation window
 
-`--duration` is the main lever on how complete the result is, and it defaults to five minutes. A transaction can only join a group if the utility sees it, so a nightly or weekly job that doesn't run during a short window is invisible.
+`--duration` is the main lever on how complete the result is, and it defaults to 5 minutes. A transaction can only join a group if the utility sees it, so a nightly or weekly job that doesn't run during a short window is invisible.
 
 | Goal                                      | Suggested window                                   |
 | ----------------------------------------- | -------------------------------------------------- |
@@ -147,7 +149,7 @@ Before it starts observing, the utility checks that it can read `__transaction_s
 | Cover steady, always-on workloads         | An hour or more                                    |
 | Include daily and weekly batch jobs       | Long enough to span their schedule, for example `168h` |
 
-The utility stops early on `Ctrl-C` or `SIGTERM` and writes whatever it has seen so far, so a long run that you need to cut short isn't wasted.
+The utility stops early on Ctrl+C or `SIGTERM` and writes whatever it has seen so far, so a long run that you need to cut short isn't wasted.
 
 ### Useful flags
 
@@ -207,17 +209,17 @@ Read-process-write (exactly-once consume-transform-produce) apps detected.
 Read it top to bottom:
 
 - **`group-1`** is the transitive rule at work. Neither application writes to all three topics, but both write to `order-events`, which links them.
-- **`group-2`** contains `payment-requests` even though the payments application never *wrote* to it. It was recovered as a consumed input and is flagged in the listing.
+- **`group-2`** contains `payment-requests` even though the payments application never wrote to it. It was recovered as a consumed input and is flagged in the listing.
 - **`audit-trail`** was written to inside a transaction but never alongside another topic, so it's listed as an individual topic.
 
-Groups are numbered by size, largest first. Long groups are truncated to 20 topics in the terminal; the full list is always in the YAML.
+Groups are numbered by size, largest first. Long groups are truncated to 20 topics in the terminal. The full list is always in the YAML file.
 
 !!! note "Check the keep-up block"
     Below the summary, a `Keep-up` block reports how well the `__transaction_state` reader kept pace: records seen, lag, and any records it failed to decode. A lag that grows and never recovers, or a decode-failure warning, means the run did not observe the whole window. Rerun with a longer `--duration`, or from a host with a better network path to the brokers, before trusting the result.
 
 ### The `migration.yaml` file
 
-The same result is written to `migration.yaml`, which is the file you review and keep.
+The utility writes the same result to `migration.yaml`, which is the file you review and keep.
 
 ```yaml
 generated_by: kcp txn-discovery (POC)
@@ -249,23 +251,23 @@ individual_topics:
     - audit-trail
 ```
 
-Each group lists its topics and the `transactional.id` values behind them, which tells you which applications to coordinate with. The `bootstrap_url` field is left empty for you to fill in for the target cluster. The schema is provisional and may change.
+Each group lists its topics and the `transactional.id` values behind them, which tells you which applications to coordinate with. The utility leaves the `bootstrap_url` field empty for you to fill in for the target cluster. The schema is provisional and might change.
 
 ## Read-process-write groups
 
-A group marked `read_process_write: true` contains at least one consume-transform-produce application. These deserve a closer look because the input topics are found indirectly, and the `warning` field tells you how:
+A group marked `read_process_write: true` contains at least one consume-transform-produce application. These deserve a closer look because the utility finds the input topics indirectly, and the `warning` field tells you how:
 
 - **Recovered by producer ID** is the strongest case. The utility saw the application commit offsets inside a transaction and matched it exactly.
 - **Recovered through Kafka Streams naming** relies on the `transactional.id` and `group.id` sharing a name. It's reliable for Kafka Streams and unreliable for anything else.
-- **Not captured** means the group has a read-process-write producer but no input was recovered. The warning says to review the group before cutover, and you should: find out what the application consumes and add it to the group by hand.
+- **Not captured** means the group has a read-process-write producer but the utility recovered no input. The warning says to review the group before cutover. Find out what the application consumes and add it to the group by hand.
 
-If the `__consumer_offsets` tail was inactive, the summary tells you that non-Streams applications may be unrecovered. Treat every read-process-write group as one you verify with its owning team.
+If the `__consumer_offsets` tail was inactive, the summary tells you that non-Streams applications might be unrecovered. Treat every read-process-write group as one you verify with its owning team.
 
 ## Understand what discovery can miss
 
 Discovery tells you what it observed. It doesn't prove that nothing else exists.
 
-**Compaction.** `__transaction_state` is compacted by `transactional.id`. A transaction's footprint can only be rebuilt from a record that still lists its partitions, and once a job finishes, its latest record has an empty partition set. If a rare job ran and was compacted down to that final record before your window opened, it can't be recovered. Reading from the earliest offset gets the most that the log retains, and a longer window helps catch jobs while they run, but neither guarantees completeness.
+**Compaction.** `__transaction_state` is compacted by `transactional.id`. A transaction's footprint can only be rebuilt from a record that still lists its partitions, and after a job finishes, its latest record has an empty partition set. If a rare job ran and was compacted down to that final record before your window opened, it can't be recovered. Reading from the earliest offset gets the most that the log retains, and a longer window helps catch jobs while they run, but neither guarantees completeness.
 
 **Reused transactional IDs.** If a `transactional.id` was reassigned to a different workload while the old footprint records are still retained, the two workloads merge into one group. This is rare, and it errs in the safe direction: you move too much together, never too little.
 
@@ -278,7 +280,7 @@ Given those limits, a useful last step is to compare the discovered `transaction
 Treat the output as the shape of your cutover schedule:
 
 - **Each group is one unit of cutover.** Define a single migration group in your plan that contains all of its topics, so they flip together.
-- **Individual topics are free to move on their own**, in whatever order suits you.
+- **Individual topics are free to move on their own.** Migrate them in whatever order suits you.
 - **Involve the owners.** The `transactional_ids` identify the applications behind each group. Those teams need to know which topics their application's cutover is tied to.
 
 ## Related content
