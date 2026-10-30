@@ -63,7 +63,7 @@ spec:
         name: source-kafka-cluster
         bootstrapServerId: UNAUTHED
       # security.cluster is keyed by streaming-domain name on this CRD
-      # (CFK 0.1838.0+) — a flat security.auth/security.cluster.authentication,
+      # (CFK 3.4.0+) — a flat security.auth/security.cluster.authentication,
       # as older switchover examples in this repo show, is rejected outright as
       # an unknown field. Every domain the route can be bound to needs its own
       # entry here, including the one it's bound to today: source's is a bare

@@ -22,16 +22,12 @@ KCP_HR_SETTLE_ITERATIONS=5 make test-migration-hot-reload-run
 
 ## Why this is a separate suite
 
-`make test-migration` pins CFK `0.1514.19`, whose Gateway CRD has neither
-`spec.configId` nor `spec.hotReload`. On that cluster kcp correctly downgrades to
-rollout verification, so the hot-reload path is never taken. That suite also
-annotates its resources with `platform.confluent.io/block-reconcile` to stop the
-operator re-asserting declared config over REST-set values — which here would
-stop CFK processing a `configId` bump at all.
-
-Either alone would make a hot-reload assertion pass while testing nothing, so
-this suite gets its own Minikube profile (`kcp-e2e-hotreload`) and nothing in it
-is annotated.
+`make test-migration` annotates its resources with
+`platform.confluent.io/block-reconcile` to stop the operator re-asserting declared
+config over REST-set values — which here would stop CFK processing a `configId`
+bump at all, and make a hot-reload assertion pass while testing nothing. So this
+suite gets its own Minikube profile (`kcp-e2e-hotreload`) and nothing in it is
+annotated.
 
 ## Why every transition must hot-reload
 
@@ -111,10 +107,9 @@ assertions here are on offsets, never on client exit codes.
 
 | Component | Pin | Why |
 |---|---|---|
-| CFK chart | `0.1718.34` (appVersion 3.3.0) | First chart whose Gateway CRD declares `spec.configId`. **The public Helm repo tops out at `0.1718.10`**, so the chart must come from a local checkout — set `CFK_CHART_PATH` |
-| CFK operator image | `v0.1718.34-amd64` from internal ECR | Docker Hub's operator also stops at `0.1718.10`. Published amd64-only |
+| CFK chart | `0.2038.1` (appVersion 3.4.0) from `https://packages.confluent.io/helm` | Its Gateway CRD declares `spec.configId`; `setup.sh` fails fast if it does not. The default operator image is public and multi-arch |
 | Gateway | `confluent-gateway-for-cloud:1.4.0` | 1.3.0 was the first release serving `GET /config`; 1.2.x has the licence hook but no endpoint. Multi-arch |
-| Init container | `confluent-init-container:3.3.0` | Matches CFK 3.3.x. Multi-arch |
+| Init container | `confluent-init-container:3.4.0` | Matches CFK 3.4.x. Multi-arch |
 | Licence | CP **Enterprise**, non-expired | The gateway gates its config-file watcher on it |
 | Source broker | `cp-kafka:7.6.0` | Not load-bearing. Matches the other integration suites so it is usually already cached |
 
@@ -138,14 +133,10 @@ Secret by name only.
 
 ## Architecture note
 
-The operator image is amd64-only, but the suite still runs on an arm64 host: the
-image is pulled on the host with an explicit `--platform` and side-loaded, and the
-node's runtime executes it under emulation (verified — the operator reports
-`x86_64` and runs normally). The gateway itself is multi-arch and runs natively,
-so only the operator is emulated.
-
-Side-loading also keeps the ECR credential on the host instead of installing it
-into the cluster as an `imagePullSecret`.
+The operator, gateway and init-container images are all multi-arch, so the suite
+runs natively on both an arm64 host and an amd64 CI node. The operator is pulled by
+the kubelet; the gateway, init-container and source-broker images are pulled on the
+host and side-loaded.
 
 ## Why the suite runs inside the cluster
 
