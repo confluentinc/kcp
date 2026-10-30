@@ -249,7 +249,15 @@ func (e *env) executeHeldAt(t *testing.T, report, manifest, state string, whileH
 			break
 		}
 		require.Falsef(t, time.Now().After(deadline), "kcp must reach its hold point after %q within %s", state, holdTimeout)
-		time.Sleep(holdPollInterval)
+		// kcp exiting before its hold point ends the wait at once, with its
+		// output; the result is recorded so the cleanup doesn't wait again.
+		select {
+		case r := <-done:
+			received = true
+			require.FailNowf(t, "kcp exited before its hold point",
+				"kcp must reach its hold point after %q, but exited first (error: %v). Output:\n%s", state, r.err, r.out)
+		case <-time.After(holdPollInterval):
+		}
 	}
 	t.Logf("\nKCP HELD ▸ paused after %q; changing the world now", state)
 	if whileHeld != nil {
