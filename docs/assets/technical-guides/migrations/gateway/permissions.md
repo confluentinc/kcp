@@ -69,7 +69,7 @@ rules:
     verbs: ["get"]
 ```
 
-Without it, kcp refuses before fencing, with a message that names two ways out: grant the permission, or set `spec.hotReload.enabled: false` in the live CR for the duration of the migration. Without this check, kcp can't confirm that a pod has updated from a hot reload.
+kcp uses `spec.configId` to confirm that each pod applied a hot reload, so without this grant it can't check that the field is declared, and it refuses before fencing. The refusal names two ways out: grant the permission, or set `spec.hotReload.enabled: false` in the live CR for the duration of the migration.
 
 ### Which workflow needs what
 

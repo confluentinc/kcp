@@ -34,3 +34,9 @@ command-line flags do accept a plain `0`). Negative values are rejected.
 | `gatewayConfigPort`{ #policies-gatewayconfigport }               | int      | `0`     | `--gateway-config-port`                 | Port serving the Gateway's `/config` endpoint, polled per pod to confirm a configuration revision was applied. `0` uses the Gateway default (`9180`).                                                                                                                                 |
 | `detectUnroutedCommitsDuration`{ #policies-detectunroutedcommitsduration }   | duration | `0s`    | `--detect-unrouted-commits-duration`    | `dynamicToStaticConversion` only. Window between the two committed-offset snapshots taken after fencing, to catch a consumer committing to the source directly, bypassing the Gateway. `0s` skips the check. When set, the minimum is `10s`. |
 | `offsetSyncConcurrency`{ #policies-offsetsyncconcurrency }           | int      | `0`     | `--offset-sync-concurrency`             | `dynamicToStaticConversion` only. Number of workers, each with its own broker connection, reading and writing consumer-group offsets. `0` uses the built-in `8`. |
+
+## Related content
+
+- [Migration sections in the migration manifest](migrations.md)
+- [Migration manifest validation and field reference](validation-and-field-reference.md)
+- [Run a migration cutover](running-a-cutover.md)

@@ -73,7 +73,7 @@ topic purges its groups' committed offsets, so kcp has nothing to copy for it.
    that decide whether the route can be converted (dynamic, two domains,
    `coordination.group` on the source, `targetStreamingDomain` one of them,
    consumer offset sync disabled), confirms its own conversion fence is still
-   on the route, and re-runs the credential, cluster-link scope and
+   on the route, and re-runs the credential, cluster-link scope, and
    consumer-group checks. It does not repeat the checks on the route's
    contents (the target binding's `bootstrapServerId`, the
    `security.cluster.<targetStreamingDomain>` auth, no fence kcp didn't write,
@@ -110,8 +110,9 @@ on every Gateway pod, as in a migration.
   to one poll (`max.poll.records`) for a consumer that commits after every
   batch, and up to the backlog the fence built for a consumer that auto-commits.
   This is expected at-least-once behavior. Nothing is skipped.
-- **KIP-848 consumers** (`group.protocol=consumer`) can't use a dynamic route
-  at all. They work after the route becomes static.
+- **KIP-848 consumers.** Consumers that use the group protocol from Kafka
+  Improvement Proposal (KIP) 848 (`group.protocol=consumer`) can't use a
+  dynamic route at all. They work after the route becomes static.
 
 ## Refusals and fixes
 
@@ -147,3 +148,10 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
   couldn't be confirmed, check the Gateway (operator acceptance, pods) instead
   of re-running: a re-run would report nothing to do.
 - **A finished conversion re-runs as nothing to do.**
+
+## Related content
+
+- [Convert a dynamic Gateway route to static](../../technical-guides/migrations/gateway/dynamic-to-static-conversion.md)
+- [Policies in the migration manifest](policies.md)
+- [Run a migration cutover](running-a-cutover.md)
+- [Example cutover manifests](examples.md)

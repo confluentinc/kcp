@@ -14,7 +14,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 - The route to migrate is static: it has a single `streamingDomain` bound to the source cluster.
 - The destination is already declared on the Gateway CR as a streaming domain with exactly one bootstrap server ID, and the route already carries `security.cluster.<destination>` authentication for it, with its secret store and Secrets present. The cutover is a pure `streamingDomain` flip, so no secret or auth change happens during it. See [Stage the destination on the Gateway](#1-stage-the-destination-on-the-gateway).
 - The route carries no fence of its own. kcp refuses a route with a fence it didn't add.
-- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](overview.md#version-requirements).
+- Gateway 1.4.0 and later, and CFK 3.4.0 and later. See [Version requirements](overview.md#version-requirements).
 
 **Cluster link**
 

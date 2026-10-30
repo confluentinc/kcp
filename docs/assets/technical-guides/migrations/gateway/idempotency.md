@@ -75,7 +75,7 @@ A conversion has no lag or promote step.
 
 ### Ctrl+C and crashes
 
-kcp has no signal handler. Ctrl+C, `SIGTERM` (a canceled CI job, a pod eviction), and a crash all end the process where it is, and kcp doesn't roll back or clean up. Whatever is on the cluster stays, which typically means:
+Ctrl+C, `SIGTERM` (a canceled CI job, a pod eviction), and a crash all end the process where it is, and kcp doesn't roll back or clean up. Whatever is on the cluster stays, which typically means:
 
 - The fence is on the route.
 - For a static migration with `pause: true`, offset sync is still paused.

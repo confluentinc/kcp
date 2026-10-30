@@ -49,7 +49,7 @@ error.
 If you are upgrading a manifest from an earlier build: `spec.route` and
 `spec.defaultPolicies` were replaced by the sections above, and
 `spec.clusterLink.pauseConsumerOffsetSync` and `consumerOffsetSyncBaseline` moved
-to `spec.staticMigration.consumerOffsetSync.pause` and `.baseline`.
+to `spec.staticMigration.consumerOffsetSync.pause` and `.baseline`, respectively.
 
 ## At a glance
 
@@ -114,3 +114,11 @@ gives autocomplete and inline validation when it can reach GitHub. The schema
 covers structure and types but does not enforce every rule (for example, it
 does not check the `10s` minimum or the `host:port` format), so `kcp
 migration cutover execute --dry-run` is the authoritative check.
+
+## Related content
+
+- [Run a migration cutover](running-a-cutover.md)
+- [Example cutover manifests](examples.md)
+- [Migration manifest validation and field reference](validation-and-field-reference.md)
+- [Gateway migrations overview](../../technical-guides/migrations/gateway/overview.md)
+- [Permissions for Gateway migrations](../../technical-guides/migrations/gateway/permissions.md)

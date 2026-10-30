@@ -96,3 +96,10 @@ the strict decode with an unknown-field error.
 | `namespace`{ #gateway-namespace }  | string | yes      | Kubernetes namespace where the Gateway is deployed.                                                 |
 | `kubeconfig`{ #gateway-kubeconfig } | string | no       | Path to the kubeconfig to use. The one field in this manifest where a leading `~/` is expanded. If unset, kcp uses the pod's in-cluster service account when it runs in a pod, and `~/.kube/config` otherwise. |
 | `cr-name`{ #gateway-cr-name }    | string | yes      | The name of the initial Gateway CR, read live from the cluster on each `execute` run. Not a file path. |
+
+## Related content
+
+- [Credentials in the migration manifest](credentials.md)
+- [Cutover migration manifest reference](overview.md)
+- [Migration manifest validation and field reference](validation-and-field-reference.md)
+- [Permissions for Gateway migrations](../../technical-guides/migrations/gateway/permissions.md)

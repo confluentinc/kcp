@@ -24,7 +24,7 @@ cluster link is its scope). A list validated to exactly one entry
 | `topics`{ #topicgroup-topics }        | `[]string` | see note | A flat list of literal topic names, not globs. A glob is not rejected when the manifest is read. It fails at reconcile as "not found on the source".                                                          |
 | `topicPatterns`{ #topicgroup-topicpatterns } | `[]string` | see note | A list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Case-sensitive, and the whole topic name must match. `.` matches any character, so escape it (`\.`) to match a literal dot. `['.*']` selects every source topic. |
 
-**At least one of `topics` or `topicPatterns` is required.** When both are set,
+At least one of `topics` or `topicPatterns` is required. When both are set,
 the union is migrated: every literal name plus every source topic a pattern
 matches. Every selected topic must be in a state kcp can migrate or resume: a topic
 that is not on the source, not on the cluster link, present on the destination
@@ -70,3 +70,11 @@ Optional, static migrations only.
 | ---------- | ------ | ------------ | ------- | ----- |
 | `pause`{ #consumeroffsetsync-pause }    | bool   | no           | `false` | Disable the link's `consumer.offset.sync.enable` right after fencing, and set it back to `baseline` after the switch. If a run stops before that restore, the restore is still owed and re-running `execute` performs it. It is also restored if a failure before promote rolls the fence back. |
 | `baseline`{ #consumeroffsetsync-baseline } | string | when pausing | —       | `enabled` or `disabled`: the value `consumer.offset.sync.enable` is set back to after the switch. |
+
+## Related content
+
+- [Policies in the migration manifest](policies.md)
+- [Route conversion settings in the migration manifest](route-conversion.md)
+- [Run a migration cutover](running-a-cutover.md)
+- [Migrate with a static Gateway route](../../technical-guides/migrations/gateway/static-migration.md)
+- [Migrate with a dynamic Gateway route](../../technical-guides/migrations/gateway/dynamic-migration.md)

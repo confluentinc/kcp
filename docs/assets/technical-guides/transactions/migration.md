@@ -45,7 +45,7 @@ This guide builds on [Migrate with a static route](../migrations/gateway/static-
 
 The cutover follows the [stages in the static guide](../migrations/gateway/static-migration.md#how-the-cutover-works): check lag, fence, promote, switch. Three things matter specifically for transactional clients.
 
-**Transactions are in flight at the fence.** When the fence goes up, clients get errors that they retry, and they buffer. A transaction that was open at that moment can't complete through the Gateway.
+**Transactions are in flight at the fence.** When the fence goes up, clients get errors they can retry, and they buffer. A transaction that was open at that moment can't complete through the Gateway.
 
 <!-- TODO: what actually happens to an open transaction when the fence goes up? Options: (a) the producer's EndTxn is fenced too and the transaction hangs until transaction.timeout.ms, then the coordinator aborts it; (b) EndTxn passes through and the transaction completes on the source; (c) something else. Which is it, and does the mirror receive the abort marker before promote? This decides what we tell users to do about long transaction timeouts. -->
 

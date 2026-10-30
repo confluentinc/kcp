@@ -8,7 +8,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 <!-- prettier-ignore -->
 !!! warning "Early Access"
-    At the time of writing, dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. A conversion closes a [dynamic migration](dynamic-migration.md), so it needs a dynamic route.
+    Dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. A conversion closes a [dynamic migration](dynamic-migration.md), so it needs a dynamic route.
 
 ## Prerequisites and limitations
 
@@ -60,7 +60,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 kcp keeps no state between runs. Each run reconciles the manifest against the live Gateway, both clusters, and the cluster link, and continues from wherever they already are. For a conversion the stages are:
 
-1. **Fence.** kcp adds a fence that blocks every topic on the route (`topicPatterns: ['.*']`, `blocked: true`) at the head of the route's `rules.fencing`, and waits for every Gateway pod to apply it. Clients get errors that they retry, and they buffer in the meantime.
+1. **Fence.** kcp adds a fence that blocks every topic on the route (`topicPatterns: ['.*']`, `blocked: true`) at the head of the route's `rules.fencing`, and waits for every Gateway pod to apply it. Clients get errors they can retry, and they buffer in the meantime.
 2. **Verify.** On data read after the fence, kcp re-runs the checks that decide whether the route can be converted, confirms its own fence is still on the route, and re-runs the credential, cluster link, and consumer group checks. It then takes two snapshots of every source group's committed offsets, [`detectUnroutedCommitsDuration`](../../../migration-assets/cutover/policies.md#policies-detectunroutedcommitsduration) apart. If any offset changed, a client is committing to the source directly, and kcp aborts and unfences the route.
 3. **Sync offsets.** kcp writes each in-scope group's committed offsets, with their metadata, to the destination. It refuses the whole sync if an offset is past its destination partition's high-water mark.
 4. **Switch.** kcp replaces the dynamic route with a static route bound to the destination, with no `rules` (so no fence). `security` and the rest of the route are kept. This is the point of no return.

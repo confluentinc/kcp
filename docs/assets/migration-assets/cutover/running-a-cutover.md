@@ -7,7 +7,7 @@ To carry out a cutover through Confluent Gateway, run `kcp migration cutover exe
 The migration manifest drives a resumable migration workflow:
 
 - **`execute`** validates the manifest and live infrastructure. It reads the live initial Gateway custom resource (CR) to check that the route's mode matches the declared migration type (see [Declare the migration type](overview.md#declare-the-migration-type)) and, on a static route, to derive the bootstrap server ID from the target domain. It then carries the migration forward through fence → promote → switch (a conversion: fence → verify → sync offsets → switch). Every run reconciles live from the manifest and the current cluster state, so you can safely continue an interrupted run by re-running the same command: it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
-  - **`--dry-run`** runs only the reconcile step, against the live Gateway CR, the source and destination Apache Kafka® clusters, and the cluster link, and prints the plan: each precondition (the route exists and has the expected mode, the Gateway CR is set up the way that mode needs, the cluster link mirrors from the source cluster, and `spec.target.clusterId` matches the destination) and a verdict for every selected topic. Nothing is changed and no migration steps run. It exits non-zero if the plan is refused. Flag overrides are applied and validated first, so a dry run rejects an invalid override exactly as a real run would. Use it to iterate on the manifest and your infrastructure before you schedule a live cutover.
+    - **`--dry-run`** runs only the reconcile step, against the live Gateway CR, the source and destination Apache Kafka® clusters, and the cluster link, and prints the plan: each precondition (the route exists and has the expected mode, the Gateway CR is set up the way that mode needs, the cluster link mirrors from the source cluster, and `spec.target.clusterId` matches the destination) and a verdict for every selected topic. Nothing is changed and no migration steps run. It exits non-zero if the plan is refused. Flag overrides are applied and validated first, so a dry run rejects an invalid override exactly as a real run would. Use it to iterate on the manifest and your infrastructure before you schedule a live cutover.
 - **`lag-check`** is an interactive terminal view of replication lag for every mirror topic on the cluster link, independent of `execute`. It uses only the destination REST leg (`spec.clusterLink.linkCredentials`), so it works before `execute` has ever run.
 
 Every `execute` reconciles the current manifest live against the cluster. A completed migration re-reconciles to nothing to do: `execute` then runs no migration steps and reports that. An interrupted one continues from the live state. To migrate a different topology, edit the manifest and run `execute` again. `metadata.name` is only a label (it appears in logs and the completion message). Changing it does not change what is reconciled.
@@ -31,7 +31,7 @@ by hand.
 between runs either. kcp recognizes its conversion fence by its exact shape:
 a `rules.fencing` entry with only `topicPatterns: ['.*']` and `blocked: true`.
 If a conversion is interrupted, re-run the same manifest: kcp finds its fence
-on the route, re-checks everything and carries on. See
+on the route, re-checks everything, and carries on. See
 [Interruptions](route-conversion.md#interruptions).
 
 **A static route must not carry someone else's fence.** A static route has a
@@ -89,3 +89,12 @@ CLI flag can override for a single run, without editing the file.
   example, a selected topic is not a mirror topic on the link), the whole run is
   refused before anything is fenced or changed. `--dry-run` shows the plan and
   the reasons.
+
+## Related content
+
+- [Cutover migration manifest reference](overview.md)
+- [Policies in the migration manifest](policies.md)
+- [Route conversion settings in the migration manifest](route-conversion.md)
+- [Gateway migrations overview](../../technical-guides/migrations/gateway/overview.md)
+- [Permissions for Gateway migrations](../../technical-guides/migrations/gateway/permissions.md)
+- [Idempotency and resumability of Gateway migrations](../../technical-guides/migrations/gateway/idempotency.md)

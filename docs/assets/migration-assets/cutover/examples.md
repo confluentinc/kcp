@@ -31,3 +31,11 @@ migration section (see
 ```yaml
 --8<-- "docs/assets/gateway-examples/gateway-route-conversion.yaml"
 ```
+
+## Related content
+
+- [Cutover migration manifest reference](overview.md)
+- [Run a migration cutover](running-a-cutover.md)
+- [Migrate with a static Gateway route](../../technical-guides/migrations/gateway/static-migration.md)
+- [Migrate with a dynamic Gateway route](../../technical-guides/migrations/gateway/dynamic-migration.md)
+- [Convert a dynamic Gateway route to static](../../technical-guides/migrations/gateway/dynamic-to-static-conversion.md)

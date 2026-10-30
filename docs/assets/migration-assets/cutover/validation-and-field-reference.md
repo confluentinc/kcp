@@ -97,3 +97,11 @@ REST credentials files. `lag-check` reads only the REST one.
 | `spec.<section>.policies.gatewayConfigPort`               | int            | no                                                     | `0`                                          | `>= 0` (all)                                                 |
 | `spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration` | duration | no                                                 | `0s`                                         | `0s`, or `>= 10s`                                            |
 | `spec.dynamicToStaticConversion.policies.offsetSyncConcurrency` | int      | no                                                     | `0`                                          | `>= 0`                                                       |
+
+## Related content
+
+- [Cutover migration manifest reference](overview.md)
+- [Migration sections in the migration manifest](migrations.md)
+- [Policies in the migration manifest](policies.md)
+- [Connection settings in the migration manifest](connections.md)
+- [Credentials in the migration manifest](credentials.md)

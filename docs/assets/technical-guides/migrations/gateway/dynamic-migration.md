@@ -8,7 +8,7 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 
 <!-- prettier-ignore -->
 !!! warning "Early Access"
-    At the time of writing, dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. Before you plan a migration, read [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html).
+    Dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. Before you plan a migration, read [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html).
 
 ## Prerequisites and limitations
 
@@ -19,7 +19,7 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 - The route uses the `host` broker identification strategy, which requires TLS between clients and the Gateway. kcp doesn't check this. The Gateway rejects a dynamic route that doesn't.
 - The destination is one of the two bound domains, and the route already carries `security.cluster.<domain>` authentication for both. `PLAIN` and `OAUTHBEARER` are supported on a dynamic route, but SCRAM is not.
 - kcp adds and removes its own fence and routing rules in `rules`. Any fence or routing rule you authored stays in place. See [If a run stops](#if-a-run-stops).
-- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](overview.md#version-requirements).
+- Gateway 1.4.0 and later, and CFK 3.4.0 and later. See [Version requirements](overview.md#version-requirements).
 
 **Cluster link**
 

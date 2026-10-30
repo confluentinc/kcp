@@ -33,8 +33,8 @@ Run `kcp migration cutover execute --dry-run` at any point to see the plan and a
 
 ## Version requirements
 
-- **Gateway 1.4.0 or later.** kcp v0.11.0 and later support Gateway 1.4.0 and later. For a Gateway on 1.3.x, upgrade the Gateway first or use kcp v0.10.x.
-- **CFK 3.4.0 or later.** Dynamic routing is Early Access in Gateway 1.4 and CFK 3.4. See the [CFK release notes](https://docs.confluent.io/operator/current/release-notes.html).
+- **Gateway 1.4.0 and later.** kcp v0.11.0 and later support Gateway 1.4.0 and later. For a Gateway on 1.3.x, upgrade the Gateway first or use kcp v0.10.x.
+- **CFK 3.4.0 and later.** Dynamic routing is Early Access in Gateway 1.4 and CFK 3.4. See the [CFK release notes](https://docs.confluent.io/operator/current/release-notes.html).
 - **Hot reload.** If the Gateway CR sets `spec.hotReload.enabled: true`, the operator's Gateway custom resource definition (CRD) must also declare `spec.configId`. kcp checks this before the fence. If the field is missing, kcp refuses and names the ways to proceed, one of which is setting `spec.hotReload.enabled: false` for the duration of the migration. For how kcp confirms each pod applied a change, see [How kcp verifies a Gateway change](limitations.md#how-kcp-verifies-a-gateway-change).
 
 ## Static routes (all-at-once)
@@ -61,7 +61,7 @@ A dynamic route binds two streaming domains, the source and the destination, and
 The Gateway side of this, including the routing rules and fencing, is documented in [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html). Read it before planning a topic-based migration.
 
 !!! warning "Early Access"
-    At the time of writing, dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. Fencing itself is generally available.
+    Dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema might change before general availability. Fencing itself is generally available.
 
 **Use it when**
 
@@ -84,7 +84,7 @@ The Gateway side of this, including the routing rules and fencing, is documented
 - A fence can't stop clients connected to the source directly. The check for producers that bypass the Gateway (`detectUnroutedProducersDuration`) is off by default in kcp.
 - All members of a consumer group must connect through the route, or the group splits across two coordinators.
 - A topic-based migration leaves the route dynamic. Finish the job with a conversion.
-- Dynamic routes need Gateway 1.4.0 and CFK 3.4.0 or later. See [Version requirements](#version-requirements).
+- Dynamic routes need Gateway 1.4.0 and later, and CFK 3.4.0 and later. See [Version requirements](#version-requirements).
 
 ## Dynamic-to-static conversion
 

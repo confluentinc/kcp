@@ -7,7 +7,7 @@ Most topics in an Apache Kafka® cluster are independent of one another. You can
 To find them, you run a small standalone utility, `txn-discovery`, against your source cluster, let it watch for a while, and get back a list of *transaction groups*: sets of topics that must move together. You can migrate everything it doesn't put in a group one topic at a time.
 
 !!! warning "Proof of concept"
-    `txn-discovery` is an exploratory utility that lives in the KCP repository under `utils/transaction-discovery`. It is not part of the `kcp` binary, and no `kcp` command reads its output. Treat the results as input to your own migration planning, and review them before acting on them.
+    `txn-discovery` is an exploratory utility that lives in the kcp repository under `utils/transaction-discovery`. It is not part of the `kcp` binary, and no `kcp` command reads its output. Treat the results as input to your own migration planning, and review them before acting on them.
 
 ## Prerequisites and considerations
 
@@ -23,7 +23,7 @@ To find them, you run a small standalone utility, `txn-discovery`, against your 
 
 **Build tooling**
 
-- Go 1.25 or later to build the utility. The result is a single static binary with no runtime dependencies, so you can build once and copy it to whichever host can reach the cluster.
+- Go 1.25 and later to build the utility. The result is a single static binary with no runtime dependencies, so you can build once and copy it to whichever host can reach the cluster.
 
 **Time**
 
@@ -67,7 +67,7 @@ Both are on by default. The producer ID match is exact and makes no assumptions 
 
 ## Build the utility
 
-The utility is a self-contained Go module inside the KCP repository.
+The utility is a self-contained Go module inside the kcp repository.
 
 ```bash
 cd utils/transaction-discovery

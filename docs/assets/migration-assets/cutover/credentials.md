@@ -79,7 +79,7 @@ Specify exactly one block (or the `api_key` and `api_secret` pair).
 
 `basic`, `bearer`, and `mtls` each accept an optional `ca_cert` and
 `insecure_skip_verify` inside their block to reach a TLS endpoint fronted by a
-private or internal CA (for example, self-managed Confluent Platform or MDS). The flat `api_key` form takes
+private or internal CA (for example, MDS on a self-managed Confluent Platform). The flat `api_key` form takes
 the same two keys at the top level instead, and they are rejected alongside
 the block forms. Public-CA endpoints (Confluent Cloud) need neither. `basic`
 does not check at load time that `username` and `password` are non-empty. A
@@ -107,3 +107,9 @@ One restriction is specific to this manifest, narrower than the two
 tables above: `spec.source.credentials.iam` is valid only when `spec.source.type: msk`,
 and `spec.target.kafka.clusterCredentials.iam` is rejected outright, because the
 destination is Confluent Cloud or Confluent Platform, never MSK.
+
+## Related content
+
+- [Connection settings in the migration manifest](connections.md)
+- [Cutover migration manifest reference](overview.md)
+- [Permissions for Gateway migrations](../../technical-guides/migrations/gateway/permissions.md)
