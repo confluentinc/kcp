@@ -53,7 +53,7 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
 in `001..100`. Each mode has its own environment, so a slice may be reused
 across modes: drift refused (operator stopped
-mid-switch) `001..005` (static only), drift refused (operator stopped
+mid-switch) `001..005` (one test per mode), drift refused (operator stopped
 mid-unfence) `006..010` (static only), a terminating gateway pod refused until
 the gateway settles `091..095` (static only, never promotes), a switch a
 trial-licence gateway never loads `091..095` (dynamic only), a resume after
@@ -153,6 +153,19 @@ after promote, deletes every gateway pod and waits for the replacements. They
 must report the CR's configId at boot, so `--dry-run` passes the pod check and
 the re-run completes. The runner's Role grants `delete` on pods for this test
 alone.
+
+`TestDrift_TBMStalledSwitchRerunIsRefused` (dynamic only) is the TBM form of
+the stalled-switch test. It uses one run, held after promote (the hold seam,
+below), because a new run's first gateway step is the hot-reload check, which
+would stop a run started with the operator already down. The hot-reload check,
+the fence and promote run with the operator up; the operator is scaled to 0
+while the run is held. On release the switch patch lands on the CR and its
+wait times out (`--rollout-timeout 45s`, `--hot-reload-timeout 45s`), with no
+rollback past promote. The CR is switched and unfenced for the slice and
+`status.observedGeneration` is behind `metadata.generation`. `--dry-run` and a
+re-run both refuse with `the operator has not caught up with the CR`, and
+neither moves the CR's generation. There is no data-plane probe: the dynamic
+gateway's client listener needs TLS with SNI host routing.
 
 `TestDrift_UnfenceStalledRerunIsRefused` (static only) is the reverse
 direction: the CR says unfenced while the pods still serve the fence. A run is

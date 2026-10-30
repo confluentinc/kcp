@@ -120,6 +120,77 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }
 
+// TestDrift_TBMStalledSwitchRerunIsRefused is the TBM form of
+// TestDrift_StalledSwitchRerunIsRefused (design §8.3). It needs one run, not
+// two: a new kcp run's first gateway step runs the hot-reload check, which
+// would time out with the operator stopped and stop the run before its
+// switch. So the run is held after promote, with the hot-reload check, the
+// fence, its verification and promote all done with the operator up, and the
+// operator is stopped while it is held. On release the switch patch lands on
+// the CR, its wait for the operator times out, and nothing rolls back past
+// promote. The CR then says switched and unfenced while the operator is
+// behind it. kcp's pod check sees that, so a dry-run and a re-run both refuse
+// and neither writes to the gateway. No data-plane probe: the dynamic
+// gateway's client listener needs TLS with SNI host routing, which
+// produceThroughGateway doesn't speak. Dynamic only. Slice tbm-topic-001..005.
+func TestDrift_TBMStalledSwitchRerunIsRefused(t *testing.T) {
+	e := newEnv()
+	if e.mode != "dynamic" {
+		t.Skip("dynamic routes only: TestDrift_StalledSwitchRerunIsRefused covers the static route")
+	}
+	ctx := context.Background()
+	topics := e.topicRange(1, 5)
+	mani := e.writeManifest(t, "drift-tbm-stalled-switch", topics)
+	e.saveManifest(t, mani)
+	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, topics route → source)", topics)
+
+	var gen0, obs0 int64
+	out1, err1 := e.runKCPHeldAt(t, "kcp-run-1-switch-stalls.log", cpPromoted, func() {
+		cr := e.readCR(t, ctx)
+		ms := e.mirrorStatus(t, ctx)
+		for _, tp := range topics {
+			require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — the run is held after promote, before switch", tp)
+			require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED — the run is held after promote", tp)
+		}
+		e.snapshot(t, ctx, "held-after-promote", "HELD after promote (expect fenced, mirrors STOPPED)", topics)
+		e.stopOperator(t, ctx)
+		gen0, obs0 = e.crGenerations(t, ctx)
+		require.Equal(t, gen0, obs0, "the operator must have observed the fenced CR before it stopped")
+	}, "migration", "cutover", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s", "--hot-reload-timeout", "45s")
+	require.Error(t, err1, "the switch must fail: the operator never observes it")
+	require.Contains(t, out1, "Switchover gateway CR applied", "the run must reach the switch and patch the CR")
+	require.NotContains(t, out1, "removing fence", "past promote there is no rollback")
+	cr := e.readCR(t, ctx)
+	for _, tp := range topics {
+		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched in the CR", tp)
+		require.Falsef(t, e.isFenced(t, cr, tp), "%s must be unfenced in the CR", tp)
+	}
+	gen1, obs1 := e.crGenerations(t, ctx)
+	require.Lessf(t, obs1, gen1, "the stopped operator must not observe the switch (observedGeneration %d, generation %d)", obs1, gen1)
+	require.Greater(t, gen1, gen0, "the switch patch must bump the CR's generation")
+	e.snapshot(t, ctx, "after-stalled-switch", "AFTER the stalled switch (CR switched and unfenced; operator behind)", topics)
+
+	out2, err2 := e.runKCP(t, "kcp-run-2-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
+	require.Error(t, err2, "the dry-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out2, "gateway pods serve the CR", "the dry-run must name the failed pod check")
+	require.Contains(t, out2, "the operator has not caught up with the CR", "the dry-run must say the operator is behind the CR")
+	gen2, obs2 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen2, "the dry-run must make no gateway write")
+	require.Equal(t, obs1, obs2, "the operator is still stopped")
+
+	out3, err3 := e.runKCP(t, "kcp-run-3-rerun.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
+	require.Error(t, err3, "the re-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out3, "the operator has not caught up with the CR", "the re-run must say the operator is behind the CR")
+	require.NotContains(t, out3, fsmStartBanner, "no state machine may run on a refused plan")
+	gen3, obs3 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen3, "the re-run must make no gateway write")
+	require.Equal(t, obs1, obs3, "the operator is still stopped")
+	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; operator behind; nothing written)", topics)
+
+	t.Logf("\n✅ RESULT: TBM drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
+		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
+}
+
 // TestDrift_UnfenceStalledRerunIsRefused is the reverse direction of
 // TestDrift_StalledSwitchRerunIsRefused (design §8.3): the CR says unfenced
 // while the pods still serve the fence. Run 1 is killed after the fence, and
