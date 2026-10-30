@@ -50,6 +50,7 @@ func TestGeneration_CRChangedBeforePromoteStopsWithNoWrite(t *testing.T) {
 		require.Equalf(t, "ACTIVE", ms[tp], "%s must not have been promoted", tp)
 	}
 
+	e.waitForGatewayInSync(t, ctx)
 	out2, err2 := e.runKCP(t, "kcp-run-2-rerun.log", "", args...)
 	require.NoErrorf(t, err2, "the plain re-run must complete the migration:\n%s", out2)
 	e.snapshot(t, ctx, "after-run-2", "AFTER run 2 (expect mirrors STOPPED, route → destination)", topics)
@@ -109,6 +110,7 @@ func TestGeneration_CRChangedBeforeRollbackStopsWithNoWrite(t *testing.T) {
 	require.Equal(t, "false", e.linkOffsetSync(t, ctx),
 		"offset sync must still be paused: a refused rollback skips the restore")
 
+	e.waitForGatewayInSync(t, ctx)
 	out2, err2 := e.runKCP(t, "kcp-run-2-rerun.log", "", args...)
 	require.NoErrorf(t, err2, "the plain re-run must complete the migration:\n%s", out2)
 	e.snapshot(t, ctx, "after-run-2", "AFTER run 2 (expect mirrors STOPPED, route → destination, offset sync on)", topics)

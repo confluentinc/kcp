@@ -515,6 +515,36 @@ func (e *env) waitForGatewayRolled(t *testing.T, ctx context.Context, baseline i
 	t.Logf("\n🔁 GATEWAY PODS ROLLED ▸ in %s; %s", time.Since(start).Round(time.Second), ps.Detail)
 }
 
+// gatewayInSyncTimeout bounds waitForGatewayInSync's wait.
+const gatewayInSyncTimeout = 2 * time.Minute
+
+// waitForGatewayInSync polls kcp's own pod check until every gateway pod
+// serves the live CR. A test that changes the CR calls it before the next kcp
+// run: a hot reload takes a few seconds, and a run that starts first is
+// refused by the reconcile-time pod check, correctly.
+func (e *env) waitForGatewayInSync(t *testing.T, ctx context.Context) {
+	t.Helper()
+	start := time.Now()
+	var last string
+	for {
+		raw, err := e.svc.GetGatewayYAML(ctx, e.namespace, e.gateway)
+		if err != nil {
+			last = "read the gateway CR: " + err.Error()
+		} else if ps, err := e.svc.CheckPodSync(ctx, e.namespace, e.gateway, raw, gateway.DefaultGatewayConfigPort); err != nil {
+			last = "read every gateway pod's /config: " + err.Error()
+		} else if ps.Verdict == gateway.PodsInSync {
+			if waited := time.Since(start).Round(time.Second); waited > 0 {
+				t.Logf("\n🔁 GATEWAY PODS IN SYNC ▸ after %s; %s", waited, ps.Detail)
+			}
+			return
+		} else {
+			last = fmt.Sprintf("verdict %v: %s", ps.Verdict, ps.Detail)
+		}
+		require.Falsef(t, time.Since(start) > gatewayInSyncTimeout, "the gateway pods must serve the CR within %s (last seen: %s)", gatewayInSyncTimeout, last)
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // crConfigID reads the live gateway CR's spec.configId.
 func (e *env) crConfigID(t *testing.T, ctx context.Context) string {
 	t.Helper()
