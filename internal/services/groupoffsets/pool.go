@@ -14,7 +14,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/tracing"
 )
 
 // worker is one pool member: the function that handles an item and the function that releases whatever the
@@ -65,11 +68,15 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 	jobs := make(chan string)
 	for i := 0; i < n; i++ {
 		var w worker
-		err := retry.Do(runCtx, "kafka.open_client", func(context.Context) error {
+		// Each worker's client build (a full metadata fetch, and any retries) is its own span, so the
+		// time spent connecting is separate from the time spent on groups.
+		openCtx, open := tracing.Start(runCtx, tracerName, "groupoffsets.open_client", attribute.Int("kcp.worker", i))
+		err := retry.Do(openCtx, "kafka.open_client", func(context.Context) error {
 			var err error
 			w, err = setup()
 			return err
 		})
+		tracing.End(open, err)
 		if err != nil {
 			fail(fmt.Sprintf("<worker %d>", i), fmt.Errorf("starting worker: %w", err))
 			break
