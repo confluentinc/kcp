@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -40,31 +42,42 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	}
 
 	// 1. Gather and probe.
-	facts, err := a.deps.Gather(ctx)
-	if err != nil {
-		return fmt.Errorf("gathering the conversion's facts after the fence: %w", err)
-	}
-	if facts == nil || facts.Link == nil {
-		return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
-	}
-	var report reconcile.Report
-	routeChecks, view, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
-	report.Preconditions = routeChecks
-	if !ok {
-		return a.refuse(config, report)
-	}
-	report.Preconditions = append(report.Preconditions, convertFenceCheck(facts.Gateway))
-	if report.Refused() {
-		return a.refuse(config, report)
-	}
-	report.Preconditions = append(report.Preconditions, reconcile.ConvertCredentialChecks(facts.GroupFacts(nil))...)
-	if report.Refused() {
-		return a.refuse(config, report)
+	var (
+		facts  *migplan.ConvertFacts
+		report reconcile.Report
+		view   reconcile.RouteView
+	)
+	if err := inSpan(ctx, "d2s.gather_facts", func(ctx context.Context) error {
+		var err error
+		facts, err = a.deps.Gather(ctx)
+		if err != nil {
+			return fmt.Errorf("gathering the conversion's facts after the fence: %w", err)
+		}
+		if facts == nil || facts.Link == nil {
+			return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
+		}
+		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
+		view = v
+		report.Preconditions = routeChecks
+		if !ok {
+			return a.refuse(config, report)
+		}
+		report.Preconditions = append(report.Preconditions, convertFenceCheck(facts.Gateway))
+		if report.Refused() {
+			return a.refuse(config, report)
+		}
+		report.Preconditions = append(report.Preconditions, reconcile.ConvertCredentialChecks(facts.GroupFacts(nil))...)
+		if report.Refused() {
+			return a.refuse(config, report)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	a.reporter.Success("Route and credentials re-checked after the fence")
 
 	// 2. Snapshot 1.
-	groups, err := a.deps.SourceGroups(ctx)
+	groups, err := groupoffsets.ListGroups(ctx, "source", a.deps.SourceGroups)
 	if err != nil {
 		return fmt.Errorf("listing source consumer groups for the first snapshot: %w", err)
 	}
@@ -76,23 +89,30 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 
 	// 3. The link and group checks. The untracked-topic warning (scope.UntrackedTopicsWarning) is reconcile's
 	// alone and is not repeated here.
-	gf := facts.GroupFacts(committedTopics(first))
-	scope := reconcile.CheckLinkScope(reconcile.LinkScopeInput{
-		Mirrors:         facts.Link.LinkMirrors,
-		SourceTopics:    facts.SourceTopics,
-		TargetTopics:    facts.TargetTopics,
-		Partitions:      facts.Partitions,
-		View:            view,
-		CommittedTopics: gf.TrackedTopics,
-		TargetStates:    gf.TargetStates,
-		TargetTypes:     gf.TargetTypes,
-	})
-	report.Unchanged = scope.Unchanged
-	report.FailFast = scope.FailFast
-	report.Preconditions = append(report.Preconditions, scope.Preconditions...)
-	report.Warnings = append(report.Warnings, scope.Warnings...)
-	if scope.Refused() {
-		return a.refuse(config, report)
+	var scope reconcile.LinkScope
+	if err := inSpan(ctx, "d2s.check_link_scope", func(ctx context.Context) error {
+		gf := facts.GroupFacts(committedTopics(first))
+		scope = reconcile.CheckLinkScope(reconcile.LinkScopeInput{
+			Mirrors:         facts.Link.LinkMirrors,
+			SourceTopics:    facts.SourceTopics,
+			TargetTopics:    facts.TargetTopics,
+			Partitions:      facts.Partitions,
+			View:            view,
+			CommittedTopics: gf.TrackedTopics,
+			TargetStates:    gf.TargetStates,
+			TargetTypes:     gf.TargetTypes,
+		})
+		report.Unchanged = scope.Unchanged
+		report.FailFast = scope.FailFast
+		report.Preconditions = append(report.Preconditions, scope.Preconditions...)
+		report.Warnings = append(report.Warnings, scope.Warnings...)
+		if scope.Refused() {
+			return a.refuse(config, report)
+		}
+		tracing.SetAttributes(ctx, attribute.Int("kcp.groups.in_scope", len(scope.InScopeGroups)))
+		return nil
+	}); err != nil {
+		return err
 	}
 	inScope := scope.InScopeGroups
 	a.reporter.Success("Link topics and consumer groups re-checked: %d link topic(s), %d in-scope consumer group(s)", len(facts.Link.LinkMirrors), len(inScope))
@@ -114,14 +134,19 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	}
 
 	// 7. Split-brain again, after snapshot 1. Refusal only; the idle-group warning is not repeated.
-	listing, err := a.deps.DestinationGroups(ctx)
+	listing, err := groupoffsets.ListGroups(ctx, "destination", a.deps.DestinationGroups)
 	if err != nil {
 		return fmt.Errorf("listing destination consumer groups after snapshot 1: %w", err)
 	}
-	splitBrain, _ := reconcile.CheckGroupSplitBrain(inScope, groupStates(listing))
-	if !splitBrain.OK {
-		report.Preconditions = replacePrecondition(report.Preconditions, splitBrain)
-		return a.refuse(config, report)
+	if err := inSpan(ctx, "d2s.check_split_brain", func(context.Context) error {
+		splitBrain, _ := reconcile.CheckGroupSplitBrain(inScope, groupStates(listing))
+		if !splitBrain.OK {
+			report.Preconditions = replacePrecondition(report.Preconditions, splitBrain)
+			return a.refuse(config, report)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	// 8. Hand-off. Never nil after a pass, even with no in-scope group: sync_offsets then writes nothing. A pass
