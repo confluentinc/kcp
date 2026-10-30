@@ -4,15 +4,24 @@ package idempotent_fsm_e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -39,22 +48,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	mani := e.writeManifest(t, "drift-stalled-switch", topics)
 	e.saveManifest(t, mani)
 
-	// The reset rolls the gateway pods, and an old pod may still serve the
-	// previous test's switched route for a while, so retry until produce
-	// reaches the source.
-	var (
-		acks     int
-		firstErr error
-	)
-	deadline := time.Now().Add(3 * time.Minute)
-	for {
-		acks, firstErr = produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
-		if acks >= 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Second)
-	}
-	require.GreaterOrEqualf(t, acks, 1, "the gateway must carry produce traffic before the migration, or the fenced-probe below proves nothing (first error: %v)", firstErr)
+	e.requireGatewayCarriesProduce(t, probe)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source, produce through the gateway works)", topics)
 
 	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoted, "migration", "cutover", "execute", "--migration-yaml", mani)
@@ -102,7 +96,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	}
 	e.snapshot(t, ctx, "after-stalled-switch", "AFTER the stalled switch (CR switched and unfenced; pods unchanged)", topics)
 
-	acks, firstErr = produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
+	acks, firstErr := produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
 	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says switched")
 	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
 
@@ -124,6 +118,377 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 
 	t.Logf("\n✅ RESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
+}
+
+// TestDrift_UnfenceStalledRerunIsRefused is the reverse direction of
+// TestDrift_StalledSwitchRerunIsRefused (design §8.3): the CR says unfenced
+// while the pods still serve the fence. Run 1 is killed after the fence, and
+// the CFK operator is stopped. Run 2's verify_fence step fails (the test-only
+// failure hook), nothing is promoted, so it rolls back: the unfence lands on
+// the CR, but the operator never observes it, so the rollback's wait times
+// out and the run exits non-zero. Producers through the gateway are still
+// fenced. kcp's pod check sees the operator hasn't caught up with the CR, so
+// a dry-run and a re-run both refuse, and neither writes to the gateway.
+// Static only: the data-plane probe needs the static route's plaintext client
+// endpoint. Slice tbm-topic-006..010.
+func TestDrift_UnfenceStalledRerunIsRefused(t *testing.T) {
+	e := newEnv()
+	if e.mode != "static" {
+		t.Skip("static routes only: the data-plane probe needs the static route's plaintext client endpoint")
+	}
+	ctx := context.Background()
+	e.resetStaticRoute(t, ctx)
+	topics := e.topicRange(6, 10)
+	probe := topics[0]
+	mani := e.writeManifest(t, "drift-unfence-stalled", topics)
+	e.saveManifest(t, mani)
+
+	acks0 := e.requireGatewayCarriesProduce(t, probe)
+	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source, produce through the gateway works)", topics)
+
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "cutover", "execute", "--migration-yaml", mani)
+	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
+	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
+	cr := e.readCR(t, ctx)
+	ms := e.mirrorStatus(t, ctx)
+	for _, tp := range topics {
+		require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — the interrupt came after the fence step", tp)
+		require.Equalf(t, "ACTIVE", ms[tp], "%s must be ACTIVE — the interrupt came before promote", tp)
+	}
+	e.snapshot(t, ctx, "after-fence", "AFTER interrupt at fenced (expect fenced, mirrors ACTIVE)", topics)
+
+	e.stopOperator(t, ctx)
+	gen0, obs0 := e.crGenerations(t, ctx)
+	require.Equal(t, gen0, obs0, "the operator must have observed the fenced CR before it stopped")
+
+	out2, err2 := e.runKCPFailingAt(t, "kcp-run-2-unfence-stalls.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani, "--rollout-timeout", "45s")
+	require.Error(t, err2, "the run must fail: its verify_fence step fails, and the operator never observes the rollback's unfence")
+	require.Contains(t, out2, killpoint.FailEnvVar, "the step failure must be the hook's")
+	require.Contains(t, out2, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	cr = e.readCR(t, ctx)
+	for _, tp := range topics {
+		require.Falsef(t, e.isFenced(t, cr, tp), "%s must be unfenced in the CR: the rollback's unfence landed", tp)
+	}
+	gen1, obs1 := e.crGenerations(t, ctx)
+	require.Lessf(t, obs1, gen1, "the stopped operator must not observe the unfence (observedGeneration %d, generation %d)", obs1, gen1)
+	e.snapshot(t, ctx, "after-stalled-unfence", "AFTER the stalled unfence (CR unfenced; pods still fenced)", topics)
+
+	acks, firstErr := produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
+	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says unfenced (the same producer got %d acks before run 1)", acks0)
+	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s (%d/5 before run 1); first error: %v", e.gatewayBootstrap(), acks0, firstErr)
+
+	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
+	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out3, "the operator has not caught up with the CR", "the dry-run must say the operator is behind the CR")
+	gen2, obs2 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen2, "the dry-run must make no gateway write")
+	require.Equal(t, obs1, obs2, "the operator is still stopped")
+
+	out4, err4 := e.runKCP(t, "kcp-run-4-rerun.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
+	require.Error(t, err4, "the re-run must refuse: the pods may not serve the CR")
+	require.Contains(t, out4, "the operator has not caught up with the CR", "the re-run must say the operator is behind the CR")
+	require.NotContains(t, out4, fsmStartBanner, "no state machine may run on a refused plan")
+	gen3, obs3 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen3, "the re-run must make no gateway write")
+	require.Equal(t, obs1, obs3, "the operator is still stopped")
+	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR unfenced; pods still fenced; nothing written)", topics)
+
+	t.Logf("\n✅ RESULT: reverse drift refused — the CR is unfenced at generation %d, the operator last observed generation %d, "+
+		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
+}
+
+// TestDrift_TrialLicenceSwitchRerunIsRefused covers the pod check's configId
+// comparison on a hot-reload-on gateway (design §8.3, the hot-reload-on
+// path). Stopping the operator never reaches it, because the pod check's first
+// rule refuses first. A gateway without an Enterprise licence does: the
+// operator observes every CR change, but the pods never load a new config, so
+// they keep reporting the configId they started with. Run 1 is killed after
+// promote. GATEWAY_LICENSES is then removed from the CR's pod template, which
+// rolls the pods onto trial limits; they load the current, fenced config at
+// start. The switched route is applied to the CR by hand with a fresh
+// configId, as kcp's switch would (kcp's own switch can't create this drift:
+// its hot-reload smoke test stops a trial-licence run first). The operator
+// observes it, and every pod still reports the previous configId. A dry-run
+// and a re-run both refuse with the pod check's configId detail, and the CR's
+// generation doesn't move. The licence is put back when the test ends. Dynamic
+// only. Slice tbm-topic-091..095.
+func TestDrift_TrialLicenceSwitchRerunIsRefused(t *testing.T) {
+	e := newEnv()
+	if e.mode != "dynamic" {
+		t.Skip("hot-reload gateways only: the static gateway has no configId to compare")
+	}
+	ctx := context.Background()
+	topics := e.topicRange(91, 95)
+	mani := e.writeManifest(t, "drift-trial-licence", topics)
+	e.saveManifest(t, mani)
+	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, topics route → source)", topics)
+
+	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpPromoted, "migration", "cutover", "execute", "--migration-yaml", mani)
+	require.Error(t, err1, "the run interrupted after promote must exit non-zero")
+	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
+	cr := e.readCR(t, ctx)
+	ms := e.mirrorStatus(t, ctx)
+	for _, tp := range topics {
+		require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced — the interrupt came after promote, before switch", tp)
+		require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED — the interrupt came after promote", tp)
+	}
+	e.snapshot(t, ctx, "after-promote", "AFTER interrupt at promoted (expect fenced, mirrors STOPPED)", topics)
+
+	e.dropGatewayLicence(t, ctx)
+	prevID := e.crConfigID(t, ctx)
+	e.snapshot(t, ctx, "after-licence-drop", "AFTER the licence is removed (pods rolled onto trial limits; still fenced)", topics)
+
+	depGen0, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	uids0, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+
+	newID := e.switchByHand(t, ctx, topics)
+	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
+		"the operator must accept the switched route")
+	gen1, obs1 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, obs1, "the operator must observe the switched route")
+	cr = e.readCR(t, ctx)
+	for _, tp := range topics {
+		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched in the CR", tp)
+		require.Falsef(t, e.isFenced(t, cr, tp), "%s must be unfenced in the CR", tp)
+	}
+
+	// Long past a hot reload's few seconds, every Ready pod's GET /config
+	// must still report the configId it loaded at start. CheckPodSync is
+	// kcp's own read of every pod's /config; the suite has no probe of its
+	// own.
+	want := fmt.Sprintf("every gateway pod reports configId %q, but the CR's spec.configId is %q", prevID, newID)
+	for end := time.Now().Add(30 * time.Second); ; {
+		raw, err := e.svc.GetGatewayYAML(ctx, e.namespace, e.gateway)
+		require.NoError(t, err)
+		ps, err := e.svc.CheckPodSync(ctx, e.namespace, e.gateway, raw, gateway.DefaultGatewayConfigPort)
+		require.NoError(t, err, "read every gateway pod's /config")
+		require.Equalf(t, gateway.PodsOutOfSync, ps.Verdict, "the pods must not load the switched route (detail: %s)", ps.Detail)
+		require.Equal(t, want, ps.Detail, "every pod must still report the previous configId")
+		if time.Now().After(end) {
+			t.Logf("\n🔍 GATEWAY PODS ▸ 30s after the switch every pod still reports configId %s, the CR's is %s:\n%s",
+				prevID, newID, indentLines(strings.Join(ps.Evidence, "\n"), "      "))
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	depGen1, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	require.Equal(t, depGen0, depGen1, "the switched route must not roll the pods: they keep the fenced config")
+	uids1, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	for uid := range uids1 {
+		_, ok := uids0[uid]
+		require.Truef(t, ok, "gateway pod %s is new: no pod may start after the switch, or it would load the switched route", uid)
+	}
+	e.snapshot(t, ctx, "after-hand-switch", "AFTER the switch by hand (CR switched and unfenced, observed; pods still on the previous configId)", topics)
+
+	out2, err2 := e.runKCP(t, "kcp-run-2-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
+	require.Error(t, err2, "the dry-run must refuse: the pods don't serve the CR")
+	require.Contains(t, out2, "gateway pods serve the CR", "the dry-run must name the failed pod check")
+	require.Contains(t, out2, "every gateway pod reports configId", "the dry-run must carry the pod check's configId detail")
+	require.Contains(t, out2, newID, "the detail must name the CR's configId")
+	gen2, obs2 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen2, "the dry-run must make no gateway write")
+	require.Equal(t, obs1, obs2)
+
+	out3, err3 := e.runKCP(t, "kcp-run-3-rerun.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
+	require.Error(t, err3, "the re-run must refuse: the pods don't serve the CR")
+	require.Contains(t, out3, "reconcile plan refused", "the re-run must exit on the refusal")
+	require.Contains(t, out3, "every gateway pod reports configId", "the re-run must carry the pod check's configId detail")
+	require.NotContains(t, out3, fsmStartBanner, "no state machine may run on a refused plan")
+	gen3, obs3 := e.crGenerations(t, ctx)
+	require.Equal(t, gen1, gen3, "the re-run must make no gateway write")
+	require.Equal(t, obs1, obs3)
+	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; pods on the previous configId; nothing written)", topics)
+
+	t.Logf("\n✅ RESULT: hot-reload drift refused — the operator observed the switch at generation %d, every pod still reports configId %s "+
+		"instead of the CR's %s, and the dry-run and the re-run both refused without writing to the gateway.", gen1, prevID, newID)
+}
+
+// licenceEnvVar is the gateway pod-template env var carrying the Enterprise
+// licence (testdata/manifests/templates/gateway-dynamic.yaml). Without it the
+// gateway runs on trial limits and its hot-reload watcher never starts.
+const licenceEnvVar = "GATEWAY_LICENSES"
+
+// gatewayResource is a dynamic client for the gateway CRs in e.namespace.
+func (e *env) gatewayResource(t *testing.T) dynamic.ResourceInterface {
+	t.Helper()
+	cfg, err := gateway.RESTConfig("")
+	require.NoError(t, err, "build the in-cluster config")
+	dc, err := dynamic.NewForConfig(cfg)
+	require.NoError(t, err, "build the dynamic client")
+	gvr := schema.GroupVersionResource{Group: gateway.GatewayGroup, Version: gateway.GatewayVersion, Resource: gateway.GatewayResourcePlural}
+	return dc.Resource(gvr).Namespace(e.namespace)
+}
+
+// licenceEntry finds the licence env entry in the gateway CR's
+// spec.podTemplate.envVars. Returns its index and value, or -1 and nil.
+func (e *env) licenceEntry(t *testing.T, ctx context.Context) (int, map[string]any) {
+	t.Helper()
+	obj, err := e.gatewayResource(t).Get(ctx, e.gateway, metav1.GetOptions{})
+	require.NoError(t, err, "read the gateway CR")
+	envVars, _, err := unstructured.NestedSlice(obj.Object, "spec", "podTemplate", "envVars")
+	require.NoError(t, err, "read spec.podTemplate.envVars")
+	for i, v := range envVars {
+		if m, ok := v.(map[string]any); ok && m["name"] == licenceEnvVar {
+			return i, m
+		}
+	}
+	return -1, nil
+}
+
+// dropGatewayLicence removes the licence env entry from the gateway CR's pod
+// template with a JSON patch, the way the design's live probe did
+// (~/claude-plans/kcp/gateway-drift-evidence/trial-probe.sh), and waits for
+// the pods to roll onto trial limits and settle. A cleanup registered before
+// the patch puts the saved entry back and waits for that roll too.
+func (e *env) dropGatewayLicence(t *testing.T, ctx context.Context) {
+	t.Helper()
+	idx, entry := e.licenceEntry(t, ctx)
+	require.GreaterOrEqualf(t, idx, 0, "the gateway CR's pod template must carry %s", licenceEnvVar)
+
+	t.Cleanup(func() { e.restoreGatewayLicence(t, context.Background(), entry) })
+
+	depGen, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	uids, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	patch := fmt.Sprintf(`[{"op":"test","path":"/spec/podTemplate/envVars/%d/name","value":%q},{"op":"remove","path":"/spec/podTemplate/envVars/%d"}]`,
+		idx, licenceEnvVar, idx)
+	_, err = e.gatewayResource(t).Patch(ctx, e.gateway, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
+	require.NoErrorf(t, err, "remove %s from the gateway CR's pod template", licenceEnvVar)
+	t.Logf("\n✍️  GATEWAY LICENCE REMOVED ▸ %s dropped from the pod template; waiting for the pods to roll onto trial limits", licenceEnvVar)
+	e.waitForGatewayRolled(t, ctx, depGen, uids)
+}
+
+// restoreGatewayLicence puts entry back on the gateway CR's pod template,
+// unless an entry with its name is already there, and waits for the pods to
+// roll and load the current CR.
+func (e *env) restoreGatewayLicence(t *testing.T, ctx context.Context, entry map[string]any) {
+	t.Helper()
+	if idx, _ := e.licenceEntry(t, ctx); idx >= 0 {
+		return
+	}
+	depGen, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	uids, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	value, err := json.Marshal(entry)
+	require.NoError(t, err)
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/podTemplate/envVars/-","value":%s}]`, value)
+	_, err = e.gatewayResource(t).Patch(ctx, e.gateway, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
+	require.NoErrorf(t, err, "put %s back on the gateway CR's pod template", licenceEnvVar)
+	e.waitForGatewayRolled(t, ctx, depGen, uids)
+	t.Logf("\n🧹 GATEWAY LICENCE RESTORED ▸ %s back on the pod template; the pods rolled and report the CR's configId", licenceEnvVar)
+}
+
+// gatewayRollTimeout bounds waitForGatewayRolled's wait.
+const gatewayRollTimeout = 10 * time.Minute
+
+// waitForGatewayRolled waits until a pod-template change has rolled the
+// gateway: the operator has observed the CR, the Deployment's generation is
+// past baseline and its rollout is complete, none of the old pods is listed,
+// no pod is terminating, and every pod is Ready. It then requires kcp's pod
+// check to find every pod reporting the CR's configId.
+func (e *env) waitForGatewayRolled(t *testing.T, ctx context.Context, baseline int64, old map[types.UID]struct{}) {
+	t.Helper()
+	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
+		"the operator must accept the pod-template change")
+	cs := kubeClient(t)
+	var last string
+	rolled := func() bool {
+		dep, err := cs.AppsV1().Deployments(e.namespace).Get(ctx, e.gateway, metav1.GetOptions{})
+		if err != nil {
+			last = "read the gateway Deployment: " + err.Error()
+			return false
+		}
+		s := dep.Status
+		if dep.Generation <= baseline || s.ObservedGeneration < dep.Generation || s.Replicas == 0 ||
+			s.UpdatedReplicas != s.Replicas || s.AvailableReplicas != s.Replicas {
+			last = fmt.Sprintf("Deployment %s: generation %d (baseline %d) observed %d, %d replicas, %d updated, %d available",
+				dep.Name, dep.Generation, baseline, s.ObservedGeneration, s.Replicas, s.UpdatedReplicas, s.AvailableReplicas)
+			return false
+		}
+		pods, err := cs.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app=" + e.gateway})
+		if err != nil {
+			last = "list the gateway pods: " + err.Error()
+			return false
+		}
+		ready := 0
+		for _, p := range pods.Items {
+			if _, stale := old[p.UID]; stale || p.DeletionTimestamp != nil {
+				last = "gateway pod " + p.Name + " is from before the roll or terminating"
+				return false
+			}
+			for _, c := range p.Status.Conditions {
+				if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+					ready++
+				}
+			}
+		}
+		last = fmt.Sprintf("%d of %d gateway pods Ready", ready, len(pods.Items))
+		return ready == len(pods.Items) && ready == int(s.Replicas)
+	}
+	start := time.Now()
+	for !rolled() {
+		require.Falsef(t, time.Since(start) > gatewayRollTimeout, "the gateway pods must roll within %s (last seen: %s)", gatewayRollTimeout, last)
+		time.Sleep(2 * time.Second)
+	}
+	raw, err := e.svc.GetGatewayYAML(ctx, e.namespace, e.gateway)
+	require.NoError(t, err)
+	ps, err := e.svc.CheckPodSync(ctx, e.namespace, e.gateway, raw, gateway.DefaultGatewayConfigPort)
+	require.NoError(t, err, "read every gateway pod's /config")
+	require.Equalf(t, gateway.PodsInSync, ps.Verdict, "the rolled pods must load the current CR (detail: %s)", ps.Detail)
+	t.Logf("\n🔁 GATEWAY PODS ROLLED ▸ in %s; %s", time.Since(start).Round(time.Second), ps.Detail)
+}
+
+// crConfigID reads the live gateway CR's spec.configId.
+func (e *env) crConfigID(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	obj, err := e.gatewayResource(t).Get(ctx, e.gateway, metav1.GetOptions{})
+	require.NoError(t, err, "read the gateway CR")
+	id, _, err := unstructured.NestedString(obj.Object, "spec", "configId")
+	require.NoError(t, err, "read spec.configId")
+	require.NotEmpty(t, id, "a hot-reload gateway CR must carry spec.configId")
+	return id
+}
+
+// switchByHand applies the switched route for topics to the live gateway CR
+// with a fresh spec.configId, the way kcp's TBM switch would, and returns
+// that configId. The rules are built with the reconcile core's own
+// operations, in the order its switchover artifact applies them
+// (migplan/reconcile/reconcile.go): drop kcp's fence for exactly these topics,
+// then prepend the exact-name routing condition to the target domain. They are
+// written as TBM's switch writes them (tbm.deriveSwitchRoutePatch): one route
+// patch replacing the route's `rules` field, carrying the new configId. Using
+// kcp's own operations rather than a hand-written JSON patch keeps the
+// switched shape identical to what isSwitchedToTarget reads after a real
+// switch. No generation guard: the test owns the CR at this point.
+func (e *env) switchByHand(t *testing.T, ctx context.Context, topics []string) string {
+	t.Helper()
+	route := e.routeObj(t, e.readCR(t, ctx))
+	require.NotNilf(t, route, "route %q must exist in the live CR", e.route)
+	rawRules, _ := route["rules"].(map[string]any)
+	rules, err := reconcile.ParseRules(rawRules)
+	require.NoError(t, err, "parse the route's rules")
+	rules.DropFence(topics)
+	rules.PrependCondition(topics, e.destDomain)
+	rulesYAML, err := rules.Serialize()
+	require.NoError(t, err, "serialize the switched rules")
+	value, err := gateway.FragmentValue(rulesYAML, "rules")
+	require.NoError(t, err, "extract the rules fragment")
+
+	before, _ := e.crGenerations(t, ctx)
+	id, err := gateway.NewConfigID()
+	require.NoError(t, err)
+	stored, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "rules", Value: value}, id, 0)
+	require.NoError(t, err, "patch the switched rules onto route %q", e.route)
+	require.Equal(t, id, stored.ConfigID, "the gateway CR must store the configId sent")
+	t.Logf("\n✍️  SWITCHED BY HAND ▸ route %q routes %d topic(s) to %q, kcp's fence dropped, spec.configId %s: metadata.generation %d → %d",
+		e.route, len(topics), e.destDomain, id, before, stored.Generation)
+	return id
 }
 
 // TestDrift_TerminatingPodRefusesUntilSettled pins the pod check's refusal
@@ -285,7 +650,8 @@ func (e *env) operatorPods(ctx context.Context, cs kubernetes.Interface) ([]core
 func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 	t.Helper()
 	cs := kubeClient(t)
-	e.scaleOperator(t, ctx, cs, 0)
+	// Registered before the scale-down, so a failure anywhere after it still
+	// brings the operator back. Scaling a running operator to 1 is a no-op.
 	t.Cleanup(func() {
 		ctx := context.Background()
 		e.scaleOperator(t, ctx, cs, 1)
@@ -307,6 +673,7 @@ func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 			"the restored operator must accept the gateway CR")
 		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
 	})
+	e.scaleOperator(t, ctx, cs, 0)
 	require.Eventually(t, func() bool {
 		pods, err := e.operatorPods(ctx, cs)
 		return err == nil && len(pods) == 0
@@ -339,6 +706,30 @@ func (e *env) crGenerations(t *testing.T, ctx context.Context) (generation, obse
 // testdata/manifests/templates/gateway-static.yaml declares it.
 func (e *env) gatewayBootstrap() string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local:9595", e.gateway, e.namespace)
+}
+
+// requireGatewayCarriesProduce retries produceThroughGateway against topic
+// for up to 3 minutes until at least one send is acked, and fails the test if
+// none is. A static route reset rolls the gateway pods, and an old pod may
+// still serve the previous test's switched route for a while. Returns the
+// acks of the attempt that succeeded.
+func (e *env) requireGatewayCarriesProduce(t *testing.T, topic string) int {
+	t.Helper()
+	var (
+		acks     int
+		firstErr error
+	)
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		acks, firstErr = produceThroughGateway(t, e.gatewayBootstrap(), topic, 5)
+		if acks >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	require.GreaterOrEqualf(t, acks, 1, "the gateway must carry produce traffic before the migration, or a fenced-probe later proves nothing (first error: %v)", firstErr)
+	t.Logf("\n🔍 DATA PLANE ▸ %d/5 produce attempts acked through %s before the migration", acks, e.gatewayBootstrap())
+	return acks
 }
 
 // produceThroughGateway sends attempts messages to topic through the gateway
