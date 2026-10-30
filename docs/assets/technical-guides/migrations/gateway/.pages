@@ -1,0 +1,9 @@
+title: Gateway
+nav:
+  - Overview: overview.md
+  - Static Migration: static-migration.md
+  - Dynamic Migration: dynamic-migration.md
+  - Dynamic-to-Static Conversion: dynamic-to-static-conversion.md
+  - Permissions: permissions.md
+  - Idempotency and Resumability: idempotency.md
+  - Limitations: limitations.md

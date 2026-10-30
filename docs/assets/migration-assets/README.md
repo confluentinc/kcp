@@ -9,7 +9,7 @@ unrelated one below.
 `gateway-static-migration.yaml` (`kind: GatewayMigration`; there is one example per migration type), which
 shares this one's `apiVersion` and parser but nothing else. Its docs live
 **outside** this folder, published normally: see
-[migration manifest reference](../migration-manifest-reference.md) and
+[migration manifest reference](cutover/overview.md) and
 [`gateway-examples/gateway-static-migration.yaml`](../gateway-examples/gateway-static-migration.yaml).
 A file written for one `kind` is rejected with a clear error if pointed at the
 other command.

@@ -20,6 +20,7 @@ exclude_docs: |
   plans/
   # hidden from the published beta docs; files stay in the repo
   getting-started-with-zero-cut-migrations.md
+  technical-guides/transactions/migration.md
   gateway-switchover/
 
 # Fail the strict build on broken internal links and anchors, so problems that
