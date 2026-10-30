@@ -16,6 +16,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/tracing"
 )
@@ -35,6 +36,10 @@ type worker struct {
 // workers stop retrying instead of using the rest of their retry budget. The returned error is the failure of the
 // lowest-named failed item, leaving out the items stopped by it, so it does not depend on which worker finished
 // first, and it keeps the cause for errors.Is.
+//
+// Each worker runs its items in its own kafka.group_worker span (client.StartGroupWorker), beside its
+// groupoffsets.open_client span. The client's group calls time their coordinator lookups and requests on it, so
+// the span shows where a phase's time went after its clients opened, without a span per group.
 func forEach(ctx context.Context, items []string, n int, setup func() (worker, error)) error {
 	if len(items) == 0 {
 		return nil
@@ -78,12 +83,18 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 			if w.release != nil {
 				defer w.release()
 			}
+			workerCtx, gw := client.StartGroupWorker(runCtx, i)
+			var workerErr error
+			defer func() { gw.End(workerErr) }()
 			for item := range jobs {
 				if failed.Load() || ctx.Err() != nil {
 					continue
 				}
-				if err := w.do(runCtx, item); err != nil {
+				if err := w.do(workerCtx, item); err != nil {
+					workerErr = err
 					fail(item, err)
+				} else {
+					gw.GroupDone()
 				}
 			}
 		}()

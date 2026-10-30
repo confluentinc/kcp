@@ -8,7 +8,12 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 )
 
 type fakeGateway struct {
@@ -751,4 +756,43 @@ func TestReconciliationEngine_Run_SecretsGateFollowsTheDeclaredTypeAndRouteMode(
 			}
 		})
 	}
+}
+
+func TestEngineRun_ConversionSpansItsFactsListingAndCommittedTopics(t *testing.T) {
+	rec := tracingtest.Install(t)
+	src := &fakeGroupLister{
+		groups:  []types.ConsumerGroupListing{{GroupID: "a"}, {GroupID: "b"}},
+		tracked: map[string][]string{"a": {"orders"}},
+	}
+	ctx, parent := tracing.Start(context.Background(), "test", "migplan.reconcile")
+
+	_, err := convertEngine(src, &fakeGroupLister{}).Run(ctx, convertIn)
+	parent.End()
+	require.NoError(t, err)
+
+	spans := tracingtest.Spans(rec)
+	children := tracingtest.Children(spans, tracingtest.Find(t, spans, "migplan.reconcile"))
+	assert.Equal(t, []string{"migplan.gather_facts", "groupoffsets.list_groups", "migplan.committed_topics"}, tracingtest.Names(children))
+	list := tracingtest.Find(t, spans, "groupoffsets.list_groups")
+	cluster, _ := tracingtest.Attr(list, "kcp.cluster")
+	assert.Equal(t, "source", cluster.AsString())
+	fetch := tracingtest.Find(t, spans, "migplan.committed_topics")
+	n, ok := tracingtest.Attr(fetch, "kcp.groups")
+	require.True(t, ok, "migplan.committed_topics carries kcp.groups")
+	assert.Equal(t, int64(2), n.AsInt64())
+	tracingtest.AssertNoValues(t, spans, "a", "b", "orders")
+}
+
+func TestEngineRun_AFailedCommittedTopicsFetchEndsItsSpanWithError(t *testing.T) {
+	rec := tracingtest.Install(t)
+	src := &fakeGroupLister{
+		groups:     []types.ConsumerGroupListing{{GroupID: "a"}},
+		trackedErr: errors.New("boom"),
+	}
+
+	_, err := convertEngine(src, &fakeGroupLister{}).Run(context.Background(), convertIn)
+	require.Error(t, err)
+
+	s := tracingtest.Find(t, tracingtest.Spans(rec), "migplan.committed_topics")
+	assert.Equal(t, codes.Error, s.Status().Code)
 }

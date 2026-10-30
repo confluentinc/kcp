@@ -898,7 +898,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (span_name) (max_over_time(traces_spanmetrics_latency_sum{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|d2s|wait)\\\\..*\"}[$__range])) / sum by (span_name) (max_over_time(traces_spanmetrics_latency_count{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|d2s|wait)\\\\..*\"}[$__range]))",
+          "expr": "sum by (span_name) (max_over_time(traces_spanmetrics_latency_sum{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|d2s|kafka|wait)\\\\..*\"}[$__range])) / sum by (span_name) (max_over_time(traces_spanmetrics_latency_count{service=\"kcp\", span_name=~\"(gateway|offset|clusterlink|migplan|groupoffsets|d2s|kafka|wait)\\\\..*\"}[$__range]))",
           "instant": true,
           "range": false,
           "legendFormat": "{{span_name}}"

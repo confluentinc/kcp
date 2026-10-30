@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/tracing"
 )
 
 // ReconciliationEngine is the I/O layer: it holds the five provider seams,
@@ -128,7 +132,9 @@ func (e *ReconciliationEngine) convertProviders() ConvertProviders {
 // refuses on the probe before it reads them, and a filtered credential could
 // turn them into an error instead of that refusal.
 func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.ReconcileInput) (*reconcile.Plan, error) {
-	facts, err := GatherConvertFacts(ctx, e.convertProviders())
+	gatherCtx, span := tracing.Start(ctx, tracerName, "migplan.gather_facts")
+	facts, err := GatherConvertFacts(gatherCtx, e.convertProviders())
+	tracing.End(span, err)
 	if err != nil {
 		return nil, err
 	}
@@ -145,10 +151,12 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	return plan, nil
 }
 
-// sourceCommittedTopics lists every source group and fetches the topics each
-// has committed on.
+// sourceCommittedTopics lists every source group (a groupoffsets.list_groups
+// span, as the conversion's own listings are) and fetches the topics each has
+// committed on, in a migplan.committed_topics span whose workers each have a
+// kafka.group_worker span.
 func (e *ReconciliationEngine) sourceCommittedTopics(ctx context.Context) (map[string][]string, error) {
-	srcGroups, err := e.sourceGroups.ListGroups(ctx)
+	srcGroups, err := groupoffsets.ListGroups(ctx, "source", e.sourceGroups.ListGroups)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups: %w", err)
 	}
@@ -156,7 +164,9 @@ func (e *ReconciliationEngine) sourceCommittedTopics(ctx context.Context) (map[s
 	for _, g := range srcGroups {
 		srcIDs = append(srcIDs, g.GroupID)
 	}
-	tracked, err := e.sourceGroups.CommittedTopics(ctx, srcIDs)
+	fetchCtx, span := tracing.Start(ctx, tracerName, "migplan.committed_topics", attribute.Int("kcp.groups", len(srcIDs)))
+	tracked, err := e.sourceGroups.CommittedTopics(fetchCtx, srcIDs)
+	tracing.End(span, err)
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets of source consumer groups: %w", err)
 	}

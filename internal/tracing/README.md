@@ -150,7 +150,11 @@ records kcp's error message, which may name topics, as the terminal output does.
 ```
 kcp migration cutover execute                       root span, one per command
 ├─ migplan.reconcile                        kcp.route.mode, kcp.refused, kcp.nothing_to_do, kcp.topics.migrate
-│  └─ clusterlink.list_mirror_topics        (its link-status read)
+│  ├─ clusterlink.list_mirror_topics        (its link-status read)
+│  ├─ migplan.gather_facts                  route conversion only: the facts it shares with verify_fence
+│  ├─ groupoffsets.list_groups              route conversion only: the source groups
+│  └─ migplan.committed_topics              route conversion only: every source group's committed offsets; kcp.groups;
+│                                           one kafka.group_worker per worker (8, on one shared client)
 ├─ migration.build_services                 client setup
 └─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, the run's settings
    │                                        (lag threshold, batch size, detection window, workers), plan counts
@@ -190,12 +194,13 @@ kcp migration cutover execute                       root span, one per command
 | `wait.retry_backoff` | Between two attempts of a call that failed on a connection error (see Retries) |
 | `d2s.gather_facts` | Dynamic-to-static verify_fence: re-gathering the facts and re-checking the route and credentials |
 | `groupoffsets.list_groups` | A consumer-group listing in verify_fence; `kcp.cluster` (`source` or `destination`), `kcp.groups` |
-| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers`; one `groupoffsets.open_client` per worker |
+| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers`; one `groupoffsets.open_client` and one `kafka.group_worker` per worker |
 | `groupoffsets.open_client` | One worker's client build, including its full metadata fetch and any retries; `kcp.worker`. A phase builds its workers one after another before handing out any group, so its connection cost is the sum of its `open_client` spans |
 | `d2s.check_link_scope` | The link and group checks; `kcp.groups.in_scope` once the group rule passes (also on a later split-brain refusal) |
 | `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.list_groups`, `groupoffsets.snapshot` |
 | `d2s.check_split_brain` | The second split-brain check, after the destination's `groupoffsets.list_groups` |
-| `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers`; `groupoffsets.apply` has one `groupoffsets.open_client` per worker |
+| `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers`; `groupoffsets.apply` has one `groupoffsets.open_client` and one `kafka.group_worker` per worker |
+| `kafka.group_worker` | One worker's groups, after its client opened: `kcp.worker`, `kcp.groups` (groups it finished), `kcp.coordinators` (distinct coordinator brokers it asked). Each group costs two round trips, both added up here over every attempt: `kcp.coordinator_lookup.count` / `.total_ms` / `.max_ms` (finding the group's coordinator) and `kcp.request.count` / `.total_ms` / `.max_ms` (the request itself, named by `kcp.request.api`: `OffsetFetch` or `OffsetCommit`). Groups are not spanned one by one. Retries show as `wait.retry_backoff` children |
 
 Every `wait.*` span carries `kcp.wait.configured_ms`.
 

@@ -167,14 +167,15 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 		}
 	}
 
-	// The fence step's listings: the source twice (snapshot 1 under verify_fence, snapshot 2 under the
+	// The listings: the source three times (reconcile's, snapshot 1 under verify_fence, snapshot 2 under the
 	// detection), the destination once.
+	reconcile := byName["migplan.reconcile"][0]
 	verify := byName["step.verify_fence"]
 	require.Len(t, verify, 1)
 	detect := byName["groupoffsets.detect_rogue_commits"]
 	require.Len(t, detect, 1)
 	lists := byName["groupoffsets.list_groups"]
-	require.Len(t, lists, 3)
+	require.Len(t, lists, 4)
 	parentsByCluster := map[string][]string{}
 	for _, l := range lists {
 		parentsByCluster[l.attrs["kcp.cluster"]] = append(parentsByCluster[l.attrs["kcp.cluster"]], l.parentID)
@@ -184,7 +185,52 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 			assert.GreaterOrEqual(t, n, r.groups, "the source listing sees every seeded group")
 		}
 	}
-	assert.ElementsMatch(t, []string{verify[0].spanID, detect[0].spanID}, parentsByCluster["source"])
+	assert.ElementsMatch(t, []string{reconcile.spanID, verify[0].spanID, detect[0].spanID}, parentsByCluster["source"])
+
+	// Reconcile's conversion reads: one span each, directly under migplan.reconcile.
+	for _, name := range []string{"migplan.gather_facts", "migplan.committed_topics"} {
+		require.Lenf(t, byName[name], 1, "one %s span", name)
+		assert.Equalf(t, reconcile.spanID, byName[name][0].parentID, "%s is a child of migplan.reconcile", name)
+	}
+
+	// Every per-group fan-out has one kafka.group_worker per worker (no more than its groups), whose groups add
+	// up to the fan-out's, each costing at least one coordinator lookup and one request of the right kind.
+	workersBy := map[string][]span{}
+	for _, w := range byName["kafka.group_worker"] {
+		workersBy[w.parentID] = append(workersBy[w.parentID], w)
+	}
+	fanOuts := []struct {
+		name, api string
+		workers   int
+	}{
+		{"migplan.committed_topics", "OffsetFetch", 8},
+		{"groupoffsets.snapshot", "OffsetFetch", wantWorkers},
+		{"groupoffsets.apply", "OffsetCommit", wantWorkers},
+	}
+	for _, f := range fanOuts {
+		for _, s := range byName[f.name] {
+			groups, err := strconv.Atoi(s.attrs["kcp.groups"])
+			require.NoErrorf(t, err, "%s carries kcp.groups", f.name)
+			ws := workersBy[s.spanID]
+			require.Lenf(t, ws, min(f.workers, groups), "one kafka.group_worker per worker under %s", f.name)
+			sum := 0
+			for _, w := range ws {
+				n := intAttr(t, w, "kcp.groups")
+				sum += n
+				assert.GreaterOrEqualf(t, intAttr(t, w, "kcp.coordinator_lookup.count"), n, "a lookup per group under %s", f.name)
+				assert.GreaterOrEqualf(t, intAttr(t, w, "kcp.request.count"), n, "a request per group under %s", f.name)
+				if n > 0 {
+					assert.Equalf(t, f.api, w.attrs["kcp.request.api"], "the request under %s", f.name)
+				}
+				for _, key := range []string{"kcp.coordinator_lookup.total_ms", "kcp.request.total_ms"} {
+					_, err := strconv.ParseFloat(w.attrs[key], 64)
+					assert.NoErrorf(t, err, "kafka.group_worker under %s carries %s", f.name, key)
+				}
+				assert.Falsef(t, w.failed, "kafka.group_worker under %s has error status", f.name)
+			}
+			assert.Equalf(t, groups, sum, "the workers under %s finished every group", f.name)
+		}
+	}
 	assert.Equal(t, []string{verify[0].spanID}, parentsByCluster["destination"])
 
 	// The rest of verify_fence: one span each, directly under the step.
@@ -193,7 +239,8 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 		assert.Equalf(t, verify[0].spanID, byName[name][0].parentID, "%s is a child of step.verify_fence", name)
 	}
 	assert.Equal(t, strconv.Itoa(r.groups), byName["d2s.check_link_scope"][0].attrs["kcp.groups.in_scope"], "every seeded group is in scope")
-	for _, name := range []string{"groupoffsets.open_client", "groupoffsets.list_groups", "d2s.gather_facts", "d2s.check_link_scope", "d2s.check_split_brain"} {
+	for _, name := range []string{"groupoffsets.open_client", "groupoffsets.list_groups", "d2s.gather_facts", "d2s.check_link_scope", "d2s.check_split_brain",
+		"migplan.gather_facts", "migplan.committed_topics"} {
 		for _, s := range byName[name] {
 			assert.Falsef(t, s.failed, "span %s has error status", name)
 		}
@@ -204,4 +251,12 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 		counts[n] = len(ss)
 	}
 	t.Logf("\n✅ RESULT [%s]: %d spans in one trace; steps %v; per-name counts %v; trace file %s", r.label, len(spans), stepNames, counts, traceFile)
+}
+
+// intAttr is span s's integer attribute key.
+func intAttr(t *testing.T, s span, key string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s.attrs[key])
+	require.NoErrorf(t, err, "%s carries %s", s.name, key)
+	return n
 }
