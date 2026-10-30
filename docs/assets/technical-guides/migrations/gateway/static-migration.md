@@ -42,7 +42,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 **Access**
 
 - Credentials for the source, the destination Kafka listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
-- A Kubernetes identity that can read and patch the Gateway CR and `get` on `pods/proxy`.
+- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role.
 
 ## How the cutover works
 
@@ -217,6 +217,7 @@ When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running 
 | Before the fence (refused plan, lag above threshold) | Nothing was changed.                                                           | Fix the cause and re-run.                                    |
 | After the fence, before promote                      | kcp removes the fence and restores offset sync. Traffic returns to the source. | Fix the cause (for example an unrouted producer) and re-run. |
 | During or after promote                              | The fence stays. Rolling back would split promoted topics from their clients.  | Fix the cause and re-run `execute`. It rolls forward.        |
+| Switch reached the CR but wasn't confirmed           | The new route is in the CR, but kcp couldn't confirm every pod applied it.     | Check the Gateway (operator acceptance, pods) before anything else. A re-run reads only the CR, sees the route bound to the destination and reports nothing to do. |
 | `Ctrl-C` or lost connection                          | The fence stays.                                                               | Re-run `execute`.                                            |
 
 Don't change the manifest's topic selection between an interrupted run and its resume unless you mean to.

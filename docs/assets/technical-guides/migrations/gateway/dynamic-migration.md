@@ -52,7 +52,7 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 **Access**
 
 - Credentials for the source, the destination Kafka listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
-- A Kubernetes identity that can read and patch the Gateway CR and `get` on `pods/proxy`.
+- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role.
 
 ## How a batch cutover works
 
@@ -66,7 +66,7 @@ kcp keeps no state between runs. Each run reconciles the manifest against the li
 
 There is no offset sync stage: the link's consumer offset sync is already off, and kcp neither pauses nor restores it.
 
-Before the first change to the Gateway, kcp works out how the Gateway applies a new config: in place (hot reload) or by rolling its pods. With hot reload it proves the Gateway applies a config revision before anything is blocked, and refuses if it can't. Then it waits for every pod to confirm each change. [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout) and [`hotReloadTimeout`](../../../migration-assets/cutover/policies.md#policies-hotreloadtimeout) bound those waits.
+At the fence step, before the first change that blocks traffic, kcp works out how the Gateway applies a new config: in place (hot reload) or by rolling its pods. With hot reload it proves the Gateway applies a config revision before anything is blocked, and refuses if it can't. This happens after the lag wait and not under `--dry-run`. Then it waits for every pod to confirm each change. [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout) and [`hotReloadTimeout`](../../../migration-assets/cutover/policies.md#policies-hotreloadtimeout) bound those waits.
 
 A failure before promote removes the fence, so the batch's traffic returns to the source.
 
@@ -264,6 +264,7 @@ When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running 
 | Before the fence (refused plan, lag above threshold)            | Nothing was changed.                                                                    | Fix the cause and re-run.                                        |
 | After the fence, before promote (for example unrouted producer) | kcp removes the fence. The batch's traffic returns to the source. The exit is non-zero. | Fix the cause (for example reconfigure the producer) and re-run. |
 | During or after promote                                         | The fence stays. Rolling back would split promoted topics from their clients.           | Fix the cause and re-run `execute`. It rolls forward.            |
+| Switch reached the CR but wasn't confirmed                      | The new routing is in the CR, but kcp couldn't confirm every pod applied it.            | Check the Gateway (operator acceptance, pods) before anything else. A re-run reads only the CR, sees the topics routed to the destination and reports nothing to do. |
 | `Ctrl-C` or lost connection                                     | The fence stays.                                                                        | Re-run `execute`.                                                |
 
 Resume with a manifest that resolves to the **same topics**. kcp recognises the fence it added by its exact shape: a `rules.fencing` entry with only `topics` (the batch's topic set) and `blocked: true`. If the topic set changes between runs, kcp treats the earlier fence as yours and leaves it on the route, so those topics stay blocked after the switch. Finish the interrupted batch first. If it has already happened, remove the leftover `blocked` entry from the route's `rules.fencing` by hand. See [Running a cutover](../../../migration-assets/cutover/running-a-cutover.md#execution-model).

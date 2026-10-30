@@ -49,12 +49,15 @@ CLI flag can override for a single run, without editing the file.
 - **Connections.** Every `execute` run, including `--dry-run`, connects to the
   source Kafka cluster, the destination Kafka cluster, the cluster-link REST
   API and the Kubernetes API, using the credentials and kubeconfig named in the
-  manifest. Each run also checks that the gateway pods
-  serve the Gateway CR before deciding anything: it reads the CR's status, the
-  gateway Deployment and its pods, and, on a gateway with hot reload on, each
-  pod's `/config` endpoint. The Kubernetes identity needs `get` and `list` on
-  `deployments`, `list` on `pods` and `get` on `pods/proxy`. kcp refuses the
-  run when the pods may not match the CR, and shows what it observed.
+  manifest. A `--dry-run` only reads: on Kubernetes it reads the Gateway CR
+  (and, for a static migration, checks that the staged Secrets exist). Every
+  run, including a dry run, also checks that the gateway pods serve the Gateway
+  CR before deciding anything: it reads the CR's status, the gateway Deployment
+  and its pods, and, on a gateway with hot reload on, each pod's `/config`
+  endpoint. kcp refuses the run when the pods may not match the CR, and shows
+  what it observed. The permissions to patch the Gateway and write cluster-link
+  configs are first used after the fence, so a real run is the first to find
+  one missing. See [Permissions](../../technical-guides/migrations/gateway/permissions.md).
 - **Producers must use the gateway.** The fence blocks traffic that goes
   through the gateway. Producers writing to the source directly are not
   blocked, and the check that catches them (`detectUnroutedProducersDuration`)
@@ -67,10 +70,12 @@ CLI flag can override for a single run, without editing the file.
   topic selection only decides which mirrors are promoted and lag-checked. A
   dynamic route fences and switches only the selected topics.
 - **Promote is the point of no return.** If a step fails after the fence is up
-  but before any topic is promoted, kcp removes the fence and restores offset
-  sync so traffic returns to the source. Once any topic is promoted or
-  promoting, kcp never removes the fence — doing so would split those clients
-  from the target. Fix the cause and re-run `execute` to roll forward. A
+  but before the promote step starts, kcp removes the fence and restores offset
+  sync so traffic returns to the source. Once promote starts, kcp never removes
+  the fence, even if no topic was promoted yet — doing so would split those
+  clients from the target. The same applies from the start of a re-run that
+  finds a topic already promoted or promoting. Fix the cause and re-run
+  `execute` to roll forward. A
   conversion promotes nothing; its point of no return is the switch (see
   [What it does](route-conversion.md#what-it-does)).
 - **Interrupting kcp leaves the fence up.** kcp has no signal handler, so

@@ -55,7 +55,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 - Credentials for the source, the destination Kafka listener, and the cluster link REST API, each as a [credentials file](../../../migration-assets/cutover/credentials.md).
 - The source and destination credentials must be able to **list every consumer group and describe every topic**. A credential that sees only part of a cluster would hide a group or topic from kcp's checks. The destination credential must also be able to **write consumer group offsets** (`READ` on the groups and the topics). On an MSK IAM source, that means `kafka-cluster:DescribeGroup` and `kafka-cluster:DescribeTopic` on every group and topic resource.
-- A Kubernetes identity that can read and patch the Gateway CR and `get` on `pods/proxy`.
+- A Kubernetes identity that can read and patch the Gateway CR and read its Deployment. With hot reload on, it also needs `list` on pods, `get` on `pods/proxy` and a cluster-scoped `get` on the Gateway CRD. See [Permissions](permissions.md) for the full Role.
 
 <!-- TODO: confirm the destination-side permissions for Confluent Cloud (which role binding gives list-all-groups, describe-all-topics and offset write on a CC cluster?). -->
 
@@ -188,7 +188,7 @@ Any policy can be overridden for a single run with its flag, for example `--dete
 
 <!-- TODO: sample output of a successful run. -->
 
-When it finishes, kcp prints `Migration completed: <metadata.name>`. Re-running a finished conversion reconciles to nothing to do.
+When it finishes, kcp prints `Route conversion completed: <metadata.name>`. Re-running a finished conversion reconciles to nothing to do.
 
 ### If a run stops
 

@@ -120,6 +120,7 @@ on every gateway pod, as in a migration.
 | A link topic's promotion is still in progress | Wait for it to reach `STOPPED`, then re-run. |
 | The route sends a link topic to the source | Finish that topic's batch (re-run `execute` on its manifest) before converting. |
 | A link topic has more partitions on the destination than on the source | Add partitions to the source copy to match, set the affected groups' offsets on the new partitions, then re-run. |
+| A link topic has fewer partitions on the destination than on the source, or a partition count can't be read | Make the destination match the source, or re-run if the read failed. The conversion refuses until the counts agree. |
 | A mirror is named differently on the destination | Conversions don't support a cluster link with `cluster.link.prefix`. |
 | No topic on the link is promoted | Migrate the route's topics first: a conversion closes a topic-based migration. |
 | A group commits on a topic that is not on the link | Migrate that topic; or delete the group's stale offsets on it (`kafka-consumer-groups --delete-offsets`), or the group; or stop or move the application outside this route that owns it. |
