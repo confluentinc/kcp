@@ -60,7 +60,12 @@ type MigrationActions struct {
 	// at most once per process, no matter which of FenceGateway/SwitchGateway
 	// runs first.
 	capabilityResolved bool
-	reporter           *reporter // user-facing terminal output
+	// gatewayGeneration is the Gateway CR metadata.generation this run expects:
+	// the one reconcile read, then the one each of kcp's own writes left. It
+	// lives here, not on the verifier, because verifier() builds a fresh one per
+	// call. 0 means unknown, and leaves every patch and check unguarded.
+	gatewayGeneration int64
+	reporter          *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -118,6 +123,7 @@ func (s *MigrationActions) verifier() *gateway.TransitionVerifier {
 		Capability:       s.gatewayCapability,
 		RolloutTimeout:   s.rolloutTimeout,
 		HotReloadTimeout: s.hotReloadTimeout,
+		Generation:       &s.gatewayGeneration,
 	}
 }
 
@@ -272,6 +278,7 @@ func (s *MigrationActions) Initialize(
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
+	s.gatewayGeneration = res.GatewayGeneration
 	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
@@ -860,6 +867,12 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		s.reporter.Detail("No topics to migrate — nothing to promote")
 		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
+	}
+
+	// Promote is the point of no return, so confirm the CR is still the one
+	// kcp's own fence left before crossing it.
+	if err := s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+		return err
 	}
 
 	if s.sourceOffset == nil || s.destinationOffset == nil {

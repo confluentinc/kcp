@@ -12,13 +12,18 @@ import (
 
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
-	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
-	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
-	waitForConfigIDFn        func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	patchGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
-	getGatewayGenerationFn   func(ctx context.Context, namespace, name string) (int64, error)
+	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
+	detectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
+	waitForConfigIDFn      func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
+	checkPermissionsFn     func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	patchGatewayRouteFn    func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
+	patchGatewayConfigIDFn func(ctx context.Context, namespace, name, configID string) (string, error)
+	getGatewayGenerationFn func(ctx context.Context, namespace, name string) (int64, error)
+	// patchRouteGenFn, when set, takes precedence over patchGatewayRouteFn and
+	// scripts the full PatchResult (generation included) or a refusal.
+	patchRouteGenFn func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error)
+	// routeExpected records every PatchGatewayRoute call's expectedGeneration.
+	routeExpected            []int64
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
@@ -57,7 +62,11 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, _ int64) (gateway.PatchResult, error) {
+func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error) {
+	m.routeExpected = append(m.routeExpected, expectedGeneration)
+	if m.patchRouteGenFn != nil {
+		return m.patchRouteGenFn(ctx, namespace, name, rp, configID, expectedGeneration)
+	}
 	if m.patchGatewayRouteFn != nil {
 		str, err := m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
 		return gateway.PatchResult{ConfigID: str}, err
