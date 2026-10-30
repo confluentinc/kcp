@@ -31,7 +31,10 @@ and the cluster link:
   `security.cluster.<targetStreamingDomain>` auth; it has no fence kcp didn't
   write and no route-level fence. The cluster link's consumer offset sync is
   disabled.
-- **The cluster link is the scope.** Every mirror topic on the link must be
+- **The cluster link is the scope.** A route pairs with one link, so the link
+  must be the one every batch on the route used: topics migrated over another
+  link are outside the scope, and a group that commits on one refuses the
+  conversion. Every mirror topic on the link must be
   promoted (`STOPPED`), named as on the source (no `cluster.link.prefix`),
   present on the destination with the same partition count as on the source,
   and routed to the destination by the dynamic route. At least one topic must
@@ -52,6 +55,12 @@ and the cluster link:
   on the groups and the topics). On an MSK IAM source, listing every group and
   describing every topic need the `kafka-cluster:DescribeGroup` and
   `kafka-cluster:DescribeTopic` actions on every group and topic resource.
+
+Keep the cluster link and the source topics until the conversion has run. The
+link's mirror topics are the conversion's only record of what to move, so a
+deleted link leaves it nothing to read and the run fails with an error reading
+the link's mirror topics rather than a purpose-written refusal. Deleting a source
+topic purges its groups' committed offsets, so there is nothing to copy for it.
 
 ## What it does
 

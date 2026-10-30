@@ -57,6 +57,12 @@ destination (test/lab only).
 | `bootstrapServers`{ #clusterlink-bootstrapservers }        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
 | `linkCredentials`{ #clusterlink-linkcredentials }         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](credentials.md#rest-credentials-specclusterlinklinkcredentials) below.  |
 
+`spec.clusterLink` takes a single link, and a dynamic route is paired with one
+link: the same link for every topic-based migration batch on the route and for the
+[route conversion](route-conversion.md), which takes its scope (the topics and
+consumer groups to move) from it. kcp doesn't check that separate manifests for the
+same route name the same link, so don't split one route's batches across links.
+
 **Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
 authenticates a direct Kafka-protocol connection to the destination
 `bootstrapServers`; `spec.clusterLink.linkCredentials` authenticates HTTP calls

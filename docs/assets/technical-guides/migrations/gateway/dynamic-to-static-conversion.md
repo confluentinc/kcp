@@ -21,12 +21,14 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 **Cluster link**
 
-- The cluster link that the dynamic migration used still exists, and **every mirror topic on it is promoted** (`STOPPED`). The link is the conversion's scope: a conversion selects no topics.
+- The cluster link that the dynamic migration used still exists, and **every mirror topic on it is promoted** (`STOPPED`). The link is the conversion's scope: its mirror topics are the topics in scope, and the consumer groups that commit only on them are in scope too. A conversion selects no topics.
 - Each link topic has the same name on both clusters, so the link has no `cluster.link.prefix`, and the same partition count on both clusters.
 - Every link topic is routed to the destination by the dynamic route. Finish any unfinished batch first.
+- Keep the link until the conversion is done. Don't delete it after the last batch: its mirror topics are kcp's only record of which topics were migrated, and kcp works out the in-scope consumer groups from those topics. Without the link, kcp can't read the scope and the run fails with an error reading the link's mirror topics.
+- Keep the source topics too. Deleting a source topic purges its consumer groups' committed offsets, so the conversion has nothing to copy for it, and the source can no longer accept offset commits on it.
 - Consumer offset sync is **off** for the link, as it was during the dynamic migration. kcp refuses otherwise. The conversion copies the offsets itself, so you don't turn sync back on.
 
-<!-- TODO: what if the route's batches used more than one cluster link (for example a new link once the first was fully promoted)? The manifest names a single link, so topics migrated over the others are on the route but off this link. Can such a route be converted, and how? -->
+- The route has **one cluster link**: every batch of the dynamic migration used it. One link maps to one route and one conversion. The manifest names a single link and the conversion's scope is that link, so topics migrated over any other link are outside it, and a consumer group that commits on one of them refuses the conversion. kcp doesn't check that the route's batches all used the same link, so this is yours to keep to.
 
 **Consumer groups**
 
