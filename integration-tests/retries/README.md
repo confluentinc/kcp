@@ -68,9 +68,8 @@ routing from the live gateway CR.
 
 ## Running
 
-Needs AWS credentials (the CFK operator image and chart come from ECR, and the gateway
-licence from AWS Secrets Manager `kcp/e2e/gateway-license`) or `GATEWAY_LICENSE_KEY`
-exported, plus `minikube`, `kubectl`, `helm`, `docker`, `openssl` and `keytool`. The
+Needs AWS credentials (the gateway licence is read from AWS Secrets Manager
+`kcp/e2e/gateway-license`) or `GATEWAY_LICENSE_KEY` exported, plus `minikube`, `kubectl`, `helm`, `docker`, `openssl` and `keytool`. The
 environment needs about 8–9 GiB of Docker memory.
 
 ```bash

@@ -3,15 +3,12 @@
 # Gateway, for the suite that proves kcp verifies a gateway transition by config
 # revision rather than by pod turnover.
 #
-# Separate from integration-tests/migration on purpose. That suite pins CFK
-# 0.1514.19, whose CRD has neither spec.configId nor spec.hotReload, and it
-# annotates its resources with platform.confluent.io/block-reconcile to stop the
-# operator re-asserting declared config over REST-set values. Both are
-# disqualifying here: without configId in the CRD kcp downgrades to rollout
-# verification and the hot-reload path is never taken, and block-reconcile would
-# stop CFK processing a configId bump at all — the suite would pass by never
-# testing anything. Nothing here is annotated, and the cluster is its own profile
-# so no resource from the other suite can be left lying around.
+# Separate from integration-tests/migration on purpose. That suite annotates its
+# resources with platform.confluent.io/block-reconcile to stop the operator
+# re-asserting declared config over REST-set values, and block-reconcile would stop
+# CFK processing a configId bump at all — this suite would pass by never testing
+# anything. Nothing here is annotated, and the cluster is its own profile so no
+# resource from the other suite can be left lying around.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,23 +22,13 @@ GATEWAY_NAME="${GATEWAY_NAME:-hotreload-gateway}"
 GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-2}"
 
 # --- Version pins. Each is load-bearing; see the table in the README. ---
-# The public Helm repo tops out at 0.1718.10, whose CRD predates spec.configId,
-# so the chart has to come from a local checkout.
-CFK_CHART_PATH="${CFK_CHART_PATH:-${HOME}/cfk-setup/gateway-hotreload/cfk-chart-v3.3.x}"
-# In CI the chart is not on disk. When CFK_CHART_OCI is set (the Semaphore path) it is
-# an oci:// reference to the chart mirrored in ECR; setup.sh pulls and unpacks it below
-# and then treats it exactly like a local checkout. CFK_CHART_VERSION is its tag.
-CFK_CHART_OCI="${CFK_CHART_OCI:-}"
-CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1718.34}"
-# Docker Hub's operator also stops at 0.1718.10, so the image comes from the
-# internal ECR mirror. It is published amd64-only.
-OPERATOR_IMAGE="${OPERATOR_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-operator:v0.1718.34-amd64}"
-OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
-OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
-OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
-OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
+# CFK 3.4.0 is public: the chart comes from Confluent's Helm repo and its default
+# operator image (confluentinc/confluent-operator:0.2038.1) is multi-arch. Its
+# Gateway CRD declares spec.configId, which this suite cannot run without.
+CFK_CHART_REPO="${CFK_CHART_REPO:-https://packages.confluent.io/helm}"
+CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.2038.1}"
 GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
-INIT_TAG="${INIT_TAG:-3.3.0}"
+INIT_TAG="${INIT_TAG:-3.4.0}"
 # The broker behind the gateway's SOURCE domain. Not a version pin in the same
 # sense as the others — nothing here depends on this being 7.6.0, it just matches
 # what the other integration suites already use, so it is usually cached.
@@ -57,13 +44,6 @@ LICENSE_SECRET_ID="${LICENSE_SECRET_ID:-kcp/e2e/gateway-license}"
 # this secret name takes precedence over the AWS path — but not over an explicit
 # GATEWAY_LICENSE_KEY.
 GATEWAY_LICENSE_GCP_SECRET="${GATEWAY_LICENSE_GCP_SECRET:-}"
-# CI likewise has no ambient AWS credentials for the ECR operator-image pull. When
-# these are set (the Semaphore path), the narrowly-scoped ECR access key is read
-# from GCP Secret Manager — over the same OIDC federation as the licence — and
-# exported for the ECR login below. Both must be set together; leave them unset
-# locally, where an ambient AWS profile is used instead.
-ECR_AWS_KEY_GCP_SECRET="${ECR_AWS_KEY_GCP_SECRET:-}"
-ECR_AWS_SECRET_GCP_SECRET="${ECR_AWS_SECRET_GCP_SECRET:-}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
@@ -78,42 +58,12 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 MINIKUBE_CPUS="${MINIKUBE_CPUS:-4}"
 MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-10240}"
 
-# Populate AWS credentials for the ECR pulls (operator image and CFK chart) from GCP
-# Secret Manager when the CI knobs are set — over the same OIDC federation as the
-# licence. Idempotent (reads once). No-op locally, where an ambient AWS profile is used
-# unchanged. Both knobs are required together. The values go straight into env vars:
-# never echoed, never written to disk, never passed as an argument.
-ensure_ecr_aws_creds() {
-  [ -n "${_ecr_aws_creds_ready:-}" ] && return 0
-  if [ -n "${ECR_AWS_KEY_GCP_SECRET:-}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET:-}" ]; then
-    command -v gcloud >/dev/null 2>&1 || {
-      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH to read the ECR credentials" >&2
-      exit 1
-    }
-    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
-    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
-    if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
-      echo "FATAL: the ECR credentials read from GCP Secret Manager are empty — does ${SERVICE_ACCOUNT_EMAIL:-the CI service account} have secretAccessor on ${ECR_AWS_KEY_GCP_SECRET} and ${ECR_AWS_SECRET_GCP_SECRET}?" >&2
-      exit 1
-    fi
-    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-    # These are static IAM-user credentials. The CI agent carries its own ambient AWS
-    # environment (instance/IMDS creds for its post-job CloudWatch hook); a leftover
-    # AWS_SESSION_TOKEN alongside a static access key makes AWS reject the request with
-    # UnrecognizedClientException, and an inherited AWS_PROFILE would shadow these. Clear
-    # both so only the scoped key is used.
-    unset AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE
-  fi
-  _ecr_aws_creds_ready=1
-}
-
 echo "=== kcp hot-reload E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "Gateway:        ${GATEWAY_NAME} (${GATEWAY_REPLICAS} replicas, +1 canary during a hot reload)"
 echo "Gateway image:  confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}"
 echo "Source broker:  ${KAFKA_IMAGE} -> ${SOURCE_BOOTSTRAP} (topic ${SOURCE_TOPIC})"
-chart_display="${CFK_CHART_OCI:+${CFK_CHART_OCI} (${CFK_CHART_VERSION}, from ECR)}"
-echo "CFK chart:      ${chart_display:-${CFK_CHART_PATH}}"
+echo "CFK chart:      ${CFK_CHART_VERSION} (${CFK_CHART_REPO})"
 echo ""
 
 # --- Preflight -------------------------------------------------------------
@@ -121,34 +71,13 @@ for bin in minikube kubectl helm docker; do
   command -v "$bin" >/dev/null 2>&1 || { echo "FATAL: ${bin} is required but not on PATH"; exit 1; }
 done
 
-# In CI, fetch the chart from the ECR OCI mirror and unpack it so everything below
-# (the configId guard and helm install) treats it exactly like a local checkout.
-if [ -n "${CFK_CHART_OCI}" ]; then
-  echo "Pulling CFK chart from the ECR mirror..."
-  ensure_ecr_aws_creds
-  chart_registry="${CFK_CHART_OCI#oci://}"
-  chart_registry="${chart_registry%%/*}"
-  aws ecr get-login-password --region "${AWS_REGION}" \
-    | helm registry login --username AWS --password-stdin "${chart_registry}" >/dev/null
-  chart_unpack_dir="$(mktemp -d)"
-  helm pull "${CFK_CHART_OCI}" --version "${CFK_CHART_VERSION}" \
-    --untar --untardir "${chart_unpack_dir}" >/dev/null
-  CFK_CHART_PATH="${chart_unpack_dir}/$(basename "${CFK_CHART_OCI}")"
-fi
-
-if [ ! -d "${CFK_CHART_PATH}" ]; then
-  cat >&2 <<EOF
-FATAL: CFK chart not found at ${CFK_CHART_PATH}
-
-  This suite needs chart 0.1718.34 (appVersion 3.3.0), the first version whose
-  Gateway CRD declares spec.configId. The public Helm repo only serves up to
-  0.1718.10, so the chart must come from a local checkout of confluent-operator
-  at origin/v3.3.x.
-
-  Point CFK_CHART_PATH at that chart directory and re-run.
-EOF
-  exit 1
-fi
+# Pull and unpack the chart so the configId guard below can inspect its CRD before
+# anything is installed.
+echo "Pulling CFK chart ${CFK_CHART_VERSION}..."
+chart_unpack_dir="$(mktemp -d)"
+helm pull confluent-for-kubernetes --repo "${CFK_CHART_REPO}" --version "${CFK_CHART_VERSION}" \
+  --untar --untardir "${chart_unpack_dir}" >/dev/null
+CFK_CHART_PATH="${chart_unpack_dir}/confluent-for-kubernetes"
 
 chart_version="$(awk '/^version:/ {print $2; exit}' "${CFK_CHART_PATH}/Chart.yaml" 2>/dev/null || true)"
 if ! grep -q 'configId' "${CFK_CHART_PATH}/crds/platform.confluent.io_gateways.yaml" 2>/dev/null; then
@@ -208,20 +137,8 @@ kubectl --context "${PROFILE}" create namespace "${NAMESPACE}" --dry-run=client 
   | kubectl --context "${PROFILE}" apply -f -
 
 # --- Images ----------------------------------------------------------------
-# Pulled on the host and side-loaded rather than pulled by the kubelet. That
-# keeps the ECR credential on the host instead of installing it into the cluster
-# as an imagePullSecret, and it is what makes the amd64-only operator image work
-# on an arm64 host: the host resolves the platform explicitly and the node's
-# runtime executes it under emulation.
+# Pulled on the host and side-loaded rather than pulled by the kubelet.
 echo "Preparing images..."
-if ! docker image inspect "${OPERATOR_IMAGE}" >/dev/null 2>&1; then
-  echo "  Authenticating to ECR..."
-  ensure_ecr_aws_creds
-  aws ecr get-login-password --region "${AWS_REGION}" \
-    | docker login --username AWS --password-stdin "${OPERATOR_REGISTRY}" >/dev/null
-  echo "  Pulling operator image (amd64)..."
-  docker pull --platform linux/amd64 "${OPERATOR_IMAGE}" >/dev/null
-fi
 for img in "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
            "confluentinc/confluent-init-container:${INIT_TAG}" \
            "${KAFKA_IMAGE}"; do
@@ -229,8 +146,7 @@ for img in "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
 done
 
 echo "  Loading images into ${PROFILE} (slow on first run)..."
-for img in "${OPERATOR_IMAGE}" \
-           "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
+for img in "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
            "confluentinc/confluent-init-container:${INIT_TAG}" \
            "${KAFKA_IMAGE}"; do
   minikube image load "$img" --profile "${PROFILE}"
@@ -273,10 +189,6 @@ else
     --namespace "${NAMESPACE}" \
     --kube-context "${PROFILE}" \
     --set namespaced=false \
-    --set "image.registry=${OPERATOR_REGISTRY}" \
-    --set "image.repository=${OPERATOR_REPO}" \
-    --set "image.tag=${OPERATOR_TAG}" \
-    --set image.pullPolicy=Never \
     --wait --timeout "${WAIT_TIMEOUT}"
 fi
 
