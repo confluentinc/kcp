@@ -38,7 +38,7 @@ A static route binds all of its traffic to one streaming domain. A static migrat
 **Use it when**
 
 - The workload can tolerate one short pause, and you would rather have one cutover than many.
-- Topics are tightly coupled (for example [transactional workloads](../transactions.md)) and must move together.
+- Topics are tightly coupled (for example [transactional workloads](../../transactions/discovery.md)) and must move together.
 - You want consumer group coordination to move with the cutover, with the cluster link syncing committed offsets across.
 
 **Things to know**
@@ -117,4 +117,4 @@ Once every topic on the cluster link has been migrated, the route is still dynam
 
 - [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html): the Gateway's own documentation for dynamic routes and fencing.
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md): every manifest field, with annotated examples for [static](../../../gateway-examples/gateway-static-migration.yaml), [dynamic](../../../gateway-examples/gateway-dynamic-migration.yaml) and [conversion](../../../gateway-examples/gateway-route-conversion.yaml) manifests.
-- [Migrate transactional workloads](../transactions.md): find the topics that must move together before you plan batches.
+- [Discover transactional workloads](../../transactions/discovery.md): find the topics that must move together before you plan batches.

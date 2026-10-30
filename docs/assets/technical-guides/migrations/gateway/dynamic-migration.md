@@ -36,7 +36,7 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 - Producers use `acks=1` or `acks=all`. Fenced clients get a retriable error and buffer; with `acks=0` they never see it and their records are dropped.
 - Consumers use the classic group protocol. KIP-848 consumers (`group.protocol=consumer`) can't use a dynamic route at all, for the whole life of the migration.
 - Every member of a consumer group connects through the route, or the group splits across two coordinators.
-- [Transactional workloads](../transactions.md) and share groups aren't supported on a dynamic route.
+- [Transactional workloads](../../transactions/discovery.md) and share groups aren't supported on a dynamic route.
 
 **Limitations**
 
@@ -153,7 +153,7 @@ kcp checks the route on every run, before anything is fenced, and `--dry-run` re
 
 Each batch is a manifest with its own topic group. Choose batches so that:
 
-- Topics that must move together are in the same batch. Find them before you plan; the [transactional workloads guide](../transactions.md) shows how, though transactional workloads themselves need a [static migration](static-migration.md).
+- Topics that must move together are in the same batch. Find them before you plan; the [transactional workloads guide](../../transactions/discovery.md) shows how, though transactional workloads themselves need a [static migration](static-migration.md).
 - Batches are **disjoint**. A topic already migrated by an earlier batch is skipped (nothing to do), so overlap doesn't fail, but it isn't a way to re-run a batch.
 - Every consumer of a topic in the batch is ready for the pause. Consumers and producers of those topics are blocked from the fence until the switch; all other topics keep running.
 
@@ -305,4 +305,4 @@ When every topic on the cluster link has been promoted, the route is still dynam
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)
 - [`kcp migration cutover execute`](../../../command-reference/migration/cutover/execute.md)
 - [`kcp migration cutover lag-check`](../../../command-reference/migration/cutover/lag-check.md)
-- [Migrate transactional workloads](../transactions.md)
+- [Discover transactional workloads](../../transactions/discovery.md)

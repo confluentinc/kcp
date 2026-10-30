@@ -222,4 +222,4 @@ After a conversion, the route is static and bound to the destination, with no `r
 - [Converting a dynamic route to static (manifest reference)](../../../migration-assets/cutover/route-conversion.md)
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)
 - [`kcp migration cutover execute`](../../../command-reference/migration/cutover/execute.md)
-- [Migrate transactional workloads](../transactions.md)
+- [Discover transactional workloads](../../transactions/discovery.md)

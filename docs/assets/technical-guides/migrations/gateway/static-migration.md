@@ -27,7 +27,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 
 - Every producer and consumer connects through the Gateway. The fence only blocks traffic that goes through it, so a producer writing to the source directly keeps writing.
 - Producers use `acks=1` or `acks=all`. Fenced clients get a retriable error and buffer; with `acks=0` they never see it and their records are dropped.
-- Consumer groups move with the cutover. KIP-848 consumers (`group.protocol=consumer`) and [transactional workloads](../transactions.md) are supported on a static route.
+- Consumer groups move with the cutover. KIP-848 consumers (`group.protocol=consumer`) and [transactional workloads](../../transactions/discovery.md) are supported on a static route.
 
 **Limitations**
 
@@ -235,4 +235,4 @@ Don't change the manifest's topic selection between an interrupted run and its r
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)
 - [`kcp migration cutover execute`](../../../command-reference/migration/cutover/execute.md)
 - [`kcp migration cutover lag-check`](../../../command-reference/migration/cutover/lag-check.md)
-- [Migrate transactional workloads](../transactions.md)
+- [Discover transactional workloads](../../transactions/discovery.md)

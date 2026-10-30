@@ -1,4 +1,4 @@
-# Migrate transactional workloads
+# Discover transactional workloads
 
 Most topics in a Kafka cluster are independent of one another. You can move `clickstream` to Confluent Cloud today and `user-profiles` next month, and neither will notice. Transactional workloads are the exception. When a producer writes to several topics inside one Kafka transaction, those writes commit or abort together, and downstream consumers reading with `isolation.level=read_committed` rely on that all-or-nothing behavior. If you cut those topics over on different days, a single transaction ends up split across two clusters, and the guarantee the application was built on is gone.
 
