@@ -94,11 +94,11 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
 		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
 
-	storedConfigID, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID)
+	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, 0)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline}, nil
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
@@ -111,11 +111,11 @@ func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, c
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
-	storedConfigID, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID)
+	patched, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID, 0)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline}, nil
 }
 
 // WaitForAccepted blocks until the Confluent operator has accepted the

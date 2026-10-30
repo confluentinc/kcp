@@ -25,6 +25,7 @@ type mockGatewayService struct {
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
 	patchGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
+	getGatewayGenerationFn   func(ctx context.Context, namespace, name string) (int64, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
@@ -61,18 +62,27 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, _ int64) (gateway.PatchResult, error) {
 	if m.patchGatewayRouteFn != nil {
-		return m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
+		str, err := m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
+		return gateway.PatchResult{ConfigID: str}, err
 	}
-	return "", fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
+	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
 }
 
-func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
+func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string, _ int64) (gateway.PatchResult, error) {
 	if m.patchGatewayConfigIDFn != nil {
-		return m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
+		str, err := m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
+		return gateway.PatchResult{ConfigID: str}, err
 	}
-	return "", fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
+	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
+}
+
+func (m *mockGatewayService) GetGatewayGeneration(ctx context.Context, namespace, name string) (int64, error) {
+	if m.getGatewayGenerationFn != nil {
+		return m.getGatewayGenerationFn(ctx, namespace, name)
+	}
+	return 0, nil
 }
 
 func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
