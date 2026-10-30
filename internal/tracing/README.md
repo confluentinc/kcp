@@ -188,9 +188,14 @@ kcp migration cutover execute                       root span, one per command
 | `step.promote` | `kcp.polls`, `kcp.batches`, `kcp.promote_errors`; one `clusterlink.promote_mirror_topics` per batch; `wait.promote_poll` between polls |
 | `wait.offset_sync_drain` | Static pause_offset_sync drain |
 | `wait.retry_backoff` | Between two attempts of a call that failed on a connection error (see Retries) |
-| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers` |
-| `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.snapshot` |
-| `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers` |
+| `d2s.gather_facts` | Dynamic-to-static verify_fence: re-gathering the facts and re-checking the route and credentials |
+| `groupoffsets.list_groups` | A consumer-group listing in verify_fence; `kcp.cluster` (`source` or `destination`), `kcp.groups` |
+| `groupoffsets.snapshot` | `kcp.groups`, `kcp.groups.with_commits`, `kcp.workers`; one `groupoffsets.open_client` per worker |
+| `groupoffsets.open_client` | One worker's client build, including its full metadata fetch and any retries; `kcp.worker` |
+| `d2s.check_link_scope` | The link and group checks; `kcp.groups.in_scope` |
+| `groupoffsets.detect_rogue_commits` | `kcp.changes`; contains `wait.rogue_commit_window`, `groupoffsets.list_groups`, `groupoffsets.snapshot` |
+| `d2s.check_split_brain` | The second split-brain check, after the destination's `groupoffsets.list_groups` |
+| `groupoffsets.destination_hwm`, `groupoffsets.apply` | Dynamic-to-static sync_offsets; `kcp.topics` / `kcp.groups`, `kcp.partitions`, `kcp.workers`; `groupoffsets.apply` has one `groupoffsets.open_client` per worker |
 
 Every `wait.*` span carries `kcp.wait.configured_ms`.
 
