@@ -449,8 +449,10 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
   `rules.fencing` by hand.
 - **A failed switch keeps the fence.** If the static route never reached the
   gateway CR, fix the cause and re-run to finish. If it reached the CR but
-  couldn't be confirmed, check the Gateway (operator acceptance, pods) instead
-  of re-running: a re-run would report nothing to do.
+  couldn't be confirmed, the gateway CR already holds the static route, and
+  the gateway pods may still serve the fenced dynamic route. A re-run checks
+  the pods before doing anything: it is refused while they don't serve the
+  CR, and finishes once they do.
 - **A finished conversion re-runs as nothing to do.**
 
 ## Policies

@@ -165,7 +165,9 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 //   - a switch failure keeps the fence (decision 25): at the switch the route is still fenced or already
 //     static, and neither can be safely undone. A switch patch that never reached the CR leaves the route
 //     fenced, and a re-run finishes the switch; one that reached the CR but was not confirmed
-//     (ErrSwitchUnconfirmed) leaves the CR static, so the operator is sent to the Gateway, not to a re-run;
+//     (ErrSwitchUnconfirmed) leaves the CR static while the pods may still serve the fenced dynamic route. A
+//     re-run's reconcile checks the pods first: it refuses while they don't serve the CR, and finishes once
+//     they do;
 //   - any other failure while kcp's fence is up rolls back: abort_fence when this run's fence has landed, or a
 //     direct unfence when an earlier run's fence was up at the start (FencedAtStart) and this run failed before
 //     its own fence step;
@@ -194,8 +196,8 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 
 	if step.Event == EventSwitch {
 		if errors.Is(stepErr, ErrSwitchUnconfirmed) {
-			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, so a re-run will report \"nothing to do\". " +
-				"The gateway pods may still be running the fenced dynamic route: check the Gateway's status (operator acceptance, pods) and fix the Gateway rather than re-running")
+			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, and the gateway pods may still serve the fenced dynamic route. " +
+				"A re-run checks the gateway pods before doing anything")
 			return stepFailure
 		}
 		o.reporter.warn("Switch failed — keeping the fence: the static route never reached the Gateway CR, so the route is still fenced; resolve the failure, then re-run to finish the switch")

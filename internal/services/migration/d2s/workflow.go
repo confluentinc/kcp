@@ -244,8 +244,9 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.Migra
 
 // ErrSwitchUnconfirmed marks a switch whose patch reached the Gateway CR but could not be confirmed (the
 // operator rejected or never accepted it, the stored configId could not be read back, or the pods never
-// reported it). The CR already holds the static route, so a re-run's reconcile reports "nothing to do" while
-// the pods may still run the fenced dynamic route: the operator must fix the Gateway, not re-run.
+// reported it). The CR already holds the static route while the pods may still serve the fenced dynamic route.
+// A re-run's reconcile checks the pods before doing anything: it refuses while they don't serve the CR, and
+// finishes once they do.
 var ErrSwitchUnconfirmed = errors.New("the static route reached the Gateway CR but could not be confirmed")
 
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular
