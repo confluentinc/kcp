@@ -51,9 +51,12 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..100`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `001..005`, `011..090` and `091..100`: drift refused (operator stopped
-mid-switch) `001..005` (static only), a terminating gateway pod refused until
-the gateway settles `091..095` (static only, never promotes), a resume after
+in `001..100`. Each mode has its own environment, so a slice may be reused
+across modes: drift refused (operator stopped
+mid-switch) `001..005` (static only), drift refused (operator stopped
+mid-unfence) `006..010` (static only), a terminating gateway pod refused until
+the gateway settles `091..095` (static only, never promotes), a switch a
+trial-licence gateway never loads `091..095` (dynamic only), a resume after
 every gateway pod restarts `096..100` (dynamic only), rollback when a resume fails before its own fence step
 `011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
@@ -150,6 +153,35 @@ after promote, deletes every gateway pod and waits for the replacements. They
 must report the CR's configId at boot, so `--dry-run` passes the pod check and
 the re-run completes. The runner's Role grants `delete` on pods for this test
 alone.
+
+`TestDrift_UnfenceStalledRerunIsRefused` (static only) is the reverse
+direction: the CR says unfenced while the pods still serve the fence. A run is
+killed after the fence, then the CFK operator is scaled to 0. The resumed run's
+`verify_fence` step fails through the failure hook, nothing is promoted, so it
+rolls back; the unfence lands on the CR but the operator never observes it, and
+the run exits non-zero with `--rollout-timeout 45s`. The CR is unfenced,
+`status.observedGeneration` is behind `metadata.generation`, and a producer
+that was acked before the migration gets no acks through the gateway.
+`--dry-run` and a re-run both refuse with `the operator has not caught up with
+the CR`, and neither moves the CR's generation. The operator is scaled back up
+when the test ends.
+
+`TestDrift_TrialLicenceSwitchRerunIsRefused` (dynamic only) reaches the pod
+check's configId comparison, which a stopped operator never does. A run is
+killed after promote. The test then removes `GATEWAY_LICENSES` from the CR's
+pod template with a JSON patch, which rolls the pods onto trial limits: they
+load the current, fenced config at start, but never hot-reload a later one.
+The test applies the switched route to the CR by hand, with a fresh
+`spec.configId`, built with the reconcile core's own fence and routing
+operations and written as TBM's switch writes it. The operator observes it
+(`status.observedGeneration` equals `metadata.generation`), no pod rolls, and
+for 30 seconds every pod's `GET /config` still reports the previous configId,
+read through kcp's own pod check. `--dry-run` and a re-run both refuse with
+the pod check's out-of-sync detail (`every gateway pod reports configId ...,
+but the CR's spec.configId is ...`), and neither moves the CR's generation.
+The licence entry is put back when the test ends, and the test waits for the
+pods to roll and report the CR's configId. kcp's own switch can't create this
+drift: its hot-reload check stops a trial-licence run before the switch.
 
 A generation test (`generation_e2e_test.go`, both modes) covers kcp's check on
 the gateway CR's `metadata.generation`. Run 1 is held after `fence_verified`
