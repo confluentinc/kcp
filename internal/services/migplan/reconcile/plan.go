@@ -160,6 +160,11 @@ type Plan struct {
 	// it. It exists for a later drift diff, not for the plan itself.
 	GatewayYAML string
 
+	// GatewayGeneration is the metadata.generation of the CR GatewayYAML was
+	// cleaned from; 0 if the source did not carry it. Set even on a refusal,
+	// as GatewayYAML is. The core does not read it.
+	GatewayGeneration int64
+
 	// Mode is the strategy this plan was reconciled under ("dynamic",
 	// "static" or "convert"), so a caller knows how to interpret the
 	// artifacts. Dynamic: every one is a whole rules: block, set on the named

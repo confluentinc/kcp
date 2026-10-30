@@ -153,7 +153,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Unrouted producers detected — attempting to remove the fence to restore traffic",
 		"the rollback banner names detection as the reason, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(), "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
@@ -250,7 +250,7 @@ func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) 
 	assert.Equal(t, 1, applyCount, "the fence only — no rollback patch")
 	assert.Equal(t, StateFenced, orchestrator.fsm.Current(), "the FSM stays where the failure left it")
 	assert.Contains(t, out.String(), "keeping the fence", "the run must say it is not unfencing")
-	assert.NotContains(t, out.String(), "removing fence", "nothing is unfenced")
+	assert.NotContains(t, out.String(), "attempting to remove the fence", "nothing is unfenced")
 }
 
 // TestTBMOrchestrator_Execute_FailureHookFailsTheStep: with the test-only
@@ -323,7 +323,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers, "a fetch failure is not a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
-	assert.Contains(t, out.String(), "Verifying fence failed — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Verifying fence failed — attempting to remove the fence to restore traffic",
 		"the rollback banner names the failed step, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(),
 		"a halting error while fenced and pre-promote must abort_fence back to initialized")
@@ -977,7 +977,7 @@ func TestTBMOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBa
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
 			assert.Equal(t, 1, patches, "the rollback only: this run never reached its own fence")
-			assert.Contains(t, out, "removing fence to restore traffic")
+			assert.Contains(t, out, "attempting to remove the fence to restore traffic")
 			assert.Contains(t, out, "Gateway unfenced")
 		})
 	}
@@ -991,7 +991,7 @@ func TestTBMOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_Noth
 
 	require.Error(t, err)
 	assert.Equal(t, 0, patches, "nothing is fenced, so nothing is patched")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 }
 
 // TestTBMOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
@@ -1012,7 +1012,7 @@ func TestTBMOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t 
 
 	require.Error(t, err)
 	assert.Equal(t, 1, patches, "this run's fence only: no rollback from promote onwards")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, state)
 }
 
@@ -1063,7 +1063,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence(t *testing.T) 
 	require.NoError(t, ferr)
 	assert.Equal(t, "rules", patches[1].Field)
 	assert.Equal(t, want, patches[1].Value, "the removal sets the rules to reconcile's rollback target")
-	assert.Contains(t, out, "removing it")
+	assert.Contains(t, out, "attempting to remove it")
 	assert.Contains(t, out, "Fence removed")
 	assert.Equal(t, StateLagsOk, state, "the fence transition never completed")
 }
@@ -1131,7 +1131,7 @@ func TestTBMOrchestrator_Execute_PromoteFails_KeepsTheFence(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 promote boom")
 	assert.Equal(t, 1, patches, "the fence only: no rollback patch")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, state)
 }
 
@@ -1144,6 +1144,300 @@ func TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "k8s API unavailable")
 	assert.Equal(t, 2, patches, "the fence and the failed switch: no rollback patch")
-	assert.NotContains(t, out, "removing fence")
+	assert.NotContains(t, out, "attempting to remove the fence")
 	assert.Equal(t, StatePromoted, state)
+}
+
+// --- Gateway CR generation checks ---
+
+// changedCR is the refusal a guarded write or check returns once the CR moved.
+func changedCR(expected, observed int64) *gateway.GenerationChangedError {
+	return &gateway.GenerationChangedError{Namespace: "confluent", Gateway: "gateway-initial", Expected: expected, Observed: observed}
+}
+
+// scriptedRoutePatches answers the n-th route patch (0-based) with results[n],
+// recording the patches; calls past the script succeed at the expected generation.
+func scriptedRoutePatches(patches *[]gateway.RoutePatch, results ...func(expected int64) (gateway.PatchResult, error)) func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
+	return func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string, expected int64) (gateway.PatchResult, error) {
+		n := len(*patches)
+		*patches = append(*patches, rp)
+		if n < len(results) {
+			return results[n](expected)
+		}
+		return gateway.PatchResult{ConfigID: configID, Generation: expected}, nil
+	}
+}
+
+// patchedTo answers a route patch as a write that left the CR at gen.
+func patchedTo(gen int64) func(int64) (gateway.PatchResult, error) {
+	return func(int64) (gateway.PatchResult, error) { return gateway.PatchResult{Generation: gen}, nil }
+}
+
+// refusedAs answers a route patch as refused: the CR is at observed.
+func refusedAs(observed int64) func(int64) (gateway.PatchResult, error) {
+	return func(expected int64) (gateway.PatchResult, error) {
+		return gateway.PatchResult{}, changedCR(expected, observed)
+	}
+}
+
+// generationRunTBM builds a TBM orchestrator whose gateway mock the caller
+// scripts after construction, with the reconcile result's generation set to 4.
+func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mockGatewayService, *migplan.Result, *strings.Builder, *strings.Builder) {
+	t.Helper()
+	orch, _ := newTestOrchestrator(t)
+	gw := &mockGatewayService{}
+	orch.actions.gatewayService = gw
+	out, errOut := &strings.Builder{}, &strings.Builder{}
+	orch.reporter = &reporter{out: out, err: errOut}
+	res := realisticReconcileResult()
+	res.GatewayGeneration = 4
+	res.FencedAtStart = fencedAtStart
+	return orch, gw, res, out, errOut
+}
+
+func TestTBMOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
+	// The fence write reports no generation, so the CR is still at 4 at promote.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, gw.routeExpected)
+	assert.Equal(t, int64(4), gw.routeExpected[0], "the fence patch is guarded on the generation reconcile read")
+}
+
+func TestTBMOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out, errOut := generationRunTBM(t, false)
+	var promotes int64
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promotes, 1)
+			return nil, fmt.Errorf("promote must not run")
+		},
+	}
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Zero(t, atomic.LoadInt64(&promotes), "promote must not run")
+	require.Len(t, patches, 1, "the fence only: no unfence")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, not promoted.")
+	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+gateway.InspectCommands("confluent", "gateway-initial"))
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+func TestTBMOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, false)
+	topics := []string{"t1.order", "t2.order"}
+	res.PromoteTopics, res.MigrateTopics = topics, topics
+	orch.actions.promoteBatchSize = 1
+	var mu sync.Mutex
+	var requests [][]string
+	stopped := map[string]bool{}
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, names []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			requests = append(requests, names)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range names {
+				stopped[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			var mts []clusterlink.MirrorTopic
+			for _, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if stopped[name] {
+					status = clusterlink.MirrorStatusStopped
+				}
+				mts = append(mts, clusterlink.MirrorTopic{MirrorTopicName: name, MirrorStatus: status})
+			}
+			return mts, nil
+		},
+	}
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	// The CR moves once the first batch is accepted.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(requests) == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, [][]string{{"t1.order"}}, requests, "the second batch's request is never sent")
+	require.Len(t, patches, 1, "the fence only: no unfence, no switch")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+func TestTBMOrchestrator_Execute_NoTopics_SkipsThePromoteCheck(t *testing.T) {
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	res.PromoteTopics, res.MigrateTopics = nil, nil
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 9, nil }
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged, "with no topics to promote the generation is not read")
+}
+
+func TestTBMOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, true)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 1, "the refused fence only: the earlier run's rollback is skipped")
+	assert.NotContains(t, out.String(), "attempting to remove the fence")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
+}
+
+func TestTBMOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoWrite(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	orch, gw, res, out, _ := generationRunTBM(t, true)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the originating failure still surfaces")
+	require.Len(t, patches, 1, "the refused unfence only")
+	assert.NotContains(t, out.String(), "Gateway unfenced")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
+}
+
+// unconfirmedFenceRunTBM fails the fence's acceptance wait once, so the fence
+// lands but is never confirmed and the orchestrator compensates.
+func unconfirmedFenceRunTBM(t *testing.T) (*TBMOrchestrator, *mockGatewayService, *migplan.Result, *strings.Builder) {
+	t.Helper()
+	orch, gw, res, out, _ := generationRunTBM(t, false)
+	var accepts int64
+	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+		if atomic.AddInt64(&accepts, 1) == 1 {
+			return fmt.Errorf("gateway spec not accepted")
+		}
+		return nil
+	}
+	return orch, gw, res, out
+}
+
+func TestTBMOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *testing.T) {
+	orch, gw, res, _ := unconfirmedFenceRunTBM(t)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 2, "the fence, then the removing apply")
+	assert.Equal(t, []int64{4, 5}, gw.routeExpected, "the removal is guarded on the generation the fence left")
+}
+
+func TestTBMOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out := unconfirmedFenceRunTBM(t)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 2, "the fence, then the refused removal")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied but not confirmed on every gateway pod.")
+}
+
+func TestTBMOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
+	orch, gw, res, out, _ := generationRunTBM(t, false)
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the originating failure still surfaces")
+	require.Len(t, patches, 2, "the fence, then the refused unfence")
+	assert.Contains(t, out.String(), changedCR(5, 6).Summary("fence applied, not promoted"))
+	assert.Equal(t, StateFenced, orch.fsm.Current())
+}
+
+func TestTBMOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopicsPromoted(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, true)
+	res.RollbackAllowed = false
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 1, "the refused fence only")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, some topics already promoted.")
+	assert.NotContains(t, out.String(), "not promoted")
+}
+
+func TestStoppedAt(t *testing.T) {
+	tests := []struct {
+		state         string
+		fencedAtStart bool
+		mayBePromoted bool
+		want          string
+	}{
+		{StateUninitialized, false, false, "no fence applied"},
+		{StateInitialized, false, false, "no fence applied"},
+		{StateLagsOk, false, false, "no fence applied"},
+		{StateUninitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateInitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateLagsOk, true, false, "an earlier run's fence applied, not promoted"},
+		{StateFenced, false, false, "fence applied, not promoted"},
+		{StateFenceVerified, true, false, "fence applied, not promoted"},
+		{StateUninitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateInitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, false, true, "fence applied, some topics already promoted"},
+		{StateFenced, false, true, "fence applied, some topics already promoted"},
+		{StateFenceVerified, true, true, "fence applied, some topics already promoted"},
+		{StatePromoted, true, false, "topics promoted, gateway not switched"},
+		{StatePromoted, false, true, "topics promoted, gateway not switched"},
+		{StateSwitched, false, false, "gateway switched"},
+		{StateSwitched, false, true, "gateway switched"},
+		{"some_future_state", false, false, "run stopped at state some_future_state"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/%v/%v", tt.state, tt.fencedAtStart, tt.mayBePromoted), func(t *testing.T) {
+			assert.Equal(t, tt.want, stoppedAt(tt.state, tt.fencedAtStart, tt.mayBePromoted))
+		})
+	}
 }

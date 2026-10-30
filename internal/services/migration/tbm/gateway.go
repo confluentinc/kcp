@@ -89,6 +89,7 @@ func (a *TBMActions) verifier() *gateway.TransitionVerifier {
 		Capability:       a.gatewayCapability,
 		RolloutTimeout:   a.rolloutTimeout,
 		HotReloadTimeout: a.hotReloadTimeout,
+		Generation:       &a.gatewayGeneration,
 	}
 }
 

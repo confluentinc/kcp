@@ -214,3 +214,24 @@ func TestGatewayFileWithSync(t *testing.T) {
 		t.Errorf("default Sync.Verdict = %v, want SyncUnchecked", plain.Sync.Verdict)
 	}
 }
+
+func TestGatewayFileLoad_Generation(t *testing.T) {
+	gw, err := NewGatewayFile("testdata/gateway-static-switched-unobserved.yaml", "migration-route").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gw.Generation != 7 {
+		t.Errorf("Generation = %d, want 7", gw.Generation)
+	}
+	if strings.Contains(gw.RawYAML, "generation") {
+		t.Errorf("RawYAML must still have generation stripped, got: %s", gw.RawYAML)
+	}
+
+	plain, err := NewGatewayFile("testdata/gateway-dynamic.yaml", "migration-route").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Generation != 0 {
+		t.Errorf("Generation without metadata.generation = %d, want 0", plain.Generation)
+	}
+}

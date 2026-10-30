@@ -103,6 +103,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	// Carry the gateway CR the plan was computed against, so a caller can re-pull
 	// it before mutating and diff for drift.
 	plan.GatewayYAML = gw.RawYAML
+	plan.GatewayGeneration = gw.Generation
 	return plan, nil
 }
 
@@ -142,6 +143,7 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	plan := reconcile.ReconcileConvert(in, facts.Gateway, facts.SourceTopics, facts.TargetTopics, facts.Link.LinkMirrors,
 		facts.Partitions, facts.Link.OffsetSyncEnabled, facts.IDs, facts.GroupFacts(tracked))
 	plan.GatewayYAML = facts.Gateway.RawYAML
+	plan.GatewayGeneration = facts.Gateway.Generation
 	return plan, nil
 }
 

@@ -72,6 +72,12 @@ type Result struct {
 	// cleaned, the whole document is stable enough to diff as-is.
 	GatewayYAML string
 
+	// GatewayGeneration is the metadata.generation of the CR GatewayYAML was
+	// pulled from (stripped from GatewayYAML itself by cleanGatewayDoc). Set
+	// on both success and refusal, like GatewayYAML. It is the generation the
+	// run's gateway patches are first conditioned on.
+	GatewayGeneration int64
+
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
@@ -231,7 +237,8 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 
 func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
-		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, GatewayGeneration: plan.GatewayGeneration,
+		Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics
 		r.AwaitStopped = plan.Artifacts.AwaitStopped

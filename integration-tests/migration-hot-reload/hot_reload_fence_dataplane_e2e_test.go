@@ -216,7 +216,7 @@ func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gatewa
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	_, err = e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, configID)
+	_, err = e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, configID, 0)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{

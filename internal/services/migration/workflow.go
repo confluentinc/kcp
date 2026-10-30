@@ -60,7 +60,15 @@ type MigrationActions struct {
 	// at most once per process, no matter which of FenceGateway/SwitchGateway
 	// runs first.
 	capabilityResolved bool
-	reporter           *reporter // user-facing terminal output
+	// gatewayGeneration is the Gateway CR metadata.generation this run expects:
+	// the one reconcile read, then the one each of kcp's own writes left. It
+	// lives here, not on the verifier, because verifier() builds a fresh one per
+	// call. 0 means unknown, and leaves every patch and check unguarded.
+	gatewayGeneration int64
+	// promoteSubmitted is set once this run has sent a promote request: from
+	// then on some topics may be promoted, so a stop must not say otherwise.
+	promoteSubmitted bool
+	reporter         *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -118,6 +126,7 @@ func (s *MigrationActions) verifier() *gateway.TransitionVerifier {
 		Capability:       s.gatewayCapability,
 		RolloutTimeout:   s.rolloutTimeout,
 		HotReloadTimeout: s.hotReloadTimeout,
+		Generation:       &s.gatewayGeneration,
 	}
 }
 
@@ -272,6 +281,7 @@ func (s *MigrationActions) Initialize(
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
+	s.gatewayGeneration = res.GatewayGeneration
 	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
@@ -1033,7 +1043,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		s.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		// Each promote request is irreversible, so confirm the CR is still the
+		// one kcp's own fence left immediately before sending it: every batch,
+		// every retry.
+		if err := s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+			return err
+		}
 		batches++
+		s.promoteSubmitted = true
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
