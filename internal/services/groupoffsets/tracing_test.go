@@ -24,7 +24,7 @@ func TestTracing_DetectRogueCommits_SpansWaitAndSnapshot(t *testing.T) {
 
 	spans := tracingtest.Spans(rec)
 	detect := tracingtest.Find(t, spans, "groupoffsets.detect_rogue_commits")
-	assert.Equal(t, []string{"wait.rogue_commit_window", "groupoffsets.snapshot"},
+	assert.Equal(t, []string{"wait.rogue_commit_window", "groupoffsets.list_groups", "groupoffsets.snapshot"},
 		tracingtest.Names(tracingtest.Children(spans, detect)))
 	snap := tracingtest.Find(t, spans, "groupoffsets.snapshot")
 	n, _ := tracingtest.Attr(snap, "kcp.groups.with_commits")
@@ -74,4 +74,34 @@ func TestTracing_TakeSnapshot_FailedClientEndsItsSpanWithError(t *testing.T) {
 	opens := tracingtest.FindAll(tracingtest.Spans(rec), "groupoffsets.open_client")
 	require.Len(t, opens, 1, "the pool stops building workers after the first setup failure")
 	assert.Equal(t, codes.Error, opens[0].Status().Code)
+}
+
+func TestTracing_ListGroups_RecordsClusterAndCount(t *testing.T) {
+	rec := tracingtest.Install(t)
+	lister := func(context.Context) ([]string, error) { return []string{"a", "b", "c"}, nil }
+
+	got, err := ListGroups(context.Background(), "source", lister)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, got)
+
+	s := tracingtest.Find(t, tracingtest.Spans(rec), "groupoffsets.list_groups")
+	cluster, _ := tracingtest.Attr(s, "kcp.cluster")
+	assert.Equal(t, "source", cluster.AsString())
+	n, _ := tracingtest.Attr(s, "kcp.groups")
+	assert.Equal(t, int64(3), n.AsInt64())
+	tracingtest.AssertNoValues(t, tracingtest.Spans(rec), "a", "b", "c")
+}
+
+func TestTracing_ListGroups_FailureEndsSpanWithErrorAndReturnsItUnchanged(t *testing.T) {
+	rec := tracingtest.Install(t)
+	boom := errors.New("broker b2 failed")
+	lister := func(context.Context) ([]string, error) { return nil, boom }
+
+	_, err := ListGroups(context.Background(), "destination", lister)
+	require.Same(t, boom, err)
+
+	s := tracingtest.Find(t, tracingtest.Spans(rec), "groupoffsets.list_groups")
+	assert.Equal(t, codes.Error, s.Status().Code)
+	_, hasCount := tracingtest.Attr(s, "kcp.groups")
+	assert.False(t, hasCount, "a failed listing records no count")
 }

@@ -149,7 +149,7 @@ func DetectRogueCommits(ctx context.Context, first Snapshot, listGroups GroupLis
 	if err != nil {
 		return nil, err
 	}
-	groups, err := listGroups(ctx)
+	groups, err := ListGroups(ctx, "source", listGroups)
 	if err != nil {
 		return nil, fmt.Errorf("listing source consumer groups for the second snapshot: %w", err)
 	}
