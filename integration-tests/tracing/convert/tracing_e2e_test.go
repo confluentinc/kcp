@@ -151,6 +151,49 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 	assert.Equal(t, strconv.Itoa(r.groups), apply[0].attrs["kcp.groups"], "groups synced")
 	assert.Equal(t, strconv.Itoa(wantWorkers), apply[0].attrs["kcp.workers"])
 
+	// Each worker's client build is its own span: one per worker actually built (no more than the groups
+	// handed out), under each snapshot and under the apply.
+	opensBy := map[string][]span{}
+	for _, o := range byName["groupoffsets.open_client"] {
+		opensBy[o.parentID] = append(opensBy[o.parentID], o)
+	}
+	for _, name := range []string{"groupoffsets.snapshot", "groupoffsets.apply"} {
+		for _, s := range byName[name] {
+			groups, err := strconv.Atoi(s.attrs["kcp.groups"])
+			require.NoErrorf(t, err, "%s carries kcp.groups", name)
+			workers, err := strconv.Atoi(s.attrs["kcp.workers"])
+			require.NoErrorf(t, err, "%s carries kcp.workers", name)
+			assert.Lenf(t, opensBy[s.spanID], min(workers, groups), "one open_client per worker under %s", name)
+		}
+	}
+
+	// The fence step's listings: the source twice (snapshot 1 under verify_fence, snapshot 2 under the
+	// detection), the destination once.
+	verify := byName["step.verify_fence"]
+	require.Len(t, verify, 1)
+	detect := byName["groupoffsets.detect_rogue_commits"]
+	require.Len(t, detect, 1)
+	lists := byName["groupoffsets.list_groups"]
+	require.Len(t, lists, 3)
+	parentsByCluster := map[string][]string{}
+	for _, l := range lists {
+		parentsByCluster[l.attrs["kcp.cluster"]] = append(parentsByCluster[l.attrs["kcp.cluster"]], l.parentID)
+		n, err := strconv.Atoi(l.attrs["kcp.groups"])
+		require.NoError(t, err, "list_groups carries kcp.groups")
+		if l.attrs["kcp.cluster"] == "source" {
+			assert.GreaterOrEqual(t, n, r.groups, "the source listing sees every seeded group")
+		}
+	}
+	assert.ElementsMatch(t, []string{verify[0].spanID, detect[0].spanID}, parentsByCluster["source"])
+	assert.Equal(t, []string{verify[0].spanID}, parentsByCluster["destination"])
+
+	// The rest of verify_fence: one span each, directly under the step.
+	for _, name := range []string{"d2s.gather_facts", "d2s.check_link_scope", "d2s.check_split_brain"} {
+		require.Lenf(t, byName[name], 1, "one %s span", name)
+		assert.Equalf(t, verify[0].spanID, byName[name][0].parentID, "%s is a child of step.verify_fence", name)
+	}
+	assert.Equal(t, strconv.Itoa(r.groups), byName["d2s.check_link_scope"][0].attrs["kcp.groups.in_scope"], "every seeded group is in scope")
+
 	counts := map[string]int{}
 	for n, ss := range byName {
 		counts[n] = len(ss)
