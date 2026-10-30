@@ -113,8 +113,12 @@ Once every topic on the cluster link has been migrated, the route is still dynam
 
 ## Next steps
 
-- [Migrate with a static route](static-migration.md): the step-by-step guide for an all-at-once migration. Guides for the other two workflows are coming; until then:
-
+- [Migrate with a static route](static-migration.md): the step-by-step guide for an all-at-once migration.
+- [Migrate with a dynamic route](dynamic-migration.md): the step-by-step guide for a topic-based migration.
+- [Convert a dynamic route to static](dynamic-to-static-conversion.md): the step-by-step guide for closing out a topic-based migration.
 - [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html): the Gateway's own documentation for dynamic routes and fencing.
+- [Permissions](permissions.md): what each identity needs, and what you see when a grant is missing.
+- [Idempotency and resumability](idempotency.md): what a re-run does and doesn't do.
+- [kcp limitations](limitations.md): limits of kcp itself, beyond the Gateway's.
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md): every manifest field, with annotated examples for [static](../../../gateway-examples/gateway-static-migration.yaml), [dynamic](../../../gateway-examples/gateway-dynamic-migration.yaml) and [conversion](../../../gateway-examples/gateway-route-conversion.yaml) manifests.
 - [Discover transactional workloads](../../transactions/discovery.md): find the topics that must move together before you plan batches.
