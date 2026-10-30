@@ -4,8 +4,9 @@ A dynamic migration moves topics to Confluent Cloud in batches, with no client c
 
 This guide walks through the prerequisites, the migration manifest, and a batch run. For how dynamic migrations compare with static ones, see [Gateway migrations](index.md).
 
+<!-- prettier-ignore -->
 !!! warning "Early Access"
-At the time of writing, dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema may change before general availability. Read [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html) before planning a migration.
+    At the time of writing, dynamic routing is an Early Access feature of Confluent Private Cloud Gateway 1.4, intended for evaluation and non-production testing. Its configuration schema may change before general availability. Read [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html) before planning a migration.
 
 ## Prerequisites and limitations
 

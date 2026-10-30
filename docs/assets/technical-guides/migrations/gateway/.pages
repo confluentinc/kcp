@@ -3,3 +3,4 @@ nav:
   - Overview: index.md
   - Static migration: static-migration.md
   - Dynamic migration: dynamic-migration.md
+  - Dynamic to static conversion: dynamic-to-static-conversion.md
