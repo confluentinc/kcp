@@ -2500,6 +2500,67 @@ func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
+func TestOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, _, alters := generationRun(t)
+	orch.actions.promoteBatchSize = 1
+	var mu sync.Mutex
+	var requests [][]string
+	stopped := map[string]bool{}
+	link := orch.actions.clusterLinkService.(*mockClusterLinkService)
+	link.promoteMirrorTopicsFn = func(_ context.Context, _ clusterlink.Config, topics []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests = append(requests, topics)
+		resp := &clusterlink.PromoteMirrorTopicsResponse{}
+		for _, topic := range topics {
+			stopped[topic] = true
+			resp.Data = append(resp.Data, struct {
+				MirrorTopicName string `json:"mirror_topic_name"`
+				ErrorMessage    string `json:"error_message,omitempty"`
+				ErrorCode       int    `json:"error_code,omitempty"`
+			}{MirrorTopicName: topic})
+		}
+		return resp, nil
+	}
+	link.listMirrorTopicsFn = func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		var mts []clusterlink.MirrorTopic
+		for _, topic := range config.Topics {
+			status := clusterlink.MirrorStatusActive
+			if stopped[topic] {
+				status = clusterlink.MirrorStatusStopped
+			}
+			mts = append(mts, clusterlink.MirrorTopic{MirrorTopicName: topic, MirrorStatus: status})
+		}
+		return mts, nil
+	}
+	var patches []gateway.RoutePatch
+	gw := gatewayMock(orch)
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	// The CR moves once the first batch is accepted.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(requests) == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, [][]string{{"topic-a"}}, requests, "the second batch's request is never sent")
+	require.Len(t, patches, 1, "the fence only: no unfence, no switch")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
 func TestOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
 	orch, config, out, _, alters := generationRun(t)
 	var patches []gateway.RoutePatch

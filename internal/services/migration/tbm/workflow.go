@@ -383,14 +383,6 @@ func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []strin
 func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationConfig, restAuth clusterlink.Authenticator) error {
 	slog.Debug("topic promotion process started")
 
-	// Promote is the point of no return, so confirm the CR is still the one
-	// kcp's own fence left before crossing it.
-	if len(config.Topics) > 0 {
-		if err := a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
-			return err
-		}
-	}
-
 	const maxPromoteRetries = 3
 
 	clusterLinkConfig := clusterlink.Config{
@@ -545,6 +537,12 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		a.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		// Each promote request is irreversible, so confirm the CR is still the
+		// one kcp's own fence left immediately before sending it: every batch,
+		// every retry.
+		if err := a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+			return err
+		}
 		batches++
 		a.promoteSubmitted = true
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)

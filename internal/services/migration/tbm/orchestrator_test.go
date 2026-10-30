@@ -1233,6 +1233,66 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testin
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
+func TestTBMOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, false)
+	topics := []string{"t1.order", "t2.order"}
+	res.PromoteTopics, res.MigrateTopics = topics, topics
+	orch.actions.promoteBatchSize = 1
+	var mu sync.Mutex
+	var requests [][]string
+	stopped := map[string]bool{}
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, names []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			requests = append(requests, names)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range names {
+				stopped[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			var mts []clusterlink.MirrorTopic
+			for _, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if stopped[name] {
+					status = clusterlink.MirrorStatusStopped
+				}
+				mts = append(mts, clusterlink.MirrorTopic{MirrorTopicName: name, MirrorStatus: status})
+			}
+			return mts, nil
+		},
+	}
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	// The CR moves once the first batch is accepted.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(requests) == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, [][]string{{"t1.order"}}, requests, "the second batch's request is never sent")
+	require.Len(t, patches, 1, "the fence only: no unfence, no switch")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
 func TestTBMOrchestrator_Execute_NoTopics_SkipsThePromoteCheck(t *testing.T) {
 	orch, gw, res, _, _ := generationRunTBM(t, false)
 	res.PromoteTopics, res.MigrateTopics = nil, nil
