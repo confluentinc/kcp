@@ -457,6 +457,10 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
   the gateway pods may still serve the fenced dynamic route. A re-run checks
   the pods before doing anything: it is refused while they don't serve the
   CR, and finishes once they do.
+- **A changed Gateway CR stops the run.** If the Gateway CR changes while the
+  conversion runs (its `metadata.generation` is not the one kcp's own last
+  write left), kcp stops without writing to the gateway and keeps its fence.
+  The next run checks the gateway pods before doing anything.
 - **A finished conversion re-runs as nothing to do.**
 
 ## Policies
