@@ -57,7 +57,8 @@ and the cluster link:
   `kafka-cluster:DescribeTopic` actions on every group and topic resource.
 
 Keep the cluster link and the source topics until the conversion has run. The
-link's mirror topics are the conversion's only record of what to move, so a
+link's mirror topics are the conversion's only record of which topics were
+migrated, and kcp works out the in-scope consumer groups from those topics, so a
 deleted link leaves it nothing to read and the run fails with an error reading
 the link's mirror topics rather than a purpose-written refusal. Deleting a source
 topic purges its groups' committed offsets, so there is nothing to copy for it.
