@@ -172,9 +172,9 @@ func TestConfigIDOnlyApplyHotReloads(t *testing.T) {
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	stored, err := e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID)
+	stored, err := e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID, 0)
 	require.NoError(t, err)
-	require.Equal(t, configID, stored, "the API server must persist the configId kcp sent")
+	require.Equal(t, configID, stored.ConfigID, "the API server must persist the configId kcp sent")
 
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 
@@ -205,7 +205,7 @@ func TestNoRollIsObservedForAHotReload(t *testing.T) {
 
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID, 0)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
@@ -231,7 +231,7 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 
 	first, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, first)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, first, 0)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
@@ -243,7 +243,7 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 
 	second, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, second)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, second, 0)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{

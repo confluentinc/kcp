@@ -19,6 +19,7 @@ import (
 type mockService struct {
 	patchGatewayRouteFn              func(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)
 	patchGatewayConfigIDFn           func(ctx context.Context, namespace, gatewayName, configID string) (string, error)
+	getGatewayGenerationFn           func(ctx context.Context, namespace, name string) (int64, error)
 	getGatewayDeploymentGenerationFn func(ctx context.Context, namespace, gatewayName string) (int64, error)
 }
 
@@ -38,18 +39,27 @@ func (m *mockService) CheckPermissions(context.Context, string, string, string, 
 	return true, nil
 }
 
-func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, _ int64) (PatchResult, error) {
 	if m.patchGatewayRouteFn != nil {
-		return m.patchGatewayRouteFn(ctx, namespace, gatewayName, rp, configID)
+		str, err := m.patchGatewayRouteFn(ctx, namespace, gatewayName, rp, configID)
+		return PatchResult{ConfigID: str}, err
 	}
-	return "", nil
+	return PatchResult{}, nil
 }
 
-func (m *mockService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
+func (m *mockService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, _ int64) (PatchResult, error) {
 	if m.patchGatewayConfigIDFn != nil {
-		return m.patchGatewayConfigIDFn(ctx, namespace, gatewayName, configID)
+		str, err := m.patchGatewayConfigIDFn(ctx, namespace, gatewayName, configID)
+		return PatchResult{ConfigID: str}, err
 	}
-	return "", nil
+	return PatchResult{}, nil
+}
+
+func (m *mockService) GetGatewayGeneration(ctx context.Context, namespace, name string) (int64, error) {
+	if m.getGatewayGenerationFn != nil {
+		return m.getGatewayGenerationFn(ctx, namespace, name)
+	}
+	return 0, nil
 }
 
 func (m *mockService) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {

@@ -44,13 +44,22 @@ type Service interface {
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
 	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)
-	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
+	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error)
+	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error)
+	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
 	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
+}
+
+// PatchResult is what a Gateway CR patch reports back. Generation is the
+// response's metadata.generation whenever the patch reached the cluster,
+// including alongside ErrApplyUnverified; it is 0 when nothing was written.
+type PatchResult struct {
+	ConfigID   string
+	Generation int64
 }
 
 // PodRolloutProgress reports the current state of a pod rollout
@@ -171,42 +180,54 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 // write, which would have self-healed by re-applying the full captured CR; a
 // narrow JSON Patch has nothing to fall back to. The returned string is the
 // configId the API server stored (empty when none sent).
-func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+//
+// When expectedGeneration > 0 the write is conditional on the CR's
+// metadata.generation still being that value: a pre-patch read refuses a CR that
+// has already moved, and a test op in the patch refuses one that moves between
+// the read and the write. Both return a *GenerationChangedError (Is
+// ErrGatewayChanged). 0 means unknown and leaves the write unguarded.
+func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to build config: %w", err)
+		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
 	}
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return "", fmt.Errorf("failed to create dynamic client: %w", err)
+		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
-	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID)
+	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID, expectedGeneration)
 }
 
 // patchGatewayRoute is the inner orchestration used by PatchGatewayRoute.
 // Split from the method so unit tests can inject a fake dynamic client.
-func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
 	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
 
 	live, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to read gateway before patch: %w", err)
+		return PatchResult{}, fmt.Errorf("failed to read gateway before patch: %w", err)
+	}
+	if expectedGeneration > 0 && live.GetGeneration() != expectedGeneration {
+		return PatchResult{}, &GenerationChangedError{Namespace: namespace, Gateway: gatewayName, Expected: expectedGeneration, Observed: live.GetGeneration()}
 	}
 	routes, found, err := unstructured.NestedSlice(live.Object, "spec", "routes")
 	if err != nil {
-		return "", fmt.Errorf("failed to read spec.routes on gateway %q: %w", gatewayName, err)
+		return PatchResult{}, fmt.Errorf("failed to read spec.routes on gateway %q: %w", gatewayName, err)
 	}
 	if !found {
-		return "", fmt.Errorf("gateway %q has no spec.routes", gatewayName)
+		return PatchResult{}, fmt.Errorf("gateway %q has no spec.routes", gatewayName)
 	}
 
 	ops, err := buildRoutePatchOps(routes, rp, configID)
 	if err != nil {
-		return "", err
+		return PatchResult{}, err
+	}
+	if expectedGeneration > 0 {
+		ops = append([]jsonPatchOp{generationTestOp(expectedGeneration)}, ops...)
 	}
 	data, err := json.Marshal(ops)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal gateway JSON patch: %w", err)
+		return PatchResult{}, fmt.Errorf("failed to marshal gateway JSON patch: %w", err)
 	}
 
 	slog.Debug("🔍 patching gateway CR (JSON patch)", "namespace", namespace, "gateway", gatewayName, "route", rp.RouteName, "field", rp.Field, "configId", configID)
@@ -214,51 +235,111 @@ func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, nam
 	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to patch gateway route: %w", err)
+		return PatchResult{}, patchFailure(ctx, dynamicClient, namespace, gatewayName, expectedGeneration, fmt.Errorf("failed to patch gateway route: %w", err))
 	}
 	slog.Debug("patched gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
 
+	result := PatchResult{Generation: patched.GetGeneration()}
 	if configID == "" {
-		return "", nil
+		return result, nil
 	}
-	return confirmStoredConfigID(patched, gatewayName, configID)
+	result.ConfigID, err = confirmStoredConfigID(patched, gatewayName, configID)
+	return result, err
 }
 
-// PatchGatewayConfigID stamps spec.configId alone on the gateway as a JSON Patch
-// for the hot-reload capability check. Returns the stored configId.
-func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
+// patchFailure turns a failed guarded patch into a *GenerationChangedError when
+// the CR's generation has moved off the expected value, which is the likely
+// reason the test op refused it. If the re-read fails or the generation is
+// unchanged, the patch's own error is returned untouched.
+func patchFailure(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, expectedGeneration int64, patchErr error) error {
+	if expectedGeneration <= 0 {
+		return patchErr
+	}
+	observed, err := getGatewayGeneration(ctx, dynamicClient, namespace, gatewayName)
+	if err != nil {
+		slog.Debug("could not re-read gateway generation after a failed patch", "namespace", namespace, "gateway", gatewayName, "error", err)
+		return patchErr
+	}
+	if observed != expectedGeneration {
+		return &GenerationChangedError{Namespace: namespace, Gateway: gatewayName, Expected: expectedGeneration, Observed: observed}
+	}
+	return patchErr
+}
+
+// GetGatewayGeneration returns the Gateway CR's current metadata.generation.
+func (s *K8sService) GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to build config: %w", err)
+		return 0, fmt.Errorf("failed to build config: %w", err)
 	}
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return "", fmt.Errorf("failed to create dynamic client: %w", err)
+		return 0, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
-	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID)
+	return getGatewayGeneration(ctx, dynamicClient, namespace, gatewayName)
+}
+
+// getGatewayGeneration is the inner read used by GetGatewayGeneration.
+// Split from the method so unit tests can inject a fake dynamic client.
+func getGatewayGeneration(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string) (int64, error) {
+	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
+	live, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to read gateway %q generation: %w", gatewayName, err)
+	}
+	return live.GetGeneration(), nil
+}
+
+// PatchGatewayConfigID stamps spec.configId alone on the gateway as a JSON Patch
+// for the hot-reload capability check. Returns the stored configId and the
+// resulting generation. expectedGeneration guards the write exactly as in
+// PatchGatewayRoute; 0 leaves it unguarded.
+func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error) {
+	config, err := RESTConfig(s.kubeConfigPath)
+	if err != nil {
+		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID, expectedGeneration)
 }
 
 // patchGatewayConfigID is the inner orchestration used by PatchGatewayConfigID.
 // Split from the method so unit tests can inject a fake dynamic client.
-func patchGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string) (string, error) {
+func patchGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error) {
 	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
 
 	op, err := configIDOp(configID)
 	if err != nil {
-		return "", err
+		return PatchResult{}, err
 	}
-	data, err := json.Marshal([]jsonPatchOp{op})
+	ops := []jsonPatchOp{op}
+	if expectedGeneration > 0 {
+		observed, err := getGatewayGeneration(ctx, dynamicClient, namespace, gatewayName)
+		if err != nil {
+			return PatchResult{}, fmt.Errorf("failed to read gateway before patch: %w", err)
+		}
+		if observed != expectedGeneration {
+			return PatchResult{}, &GenerationChangedError{Namespace: namespace, Gateway: gatewayName, Expected: expectedGeneration, Observed: observed}
+		}
+		ops = append([]jsonPatchOp{generationTestOp(expectedGeneration)}, ops...)
+	}
+	data, err := json.Marshal(ops)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal gateway configId patch: %w", err)
+		return PatchResult{}, fmt.Errorf("failed to marshal gateway configId patch: %w", err)
 	}
 
 	slog.Debug("🔍 patching gateway configId (JSON patch)", "namespace", namespace, "gateway", gatewayName, "configId", configID)
 	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to patch gateway configId: %w", err)
+		return PatchResult{}, patchFailure(ctx, dynamicClient, namespace, gatewayName, expectedGeneration, fmt.Errorf("failed to patch gateway configId: %w", err))
 	}
-	return confirmStoredConfigID(patched, gatewayName, configID)
+	result := PatchResult{Generation: patched.GetGeneration()}
+	result.ConfigID, err = confirmStoredConfigID(patched, gatewayName, configID)
+	return result, err
 }
 
 // confirmStoredConfigID reads spec.configId back from a JSON Patch response
