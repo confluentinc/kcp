@@ -1,4 +1,5 @@
 title: Technical Guides
 nav:
   - migrations
+  - consumer-groups
   - transactions
