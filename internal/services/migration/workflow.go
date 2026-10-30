@@ -872,12 +872,6 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		return nil
 	}
 
-	// Promote is the point of no return, so confirm the CR is still the one
-	// kcp's own fence left before crossing it.
-	if err := s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
-		return err
-	}
-
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -1049,6 +1043,12 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		s.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		// Each promote request is irreversible, so confirm the CR is still the
+		// one kcp's own fence left immediately before sending it: every batch,
+		// every retry.
+		if err := s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+			return err
+		}
 		batches++
 		s.promoteSubmitted = true
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
