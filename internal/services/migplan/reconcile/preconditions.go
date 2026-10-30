@@ -57,6 +57,11 @@ type GatewayConfig struct {
 	// that are CR-level, not route-level (declared spec.streamingDomains[]).
 	// The reconcile core still does not mutate it.
 	RawObj map[string]any
+
+	// Sync is the pod check's verdict on whether the gateway pods serve this
+	// CR. The zero value (SyncUnchecked) means no check ran and the core
+	// applies nothing.
+	Sync GatewaySync
 }
 
 type RouteConfig struct {

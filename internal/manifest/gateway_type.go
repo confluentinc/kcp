@@ -216,6 +216,20 @@ func (s GatewaySpec) DeclaredRoute() RouteRef {
 	return RouteRef{}
 }
 
+// DeclaredCommonPolicies returns the declared section's common policies, or the
+// zero value when no (or several) sections are declared.
+func (s GatewaySpec) DeclaredCommonPolicies() CommonPolicies {
+	switch s.MigrationType() {
+	case MigrationTypeStatic:
+		return s.StaticMigration.Policies.CommonPolicies
+	case MigrationTypeDynamic:
+		return s.DynamicMigration.Policies.CommonPolicies
+	case MigrationTypeDynamicToStatic:
+		return s.DynamicToStaticConversion.Policies.CommonPolicies
+	}
+	return CommonPolicies{}
+}
+
 // DeclaredTopicGroup returns the declared migration's topic selection; nil for
 // a conversion (which selects no topics) or an undeclared type.
 func (s GatewaySpec) DeclaredTopicGroup() []TopicGroupEntry {

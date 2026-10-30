@@ -194,3 +194,23 @@ func TestGatewayFile_Load_EmptyNameSingularDomainDoesNotCountAsStatic(t *testing
 		t.Fatalf("Mode = %q, want dynamic (empty-name singular binding must not count)", gw.Route.Mode)
 	}
 }
+
+func TestGatewayFileWithSync(t *testing.T) {
+	sync := reconcile.GatewaySync{Verdict: reconcile.SyncOutOfSync, Detail: "d", Evidence: []string{"e"}}
+
+	gw, err := NewGatewayFile("testdata/gateway-dynamic.yaml", "migration-route").WithSync(sync).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gw.Sync, sync) {
+		t.Errorf("Sync = %+v, want %+v", gw.Sync, sync)
+	}
+
+	plain, err := NewGatewayFile("testdata/gateway-dynamic.yaml", "migration-route").Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Sync.Verdict != reconcile.SyncUnchecked {
+		t.Errorf("default Sync.Verdict = %v, want SyncUnchecked", plain.Sync.Verdict)
+	}
+}

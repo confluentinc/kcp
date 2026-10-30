@@ -261,9 +261,9 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 
 	switch in.Type {
 	case TypeStatic:
-		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
+		return applyGatewaySync(reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped), gw)
 	case TypeDynamic:
-		return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
+		return applyGatewaySync(reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids), gw)
 	case TypeDynamicToStatic:
 		return &Plan{Mode: convertMode, Report: Report{Preconditions: []PreconditionResult{fail(
 			"conversion reconciled by ReconcileConvert",

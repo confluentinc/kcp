@@ -304,3 +304,23 @@ func TestParse_LegacyShapeGetsATargetedHint(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "the manifest shape changed", "an ordinary typo keeps the plain unknown-field error")
 }
+
+func TestDeclaredCommonPolicies(t *testing.T) {
+	const policies = "    policies:\n      hotReloadTimeout: 45s\n      gatewayConfigPort: 9181\n"
+	want := CommonPolicies{HotReloadTimeout: 45 * time.Second, GatewayConfigPort: 9181}
+	cases := []struct{ name, block string }{
+		{"static", staticMigrationBlock},
+		{"dynamic", dynamicMigrationBlock},
+		{"conversion", conversionBlock},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := parseGateway(t, gatewayDocBase+c.block+policies)
+			require.Empty(t, g.Validate())
+			assert.Equal(t, want, g.Spec.DeclaredCommonPolicies())
+		})
+	}
+	t.Run("none", func(t *testing.T) {
+		assert.Equal(t, CommonPolicies{}, GatewaySpec{}.DeclaredCommonPolicies())
+	})
+}

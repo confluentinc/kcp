@@ -52,7 +52,9 @@ rules:
   verbs: ["get", "list", "patch"]
 - apiGroups: [""]
   resources: ["pods"]
-  verbs: ["get", "list"]
+  # delete is for TestDrift_GatewayPodRestartRerunProceeds, which restarts
+  # the gateway pods; kcp itself only reads them.
+  verbs: ["get", "list", "delete"]
 - apiGroups: [""]
   # proxy is how ensureGatewayCapability reaches each gateway pod's /config
   # endpoint through the API server when the gateway has no REST endpoint of
@@ -63,6 +65,12 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  # Only the drift test (drift_e2e_test.go) uses this, to stop the CFK
+  # operator so a gateway CR change never reaches the pods. kcp shares this
+  # service account but never scales anything.
+  resources: ["deployments/scale"]
+  verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

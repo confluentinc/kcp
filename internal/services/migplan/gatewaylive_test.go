@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/goccy/go-yaml"
 )
 
@@ -188,5 +190,119 @@ func TestGatewayLive_Load_ModeFieldWinsWhenPresent(t *testing.T) {
 	}
 	if gw.Route.Mode != "dynamic" {
 		t.Fatalf("Mode = %q, want dynamic (explicit field)", gw.Route.Mode)
+	}
+}
+
+// fakePodChecker returns a canned pod check result and records the CR bytes it
+// was handed.
+type fakePodChecker struct {
+	result    gateway.PodSync
+	err       error
+	gotCR     []byte
+	gotPort   int
+	gotNS     string
+	gotName   string
+	callCount int
+}
+
+func (f *fakePodChecker) CheckPodSync(_ context.Context, namespace, name string, cr []byte, port int) (gateway.PodSync, error) {
+	f.callCount++
+	f.gotNS, f.gotName, f.gotCR, f.gotPort = namespace, name, cr, port
+	return f.result, f.err
+}
+
+// rawGatewayCR is a live-shaped CR: the server-managed fields cleanGatewayDoc
+// strips are present.
+const rawGatewayCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+  generation: 7
+  managedFields:
+  - manager: kubectl
+spec:
+  routes:
+  - name: migration-route
+    mode: dynamic
+    streamingDomains:
+    - name: msk
+status:
+  observedGeneration: 7
+`
+
+func TestGatewayLivePodCheckSeesRawCR(t *testing.T) {
+	checker := &fakePodChecker{result: gateway.PodSync{Verdict: gateway.PodsInSync}}
+	live := NewGatewayLive(&fakeCRReader{yaml: []byte(rawGatewayCR)}, "gateway", "migration-gateway", "migration-route").
+		WithPodCheck(checker, 9181)
+
+	gc, err := live.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got := string(checker.gotCR)
+	if !strings.Contains(got, "observedGeneration") || !strings.Contains(got, "managedFields") {
+		t.Errorf("checker received a cleaned CR, want the raw bytes:\n%s", got)
+	}
+	if strings.Contains(gc.RawYAML, "observedGeneration") || strings.Contains(gc.RawYAML, "managedFields") {
+		t.Errorf("RawYAML still carries server-managed fields:\n%s", gc.RawYAML)
+	}
+	if checker.gotNS != "gateway" || checker.gotName != "migration-gateway" || checker.gotPort != 9181 {
+		t.Errorf("checker called with %q/%q port %d, want gateway/migration-gateway port 9181", checker.gotNS, checker.gotName, checker.gotPort)
+	}
+}
+
+func TestGatewayLivePodCheckVerdictMapped(t *testing.T) {
+	cases := []struct {
+		in   gateway.PodSyncVerdict
+		want reconcile.SyncVerdict
+	}{
+		{gateway.PodsInSync, reconcile.SyncInSync},
+		{gateway.PodsOutOfSync, reconcile.SyncOutOfSync},
+		{gateway.PodsCannotTell, reconcile.SyncCannotTell},
+	}
+	for _, c := range cases {
+		t.Run(string(c.in), func(t *testing.T) {
+			checker := &fakePodChecker{result: gateway.PodSync{Verdict: c.in, Detail: "the detail", Evidence: []string{"a", "b"}}}
+			live := NewGatewayLive(&fakeCRReader{yaml: []byte(rawGatewayCR)}, "gateway", "migration-gateway", "migration-route").
+				WithPodCheck(checker, 0)
+
+			gc, err := live.Load(context.Background())
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			want := reconcile.GatewaySync{Verdict: c.want, Detail: "the detail", Evidence: []string{"a", "b"}}
+			if !reflect.DeepEqual(gc.Sync, want) {
+				t.Errorf("Sync = %+v, want %+v", gc.Sync, want)
+			}
+		})
+	}
+}
+
+func TestGatewayLivePodCheckErrorIsLoadError(t *testing.T) {
+	boom := errors.New("pods forbidden")
+	live := NewGatewayLive(&fakeCRReader{yaml: []byte(rawGatewayCR)}, "gateway", "migration-gateway", "migration-route").
+		WithPodCheck(&fakePodChecker{err: boom}, 0)
+
+	gc, err := live.Load(context.Background())
+
+	if err == nil || gc != nil {
+		t.Fatalf("Load = %v, %v, want a nil config and an error", gc, err)
+	}
+	if !errors.Is(err, boom) || !strings.Contains(err.Error(), `checking gateway "migration-gateway" pods`) {
+		t.Errorf("error = %q, want it to wrap the checker error and name the gateway", err.Error())
+	}
+}
+
+func TestGatewayLiveWithoutPodCheckIsUnchecked(t *testing.T) {
+	live := NewGatewayLive(&fakeCRReader{yaml: []byte(rawGatewayCR)}, "gateway", "migration-gateway", "migration-route")
+
+	gc, err := live.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if gc.Sync.Verdict != reconcile.SyncUnchecked {
+		t.Errorf("Sync.Verdict = %v, want SyncUnchecked", gc.Sync.Verdict)
 	}
 }
