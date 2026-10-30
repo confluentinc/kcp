@@ -162,9 +162,9 @@ func TestD2SOrchestrator_Execute_SwitchFailureKeepsTheFence(t *testing.T) {
 	})
 }
 
-// A switch patch that reached the CR but was not confirmed leaves the CR static: a re-run would report "nothing
-// to do" while the pods may still run the fenced dynamic route, so the operator is sent to the Gateway instead.
-func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSendsTheOperatorToTheGateway(t *testing.T) {
+// A switch patch that reached the CR but was not confirmed leaves the CR static while the pods may still serve
+// the fenced dynamic route. The warning says what was observed and that a re-run checks the pods first.
+func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSaysARerunChecksThePods(t *testing.T) {
 	cases := map[string]func(rec *patchRecorder) *mockGatewayService{
 		"acceptance fails after the patch": func(rec *patchRecorder) *mockGatewayService {
 			gw := rec.service()
@@ -195,8 +195,11 @@ func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSendsTheOperat
 			assert.Len(t, rec.patches, 2, "the fence and the switch: kcp never restores the route here")
 			out := run.out.String()
 			assert.Contains(t, out, "the Gateway CR already holds the static route")
-			assert.Contains(t, out, `a re-run will report "nothing to do"`)
-			assert.Contains(t, out, "check the Gateway's status")
+			assert.Contains(t, out, "Switch could not be confirmed")
+			assert.Contains(t, out, "the gateway pods may still serve the fenced dynamic route")
+			assert.Contains(t, out, "A re-run checks the gateway pods before doing anything")
+			assert.NotContains(t, out, "nothing to do")
+			assert.NotContains(t, out, "rather than re-running")
 			assert.NotContains(t, out, "re-run to finish the switch")
 		})
 	}
