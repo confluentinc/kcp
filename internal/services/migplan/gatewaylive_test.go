@@ -306,3 +306,28 @@ func TestGatewayLiveWithoutPodCheckIsUnchecked(t *testing.T) {
 		t.Errorf("Sync.Verdict = %v, want SyncUnchecked", gc.Sync.Verdict)
 	}
 }
+
+func TestGatewayLiveLoad_Generation(t *testing.T) {
+	cr := []byte(`apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+  generation: 9
+spec:
+  routes:
+    - name: migration-route
+      streamingDomains:
+        - name: msk
+        - name: cc
+`)
+	gw, err := NewGatewayLive(&fakeCRReader{yaml: cr}, "gateway", "migration-gateway", "migration-route").Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if gw.Generation != 9 {
+		t.Errorf("Generation = %d, want 9", gw.Generation)
+	}
+	if strings.Contains(gw.RawYAML, "generation") {
+		t.Errorf("RawYAML must still have generation stripped, got: %s", gw.RawYAML)
+	}
+}

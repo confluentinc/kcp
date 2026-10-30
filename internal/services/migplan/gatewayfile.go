@@ -41,6 +41,7 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("parsing gateway config %q: %w", g.path, err)
 	}
+	generation := gatewayGeneration(doc)
 	cleanGatewayDoc(doc)
 	route, err := findRoute(doc, g.routeName)
 	if err != nil {
@@ -50,7 +51,23 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 	if err != nil {
 		return nil, fmt.Errorf("marshalling cleaned gateway config %q: %w", g.path, err)
 	}
-	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc, Sync: g.sync}, nil
+	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc, Sync: g.sync, Generation: generation}, nil
+}
+
+// gatewayGeneration reads metadata.generation from a parsed CR, 0 when absent.
+// It must run before cleanGatewayDoc, which strips the field. goccy/go-yaml
+// decodes integers as uint64; int and int64 are accepted too.
+func gatewayGeneration(doc map[string]any) int64 {
+	metadata, _ := doc["metadata"].(map[string]any)
+	switch v := metadata["generation"].(type) {
+	case uint64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	}
+	return 0
 }
 
 // cleanGatewayDoc strips the Kubernetes server-managed fields a live CR read
