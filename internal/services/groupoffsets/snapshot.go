@@ -52,7 +52,7 @@ func (s Snapshot) Topics() []string {
 
 // GroupOffsetFetcher reads one group's committed offsets (offsets >= 0 only).
 type GroupOffsetFetcher interface {
-	CommittedOffsets(group string) (Offsets, error)
+	CommittedOffsets(ctx context.Context, group string) (Offsets, error)
 }
 
 // FetcherFactory returns a fetcher and the function that releases it (which may be nil). Each pool worker
@@ -73,8 +73,8 @@ func TakeSnapshot(ctx context.Context, newFetcher FetcherFactory, groups []strin
 			return worker{}, err
 		}
 		return worker{
-			do: func(group string) error {
-				offsets, err := f.CommittedOffsets(group)
+			do: func(ctx context.Context, group string) error {
+				offsets, err := f.CommittedOffsets(ctx, group)
 				if err != nil {
 					return err
 				}

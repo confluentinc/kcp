@@ -3,14 +3,18 @@ package lagcheck
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/spf13/pflag"
@@ -415,4 +419,33 @@ func TestLagCheck_ClampsPollInterval(t *testing.T) {
 	assert.Equal(t, 1, clampPollInterval(-5))
 	assert.Equal(t, 60, clampPollInterval(999))
 	assert.Equal(t, 7, clampPollInterval(7))
+}
+
+// TestLagCheck_VerifiesTheLinkWithOneRequest — the check before the view opens makes one request and reports
+// its error as it happened.
+func TestLagCheck_VerifiesTheLinkWithOneRequest(t *testing.T) {
+	retrytest.Fast(t)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	p := writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443", server.URL, 1)
+	})
+
+	cmd := NewMigrationLagCheckCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--migration-yaml", p})
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to verify cluster link")
+	assert.Contains(t, err.Error(), "unexpected status code 503")
+	var gave *retry.GaveUpError
+	assert.False(t, errors.As(err, &gave), "the error is the request's own, not a retry's: %v", err)
+	assert.Equal(t, int32(1), hits.Load())
 }

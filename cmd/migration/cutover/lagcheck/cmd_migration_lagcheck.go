@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -77,7 +78,8 @@ func runMigrationLag(cmd *cobra.Command, args []string) error {
 
 	svc := clusterlink.NewConfluentCloudService(httpClient)
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), clusterLinkVerifyTimeout)
+	// One request, its error shown as it happened: lag-check reports a failure rather than retrying it.
+	ctx, cancel := context.WithTimeout(retry.WithoutRetries(cmd.Context()), clusterLinkVerifyTimeout)
 	defer cancel()
 	if _, err := svc.GetClusterLink(ctx, config); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
