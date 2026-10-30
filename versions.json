@@ -110,5 +110,10 @@
     "version": "0.7.3",
     "title": "0.7.3",
     "aliases": []
+  },
+  {
+    "version": "0.0.0-preview",
+    "title": "0.0.0-preview",
+    "aliases": []
   }
 ]
