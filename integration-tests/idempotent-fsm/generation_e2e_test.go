@@ -23,6 +23,8 @@ func TestGeneration_CRChangedBeforePromoteStopsWithNoWrite(t *testing.T) {
 	e := newEnv()
 	ctx := context.Background()
 	topics := e.topicRange(86, 90)
+	// A failure before run 2 must not leave the slice fenced or offset sync paused for later tests.
+	t.Cleanup(func() { e.liftSliceFence(t, context.Background(), topics) })
 	if e.mode == "static" {
 		e.resetStaticRoute(t, ctx)
 	}
@@ -79,6 +81,8 @@ func TestGeneration_CRChangedBeforeRollbackStopsWithNoWrite(t *testing.T) {
 	}
 	ctx := context.Background()
 	topics := e.topicRange(96, 100)
+	// A failure before run 2 must not leave the slice fenced or offset sync paused for later tests.
+	t.Cleanup(func() { e.liftSliceFence(t, context.Background(), topics) })
 	e.resetStaticRoute(t, ctx)
 	require.Equal(t, "true", e.linkOffsetSync(t, ctx),
 		"setup.sh must start the static suite's cluster link with consumer offset sync on")
