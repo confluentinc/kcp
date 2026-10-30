@@ -2,8 +2,6 @@
 
 You can re-run `kcp migration cutover execute` after any failure, interruption, or completed migration. This page explains, for each workflow, what a re-run does and doesn't do.
 
-A re-run doesn't pick up where the last run stopped from a saved record. It reads the live world and continues from there.
-
 For what to do at each failure point, see the "If a run stops" table in the guide for your workflow: [static](static-migration.md#if-a-run-stops), [dynamic](dynamic-migration.md#if-a-run-stops), or [conversion](dynamic-to-static-conversion.md#if-a-run-stops).
 
 ## How a run works
@@ -15,7 +13,7 @@ Every run does the same two things:
 1. **Reconcile, once.** kcp reads the manifest, the live Gateway custom resource (CR), both clusters, and the cluster link, and classifies each topic (or, for a conversion, the route and the link's scope). A refusal is all-or-nothing: if any check fails, nothing is changed. If nothing is left to do, the run stops here and exits zero.
 2. **Walk the steps.** kcp walks the full list of steps for the workflow from the first. The reconcile plan decides each step: a step either has nothing to do, or applies its change again. kcp doesn't re-check the live state for each step along the way.
 
-Re-applying an already-completed step is safe. It is worth knowing what a re-applied step involves:
+Re-applying a completed step is safe, but some steps cost time again:
 
 - **Fence.** A resume re-patches the fence even if it is already on the route. The value is identical, but the patch carries a fresh `spec.configId`, so it can cost another hot reload or pod roll before kcp moves on. An identical dynamic fence entry is replaced, never duplicated.
 - **Offset sync pause** (static). kcp waits the [`consumerOffsetSyncDrainDuration`](../../../migration-assets/cutover/policies.md#policies-consumeroffsetsyncdrainduration) again, then sets the configuration to `false` again.
@@ -24,19 +22,19 @@ Re-applying an already-completed step is safe. It is worth knowing what a re-app
 
 ## What a run leaves behind
 
-| Where                     | What                                                                                                   | Workflows           |
-| ------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------- |
-| Gateway CR route          | Static: a route-level fence, `scope: ALL` and `errorCode: BROKER_NOT_AVAILABLE`. Dynamic: a `rules.fencing` entry of `{topics, blocked: true}` and a routing condition for the batch. Conversion: a `rules.fencing` entry over every topic. | All                 |
-| Gateway CR `spec.configId` | A random `kcp-<hex>` value, set by every patch when the Gateway supports it. Never cleaned up. Also set once by the hot-reload check before the fence. | All, with hot reload |
-| Cluster link              | `consumer.offset.sync.enable`, and each mirror's status. Promotion is irreversible.                    | Configuration: static. Mirrors: static and dynamic. |
-| Destination               | Committed consumer group offsets.                                                                      | Conversion          |
-| `kcp.log`                 | Diagnostic only. kcp never reads it back.                                                              | All                 |
+| Where                      | What                                                                                                                                                                                                                                                           | Workflows                                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Gateway CR route           | The fence (see below). Dynamic also adds a routing condition for the batch.                                                                                                                                                                                    | All                                                 |
+| Gateway CR `spec.configId` | A random `kcp-<hex>` value, set by every patch when the Gateway supports it. Never cleaned up. Also set once by the hot-reload check at the start of the fence step, so a run that fails after the lag wait has already changed it, with no effect on traffic. | All, with hot reload                                |
+| Cluster link               | `consumer.offset.sync.enable`, and each mirror's status. Promotion is irreversible.                                                                                                                                                                            | Configuration: static. Mirrors: static and dynamic. |
+| Destination                | Committed consumer group offsets.                                                                                                                                                                                                                              | Conversion                                          |
+| `kcp.log`                  | Diagnostic only. kcp never reads it back.                                                                                                                                                                                                                      | All                                                 |
 
 ### How kcp recognizes its own fence
 
 kcp doesn't tag its fence. It recognizes it by exact shape, and anything else is treated as yours:
 
-- **Static:** exactly `scope: ALL` with the defaulted error code. An operator's plain `scope: ALL` fence reads back identically, so kcp can't tell it from its own and removes it. Any other non-`NONE` fence is refused.
+- **Static:** a route-level fence of exactly `scope: ALL` with the defaulted error code, `BROKER_NOT_AVAILABLE`. An operator's plain `scope: ALL` fence reads back identically, so kcp can't tell it from its own and removes it. Any other non-`NONE` fence is refused.
 - **Dynamic:** a `rules.fencing` entry with only `topics` and `blocked: true`, where `topics` is exactly this batch's resolved set. Any other entry, such as one with a `trafficType` key or a different topic set, is treated as an operator's. The fence, the switch, and a rollback all leave it untouched.
 - **Conversion:** a `rules.fencing` entry over every topic. Any other `rules.fencing` entry is refused as a foreign fence.
 
@@ -109,15 +107,6 @@ Rollback is also off from the start of a run that finds a topic already promoted
 
 **When a producer writes to the source after rollback stops.** If the unrouted-producer check fails after the point of no return, the fence stays. Stop the producer or route it through the Gateway, then re-run.
 
-### Timeouts
-
-| Wait                                         | Bound                                                                                                  |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Lag before the fence                         | None. Fails after three consecutive offset read failures.                                              |
-| Zero lag and mirror `STOPPED` during promote | None, and not bounded by `rolloutTimeout`. The fence stays up while it waits.                          |
-| Operator acceptance and Gateway rollout      | [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout). Default: no deadline. |
-| Per-pod configuration wait (hot reload)      | [`hotReloadTimeout`](../../../migration-assets/cutover/policies.md#policies-hotreloadtimeout). Default: 90 seconds. |
-
 ## Re-run a finished migration
 
 A finished static or dynamic migration prints `Migration completed: <name>` with `nothing to do: no topic in it still needs migrating`, and exits zero. A finished conversion prints `Route conversion completed: <name>` with `nothing to do: the route is already static on its target domain`. In both cases only the reconcile reads happen: no Gateway patch, no capability probe, no promote.
@@ -160,10 +149,6 @@ kcp can't tell when a GitOps controller reverts its fence, so consider pausing s
 Reads it performs: the Gateway CR, topic lists and cluster IDs on both clusters, the link's state, mirrors, and configurations, and for a static migration the staged Secrets. A conversion also lists groups, describes topics, reads offsets and partition counts, and sends one write probe: an offset commit for a group and topic that don't exist, to test the destination credential. It creates nothing.
 
 Because it stops there, a passing `--dry-run` doesn't exercise the Kubernetes patch permissions, the hot-reload prerequisites, or the link write permission. See [Permissions](permissions.md) for what to grant ahead of a real run.
-
-## Before a run changes anything
-
-The guides say that nothing changes before the fence, and for traffic that holds. With hot reload on, kcp also stamps `spec.configId` on the live CR once, at the start of the fence step, to confirm the Gateway applies a new revision. That happens after the lag wait, so a run that is refused or fails later has already updated that field, with no effect on traffic.
 
 ## Related content
 

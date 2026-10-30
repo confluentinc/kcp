@@ -71,26 +71,15 @@ rules:
 
 kcp uses `spec.configId` to confirm that each pod applied a hot reload, so without this grant it can't check that the field is declared, and it refuses before fencing. The refusal names two ways out: grant the permission, or set `spec.hotReload.enabled: false` in the live CR for the duration of the migration.
 
-### Which workflow needs what
-
-| Grant                   | Static                                       | Dynamic    | Conversion |
-| ----------------------- | -------------------------------------------- | ---------- | ---------- |
-| `gateways` get, patch   | Yes                                          | Yes        | Yes        |
-| `deployments` get       | Yes                                          | Yes        | Yes        |
-| `pods` list             | Hot reload, or producer detection without it | Hot reload | Hot reload |
-| `pods/proxy` get        | Hot reload                                   | Hot reload | Hot reload |
-| CRD get (cluster scope) | Hot reload                                   | Hot reload | Hot reload |
-| `secrets` get           | Optional                                     | No         | No         |
-
 ### When a Kubernetes grant is missing
 
-| Missing                       | What you see                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gateways` get                | `failed to produce the reconcile plan: loading gateway config: reading gateway CR ...`, with the API server's 403 text. Before anything changes.                                                                                                                                                                                                                                                                          |
-| `gateways` patch              | `failed to apply fenced gateway CR: ...` at the fence step. A rollback patch needs the same grant.                                                                                                                                                                                                                                                                                                                        |
-| `deployments` get             | `failed to get gateway deployment: ...`. The baseline read before each patch is tolerated. A later wait fails, and if that is after the fence, kcp rolls the fence back where it can.                                                                                                                                                                                                                                     |
-| CRD get (hot reload)          | A refusal before the fence, naming the grant (see above).                                                                                                                                                                                                                                                                                                                                                                 |
-| `pods/proxy` get (hot reload) | Before the fence, while kcp detects hot reload support: `could not reach the config endpoint on any of the N ready gateway pods ... (check the kcp identity has "get" on pods/proxy)`. If the grant is lost or the endpoint becomes unreachable after detection, kcp can't tell a missing grant from a network failure and you see only `timed out after 90s waiting for the gateway to apply the configId on every pod`. |
+| Missing                       | What you see                                                                                                                                                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateways` get                | `failed to produce the reconcile plan: loading gateway config: reading gateway CR ...`, with the API server's 403 text. Before anything changes.                                                                                                                                       |
+| `gateways` patch              | `failed to apply fenced gateway CR: ...` at the fence step. A rollback patch needs the same grant.                                                                                                                                                                                     |
+| `deployments` get             | `failed to get gateway deployment: ...` while waiting for a rollout. After the fence, kcp rolls the fence back where it can.                                                                                                                                                           |
+| CRD get (hot reload)          | A refusal before the fence, naming the grant (see above).                                                                                                                                                                                                                              |
+| `pods/proxy` get (hot reload) | Before the fence: `could not reach the config endpoint on any of the N ready gateway pods ... (check the kcp identity has "get" on pods/proxy)`. If the grant is lost after that check, you see only `timed out after 90s waiting for the gateway to apply the configId on every pod`. |
 
 For the Gateway and Confluent for Kubernetes (CFK) versions that hot reload needs, see [Version requirements](overview.md#version-requirements).
 
@@ -121,7 +110,7 @@ On Confluent Cloud, grant these to the API key's service account with ACLs or th
 
 ## Cluster link
 
-kcp never creates or changes the link. It must exist, with its mirror topics, before the run.
+kcp doesn't create the link. It must exist, with its mirror topics, before the run.
 
 ### REST credential
 
@@ -164,7 +153,7 @@ If the operator rejects the applied CR, for example for a missing `secretRef`, k
 
 ## Conversion credential checks
 
-A conversion probes its Kafka credentials during reconcile, so `--dry-run` finds these before any change. It re-runs them after the fence. The probes use fixed sentinel group and topic names, so they test wildcard-level access: an identity with ACLs scoped to a prefix fails them even if it could cover the groups you have.
+A conversion probes its Kafka credentials during reconcile, so `--dry-run` finds these before any change. It re-runs them after the fence. The probes use fixed sentinel group and topic names, so they test wildcard-level access: an identity with ACLs scoped to a prefix fails them even if it could cover the groups you have. A failing probe skips the later link checks, so fixing one credential can reveal the next.
 
 | Refusal                                                     | Grant it asks for                                                                                             |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |

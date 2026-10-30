@@ -35,7 +35,8 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 
 - A source consumer group whose committed offsets are all on link topics is in scope, and its offsets are copied to the destination.
 - A group with a committed offset on a topic that isn't on the link refuses the conversion. After the switch that topic isn't reachable through the route, or the group belongs to a client outside it.
-- An in-scope group with live members on the destination refuses the conversion. A group that exists on the destination with no members gets a warning, because its offsets are overwritten.
+- kcp checks every group on the source cluster, not only the route's. That includes groups that commit on Kafka Streams changelog and repartition topics or Kafka Connect internal topics, so put those topics on the link or retire the group first.
+- An in-scope group with live members on the destination refuses the conversion, and so does a destination share group with the same name as an in-scope group. Detecting a share group clash needs a destination that reports group types, which Kafka 3.8 and later do. A group that exists on the destination with no members gets a warning, because its offsets are overwritten.
 
 **Clients**
 
@@ -49,6 +50,8 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 - The point of no return is the switch. A failure before it removes the fence and leaves the route as it was. After the switch, kcp can't roll the route back to dynamic.
 - Ctrl+C leaves the fence in place. Re-run `execute` to continue.
 - A conversion needs at least one promoted topic on the link. It closes a topic-based migration rather than replacing one.
+- Only committed offsets and their metadata are copied. Group configuration, share group state, and transactional state aren't.
+- The unrouted-commit check sees only what changes between its two snapshots, including a removed group, an admin reset, or expired offsets. A commit after the second snapshot isn't seen, and that consumer re-reads from the copied offset.
 
 **Access**
 
