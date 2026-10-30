@@ -63,6 +63,9 @@ func (a *D2SActions) SyncOffsets(ctx context.Context, config *migration.Migratio
 	if snap == nil {
 		return errNoHandoff
 	}
+	if err := a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "sync_offsets"); err != nil {
+		return err
+	}
 	hwm, err := groupoffsets.DestinationHighWaterMarks(ctx, a.deps.DestinationTopics, a.deps.HighWaterMarks, snap)
 	if err != nil {
 		return err

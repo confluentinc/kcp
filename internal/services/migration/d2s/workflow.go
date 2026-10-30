@@ -111,6 +111,10 @@ type D2SActions struct {
 	rolloutTimeout time.Duration
 	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
 	hotReloadTimeout time.Duration
+	// gatewayGeneration is the Gateway CR metadata.generation this run expects: the one reconcile read, then the
+	// one each of kcp's own writes left. It lives here because verifier() builds a fresh verifier per call. 0
+	// means unknown, and leaves every patch and check unguarded.
+	gatewayGeneration int64
 
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
 	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
@@ -171,6 +175,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 
 	config.Topics, config.MigrateTopics, config.AwaitStopped = nil, nil, nil
 	config.Route = res.Route
+	a.gatewayGeneration = res.GatewayGeneration
 	config.GatewayYAML = res.GatewayYAML
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
