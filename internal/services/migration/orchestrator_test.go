@@ -319,7 +319,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Unrouted producers detected — attempting to remove the fence to restore traffic",
 		"the rollback banner names detection as the reason, as a capitalised sentence")
 
 	// FSM state should have rolled back to initialized via abort_fence
@@ -1554,7 +1554,7 @@ func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testin
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
-	assert.Contains(t, out.String(), "Verifying gateway fence failed — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Verifying gateway fence failed — attempting to remove the fence to restore traffic",
 		"the rollback banner names the failed step, as a capitalised sentence")
 
 	assert.Equal(t, StateInitialized, orch.fsm.Current(),
@@ -2309,7 +2309,7 @@ func TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack(
 			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
 			require.Len(t, patches, 1, "the rollback only: this run never reached its own fence")
 			assert.Equal(t, "", patches[0].Field, "the rollback replaces the whole route with the rollback target")
-			assert.Contains(t, buf.String(), "removing fence to restore traffic")
+			assert.Contains(t, buf.String(), "attempting to remove the fence to restore traffic")
 			assert.Contains(t, buf.String(), "Gateway unfenced")
 			assert.Contains(t, alters, offsetSyncBackOn, "the rollback sets consumer offset sync back to the baseline")
 		})
@@ -2331,7 +2331,7 @@ func TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_Nothing
 
 	require.Error(t, err)
 	assert.Empty(t, patches, "nothing is fenced, so nothing is patched")
-	assert.NotContains(t, buf.String(), "removing fence")
+	assert.NotContains(t, buf.String(), "attempting to remove the fence")
 }
 
 // TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
@@ -2368,7 +2368,7 @@ func TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t *te
 
 	require.Error(t, err)
 	require.Len(t, patches, 1, "this run's fence only: no rollback from promote onwards")
-	assert.NotContains(t, buf.String(), "removing fence")
+	assert.NotContains(t, buf.String(), "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
@@ -2574,7 +2574,7 @@ func TestOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 1, "the refused fence only: the earlier run's rollback is skipped")
 	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
-	assert.NotContains(t, out.String(), "removing fence")
+	assert.NotContains(t, out.String(), "attempting to remove the fence")
 	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
 }
 

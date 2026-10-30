@@ -281,7 +281,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		o.reporter.warn("%s — keeping the fence: %s", reason, rollbackForbiddenReason)
 		return stepFailure
 	}
-	o.reporter.warn("%s — removing fence to restore traffic", reason)
+	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
 	path := migration.RollbackPathAbortFence
 	if !thisRunsFence {
@@ -342,9 +342,9 @@ func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 
 	var rejected *gateway.GatewayRejectedError
 	if errors.As(stepFailure, &rejected) {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; removing it", rejected.Reason)
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to remove it", rejected.Reason)
 	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — removing it")
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to remove it")
 	}
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err

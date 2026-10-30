@@ -36,7 +36,7 @@ func runGenerationStop(t *testing.T, name, state, stopped string) {
 	require.Error(t, err, "the run must exit non-zero: the CR changed under it")
 	require.Contains(t, out, "changed since kcp last knew it", "the run must name the CR change")
 	require.Contains(t, out, "Stopping with no gateway write — "+stopped)
-	require.NotContains(t, out, "removing fence", "the run must not roll the fence back with a write")
+	require.NotContains(t, out, "attempting to remove the fence", "the run must not roll the fence back with a write")
 	require.NotContains(t, out, gatewayUnfenced, "the run must not roll the fence back with a write")
 
 	e.snapshot(t, ctx, "after-stop", "AFTER the stop (expect fenced, no destination offsets, generation = the change's)", seeds)
