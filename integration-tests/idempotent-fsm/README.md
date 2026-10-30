@@ -51,7 +51,7 @@ whether the tests pass or fail, so a failed test keeps everything it captured.
 
 `setup.sh` seeds `tbm-topic-001..100`, all mirrored. Promotion is irreversible,
 so each kill-point test **reserves a disjoint 5-topic slice** (via `topicRange`)
-in `001..005`, `011..085` and `091..100`: drift refused (operator stopped
+in `001..005`, `011..090` and `091..100`: drift refused (operator stopped
 mid-switch) `001..005` (static only), a terminating gateway pod refused until
 the gateway settles `091..095` (static only, never promotes), a resume after
 every gateway pod restarts `096..100` (dynamic only), rollback when a resume fails before its own fence step
@@ -63,7 +63,8 @@ rollback on a mid-batch resume `036..040`, rollback on a resume
 `041..045`, after-switch with the offset-sync pause on `046..050` (static
 only), baseline `051..055`, after-fence `056..060`, after-promote
 `061..065`, after-switch `066..070`, during-promote `071..075`,
-after-offset-sync-pause `076..080` (static only), mid-batch `081..085`. On the dynamic
+after-offset-sync-pause `076..080` (static only), mid-batch `081..085`, a CR
+change before promote `086..090` (both modes). On the dynamic
 route these coexist in one env; on the static (whole-route) route each test first
 resets the route to source (`resetStaticRoute`).
 
@@ -149,6 +150,24 @@ after promote, deletes every gateway pod and waits for the replacements. They
 must report the CR's configId at boot, so `--dry-run` passes the pod check and
 the re-run completes. The runner's Role grants `delete` on pods for this test
 alone.
+
+A generation test (`generation_e2e_test.go`, both modes) covers kcp's check on
+the gateway CR's `metadata.generation`. Run 1 is held after `fence_verified`
+(the hold seam, below), and while it is held the test changes the CR's
+`spec.configId` with a JSON patch, which moves the generation. Once released,
+kcp's pre-promote check sees a generation it didn't write and stops with a
+non-zero exit and no gateway write: the output says the CR changed and that
+kcp is stopping with the fence applied and nothing promoted, the CR's
+generation is still the change's, every topic is still fenced and every mirror
+is still `ACTIVE`. A plain re-run then completes, and every mirror is
+`STOPPED`.
+
+**The hold seam.** Beside the kill-point and failure hook, kcp has a test-only
+hold: with `KCP_TEST_HOLD_AFTER=<state>` and `KCP_TEST_HOLD_FILE=<file>`, kcp
+creates `<file>.held` after reaching that state and blocks until `<file>`
+exists. `runKCPHeldAt` runs kcp that way, waits for `.held` (up to 5 minutes),
+runs the test's step against the live world, then creates the release file. A
+cleanup creates it too, so a failed test never leaves kcp blocked.
 
 **The settle wait.** On a hot-reload-off (static) gateway, a rollout reports
 complete while the replaced pod terminates for up to its grace period, and

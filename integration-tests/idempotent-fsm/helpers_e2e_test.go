@@ -35,6 +35,9 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 )
 
 // kcpBinary is the in-pod path run.sh copies the linux kcp binary to.
@@ -48,6 +51,7 @@ const kcpBinary = "/workspace/kcp"
 const (
 	cpFenced           = "fenced"
 	cpOffsetSyncPaused = "offset_sync_paused" // static only
+	cpFenceVerified    = "fence_verified"
 	cpPromoted         = "promoted"
 	cpSwitched         = "switched"
 	cpPromoteAccepted  = killpoint.AfterPromoteAccepted // intra-step: accepted, not yet STOPPED
@@ -365,7 +369,7 @@ func (e *env) runKCP(t *testing.T, reportName, cancelAfter string, args ...strin
 	t.Helper()
 	var seam *testSeam
 	if cancelAfter != "" {
-		seam = &testSeam{env: killpoint.EnvVar + "=" + cancelAfter, effect: "simulated abrupt exit"}
+		seam = &testSeam{env: []string{killpoint.EnvVar + "=" + cancelAfter}, effect: "simulated abrupt exit"}
 	}
 	return e.runKCPWith(t, reportName, seam, args...)
 }
@@ -375,14 +379,14 @@ func (e *env) runKCP(t *testing.T, reportName, cancelAfter string, args ...strin
 // of it would, instead of running.
 func (e *env) runKCPFailingAt(t *testing.T, reportName, failAt string, args ...string) (string, error) {
 	t.Helper()
-	return e.runKCPWith(t, reportName, &testSeam{env: killpoint.FailEnvVar + "=" + failAt, effect: "simulated step failure"}, args...)
+	return e.runKCPWith(t, reportName, &testSeam{env: []string{killpoint.FailEnvVar + "=" + failAt}, effect: "simulated step failure"}, args...)
 }
 
 // testSeam is one of kcp's test-only environment switches (see the killpoint
 // package) set on a single run.
 type testSeam struct {
-	env    string // NAME=value
-	effect string // what it does to the run, for the logs
+	env    []string // NAME=value, one per switch
+	effect string   // what it does to the run, for the logs
 }
 
 // runKCPWith runs kcp with seam (nil for a normal run) in its environment,
@@ -391,6 +395,90 @@ func (e *env) runKCPWith(t *testing.T, reportName string, seam *testSeam, args .
 	t.Helper()
 	e.waitForGatewaySettled(t, context.Background())
 	return e.execKCP(t, reportName, seam, args...)
+}
+
+// holdPollInterval and holdTimeout bound runKCPHeldAt's wait for kcp to reach
+// its hold point.
+const (
+	holdPollInterval = 500 * time.Millisecond
+	holdTimeout      = 5 * time.Minute
+)
+
+// runKCPHeldAt runs kcp with the test-only hold seam set to state (an FSM
+// state name such as "fence_verified"): once kcp reaches that state it pauses,
+// whileHeld runs against the live world, and kcp is then released and runs on.
+// The gateway settles first, as for runKCPWith. Returns kcp's output and
+// process error.
+func (e *env) runKCPHeldAt(t *testing.T, reportName, state string, whileHeld func(), args ...string) (string, error) {
+	t.Helper()
+	e.waitForGatewaySettled(t, context.Background())
+
+	release := filepath.Join(t.TempDir(), "release")
+	held := release + ".held"
+	releaseKCP := func() {
+		if f, err := os.OpenFile(release, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			_ = f.Close()
+		}
+	}
+	// Registered before kcp starts, so a failed require below never leaves kcp
+	// blocked until the execute timeout.
+	t.Cleanup(releaseKCP)
+
+	seam := &testSeam{
+		env:    []string{killpoint.HoldEnvVar + "=" + state, killpoint.HoldFileEnvVar + "=" + release},
+		effect: "holds after " + state + " until released",
+	}
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := e.execKCP(t, reportName, seam, args...)
+		done <- result{out, err}
+	}()
+
+	deadline := time.Now().Add(holdTimeout)
+	for {
+		if _, err := os.Stat(held); err == nil {
+			break
+		}
+		require.Falsef(t, time.Now().After(deadline), "kcp must reach its hold point after %q within %s", state, holdTimeout)
+		time.Sleep(holdPollInterval)
+	}
+	t.Logf("\nKCP HELD ▸ paused after %q; changing the world now", state)
+	if whileHeld != nil {
+		whileHeld()
+	}
+	releaseKCP()
+	t.Logf("\nKCP RELEASED ▸ the run continues from %q", state)
+	r := <-done
+	return r.out, r.err
+}
+
+// bumpGatewayGeneration changes the gateway CR's spec out from under kcp, the
+// way an operator's edit would: it JSON-patches spec.configId to a fresh
+// "e2e-bump-<unix nanos>" value. That moves metadata.generation, which the
+// call requires to have risen. Returns the new generation.
+func (e *env) bumpGatewayGeneration(t *testing.T, ctx context.Context) int64 {
+	t.Helper()
+	before, _ := e.crGenerations(t, ctx)
+
+	cfg, err := gateway.RESTConfig("")
+	require.NoError(t, err, "build the in-cluster config")
+	dc, err := dynamic.NewForConfig(cfg)
+	require.NoError(t, err, "build the dynamic client")
+	gvr := schema.GroupVersionResource{Group: gateway.GatewayGroup, Version: gateway.GatewayVersion, Resource: gateway.GatewayResourcePlural}
+
+	value := fmt.Sprintf("e2e-bump-%d", time.Now().UnixNano())
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/configId","value":%q}]`, value)
+	_, err = dc.Resource(gvr).Namespace(e.namespace).Patch(ctx, e.gateway, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
+	require.NoError(t, err, "patch spec.configId on the gateway CR")
+
+	after, _ := e.crGenerations(t, ctx)
+	require.Greaterf(t, after, before, "patching spec.configId must raise metadata.generation (was %d)", before)
+	t.Logf("\nGATEWAY CR CHANGED ▸ spec.configId set to %s: metadata.generation %d → %d", value, before, after)
+	return after
 }
 
 // runKCPUnsettled is a normal run that doesn't wait for the gateway to
@@ -463,8 +551,8 @@ func (e *env) execKCP(t *testing.T, reportName string, seam *testSeam, args ...s
 	cmd.Env = os.Environ()
 	desc := "kcp " + strings.Join(args, " ")
 	if seam != nil {
-		cmd.Env = append(cmd.Env, seam.env)
-		desc += "    [" + seam.env + " → " + seam.effect + "]"
+		cmd.Env = append(cmd.Env, seam.env...)
+		desc += "    [" + strings.Join(seam.env, " ") + " → " + seam.effect + "]"
 	}
 	out, err := cmd.CombinedOutput()
 
