@@ -236,6 +236,12 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
+	// The CR is no longer the one kcp last knew, so no rollback either: every
+	// compensation below writes to the gateway.
+	if errors.Is(stepErr, gateway.ErrGatewayChanged) {
+		return o.stopOnGatewayChange(stepFailure, stepErr, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+	}
+
 	// A fence that reached the cluster but was never confirmed is removed
 	// outside the FSM: the fence transition was cancelled, so the machine never
 	// left lags_ok and there is no edge to travel back along. Only the gateway
@@ -284,6 +290,9 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		// only the gateway needs putting right.
 		if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 			rollbackErr = err
+			if errors.Is(err, gateway.ErrGatewayChanged) {
+				return o.stopOnGatewayChange(stepFailure, err, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+			}
 			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 			return stepFailure
 		}
@@ -296,6 +305,10 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	)
 	err := o.fsm.Event(abortCtx, EventAbortFence)
 	tracing.End(abortSpan, err)
+	if errors.Is(err, gateway.ErrGatewayChanged) {
+		rollbackErr = err
+		return o.stopOnGatewayChange(stepFailure, err, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+	}
 	if err != nil {
 		rollbackErr = err
 		slog.Error("❌ failed to roll back to initialized", "error", err)
@@ -329,11 +342,56 @@ func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 	}
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
+		if errors.Is(err, gateway.ErrGatewayChanged) {
+			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+		}
 		slog.Error("❌ failed to remove an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
 	return stepFailure
+}
+
+// unconfirmedFenceStop is where a run stops when the CR moved before the
+// removal of an unconfirmed fence could restore it.
+const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
+
+// stoppedAt says where a TBM run stopped, for a stop on a changed gateway CR:
+// how far the gateway got, read from the FSM state the run halted at.
+func stoppedAt(state string, fencedAtStart bool) string {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		if fencedAtStart {
+			return "an earlier run's fence applied, not promoted"
+		}
+		return "no fence applied"
+	case StateFenced, StateFenceVerified:
+		return "fence applied, not promoted"
+	case StatePromoted:
+		return "topics promoted, gateway not switched"
+	case StateSwitched:
+		return "gateway switched"
+	default:
+		return "run stopped at state " + state
+	}
+}
+
+// stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last
+// knew (err Is gateway.ErrGatewayChanged). kcp makes no further gateway write:
+// it reports what it observed and where it stopped, and leaves the gateway for
+// the operator to inspect. err is either the step's own error or a
+// compensation's, in which case it is joined onto stepFailure so both survive.
+func (o *TBMOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
+	var gce *gateway.GenerationChangedError
+	if errors.As(err, &gce) {
+		o.reporter.warn("%s", gce.Summary(stopped))
+	}
+	o.reporter.Remediation("Inspect the gateway:\n   %s", gateway.InspectCommands(o.config.K8sNamespace, o.config.InitialCrName))
+	slog.Debug("stopping on a changed gateway CR", "stopped", stopped, "error", err)
+	if errors.Is(stepFailure, err) {
+		return stepFailure
+	}
+	return fmt.Errorf("%w; kcp made no further gateway write: %w", stepFailure, err)
 }
 
 // beforeFenceStep reports whether state comes before this run's fence step
@@ -416,7 +474,10 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	// Reason is announced by handleStepFailure; this callback owns only the unfence.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		// A changed CR is reported by handleStepFailure's stopOnGatewayChange.
+		if !errors.Is(err, gateway.ErrGatewayChanged) {
+			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		}
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
