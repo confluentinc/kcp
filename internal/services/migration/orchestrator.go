@@ -294,7 +294,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// The CR is no longer the one kcp last knew, so no rollback either: every
 	// compensation below writes to the gateway.
 	if errors.Is(stepErr, gateway.ErrGatewayChanged) {
-		return o.stopOnGatewayChange(stepFailure, stepErr, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+		return o.stopOnGatewayChange(stepFailure, stepErr, o.stoppedAt())
 	}
 
 	// A fence that reached the cluster but was never confirmed is compensated
@@ -358,7 +358,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		tracing.End(abortSpan, err)
 		if errors.Is(err, gateway.ErrGatewayChanged) {
 			rollbackErr = err
-			return o.stopOnGatewayChange(stepFailure, err, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+			return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())
 		}
 		if err != nil {
 			rollbackErr = err
@@ -377,7 +377,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		}
 		if errors.Is(err, gateway.ErrGatewayChanged) {
 			rollbackErr = err
-			return o.stopOnGatewayChange(stepFailure, err, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
+			return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())
 		}
 		if err != nil {
 			rollbackErr = err
@@ -408,21 +408,42 @@ func beforeFenceStep(state string) bool {
 // compensation for an unconfirmed fence could restore it.
 const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
 
+// stoppedAt says where this run stopped, for a stop on a changed gateway CR.
+// Topics may already be promoted when reconcile forbade a rollback (it does
+// exactly when topics are promoted or promoting) or once this run has sent a
+// promote request.
+func (o *MigrationOrchestrator) stoppedAt() string {
+	mayBePromoted := !o.config.RollbackAllowed || o.actions.promoteSubmitted
+	return stoppedAt(o.fsm.Current(), o.config.FencedAtStart, mayBePromoted)
+}
+
 // stoppedAt says where an AAO run stopped, for a stop on a changed gateway CR:
 // how far the gateway got, read from the FSM state the run halted at.
-func stoppedAt(state string, fencedAtStart bool) string {
+// mayBePromoted reports that some topics may already be promoted, which every
+// state before promoted must then say instead of "not promoted".
+func stoppedAt(state string, fencedAtStart, mayBePromoted bool) string {
 	switch state {
 	case StateUninitialized, StateInitialized, StateLagsOk:
-		if fencedAtStart {
+		switch {
+		case fencedAtStart && mayBePromoted:
+			return "an earlier run's fence applied, some topics already promoted"
+		case fencedAtStart:
 			return "an earlier run's fence applied, not promoted"
+		case mayBePromoted:
+			return "fence applied, some topics already promoted"
 		}
 		return "no fence applied"
 	case StateFenced, StateOffsetSyncPaused, StateFenceVerified:
+		if mayBePromoted {
+			return "fence applied, some topics already promoted"
+		}
 		return "fence applied, not promoted"
 	case StatePromoted:
 		return "topics promoted, gateway not switched"
-	default: // StateSwitched, StateOffsetSyncRestored
+	case StateSwitched, StateOffsetSyncRestored:
 		return "gateway switched"
+	default:
+		return "run stopped at state " + state
 	}
 }
 

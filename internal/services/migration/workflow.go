@@ -65,7 +65,10 @@ type MigrationActions struct {
 	// lives here, not on the verifier, because verifier() builds a fresh one per
 	// call. 0 means unknown, and leaves every patch and check unguarded.
 	gatewayGeneration int64
-	reporter          *reporter // user-facing terminal output
+	// promoteSubmitted is set once this run has sent a promote request: from
+	// then on some topics may be promoted, so a stop must not say otherwise.
+	promoteSubmitted bool
+	reporter         *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -1047,6 +1050,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		batches++
+		s.promoteSubmitted = true
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)

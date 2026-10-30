@@ -1333,27 +1333,51 @@ func TestTBMOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testi
 	assert.Equal(t, StateFenced, orch.fsm.Current())
 }
 
+func TestTBMOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopicsPromoted(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, true)
+	res.RollbackAllowed = false
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 1, "the refused fence only")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, some topics already promoted.")
+	assert.NotContains(t, out.String(), "not promoted")
+}
+
 func TestStoppedAt(t *testing.T) {
 	tests := []struct {
 		state         string
 		fencedAtStart bool
+		mayBePromoted bool
 		want          string
 	}{
-		{StateUninitialized, false, "no fence applied"},
-		{StateInitialized, false, "no fence applied"},
-		{StateLagsOk, false, "no fence applied"},
-		{StateUninitialized, true, "an earlier run's fence applied, not promoted"},
-		{StateInitialized, true, "an earlier run's fence applied, not promoted"},
-		{StateLagsOk, true, "an earlier run's fence applied, not promoted"},
-		{StateFenced, false, "fence applied, not promoted"},
-		{StateFenceVerified, true, "fence applied, not promoted"},
-		{StatePromoted, true, "topics promoted, gateway not switched"},
-		{StateSwitched, false, "gateway switched"},
-		{"some_future_state", false, "run stopped at state some_future_state"},
+		{StateUninitialized, false, false, "no fence applied"},
+		{StateInitialized, false, false, "no fence applied"},
+		{StateLagsOk, false, false, "no fence applied"},
+		{StateUninitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateInitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateLagsOk, true, false, "an earlier run's fence applied, not promoted"},
+		{StateFenced, false, false, "fence applied, not promoted"},
+		{StateFenceVerified, true, false, "fence applied, not promoted"},
+		{StateUninitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateInitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, false, true, "fence applied, some topics already promoted"},
+		{StateFenced, false, true, "fence applied, some topics already promoted"},
+		{StateFenceVerified, true, true, "fence applied, some topics already promoted"},
+		{StatePromoted, true, false, "topics promoted, gateway not switched"},
+		{StatePromoted, false, true, "topics promoted, gateway not switched"},
+		{StateSwitched, false, false, "gateway switched"},
+		{StateSwitched, false, true, "gateway switched"},
+		{"some_future_state", false, false, "run stopped at state some_future_state"},
 	}
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%s/%v", tt.state, tt.fencedAtStart), func(t *testing.T) {
-			assert.Equal(t, tt.want, stoppedAt(tt.state, tt.fencedAtStart))
+		t.Run(fmt.Sprintf("%s/%v/%v", tt.state, tt.fencedAtStart, tt.mayBePromoted), func(t *testing.T) {
+			assert.Equal(t, tt.want, stoppedAt(tt.state, tt.fencedAtStart, tt.mayBePromoted))
 		})
 	}
 }
