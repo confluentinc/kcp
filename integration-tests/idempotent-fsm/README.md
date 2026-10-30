@@ -57,7 +57,8 @@ mid-switch) `001..005` (one test per mode), drift refused (operator stopped
 mid-unfence) `006..010` (static only), a terminating gateway pod refused until
 the gateway settles `091..095` (static only, never promotes), a switch a
 trial-licence gateway never loads `091..095` (dynamic only), a resume after
-every gateway pod restarts `096..100` (dynamic only), rollback when a resume fails before its own fence step
+every gateway pod restarts `096..100` (dynamic only), a CR change before a
+rollback `096..100` (static only), rollback when a resume fails before its own fence step
 `011..015`, a static route fenced by an operator is refused `016..020`
 (static only), an operator's fence kept through a resumed migration `021..025`
 and through a rollback `026..030` (dynamic only), unrouted-producer detection
@@ -207,12 +208,26 @@ generation is still the change's, every topic is still fenced and every mirror
 is still `ACTIVE`. A plain re-run then completes, and every mirror is
 `STOPPED`.
 
+A second generation test (static only, with the offset-sync pause on) covers
+the write guard on a rollback. Run 1 sets both the failure hook on
+`verify_fence` and the hold after `fenced`; while it is held, the test changes
+the CR's `spec.configId`. Once released, kcp pauses offset sync, `verify_fence`
+fails, and the rollback's unfence is refused because the generation is not the
+one kcp's fence left. kcp exits non-zero: the output names the failure hook and
+says kcp is stopping with no gateway write, with the fence applied and nothing
+promoted. The CR's generation is still the change's, every topic is still
+fenced, every mirror is still `ACTIVE`, and the link's consumer offset sync is
+still paused (the restore is skipped). A plain re-run then completes, every
+mirror is `STOPPED`, and offset sync is back on.
+
 **The hold seam.** Beside the kill-point and failure hook, kcp has a test-only
 hold: with `KCP_TEST_HOLD_AFTER=<state>` and `KCP_TEST_HOLD_FILE=<file>`, kcp
 creates `<file>.held` after reaching that state and blocks until `<file>`
-exists. `runKCPHeldAt` runs kcp that way, waits for `.held` (up to 5 minutes),
-runs the test's step against the live world, then creates the release file. A
-cleanup creates it too, so a failed test never leaves kcp blocked.
+exists. `runKCPHeldAt` runs kcp that way, waits for `.held` (up to 5 minutes, or
+until kcp exits first, which fails the test with kcp's output), runs the
+test's step against the live world, then creates the release file.
+`runKCPHeldAtWith` adds further environment, such as the failure hook. A
+cleanup creates the release file too, so a failed test never leaves kcp blocked.
 
 **The settle wait.** On a hot-reload-off (static) gateway, a rollout reports
 complete while the replaced pod terminates for up to its grace period, and

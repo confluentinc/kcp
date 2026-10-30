@@ -411,6 +411,13 @@ const (
 // process error.
 func (e *env) runKCPHeldAt(t *testing.T, reportName, state string, whileHeld func(), args ...string) (string, error) {
 	t.Helper()
+	return e.runKCPHeldAtWith(t, reportName, state, nil, whileHeld, args...)
+}
+
+// runKCPHeldAtWith is runKCPHeldAt with extraEnv (NAME=value, such as another
+// test seam) added to kcp's environment alongside the hold.
+func (e *env) runKCPHeldAtWith(t *testing.T, reportName, state string, extraEnv []string, whileHeld func(), args ...string) (string, error) {
+	t.Helper()
 	e.waitForGatewaySettled(t, context.Background())
 
 	release := filepath.Join(t.TempDir(), "release")
@@ -441,7 +448,7 @@ func (e *env) runKCPHeldAt(t *testing.T, reportName, state string, whileHeld fun
 	})
 
 	seam := &testSeam{
-		env:    []string{killpoint.HoldEnvVar + "=" + state, killpoint.HoldFileEnvVar + "=" + release},
+		env:    append([]string{killpoint.HoldEnvVar + "=" + state, killpoint.HoldFileEnvVar + "=" + release}, extraEnv...),
 		effect: "holds after " + state + " until released",
 	}
 	go func() {
