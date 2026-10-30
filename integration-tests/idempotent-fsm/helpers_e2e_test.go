@@ -420,19 +420,30 @@ func (e *env) runKCPHeldAt(t *testing.T, reportName, state string, whileHeld fun
 			_ = f.Close()
 		}
 	}
-	// Registered before kcp starts, so a failed require below never leaves kcp
-	// blocked until the execute timeout.
-	t.Cleanup(releaseKCP)
-
-	seam := &testSeam{
-		env:    []string{killpoint.HoldEnvVar + "=" + state, killpoint.HoldFileEnvVar + "=" + release},
-		effect: "holds after " + state + " until released",
-	}
 	type result struct {
 		out string
 		err error
 	}
 	done := make(chan result, 1)
+	received := false
+	// Registered before kcp starts, so a failed require below never leaves kcp
+	// blocked until the execute timeout. It also waits for the kcp goroutine,
+	// which logs through t, so that it never outlives the test.
+	t.Cleanup(func() {
+		releaseKCP()
+		if received {
+			return
+		}
+		select {
+		case <-done:
+		case <-time.After(executeTimeout):
+		}
+	})
+
+	seam := &testSeam{
+		env:    []string{killpoint.HoldEnvVar + "=" + state, killpoint.HoldFileEnvVar + "=" + release},
+		effect: "holds after " + state + " until released",
+	}
 	go func() {
 		out, err := e.execKCP(t, reportName, seam, args...)
 		done <- result{out, err}
@@ -453,6 +464,7 @@ func (e *env) runKCPHeldAt(t *testing.T, reportName, state string, whileHeld fun
 	releaseKCP()
 	t.Logf("\nKCP RELEASED ▸ the run continues from %q", state)
 	r := <-done
+	received = true
 	return r.out, r.err
 }
 
