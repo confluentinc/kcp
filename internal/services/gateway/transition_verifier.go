@@ -31,6 +31,9 @@ type ApplyResult struct {
 	// not be read, which the rollout waits treat as "any generation counts as
 	// a bump".
 	BaselineDeploymentGeneration int64
+	// Generation is the Gateway CR's metadata.generation after the write, or 0
+	// when the write never reached the cluster.
+	Generation int64
 }
 
 // TransitionVerifier applies a gateway CR (or a configId-only stamp) and
@@ -48,6 +51,48 @@ type TransitionVerifier struct {
 	Capability       Capability
 	RolloutTimeout   time.Duration
 	HotReloadTimeout time.Duration
+	// Generation is the run's expected Gateway CR metadata.generation, owned by
+	// the caller. Every patch is guarded on it and advances it to the
+	// generation that write produced. nil, or a pointed-to 0, means unknown:
+	// patches are unguarded and CheckGeneration is a no-op.
+	Generation *int64
+}
+
+// expectedGeneration returns the generation to guard on, 0 when unknown.
+func (v *TransitionVerifier) expectedGeneration() int64 {
+	if v.Generation == nil {
+		return 0
+	}
+	return *v.Generation
+}
+
+// recordGeneration advances the expected generation to the one a write
+// produced. It runs whether or not the write verified: an unverified write
+// still moved the generation.
+func (v *TransitionVerifier) recordGeneration(written int64) {
+	if v.Generation != nil && written > 0 {
+		*v.Generation = written
+	}
+}
+
+// CheckGeneration confirms the Gateway CR's metadata.generation is still the
+// one kcp expects, with a single GET and no pod probes. It returns a
+// *GenerationChangedError on a mismatch, and nil when the expected generation
+// is unknown.
+func (v *TransitionVerifier) CheckGeneration(ctx context.Context, namespace, crName, step string) error {
+	expected := v.expectedGeneration()
+	if expected == 0 {
+		slog.Debug("generation check skipped: expected generation unknown", "step", step)
+		return nil
+	}
+	observed, err := v.Service.GetGatewayGeneration(ctx, namespace, crName)
+	if err != nil {
+		return fmt.Errorf("failed to read the gateway generation during %s: %w", step, err)
+	}
+	if observed != expected {
+		return &GenerationChangedError{Namespace: namespace, Gateway: crName, Expected: expected, Observed: observed}
+	}
+	return nil
 }
 
 // HotReloadTimeoutOrDefault returns the configId verification deadline,
@@ -94,11 +139,13 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
 		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
 
-	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, 0)
+	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, v.expectedGeneration())
+	v.recordGeneration(patched.Generation)
 	if err != nil {
-		return ApplyResult{}, err
+		// An unverified write still reached the cluster; hand back what it produced.
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
@@ -111,11 +158,12 @@ func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, c
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
-	patched, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID, 0)
+	patched, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID, v.expectedGeneration())
+	v.recordGeneration(patched.Generation)
 	if err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
 }
 
 // WaitForAccepted blocks until the Confluent operator has accepted the
