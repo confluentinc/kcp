@@ -61,6 +61,9 @@ type TBMActions struct {
 	// lives here, not on the verifier, because verifier() builds a fresh one per
 	// call. 0 means unknown, and leaves every patch and check unguarded.
 	gatewayGeneration int64
+	// promoteSubmitted is set once this run has sent a promote request: from
+	// then on some topics may be promoted, so a stop must not say otherwise.
+	promoteSubmitted bool
 
 	clusterLinkService clusterlink.Service
 	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
@@ -543,6 +546,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		batches++
+		a.promoteSubmitted = true
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
