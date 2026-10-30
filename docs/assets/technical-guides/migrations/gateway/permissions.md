@@ -92,7 +92,7 @@ Without it, kcp refuses before fencing, with a message that names two ways out: 
 | CRD get (hot reload)          | A refusal before the fence, naming the grant (see above).                                                                                                                                                                                                                                                                                                                                                                 |
 | `pods/proxy` get (hot reload) | Before the fence, while kcp detects hot reload support: `could not reach the config endpoint on any of the N ready gateway pods ... (check the kcp identity has "get" on pods/proxy)`. If the grant is lost or the endpoint becomes unreachable after detection, kcp can't tell a missing grant from a network failure and you see only `timed out after 90s waiting for the gateway to apply the configId on every pod`. |
 
-For the Gateway and Confluent for Kubernetes (CFK) versions that hot reload needs, see [Version requirements](index.md#version-requirements).
+For the Gateway and Confluent for Kubernetes (CFK) versions that hot reload needs, see [Version requirements](overview.md#version-requirements).
 
 ## Source Kafka cluster
 
@@ -176,7 +176,7 @@ The offset-write probe commits an offset for a group and topic that don't exist 
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Idempotency and resumability of Gateway migrations](idempotency.md)
 - [Gateway migration limitations](limitations.md)
 - [Credentials](../../../migration-assets/cutover/credentials.md)

@@ -4,7 +4,7 @@ A static migration moves all topics on the route to Confluent Cloud in a single 
 
 Your applications already connect to the Confluent Gateway. A static route binds all of its traffic to one cluster, so cutting over means pausing the route, promoting the mirror topics on the cluster link, and repointing the route at the destination. Clients reconnect to the same Gateway address and land on Confluent Cloud.
 
-This guide walks through the prerequisites, the migration manifest, and a cutover run. For how static migrations compare with topic-based ones, see [Gateway migrations](index.md).
+This guide walks through the prerequisites, the migration manifest, and a cutover run. For how static migrations compare with topic-based ones, see [Gateway migrations](overview.md).
 
 ## Prerequisites and limitations
 
@@ -14,7 +14,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 - The route to migrate is static: it has a single `streamingDomain` bound to the source cluster.
 - The destination is already declared on the Gateway CR as a streaming domain with exactly one bootstrap server ID, and the route already carries `security.cluster.<destination>` authentication for it, with its secret store and Secrets present. The cutover is a pure `streamingDomain` flip, so no secret or auth change happens during it. See [Stage the destination on the Gateway](#1-stage-the-destination-on-the-gateway).
 - The route carries no fence of its own. kcp refuses a route with a fence it didn't add.
-- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](index.md#version-requirements).
+- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](overview.md#version-requirements).
 
 **Cluster link**
 
@@ -34,7 +34,7 @@ This guide walks through the prerequisites, the migration manifest, and a cutove
 - A manifest migrates one route and one topic group per run.
 - The point of no return is the start of promote. After it, kcp never rolls back. A failure leaves the fence up until you re-run and the migration completes.
 - Ctrl+C leaves the fence in place. Re-run `execute` to continue.
-- A static migration has no per-topic staging. If you need to move topics in stages, use a [topic-based migration](index.md#dynamic-routes-topic-based).
+- A static migration has no per-topic staging. If you need to move topics in stages, use a [topic-based migration](overview.md#dynamic-routes-topic-based).
 - Create the cluster link without `cluster.link.prefix`. kcp expects each mirror topic to have the same name on both clusters.
 - Cutover doesn't migrate schemas. Move them before the cutover, for example with [`kcp iac schemas generate`](../../../command-reference/iac/schemas/generate.md).
 
@@ -229,7 +229,7 @@ After promote starts, a migration only moves forward. kcp doesn't move clients b
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)
 - [`kcp migration cutover execute`](../../../command-reference/migration/cutover/execute.md)
 - [`kcp migration cutover lag-check`](../../../command-reference/migration/cutover/lag-check.md)

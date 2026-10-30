@@ -1,6 +1,6 @@
 title: Gateway
 nav:
-  - Overview: index.md
+  - Overview: overview.md
   - Static Migration: static-migration.md
   - Dynamic Migration: dynamic-migration.md
   - Dynamic-to-Static Conversion: dynamic-to-static-conversion.md

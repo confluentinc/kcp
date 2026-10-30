@@ -4,7 +4,7 @@ A conversion closes out a topic-based migration on Confluent Gateway. It replace
 
 When every topic you're migrating has moved to Confluent Cloud, the route is still dynamic: it binds both clusters, and consumer group coordination is still pinned to the source. After the conversion, clients reconnect to the same Gateway address, and the source is no longer on the route.
 
-This guide walks through the prerequisites, the migration manifest, and a conversion run. For how conversions fit with the other migration types, see [Gateway migrations](index.md).
+This guide walks through the prerequisites, the migration manifest, and a conversion run. For how conversions fit with the other migration types, see [Gateway migrations](overview.md).
 
 <!-- prettier-ignore -->
 !!! warning "Early Access"
@@ -18,7 +18,7 @@ This guide walks through the prerequisites, the migration manifest, and a conver
 - The route to convert is dynamic: it binds exactly two streaming domains, the source and the destination, and sets `rules.routing.coordination.group` to the source.
 - The destination is one of the two bound domains, its binding carries a `bootstrapServerId`, and the route already carries `security.cluster.<domain>` authentication for it. This is already true if you ran a [dynamic migration](dynamic-migration.md) on the route.
 - The route carries no fence kcp didn't write, and no route-level fence. A fence left by an unfinished dynamic migration batch is the usual cause of a refusal. See [Refusals](#refusals).
-- Gateway 1.4.0 and later, and CFK 3.4.0 and later. See [Version requirements](index.md#version-requirements).
+- Gateway 1.4.0 and later, and CFK 3.4.0 and later. See [Version requirements](overview.md#version-requirements).
 
 **Cluster link**
 
@@ -244,7 +244,7 @@ After the switch, a conversion only moves forward. kcp doesn't move clients back
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Migrate with a dynamic route](dynamic-migration.md)
 - [Migrate with a static route](static-migration.md)
 - [Route conversion settings in the migration manifest](../../../migration-assets/cutover/route-conversion.md)

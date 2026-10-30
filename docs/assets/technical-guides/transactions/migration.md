@@ -146,7 +146,7 @@ After promote starts, a migration only moves forward. kcp doesn't move clients b
 
 ## Related content
 
-- [Gateway migrations](../migrations/gateway/index.md)
+- [Gateway migrations](../migrations/gateway/overview.md)
 - [Migrate with a static route](../migrations/gateway/static-migration.md)
 - [Discover transactional workloads](discovery.md)
 - [Migration manifest reference](../../migration-assets/cutover/overview.md)

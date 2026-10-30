@@ -173,7 +173,7 @@ After promote starts, or after the switch for a conversion, a migration only mov
 
 ## Related content
 
-- [Gateway migrations](../migrations/gateway/index.md)
+- [Gateway migrations](../migrations/gateway/overview.md)
 - [Migrate with a static route](../migrations/gateway/static-migration.md)
 - [Migrate with a dynamic route](../migrations/gateway/dynamic-migration.md)
 - [Convert a dynamic route to static](../migrations/gateway/dynamic-to-static-conversion.md)

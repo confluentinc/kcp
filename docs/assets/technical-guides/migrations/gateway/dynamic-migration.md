@@ -4,7 +4,7 @@ A dynamic migration moves topics to Confluent Cloud in batches, with no client c
 
 Your applications already connect to the Confluent Gateway. A dynamic route binds both the source and the destination and sends each topic to one or the other according to routing rules. Cutting over a batch means fencing only those topics, promoting their mirror topics on the cluster link, and adding a routing rule that sends them to the destination. Clients reconnect to the same Gateway address, and everything outside the batch keeps flowing to the source.
 
-This guide walks through the prerequisites, the migration manifest, and a batch run. For how dynamic migrations compare with static ones, see [Gateway migrations](index.md).
+This guide walks through the prerequisites, the migration manifest, and a batch run. For how dynamic migrations compare with static ones, see [Gateway migrations](overview.md).
 
 <!-- prettier-ignore -->
 !!! warning "Early Access"
@@ -19,7 +19,7 @@ This guide walks through the prerequisites, the migration manifest, and a batch 
 - The route uses the `host` broker identification strategy, which requires TLS between clients and the Gateway. kcp doesn't check this. The Gateway rejects a dynamic route that doesn't.
 - The destination is one of the two bound domains, and the route already carries `security.cluster.<domain>` authentication for both. `PLAIN` and `OAUTHBEARER` are supported on a dynamic route, but SCRAM is not.
 - kcp adds and removes its own fence and routing rules in `rules`. Any fence or routing rule you authored stays in place. See [If a run stops](#if-a-run-stops).
-- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](index.md#version-requirements).
+- Gateway 1.4.0 or later, and CFK 3.4.0 or later. See [Version requirements](overview.md#version-requirements).
 
 **Cluster link**
 
@@ -290,7 +290,7 @@ The source cluster stays on the route until the conversion. Decommission it afte
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Migrate with a static route](static-migration.md)
 - Confluent Documentation: [Migrate Topics Incrementally with Topic-Based Routing and Fencing](https://docs.confluent.io/private-cloud-gateway/current/gateway-topic-based-routing.html)
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)

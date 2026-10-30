@@ -2,14 +2,14 @@
 
 This page covers the boundaries of `kcp migration cutover` itself, so you can plan around them.
 
-Limits that come from Confluent Gateway, such as dynamic routing being Early Access, no transactions or share groups on a dynamic route, no KIP-848 consumers, and the `host` broker identification strategy, are in the [Gateway migrations overview](index.md) and the guide for each workflow.
+Limits that come from Confluent Gateway, such as dynamic routing being Early Access, no transactions or share groups on a dynamic route, no KIP-848 consumers, and the `host` broker identification strategy, are in the [Gateway migrations overview](overview.md) and the guide for each workflow.
 
 ## Scope
 
 - **The cluster link and its mirror topics are prepared before the run.** kcp reads and promotes them but doesn't create them. Use [`kcp migration resources create`](../../../migration-assets/README.md) to set them up.
 - **kcp looks at each mirror's status.** `ACTIVE`, `STOPPED`, and `PENDING_STOPPED` are understood. A mirror in any other state, such as `FAILED` or `PAUSED`, stops the run with `<topic> mirror is in a failed/transitional state`, so bring the mirror back to a healthy state first.
 - **A manifest covers one route**, and for static and dynamic migrations one topic group per run.
-- **Kubernetes and Confluent for Kubernetes (CFK).** See the [overview](index.md).
+- **Kubernetes and Confluent for Kubernetes (CFK).** See the [overview](overview.md).
 
 ## Connections and authentication
 
@@ -59,7 +59,7 @@ How kcp confirms that a change took effect depends on `spec.hotReload.enabled` o
 
 **Operator acceptance.** kcp waits for `status.observedGeneration` to reach the CR's generation. A `False` condition whose reason ends in `Failed` is treated as a rejection after it has persisted for 30 seconds, and conditions older than the current generation are ignored, which guards against stale conditions.
 
-`--dry-run` doesn't run these checks. For what to grant ahead of a real run, see [Permissions](permissions.md). For the Gateway and CFK versions, see [Version requirements](index.md#version-requirements).
+`--dry-run` doesn't run these checks. For what to grant ahead of a real run, see [Permissions](permissions.md). For the Gateway and CFK versions, see [Version requirements](overview.md#version-requirements).
 
 ## What to confirm yourself
 
@@ -121,7 +121,7 @@ kcp works from the Gateway CR, the clusters, and the link. A few things sit outs
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Permissions for Gateway migrations](permissions.md)
 - [Idempotency and resumability of Gateway migrations](idempotency.md)
 - [Migration manifest reference](../../../migration-assets/cutover/overview.md)

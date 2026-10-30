@@ -167,7 +167,7 @@ The guides say that nothing changes before the fence, and for traffic that holds
 
 ## Related content
 
-- [Gateway migrations](index.md)
+- [Gateway migrations](overview.md)
 - [Permissions for Gateway migrations](permissions.md)
 - [Gateway migration limitations](limitations.md)
 - [Run a migration cutover](../../../migration-assets/cutover/running-a-cutover.md)
