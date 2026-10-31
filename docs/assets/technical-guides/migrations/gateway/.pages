@@ -1,6 +1,7 @@
 title: Gateway
 nav:
   - Overview: overview.md
+  - Topic-Based Migration Guide: topic-based-migration-guide.md
   - Static Migration: static-migration.md
   - Dynamic Migration: dynamic-migration.md
   - Dynamic-to-Static Conversion: dynamic-to-static-conversion.md
