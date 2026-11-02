@@ -122,10 +122,16 @@ main() {
 }
 
 # Output goes to the terminal and run.log; the exit code is main's.
+# Record what the gateway does on every config change, for diagnosing missed hot reloads.
+# shellcheck source=../lib/gateway-capture.sh
+. "${SCRIPT_DIR}/../lib/gateway-capture.sh"
+gateway_capture_start "${PROFILE}" "${NAMESPACE}" "${KCP_TBM_GATEWAY_NAME}" "${RUN_DIR}-gateway-capture"
+
 set +e
 main 2>&1 | tee "${RUN_DIR}/run.log"
 status=${PIPESTATUS[0]}
 set -e
+gateway_capture_stop
 
 # Whatever the result, copy the tests' report folders out of the runner pod,
 # then give each folder its test's slice of run.log (from its `=== RUN` line to
