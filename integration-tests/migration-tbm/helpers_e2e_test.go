@@ -390,9 +390,9 @@ func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	stored, err := h.e.svc.PatchGatewayRoute(h.ctx, h.e.namespace, h.e.gateway, rp, configID)
+	stored, err := h.e.svc.PatchGatewayRoute(h.ctx, h.e.namespace, h.e.gateway, rp, configID, 0)
 	require.NoError(t, err, "%s: PatchGatewayRoute", label)
-	require.Equal(t, configID, stored, "the API server must persist the configId kcp sent")
+	require.Equal(t, configID, stored.ConfigID, "the API server must persist the configId kcp sent")
 
 	require.NoError(t, h.e.svc.WaitForGatewayAccepted(h.ctx, h.e.namespace, h.e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, h.e.svc.WaitForGatewayConfigID(h.ctx, h.e.namespace, h.e.gateway, gateway.ConfigWaitOptions{
@@ -409,7 +409,7 @@ func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 // ensureFencingBlocked fills in the CRD-required `blocked` on any fencing entry
 // the engine emitted without it. The engine renders a batch fence as
 // {topics: [...]} — fence = block those topics during cutover — but the CFK
-// 0.1838.0 Gateway CRD marks fencing[].blocked a required field, so a raw apply is
+// CFK 3.4.0 Gateway CRD marks fencing[].blocked a required field, so a raw apply is
 // rejected. The harness fills it (blocked: true matches the fence's intent) the way
 // the future TBM FSM will have to; it is not an engine defect the tests should mask
 // elsewhere.

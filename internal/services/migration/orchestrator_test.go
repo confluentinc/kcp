@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -318,7 +319,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Unrouted producers detected — attempting to remove the fence to restore traffic",
 		"the rollback banner names detection as the reason, as a capitalised sentence")
 
 	// FSM state should have rolled back to initialized via abort_fence
@@ -1553,7 +1554,7 @@ func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testin
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
-	assert.Contains(t, out.String(), "Verifying gateway fence failed — removing fence to restore traffic",
+	assert.Contains(t, out.String(), "Verifying gateway fence failed — attempting to remove the fence to restore traffic",
 		"the rollback banner names the failed step, as a capitalised sentence")
 
 	assert.Equal(t, StateInitialized, orch.fsm.Current(),
@@ -2308,7 +2309,7 @@ func TestOrchestrator_Execute_FencedAtStart_FailureBeforeTheFenceStep_RollsBack(
 			assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the failure must be the hook's")
 			require.Len(t, patches, 1, "the rollback only: this run never reached its own fence")
 			assert.Equal(t, "", patches[0].Field, "the rollback replaces the whole route with the rollback target")
-			assert.Contains(t, buf.String(), "removing fence to restore traffic")
+			assert.Contains(t, buf.String(), "attempting to remove the fence to restore traffic")
 			assert.Contains(t, buf.String(), "Gateway unfenced")
 			assert.Contains(t, alters, offsetSyncBackOn, "the rollback sets consumer offset sync back to the baseline")
 		})
@@ -2330,7 +2331,7 @@ func TestOrchestrator_Execute_NotFencedAtStart_FailureBeforeTheFenceStep_Nothing
 
 	require.Error(t, err)
 	assert.Empty(t, patches, "nothing is fenced, so nothing is patched")
-	assert.NotContains(t, buf.String(), "removing fence")
+	assert.NotContains(t, buf.String(), "attempting to remove the fence")
 }
 
 // TestOrchestrator_Execute_FencedAtStart_RollbackNotAllowed_KeepsTheFence: a
@@ -2367,7 +2368,7 @@ func TestOrchestrator_Execute_FencedAtStart_FailureAtPromote_KeepsTheFence(t *te
 
 	require.Error(t, err)
 	require.Len(t, patches, 1, "this run's fence only: no rollback from promote onwards")
-	assert.NotContains(t, buf.String(), "removing fence")
+	assert.NotContains(t, buf.String(), "attempting to remove the fence")
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
@@ -2397,4 +2398,323 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 	require.ErrorIs(t, err, ErrFenceUnconfirmed)
 	require.Len(t, patches, 2, "the fence, then the restoring apply")
 	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
+}
+
+// --- Gateway CR generation checks ---
+
+// gatewayMock returns the orchestrator's mock gateway service, for scripting
+// generations after construction.
+func gatewayMock(orch *MigrationOrchestrator) *mockGatewayService {
+	return orch.actions.gatewayService.(*mockGatewayService)
+}
+
+// changedCR is the refusal a guarded write or check returns once the CR moved.
+func changedCR(expected, observed int64) *gateway.GenerationChangedError {
+	return &gateway.GenerationChangedError{Namespace: "confluent", Gateway: "my-gateway", Expected: expected, Observed: observed}
+}
+
+// scriptedRoutePatches answers the n-th route patch (0-based) with results[n],
+// recording the patches; calls past the script succeed at the expected generation.
+func scriptedRoutePatches(patches *[]gateway.RoutePatch, results ...func(expected int64) (gateway.PatchResult, error)) func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
+	return func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string, expected int64) (gateway.PatchResult, error) {
+		n := len(*patches)
+		*patches = append(*patches, rp)
+		if n < len(results) {
+			return results[n](expected)
+		}
+		return gateway.PatchResult{ConfigID: configID, Generation: expected}, nil
+	}
+}
+
+// patchedTo answers a route patch as a write that left the CR at gen.
+func patchedTo(gen int64) func(int64) (gateway.PatchResult, error) {
+	return func(int64) (gateway.PatchResult, error) { return gateway.PatchResult{Generation: gen}, nil }
+}
+
+// refusedAs answers a route patch as refused: the CR is at observed.
+func refusedAs(observed int64) func(int64) (gateway.PatchResult, error) {
+	return func(expected int64) (gateway.PatchResult, error) {
+		return gateway.PatchResult{}, changedCR(expected, observed)
+	}
+}
+
+// generationRun builds a happy-path orchestrator with consumer offset sync
+// paused and the cluster-link config changes recorded, so a test can tell
+// whether the rollback's offset-sync restore ran.
+func generationRun(t *testing.T) (orch *MigrationOrchestrator, config *MigrationConfig, out, errOut *strings.Builder, alters *[]clusterlink.ConfigAlteration) {
+	t.Helper()
+	orch, config = newHappyPathOrchestrator(t, nil)
+	config.PauseConsumerOffsetSync = true
+	config.ConsumerOffsetSyncBaseline = "enabled"
+	var mu sync.Mutex
+	alters = &[]clusterlink.ConfigAlteration{}
+	link := recordingLink(&mu, alters)
+	link.listConfigsFn = func(context.Context, clusterlink.Config) (map[string]string, error) {
+		return map[string]string{offsetSyncEnableKey: "true"}, nil
+	}
+	orch.actions.clusterLinkService = link
+	out, errOut = &strings.Builder{}, &strings.Builder{}
+	orch.reporter = &reporter{out: out, err: errOut}
+	return orch, config, out, errOut, alters
+}
+
+func TestOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
+	orch, config := newHappyPathOrchestrator(t, nil)
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+	gw := gatewayMock(orch)
+	// The fence write reports no generation, so the CR is still at 4 at promote.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.NoError(t, err)
+	require.NotEmpty(t, gw.routeExpected)
+	assert.Equal(t, int64(4), gw.routeExpected[0], "the fence patch is guarded on the generation reconcile read")
+}
+
+func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, errOut, alters := generationRun(t)
+	var promotes int64
+	orch.actions.clusterLinkService.(*mockClusterLinkService).promoteMirrorTopicsFn = func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		atomic.AddInt64(&promotes, 1)
+		return nil, fmt.Errorf("promote must not run")
+	}
+	var patches []gateway.RoutePatch
+	gw := gatewayMock(orch)
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, gateway.ErrGatewayChanged))
+	assert.Zero(t, atomic.LoadInt64(&promotes), "promote must not run")
+	require.Len(t, patches, 1, "the fence only: no unfence")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, not promoted.")
+	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+gateway.InspectCommands("confluent", "my-gateway"))
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+func TestOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, _, alters := generationRun(t)
+	orch.actions.promoteBatchSize = 1
+	var mu sync.Mutex
+	var requests [][]string
+	stopped := map[string]bool{}
+	link := orch.actions.clusterLinkService.(*mockClusterLinkService)
+	link.promoteMirrorTopicsFn = func(_ context.Context, _ clusterlink.Config, topics []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests = append(requests, topics)
+		resp := &clusterlink.PromoteMirrorTopicsResponse{}
+		for _, topic := range topics {
+			stopped[topic] = true
+			resp.Data = append(resp.Data, struct {
+				MirrorTopicName string `json:"mirror_topic_name"`
+				ErrorMessage    string `json:"error_message,omitempty"`
+				ErrorCode       int    `json:"error_code,omitempty"`
+			}{MirrorTopicName: topic})
+		}
+		return resp, nil
+	}
+	link.listMirrorTopicsFn = func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		var mts []clusterlink.MirrorTopic
+		for _, topic := range config.Topics {
+			status := clusterlink.MirrorStatusActive
+			if stopped[topic] {
+				status = clusterlink.MirrorStatusStopped
+			}
+			mts = append(mts, clusterlink.MirrorTopic{MirrorTopicName: topic, MirrorStatus: status})
+		}
+		return mts, nil
+	}
+	var patches []gateway.RoutePatch
+	gw := gatewayMock(orch)
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	// The CR moves once the first batch is accepted.
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(requests) == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, [][]string{{"topic-a"}}, requests, "the second batch's request is never sent")
+	require.Len(t, patches, 1, "the fence only: no unfence, no switch")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+func TestOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, _, alters := generationRun(t)
+	var patches []gateway.RoutePatch
+	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	res := fencedResume(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 1, "the refused fence only: the earlier run's rollback is skipped")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.NotContains(t, out.String(), "attempting to remove the fence")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
+}
+
+func TestOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoWrite(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
+	orch, config, out, _, alters := generationRun(t)
+	var patches []gateway.RoutePatch
+	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	res := fencedResume(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the originating failure still surfaces")
+	require.Len(t, patches, 1, "the refused unfence only")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.NotContains(t, out.String(), "Gateway unfenced")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, not promoted.")
+}
+
+// unconfirmedFenceRun fails the fence's acceptance wait once, so the fence
+// lands but is never confirmed and the orchestrator compensates.
+func unconfirmedFenceRun(t *testing.T) (*MigrationOrchestrator, *MigrationConfig, *strings.Builder, *[]clusterlink.ConfigAlteration) {
+	t.Helper()
+	orch, config, out, _, alters := generationRun(t)
+	var accepts int64
+	gatewayMock(orch).waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+		if atomic.AddInt64(&accepts, 1) == 1 {
+			return fmt.Errorf("gateway spec not accepted")
+		}
+		return nil
+	}
+	return orch, config, out, alters
+}
+
+func TestOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *testing.T) {
+	orch, config, _, alters := unconfirmedFenceRun(t)
+	var patches []gateway.RoutePatch
+	gw := gatewayMock(orch)
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
+	res := fencedResume(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 2, "the fence, then the restoring apply")
+	assert.Equal(t, []int64{4, 5}, gw.routeExpected, "the restore is guarded on the generation the fence left")
+	assert.Contains(t, *alters, offsetSyncBackOn, "the compensation still restores offset sync")
+}
+
+func TestOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, alters := unconfirmedFenceRun(t)
+	var patches []gateway.RoutePatch
+	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	res := fencedResume(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 2, "the fence, then the refused restore")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied but not confirmed on every gateway pod.")
+}
+
+func TestOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testing.T) {
+	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
+	orch, config, out, _, alters := generationRun(t)
+	var patches []gateway.RoutePatch
+	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Contains(t, err.Error(), killpoint.FailEnvVar, "the originating failure still surfaces")
+	require.Len(t, patches, 2, "the fence, then the refused unfence")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), changedCR(5, 6).Summary("fence applied, not promoted"))
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current())
+}
+
+func TestOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopicsPromoted(t *testing.T) {
+	orch, config, out, _, alters := generationRun(t)
+	var patches []gateway.RoutePatch
+	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	res := fencedResume(config)
+	res.RollbackAllowed = false
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	require.Len(t, patches, 1, "the refused fence only")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "Stopping with no gateway write — an earlier run's fence applied, some topics already promoted.")
+	assert.NotContains(t, out.String(), "not promoted")
+}
+
+func TestStoppedAt(t *testing.T) {
+	tests := []struct {
+		state         string
+		fencedAtStart bool
+		mayBePromoted bool
+		want          string
+	}{
+		{StateUninitialized, false, false, "no fence applied"},
+		{StateInitialized, false, false, "no fence applied"},
+		{StateLagsOk, false, false, "no fence applied"},
+		{StateUninitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateInitialized, true, false, "an earlier run's fence applied, not promoted"},
+		{StateLagsOk, true, false, "an earlier run's fence applied, not promoted"},
+		{StateFenced, false, false, "fence applied, not promoted"},
+		{StateOffsetSyncPaused, true, false, "fence applied, not promoted"},
+		{StateFenceVerified, false, false, "fence applied, not promoted"},
+		{StateUninitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateInitialized, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, true, true, "an earlier run's fence applied, some topics already promoted"},
+		{StateLagsOk, false, true, "fence applied, some topics already promoted"},
+		{StateFenced, false, true, "fence applied, some topics already promoted"},
+		{StateOffsetSyncPaused, true, true, "fence applied, some topics already promoted"},
+		{StateFenceVerified, false, true, "fence applied, some topics already promoted"},
+		{StatePromoted, true, false, "topics promoted, gateway not switched"},
+		{StatePromoted, false, true, "topics promoted, gateway not switched"},
+		{StateSwitched, false, false, "gateway switched"},
+		{StateOffsetSyncRestored, true, true, "gateway switched"},
+		{"bogus", false, false, "run stopped at state bogus"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/%v/%v", tt.state, tt.fencedAtStart, tt.mayBePromoted), func(t *testing.T) {
+			assert.Equal(t, tt.want, stoppedAt(tt.state, tt.fencedAtStart, tt.mayBePromoted))
+		})
+	}
 }

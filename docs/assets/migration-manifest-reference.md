@@ -83,7 +83,11 @@ CLI flag can override for a single run, without editing the file.
   dynamic route fences and switches only the selected topics.
 - **Promote is the point of no return.** If a step fails after the fence is up
   but before any topic is promoted, kcp removes the fence and restores offset
-  sync so traffic returns to the source. Once any topic is promoted or
+  sync so traffic returns to the source. The exception is a Gateway CR that
+  changed while the run was under way (its `metadata.generation` is not the
+  one kcp's own last write left): kcp then stops without writing to the
+  gateway, leaving the fence in place, and the next run checks the gateway
+  again before doing anything. Once any topic is promoted or
   promoting, kcp never removes the fence — doing so would split those clients
   from the target. Fix the cause and re-run `execute` to roll forward. A
   conversion promotes nothing; its point of no return is the switch (see
@@ -449,8 +453,14 @@ A refusal before the fence changes nothing, and `--dry-run` shows it.
   `rules.fencing` by hand.
 - **A failed switch keeps the fence.** If the static route never reached the
   gateway CR, fix the cause and re-run to finish. If it reached the CR but
-  couldn't be confirmed, check the Gateway (operator acceptance, pods) instead
-  of re-running: a re-run would report nothing to do.
+  couldn't be confirmed, the gateway CR already holds the static route, and
+  the gateway pods may still serve the fenced dynamic route. A re-run checks
+  the pods before doing anything: it is refused while they don't serve the
+  CR, and finishes once they do.
+- **A changed Gateway CR stops the run.** If the Gateway CR changes while the
+  conversion runs (its `metadata.generation` is not the one kcp's own last
+  write left), kcp stops without writing to the gateway and keeps its fence.
+  The next run checks the gateway pods before doing anything.
 - **A finished conversion re-runs as nothing to do.**
 
 ## Policies

@@ -7,15 +7,14 @@
 # bumped spec.configId (hot reload, no pod roll) between mirror promotions.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
-# from integration-tests/migration (chart 0.1838.0, gateway 1.4.0,
+# from integration-tests/migration (chart 0.2038.1, gateway 1.4.0,
 # SASL_SSL destination, cluster link, REST proxy); the licence/configId/hotReload
 # plumbing is copied from integration-tests/migration-hot-reload.
 #
-# Why chart 0.1838.0 and NOT hot-reload's 0.1718.34: 0.1718.34 predates the
-# dynamic-route CRD (mode: dynamic, plural streamingDomains, rules.routing,
-# unmatchedTopics). 0.1838.0 has BOTH the dynamic-route CRD and spec.configId, so
-# it is the only pin that supports this suite. The configId guard below fails fast
-# if that assumption is ever wrong.
+# Chart 0.2038.1 (CFK 3.4.0) is the first public chart with BOTH the dynamic-route
+# CRD (mode: dynamic, plural streamingDomains, rules.routing) and spec.configId,
+# which this suite needs. The configId guard below fails fast if that assumption
+# is ever wrong.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,18 +29,14 @@ NAMESPACE="confluent"
 
 # --- Version pins (spine from integration-tests/migration) ---
 AWS_REGION="${AWS_REGION:-us-east-1}"
-CFK_CHART_OCI="${CFK_CHART_OCI:-oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes}"
-CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1838.0}"
-OPERATOR_IMAGE="${OPERATOR_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-operator:v0.1838.0-amd64}"
-OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
-OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
-OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
-OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
-# The public gateway image is multi-arch, so the gateway pod needs no emulation;
-# only the operator image is amd64-only.
+# CFK 3.4.0 is public: the chart comes from Confluent's Helm repo and its default
+# operator image (confluentinc/confluent-operator:0.2038.1) is multi-arch.
+CFK_CHART_REPO="${CFK_CHART_REPO:-https://packages.confluent.io/helm}"
+CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.2038.1}"
+# The public gateway image is multi-arch, so the gateway pod needs no emulation.
 GATEWAY_TAG="${GATEWAY_TAG:-1.4.0}"
 GATEWAY_IMAGE="${GATEWAY_IMAGE:-confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}}"
-INIT_IMAGE="${INIT_IMAGE:-confluentinc/confluent-init-container:3.3.0}"
+INIT_IMAGE="${INIT_IMAGE:-confluentinc/confluent-init-container:3.4.0}"
 CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
@@ -74,33 +69,10 @@ DEST_SASL_PASSWORD="${DEST_SASL_PASSWORD:-testpassword}"
 LICENSE_SECRET_ID="${LICENSE_SECRET_ID:-kcp/e2e/gateway-license}"
 GATEWAY_LICENSE_GCP_SECRET="${GATEWAY_LICENSE_GCP_SECRET:-}"
 
-# --- ECR credential knobs (CI path; no-op locally where an ambient AWS profile is used) ---
-ECR_AWS_KEY_GCP_SECRET="${ECR_AWS_KEY_GCP_SECRET:-}"
-ECR_AWS_SECRET_GCP_SECRET="${ECR_AWS_SECRET_GCP_SECRET:-}"
-
 # Two CP clusters + gateway JVMs + operator need more headroom than migration's
 # single-purpose profiles.
 MINIKUBE_CPUS="${MINIKUBE_CPUS:-4}"
 MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-12288}"
-
-# ensure_ecr_aws_creds — populate AWS creds from GCP Secret Manager when the CI
-# knobs are set, else leave the ambient AWS profile untouched. Idempotent. Copied
-# from integration-tests/migration/setup.sh; see it for why the session token is
-# cleared.
-ensure_ecr_aws_creds() {
-  [ -n "${_ecr_aws_creds_ready:-}" ] && return 0
-  if [ -n "${ECR_AWS_KEY_GCP_SECRET}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET}" ]; then
-    command -v gcloud >/dev/null 2>&1 || {
-      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH" >&2; exit 1; }
-    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
-    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
-    if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
-      echo "FATAL: ECR credentials read from GCP Secret Manager are empty" >&2; exit 1; fi
-    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-    unset AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE
-  fi
-  _ecr_aws_creds_ready=1
-}
 
 # wait_for_pods — wait for at least one matching pod, then for all to be Ready.
 wait_for_pods() {
@@ -128,7 +100,7 @@ topic_name() { printf '%s%03d' "${TOPIC_PREFIX}" "$1"; }
 
 echo "=== KCP TBM hot-reload E2E setup ==="
 echo "Profile:        ${PROFILE}"
-echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
+echo "CFK chart:      ${CFK_CHART_VERSION} (${CFK_CHART_REPO})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, hot reload)"
 echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored / success 001..$(printf '%03d' "${SUCCESS_HI}") / reserved $(printf '%03d' "${RESERVED_TOPIC}")"
 echo ""
@@ -166,13 +138,8 @@ fi
 eval "$(minikube docker-env --profile "${PROFILE}" 2>/dev/null || true)"
 KUBECONFIG_PATH="${HOME}/.kube/config"
 
-# --- Images (private operator from ECR; public gateway and CP images) ---
-echo "Authenticating to ECR..."
-ensure_ecr_aws_creds
-aws ecr get-login-password --region "${AWS_REGION}" \
-  | docker login --username AWS --password-stdin "${OPERATOR_REGISTRY}" >/dev/null
-echo "Pulling operator (amd64) and gateway images..."
-docker pull --platform linux/amd64 "${OPERATOR_IMAGE}" >/dev/null
+# --- Images ---
+echo "Pulling gateway image..."
 docker pull "${GATEWAY_IMAGE}" >/dev/null
 echo "Pre-pulling public images in background..."
 docker pull "docker.io/confluentinc/cp-server:${CP_SERVER_TAG}" &>/dev/null &
@@ -182,26 +149,15 @@ docker pull "docker.io/alpine:3.20" &>/dev/null &
 # --- Namespace ---
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/namespace.yaml"
 
-# --- CFK operator (chart from ECR OCI mirror) ---
-echo "Pulling CFK chart ${CFK_CHART_VERSION} from the ECR mirror..."
-CHART_REGISTRY="${CFK_CHART_OCI#oci://}"; CHART_REGISTRY="${CHART_REGISTRY%%/*}"
-aws ecr get-login-password --region "${AWS_REGION}" \
-  | helm registry login --username AWS --password-stdin "${CHART_REGISTRY}" >/dev/null
-CHART_UNPACK_DIR="$(mktemp -d)"
-helm pull "${CFK_CHART_OCI}" --version "${CFK_CHART_VERSION}" --untar --untardir "${CHART_UNPACK_DIR}" >/dev/null
-CFK_CHART_PATH="${CHART_UNPACK_DIR}/$(basename "${CFK_CHART_OCI}")"
-
+# --- CFK operator (chart from Confluent's public Helm repo) ---
 echo "Installing CFK operator..."
 if helm status confluent-operator --namespace "${NAMESPACE}" --kube-context "${PROFILE}" &>/dev/null; then
   echo "CFK operator already installed, skipping..."
 else
-  helm install confluent-operator "${CFK_CHART_PATH}" \
+  helm install confluent-operator confluent-for-kubernetes \
+    --repo "${CFK_CHART_REPO}" --version "${CFK_CHART_VERSION}" \
     --namespace "${NAMESPACE}" --kube-context "${PROFILE}" \
     --set namespaced=false \
-    --set "image.registry=${OPERATOR_REGISTRY}" \
-    --set "image.repository=${OPERATOR_REPO}" \
-    --set "image.tag=${OPERATOR_TAG}" \
-    --set image.pullPolicy=IfNotPresent \
     --wait --timeout "${WAIT_TIMEOUT}"
 fi
 wait_for_pods "app=confluent-operator"

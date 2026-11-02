@@ -40,7 +40,7 @@ topic_name() { printf '%s%03d' "${TOPIC_PREFIX}" "$1"; }
 
 echo "=== KCP retries E2E setup ==="
 echo "Profile:        ${PROFILE}"
-echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
+echo "CFK chart:      ${CFK_CHART_VERSION} (${CFK_CHART_REPO})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode)"
 echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored"
 echo ""
