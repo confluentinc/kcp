@@ -425,8 +425,14 @@ blocks:
         machine:
           # Matches the TBM e2e block: two CP Kafka clusters + gateway JVMs +
           # operator; setup.sh sizes minikube at 12 GiB / 4 CPU.
-          type: s1-prod-ubuntu24-04-amd64-2
+          type: s1-prod-ubuntu24-04-amd64-4
       env_vars:
+        # DIAGNOSTIC: bigger host + bigger minikube, canary left on, to test whether
+        # hot-reload misses are a sizing problem.
+        - name: MINIKUBE_CPUS
+          value: "8"
+        - name: MINIKUBE_MEMORY
+          value: "24576"
         # GCP workload-identity federation for the confluentinc/kcp repo
         # (provisioned in migration-tooling/.infra, module kcp_ci_workload_identity),
         # as for the TBM e2e block: this suite needs the same licence (a
@@ -500,8 +506,14 @@ blocks:
           # As the idempotent-fsm block: two CP Kafka clusters + gateway JVMs +
           # operator, plus the client JVMs in the runner pod; setup.sh sizes
           # minikube at 12 GiB / 4 CPU.
-          type: s1-prod-ubuntu24-04-amd64-2
+          type: s1-prod-ubuntu24-04-amd64-4
       env_vars:
+        # DIAGNOSTIC: bigger host + bigger minikube, canary left on, to test whether
+        # hot-reload misses are a sizing problem.
+        - name: MINIKUBE_CPUS
+          value: "8"
+        - name: MINIKUBE_MEMORY
+          value: "24576"
         # GCP workload-identity federation and the same licence as the
         # idempotent-fsm block, read from GCP Secret Manager by setup.sh
         # (../lib/cp-e2e-env.sh) and never materialised in the pipeline.
@@ -560,8 +572,14 @@ blocks:
         machine:
           # As the idempotent-fsm block: two CP Kafka clusters + gateway JVMs +
           # operator; setup.sh sizes minikube at 12 GiB / 4 CPU.
-          type: s1-prod-ubuntu24-04-amd64-2
+          type: s1-prod-ubuntu24-04-amd64-4
       env_vars:
+        # DIAGNOSTIC: bigger host + bigger minikube, canary left on, to test whether
+        # hot-reload misses are a sizing problem.
+        - name: MINIKUBE_CPUS
+          value: "8"
+        - name: MINIKUBE_MEMORY
+          value: "24576"
         # GCP workload-identity federation and the same licence as the
         # idempotent-fsm block, read from GCP Secret Manager by setup.sh (env.sh
         # in this suite's folder) and never materialised in the pipeline.
