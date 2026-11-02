@@ -49,7 +49,7 @@ the test binary in-cluster.
 ## Prerequisites
 
 On `PATH`: `minikube`, `kubectl`, `helm`, `docker`, `openssl`, `keytool` (JDK), and
-either `aws` (default licence/ECR path) or `gcloud` (CI licence path). Go is fetched
+either `aws` (default licence path) or `gcloud` (CI licence path). Go is fetched
 via `GOTOOLCHAIN=auto` against the version pinned in `.go-version`.
 
 - **CP Enterprise licence** — resolved by `setup.sh` in precedence order:
@@ -59,24 +59,19 @@ via `GOTOOLCHAIN=auto` against the version pinned in `.go-version`.
   3. AWS Secrets Manager secret `kcp/e2e/gateway-license` (authenticate first, e.g.
      `sso`). Override the id with `LICENSE_SECRET_ID`.
   The JWT is piped into a k8s Secret — never on argv, disk, or logs.
-- **ECR access** for the private CFK chart + operator + gateway images. Locally an
-  ambient AWS profile is used; in CI set `ECR_AWS_KEY_GCP_SECRET` +
-  `ECR_AWS_SECRET_GCP_SECRET` to load static ECR creds from GCP Secret Manager.
 
 ### Image / chart env knobs (all defaulted in `setup.sh`)
 
 | Var | Default | Notes |
 |---|---|---|
-| `CFK_CHART_OCI` | `oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes` | ECR mirror |
-| `CFK_CHART_VERSION` | `0.1838.0` | First chart with **both** the dynamic-route CRD and `spec.configId` |
-| `OPERATOR_IMAGE` | `635910096382.../kcp/confluent-operator:v0.1838.0-amd64` | amd64-only; side-loaded and emulated on arm64 nodes |
+| `CFK_CHART_REPO` | `https://packages.confluent.io/helm` | Confluent's public Helm repo |
+| `CFK_CHART_VERSION` | `0.2038.1` (CFK 3.4.0) | First public chart with **both** the dynamic-route CRD and `spec.configId`; its default operator image is public and multi-arch |
 | `GATEWAY_IMAGE` / `GATEWAY_TAG` | `confluentinc/confluent-gateway-for-cloud:1.4.0` | Public, multi-arch |
-| `INIT_IMAGE` | `confluentinc/confluent-init-container:3.3.0` | Matches CFK 3.3.x |
+| `INIT_IMAGE` | `confluentinc/confluent-init-container:3.4.0` | Matches CFK 3.4.x |
 | `CP_SERVER_TAG` | `8.1.2` | Source + destination brokers |
 
-`0.1718.34` (the `migration-hot-reload` pin) is **not** reused: it predates the
-dynamic-route CRD. `0.1838.0` is the only pin supporting both dynamic routing and
-`spec.configId`; a CRD guard in `setup.sh` fails fast if that ever changes.
+A CRD guard in `setup.sh` fails fast if the installed chart's Gateway CRD ever
+stops declaring `spec.configId`.
 
 ## Topic partition (single source of truth in `setup.sh`)
 
