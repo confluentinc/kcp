@@ -43,6 +43,10 @@ make clean              # remove build artifacts
 
 **Critical**: the frontend MUST be built before Go tests — they embed `cmd/ui/frontend/dist/` via `go:embed`. Tests fail with `pattern all:dist: no matching files found` otherwise.
 
+## Documentation
+
+Pages under `docs/assets/` are the customer-facing docs site (MkDocs). Before writing or editing one, or the Cobra help text in `cmd/` that generates `docs/assets/command-reference/`, read and follow `docs/style-guide.md`. Run `make docs-build` (strict: fails on broken links and anchors) before committing doc changes.
+
 ## Architecture
 
 The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `iac`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree. Direct-API resource migration lives under `kcp migration resources` (`create`, `validate`).
