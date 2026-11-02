@@ -268,6 +268,29 @@ type groupOffsetFetcher interface {
 	ListConsumerGroupOffsets(group string, topicPartitions map[string][]int32) (*sarama.OffsetFetchResponse, error)
 }
 
+// coordinatorFinder is a groupOffsetFetcher that can also find a group's coordinator. A fetch through one finds
+// the coordinator first, as a call of its own, so a kafka.group_worker span can time the lookup and the
+// OffsetFetch apart; the fetch then finds the coordinator in the client's cache.
+type coordinatorFinder interface {
+	Coordinator(group string) (*sarama.Broker, error)
+}
+
+// adminFetcher is the client's admin as a coordinatorFinder: the admin fetches, the client it was built from
+// finds coordinators, and both share that client's coordinator cache.
+type adminFetcher struct {
+	sarama.ClusterAdmin
+	client sarama.Client
+}
+
+func (a adminFetcher) Coordinator(group string) (*sarama.Broker, error) {
+	return a.client.Coordinator(group)
+}
+
+// fetcher is the client's offset fetcher.
+func (c *ConsumerGroupClient) fetcher() adminFetcher {
+	return adminFetcher{ClusterAdmin: c.admin, client: c.client}
+}
+
 // committedTopicsWorkers is the fixed fetch concurrency. The cost of one
 // OffsetFetch per group is unmeasured; making this configurable is future work.
 const committedTopicsWorkers = 8
@@ -277,11 +300,12 @@ const committedTopicsWorkers = 8
 // group is an error: skipping it would leave its topics unverified. Each group's fetch is retried (see
 // retryGroupOp).
 func (c *ConsumerGroupClient) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
-	return committedTopics(ctx, c.admin, groups, committedTopicsWorkers, c.resetCoordinator)
+	return committedTopics(ctx, c.fetcher(), groups, committedTopicsWorkers, c.resetCoordinator)
 }
 
-// committedTopics fetches each group's committed topics on workers goroutines. reset, if set, is called with
-// the group before each retry of that group's fetch.
+// committedTopics fetches each group's committed topics on workers goroutines, each in its own
+// kafka.group_worker span (at most one per group). reset, if set, is called with the group before each retry of
+// that group's fetch.
 func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string, workers int, reset func(group string)) (map[string][]string, error) {
 	if workers < 1 {
 		workers = 1
@@ -300,21 +324,30 @@ func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string,
 	defer stop()
 	var failed atomic.Bool
 	var wg sync.WaitGroup
+	if workers > len(groups) {
+		workers = len(groups)
+	}
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			workerCtx, w := StartGroupWorker(runCtx, i)
+			var workerErr error
+			defer func() { w.End(workerErr) }()
 			for g := range jobs {
 				if failed.Load() {
 					continue
 				}
-				topics, err := committedTopicsOf(runCtx, f, g, resetFor(reset, g))
+				topics, err := committedTopicsOf(workerCtx, f, g, resetFor(reset, g))
 				if err != nil {
+					workerErr = err
 					if failed.Load() && ctx.Err() == nil && errors.Is(err, context.Canceled) {
 						continue // stopped by an earlier failure, which is the one to report
 					}
 					failed.Store(true)
 					stop()
+				} else {
+					w.GroupDone()
 				}
 				results <- result{group: g, topics: topics, err: err}
 			}
@@ -376,15 +409,26 @@ func committedOffsetsOf(ctx context.Context, f groupOffsetFetcher, group string,
 	var out map[string]map[int32]CommittedOffset
 	err := retryGroupOp(ctx, "kafka.committed_offsets", reset, func() error {
 		var err error
-		out, err = fetchCommittedOffsets(f, group)
+		out, err = fetchCommittedOffsets(ctx, f, group)
 		return err
 	})
 	return out, err
 }
 
-// fetchCommittedOffsets is one attempt of committedOffsetsOf.
-func fetchCommittedOffsets(f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
-	resp, err := f.ListConsumerGroupOffsets(group, nil)
+// fetchCommittedOffsets is one attempt of committedOffsetsOf. If f is a coordinatorFinder it finds the
+// coordinator first; the lookup and the OffsetFetch are timed on ctx's kafka.group_worker, if any.
+func fetchCommittedOffsets(ctx context.Context, f groupOffsetFetcher, group string) (map[string]map[int32]CommittedOffset, error) {
+	if cf, ok := f.(coordinatorFinder); ok {
+		if _, err := findCoordinator(ctx, cf.Coordinator, group); err != nil {
+			return nil, err
+		}
+	}
+	var resp *sarama.OffsetFetchResponse
+	err := timeRequest(ctx, "OffsetFetch", func() error {
+		var err error
+		resp, err = f.ListConsumerGroupOffsets(group, nil)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fetching committed offsets for consumer group %s: %w", group, err)
 	}
@@ -422,7 +466,7 @@ func committedTopicsOf(ctx context.Context, f groupOffsetFetcher, group string, 
 // CommittedOffsets returns one group's committed offsets and their metadata, topic -> partition -> committed
 // offset, offsets >= 0 only.
 func (c *ConsumerGroupClient) CommittedOffsets(ctx context.Context, group string) (map[string]map[int32]CommittedOffset, error) {
-	return committedOffsetsOf(ctx, c.admin, group, func() { c.resetCoordinator(group) })
+	return committedOffsetsOf(ctx, c.fetcher(), group, func() { c.resetCoordinator(group) })
 }
 
 // retryGroupOp runs op with retry.Do: a connection error, or a coordinator that moved, is not available yet or
@@ -507,11 +551,16 @@ func firstCommitError(resp *sarama.OffsetCommitResponse) (string, int32, error) 
 // without READ on the group or topic, is an error naming the group, topic and partition, and is not retried.
 func (c *ConsumerGroupClient) CommitGroupOffsets(ctx context.Context, group string, offsets map[string]map[int32]CommittedOffset) error {
 	return retryGroupOp(ctx, "kafka.commit_offsets", func() { c.resetCoordinator(group) }, func() error {
-		coordinator, err := c.client.Coordinator(group)
+		coordinator, err := findCoordinator(ctx, c.client.Coordinator, group)
 		if err != nil {
-			return fmt.Errorf("finding the coordinator of consumer group %s: %w", group, err)
+			return err
 		}
-		resp, err := coordinator.CommitOffset(buildGroupCommit(group, offsets))
+		var resp *sarama.OffsetCommitResponse
+		err = timeRequest(ctx, "OffsetCommit", func() error {
+			var err error
+			resp, err = coordinator.CommitOffset(buildGroupCommit(group, offsets))
+			return err
+		})
 		if err != nil {
 			return fmt.Errorf("committing offsets for consumer group %s: %w", group, err)
 		}
