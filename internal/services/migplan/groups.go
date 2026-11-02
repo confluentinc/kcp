@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -40,7 +41,6 @@ type GroupLister interface {
 // needs; the real client satisfies it.
 type strictGroupClient interface {
 	ListGroupsAllBrokers(ctx context.Context) ([]types.ConsumerGroupListing, error)
-	CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error)
 	CanDescribeAnyGroup(ctx context.Context) (bool, error)
 	CanDescribeAnyTopic(ctx context.Context) (bool, error)
 	CanCommitAnyOffsets(ctx context.Context) (bool, error)
@@ -50,21 +50,29 @@ type strictGroupClient interface {
 var _ GroupLister = (*KafkaGroupLister)(nil)
 
 // KafkaGroupLister lists groups through a consumer-group client's strict,
-// every-broker listing.
+// every-broker listing, and reads committed topics on workers workers, each with
+// the client fetchers builds for it: sarama holds a lock per broker connection, so
+// workers sharing one client wait on each other, the more so the fewer brokers
+// the cluster has.
 type KafkaGroupLister struct {
-	client strictGroupClient
+	client   strictGroupClient
+	fetchers groupoffsets.FetcherFactory
+	workers  int
 }
 
-func NewKafkaGroupLister(c strictGroupClient) *KafkaGroupLister {
-	return &KafkaGroupLister{client: c}
+func NewKafkaGroupLister(c strictGroupClient, fetchers groupoffsets.FetcherFactory, workers int) *KafkaGroupLister {
+	return &KafkaGroupLister{client: c, fetchers: fetchers, workers: workers}
 }
 
 func (l *KafkaGroupLister) ListGroups(ctx context.Context) ([]types.ConsumerGroupListing, error) {
 	return l.client.ListGroupsAllBrokers(ctx)
 }
 
+// CommittedTopics reads, for each group that has committed an offset, the sorted
+// topics it has committed on; a group with none is left out. A failure to read
+// any group is an error.
 func (l *KafkaGroupLister) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
-	return l.client.CommittedTopics(ctx, groups)
+	return groupoffsets.CommittedTopics(ctx, l.fetchers, groups, l.workers)
 }
 
 func (l *KafkaGroupLister) CanDescribeAnyGroup(ctx context.Context) (bool, error) {
