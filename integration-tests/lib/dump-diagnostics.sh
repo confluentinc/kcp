@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Dumps what a failed e2e run needs to explain itself but the tests' own reports
 # leave out: the CFK operator log, every Gateway CR with its status conditions
-# (hot-reload-status says whether CFK's hot-reload canary passed), each gateway
+# (hot-reload-status says whether CFK's hot-reload canary passed), the canary
+# Jobs, each gateway
 # pod's log and served /config, any canary pod still around, the node's resource
 # pressure and the namespace's events.
 #
@@ -31,6 +32,9 @@ k describe nodes > "${OUT}/nodes.txt" 2>&1
 k -n "${NS}" get pods -o wide > "${OUT}/pods.txt" 2>&1
 k -n "${NS}" get events --sort-by=.lastTimestamp -o wide > "${OUT}/events.txt" 2>&1
 k -n "${NS}" get gateway -o yaml > "${OUT}/gateways.yaml" 2>&1
+# The canary Job's pod spec shows the resources CFK gives the canary JVM, which
+# the Gateway CR does not (events only record that the Job existed).
+k -n "${NS}" get jobs -o yaml > "${OUT}/jobs.yaml" 2>&1
 
 k -n "${NS}" logs deploy/confluent-operator --timestamps > "${OUT}/operator.log" 2>&1
 k -n "${NS}" logs deploy/confluent-operator --timestamps --previous > "${OUT}/operator-previous.log" 2>/dev/null \

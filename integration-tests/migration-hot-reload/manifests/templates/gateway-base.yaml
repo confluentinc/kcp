@@ -91,4 +91,12 @@ __ROUTE_EXTRA__
         client:
           authentication:
             type: none
-        auth: passthrough
+        # Keyed by streaming-domain name on CFK 3.4.0+ (a flat security.auth is
+        # rejected as an unknown field). The route is bound to one domain in the
+        # initial and fenced CRs and the other after the switch, so both need an
+        # entry.
+        cluster:
+          source-domain:
+            auth: passthrough
+          destination-domain:
+            auth: passthrough
