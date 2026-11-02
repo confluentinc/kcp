@@ -45,7 +45,7 @@ GATEWAY_LICENSE_GCP_SECRET="${GATEWAY_LICENSE_GCP_SECRET:-}"
 
 # Two CP clusters + gateway JVMs + operator need more headroom than migration's
 # single-purpose profiles.
-MINIKUBE_CPUS="${MINIKUBE_CPUS:-4}"
+MINIKUBE_CPUS="${MINIKUBE_CPUS:-8}"
 MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-12288}"
 
 # wait_for_pods — wait for at least one matching pod, then for all to be Ready.
