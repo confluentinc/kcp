@@ -20,12 +20,18 @@ import (
 // doubles are kept per-package even where the underlying interface is
 // shared.
 type mockGatewayService struct {
-	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
-	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
-	waitForConfigIDFn        func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	patchGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
+	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
+	detectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
+	waitForConfigIDFn      func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
+	checkPermissionsFn     func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	patchGatewayRouteFn    func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
+	patchGatewayConfigIDFn func(ctx context.Context, namespace, name, configID string) (string, error)
+	getGatewayGenerationFn func(ctx context.Context, namespace, name string) (int64, error)
+	// patchRouteGenFn, when set, takes precedence over patchGatewayRouteFn and
+	// scripts the full PatchResult (generation included) or a refusal.
+	patchRouteGenFn func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error)
+	// routeExpected records every PatchGatewayRoute call's expectedGeneration.
+	routeExpected            []int64
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
@@ -64,18 +70,31 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
-	if m.patchGatewayRouteFn != nil {
-		return m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
+func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error) {
+	m.routeExpected = append(m.routeExpected, expectedGeneration)
+	if m.patchRouteGenFn != nil {
+		return m.patchRouteGenFn(ctx, namespace, name, rp, configID, expectedGeneration)
 	}
-	return "", fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
+	if m.patchGatewayRouteFn != nil {
+		str, err := m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
+		return gateway.PatchResult{ConfigID: str}, err
+	}
+	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
 }
 
-func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
+func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string, _ int64) (gateway.PatchResult, error) {
 	if m.patchGatewayConfigIDFn != nil {
-		return m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
+		str, err := m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
+		return gateway.PatchResult{ConfigID: str}, err
 	}
-	return "", fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
+	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
+}
+
+func (m *mockGatewayService) GetGatewayGeneration(ctx context.Context, namespace, name string) (int64, error) {
+	if m.getGatewayGenerationFn != nil {
+		return m.getGatewayGenerationFn(ctx, namespace, name)
+	}
+	return 0, nil
 }
 
 func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {

@@ -80,12 +80,16 @@ func (stubGatewayServiceImpl) CheckPermissions(context.Context, string, string, 
 	return true, nil
 }
 
-func (stubGatewayServiceImpl) PatchGatewayRoute(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
-	return "", nil
+func (stubGatewayServiceImpl) PatchGatewayRoute(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
+	return gateway.PatchResult{}, nil
 }
 
-func (stubGatewayServiceImpl) PatchGatewayConfigID(context.Context, string, string, string) (string, error) {
-	return "", nil
+func (stubGatewayServiceImpl) PatchGatewayConfigID(context.Context, string, string, string, int64) (gateway.PatchResult, error) {
+	return gateway.PatchResult{}, nil
+}
+
+func (stubGatewayServiceImpl) GetGatewayGeneration(context.Context, string, string) (int64, error) {
+	return 0, nil
 }
 
 func (stubGatewayServiceImpl) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {
@@ -133,7 +137,7 @@ func (stubClusterLinkServiceImpl) ValidateTopics([]string, []string) error {
 	return fmt.Errorf("stubClusterLinkServiceImpl.ValidateTopics not implemented")
 }
 
-func (stubClusterLinkServiceImpl) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+func (stubClusterLinkServiceImpl) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string, _ ...clusterlink.PromoteOption) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 	return promoteAll(topicNames), nil
 }
 
@@ -176,7 +180,7 @@ type recordingClusterLinkService struct {
 	batches []int
 }
 
-func (r *recordingClusterLinkService) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+func (r *recordingClusterLinkService) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string, _ ...clusterlink.PromoteOption) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 	r.mu.Lock()
 	r.batches = append(r.batches, len(topicNames))
 	r.mu.Unlock()

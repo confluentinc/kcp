@@ -259,6 +259,12 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			cancel()
 			return ctx.Err()
 		}
+
+		// Test-only hold seam: pause after the configured checkpoint until the
+		// release file appears. No-op in production.
+		if err := killpoint.HoldAfter(ctx, o.fsm.Current()); err != nil {
+			return err
+		}
 	}
 
 	o.reporter.complete("✅ Migration complete!")
@@ -284,6 +290,12 @@ const rollbackForbiddenReason = "part of this migration is already promoted, and
 // FSM stays at the rollback's source.
 func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
+
+	// The CR is no longer the one kcp last knew, so no rollback either: every
+	// compensation below writes to the gateway.
+	if errors.Is(stepErr, gateway.ErrGatewayChanged) {
+		return o.stopOnGatewayChange(stepFailure, stepErr, o.stoppedAt())
+	}
 
 	// A fence that reached the cluster but was never confirmed is compensated
 	// outside the FSM: the fence transition was cancelled, so the machine never
@@ -327,7 +339,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		o.reporter.warn("%s — keeping the fence: %s", reason, rollbackForbiddenReason)
 		return stepFailure
 	}
-	o.reporter.warn("%s — removing fence to restore traffic", reason)
+	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
 	path := RollbackPathAbortFence
 	if !thisRunsFence {
@@ -344,6 +356,10 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		)
 		err := o.fsm.Event(abortCtx, EventAbortFence)
 		tracing.End(abortSpan, err)
+		if errors.Is(err, gateway.ErrGatewayChanged) {
+			rollbackErr = err
+			return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())
+		}
 		if err != nil {
 			rollbackErr = err
 			slog.Error("❌ failed to roll back to initialized", "error", err)
@@ -358,6 +374,10 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		err := o.actions.ensureGatewayCapability(ctx, o.config)
 		if err == nil {
 			err = o.actions.unfenceGateway(ctx, o.config)
+		}
+		if errors.Is(err, gateway.ErrGatewayChanged) {
+			rollbackErr = err
+			return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())
 		}
 		if err != nil {
 			rollbackErr = err
@@ -382,6 +402,68 @@ func beforeFenceStep(state string) bool {
 		return true
 	}
 	return false
+}
+
+// unconfirmedFenceStop is where a run stops when the CR moved before the
+// compensation for an unconfirmed fence could restore it.
+const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
+
+// stoppedAt says where this run stopped, for a stop on a changed gateway CR.
+// Topics may already be promoted when reconcile forbade a rollback (it does
+// exactly when topics are promoted or promoting) or once this run has sent a
+// promote request.
+func (o *MigrationOrchestrator) stoppedAt() string {
+	mayBePromoted := !o.config.RollbackAllowed || o.actions.promoteSubmitted
+	return stoppedAt(o.fsm.Current(), o.config.FencedAtStart, mayBePromoted)
+}
+
+// stoppedAt says where an AAO run stopped, for a stop on a changed gateway CR:
+// how far the gateway got, read from the FSM state the run halted at.
+// mayBePromoted reports that some topics may already be promoted, which every
+// state before promoted must then say instead of "not promoted".
+func stoppedAt(state string, fencedAtStart, mayBePromoted bool) string {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		switch {
+		case fencedAtStart && mayBePromoted:
+			return "an earlier run's fence applied, some topics already promoted"
+		case fencedAtStart:
+			return "an earlier run's fence applied, not promoted"
+		case mayBePromoted:
+			return "fence applied, some topics already promoted"
+		}
+		return "no fence applied"
+	case StateFenced, StateOffsetSyncPaused, StateFenceVerified:
+		if mayBePromoted {
+			return "fence applied, some topics already promoted"
+		}
+		return "fence applied, not promoted"
+	case StatePromoted:
+		return "topics promoted, gateway not switched"
+	case StateSwitched, StateOffsetSyncRestored:
+		return "gateway switched"
+	default:
+		return "run stopped at state " + state
+	}
+}
+
+// stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last
+// knew (err Is gateway.ErrGatewayChanged). kcp makes no further gateway write
+// and skips the offset-sync restore: it reports what it observed and where it
+// stopped, and leaves the gateway for the operator to inspect. err is either
+// the step's own error or a compensation's, in which case it is joined onto
+// stepFailure so both survive.
+func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
+	var gce *gateway.GenerationChangedError
+	if errors.As(err, &gce) {
+		o.reporter.warn("%s", gce.Summary(stopped))
+	}
+	o.reporter.Remediation("Inspect the gateway:\n   %s", gateway.InspectCommands(o.config.K8sNamespace, o.config.InitialCrName))
+	slog.Debug("stopping on a changed gateway CR", "stopped", stopped, "error", err)
+	if errors.Is(stepFailure, err) {
+		return stepFailure
+	}
+	return fmt.Errorf("%w; kcp made no further gateway write: %w", stepFailure, err)
 }
 
 // restoreAfterUnconfirmedFence reapplies the initial gateway CR after a fence
@@ -425,13 +507,16 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	definiteRejection := errors.As(stepFailure, &rejected)
 
 	if definiteRejection {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; restoring the initial gateway CR", rejected.Reason)
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to restore the initial gateway CR", rejected.Reason)
 	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — restoring the initial gateway CR")
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to restore the initial gateway CR")
 	}
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
+		if errors.Is(err, gateway.ErrGatewayChanged) {
+			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+		}
 		slog.Error("❌ failed to restore the gateway after an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
 	}
@@ -542,7 +627,10 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 	// success line. abort_fence fires for any halting pre-promote error, so the
 	// reason can't be inferred from the source state here.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		// A changed CR is reported by handleStepFailure's stopOnGatewayChange.
+		if !errors.Is(err, gateway.ErrGatewayChanged) {
+			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		}
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}

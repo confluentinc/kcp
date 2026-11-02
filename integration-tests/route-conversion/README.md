@@ -47,6 +47,39 @@ deleted on both clusters.
 | `rollback_e2e_test.go` | failures at `verify_fence`, `sync_offsets` and `switch`, and at `fence` on a re-run after an interrupted fence |
 | `refusal_e2e_test.go` | an unpromoted link topic, a group committing outside the link, a group live on the destination (classic and KIP-848), a destination member joining during the window, a direct commit during the window, a refusal with kcp's fence already up |
 | `continuous_e2e_test.go` | `TestContinuousClients_Conversion` and `TestContinuousClients_ResumeAfterOffsetsSynced`: producers and consumers through the gateway across the conversion |
+| `generation_e2e_test.go` | `TestGeneration_CRChangedAfterFenceRefusesVerify` and `TestGeneration_CRChangedBeforeSyncOffsetsStopsWithNoWrite`: the gateway CR changes while a run is held, and kcp stops with no gateway write |
+| `drift_e2e_test.go` | `TestDrift_StalledSwitchRerunIsRefused`: the CR holds the static route the operator never observed, and a dry-run and a re-run refuse |
+
+The generation and drift tests hold a run after a state with the hold seam
+(`KCP_TEST_HOLD_AFTER=<state>`, with `KCP_TEST_HOLD_FILE=<file>`): kcp creates
+`<file>.held` on reaching the state and waits until `<file>` exists, so the
+test can change the world while the run is paused.
+
+`TestGeneration_CRChangedAfterFenceRefusesVerify` holds the run after
+`fenced`, changes the gateway CR's `spec.configId` (which moves
+`metadata.generation`) and releases it. `verify_fence` reads the CR, finds a
+generation kcp didn't write, and the run exits non-zero with `Stopping with no
+gateway write — fence applied, not verified`. kcp's fence is still on the
+route, no seeded group has offsets on the destination, and the CR's generation
+is still the change's.
+
+`TestGeneration_CRChangedBeforeSyncOffsetsStopsWithNoWrite` is the same with
+the run held after `fence_verified`: the check before `sync_offsets` stops the
+run with `Stopping with no gateway write — fence applied, offsets not synced`,
+with the same end state.
+
+`TestDrift_StalledSwitchRerunIsRefused` holds one run after `offsets_synced`
+and stops the CFK operator while it is held (a new run could not be used: its
+first gateway step runs the hot-reload smoke test, which waits for the
+operator). On release the static route lands on the CR and the switch's wait
+for the operator times out (`--rollout-timeout 45s --hot-reload-timeout 45s`),
+so the run exits non-zero with the CR static and `status.observedGeneration`
+behind `metadata.generation`. A `--dry-run` and a plain re-run then both
+refuse with `the operator has not caught up with the CR`, and the CR's
+generation doesn't move. The operator is scaled back up when the test ends,
+through a cleanup registered before it is scaled down. This is the only test
+that uses the runner's `deployments/scale` permission in `rc-runner.yaml`;
+kcp never scales anything.
 
 The continuous-client tests assert **coordination moved** (after the switch,
 while the clients run, each group is Stable on the destination with all its

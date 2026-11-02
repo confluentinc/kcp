@@ -46,7 +46,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 	require.Positive(t, sent, "the producer must have written to the promoted topics' source")
 	require.Error(t, err2, "the resume must fail: a producer is writing straight to a promoted topic's source")
 	require.Contains(t, out2, "Unrouted producers detected — keeping the fence")
-	require.NotContains(t, out2, "removing fence")
+	require.NotContains(t, out2, "attempting to remove the fence")
 
 	e.snapshot(t, ctx, "after-detection", "AFTER the resume detects the producer (expect still fenced, route → source)", topics)
 	cr := e.readCR(t, ctx)
