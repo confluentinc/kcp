@@ -342,6 +342,9 @@ blocks:
       epilogue:
         always:
           commands:
+            # Operator, gateway and canary evidence for a failed hot reload.
+            - bash integration-tests/lib/dump-diagnostics.sh kcp-e2e-hotreload confluent integration-tests/migration-hot-reload/.diagnostics
+            - artifact push job integration-tests/migration-hot-reload/.diagnostics --destination "hot-reload-diagnostics" || true
             - make test-migration-hot-reload-teardown
         on_pass:
           commands:
@@ -485,7 +488,9 @@ blocks:
         always:
           commands:
             # The per-test evidence (manifests, gateway route and mirror status at
-            # each checkpoint, kcp's full output), for a failed run.
+            # each checkpoint, kcp's full output), plus the operator, gateway and
+            # canary evidence the tests do not capture, for a failed run.
+            - bash integration-tests/lib/dump-diagnostics.sh "kcp-e2e-idempotent-${GATEWAY_MODE}" confluent integration-tests/idempotent-fsm/.reports/diagnostics
             - '[ -d integration-tests/idempotent-fsm/.reports ] && artifact push job integration-tests/idempotent-fsm/.reports --destination "idempotent-fsm-reports-${GATEWAY_MODE}" || true'
             - make test-idempotent-fsm-teardown
         on_pass:
@@ -546,7 +551,9 @@ blocks:
         always:
           commands:
             # The per-test evidence (manifests, route and mirror states, offsets,
-            # kcp's full output, client logs, checker verdicts), for a failed run.
+            # kcp's full output, client logs, checker verdicts), plus the operator,
+            # gateway and canary evidence the tests do not capture, for a failed run.
+            - bash integration-tests/lib/dump-diagnostics.sh kcp-e2e-route-conversion confluent integration-tests/route-conversion/.reports/diagnostics
             - '[ -d integration-tests/route-conversion/.reports ] && artifact push job integration-tests/route-conversion/.reports --destination "route-conversion-reports" || true'
             - make test-route-conversion-teardown
         on_pass:
@@ -606,7 +613,10 @@ blocks:
         always:
           commands:
             # The per-test evidence (manifests, the world before and after, kcp's
-            # full output with its retry lines, the fault timeline), for a failed run.
+            # full output with its retry lines, the fault timeline), plus the
+            # operator, gateway and canary evidence the tests do not capture, for a
+            # failed run.
+            - bash integration-tests/lib/dump-diagnostics.sh kcp-e2e-retries confluent integration-tests/retries/.reports/diagnostics
             - '[ -d integration-tests/retries/.reports ] && artifact push job integration-tests/retries/.reports --destination "retries-reports" || true'
             - make test-retries-teardown
         on_pass:
