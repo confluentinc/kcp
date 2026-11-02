@@ -253,3 +253,70 @@ func TestPromoteMirrorTopics_ReadsTheStatusBeforeEveryResendUntilItRunsOutOfBudg
 	assert.Greater(t, len(api.posts), 1, "the promote was resent while the budget lasted")
 	assert.Equal(t, len(api.posts)-1, api.gets, "the mirror status is read before each resend, never after the first request alone")
 }
+
+// errCRChanged stands in for a caller's refusal, such as a changed Gateway CR.
+var errCRChanged = errors.New("the gateway CR changed")
+
+func runPromoteWithCheck(t *testing.T, api *promoteAPI, topics []string, check func(context.Context) error) (*PromoteMirrorTopicsResponse, error) {
+	t.Helper()
+	server := httptest.NewServer(api)
+	t.Cleanup(server.Close)
+	return NewConfluentCloudService(server.Client()).PromoteMirrorTopics(context.Background(), testConfig(server.URL), topics, CheckBeforeResend(check))
+}
+
+func TestPromoteMirrorTopics_SendsNoResendWhenTheCheckBeforeItFails(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive, "users": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	checks := 0
+	check := func(context.Context) error {
+		checks++
+		return errCRChanged // the CR changed during the backoff
+	}
+
+	_, err := runPromoteWithCheck(t, api, []string{"orders", "users"}, check)
+
+	require.ErrorIs(t, err, errCRChanged)
+	assert.Len(t, api.posts, 1, "nothing is resent once the check fails")
+	assert.Equal(t, 1, checks, "the check runs before the resend, and the failure is not retried")
+}
+
+func TestPromoteMirrorTopics_ChecksBeforeEveryResendButNotTheFirstRequest(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		if n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		a.accept(topics, w)
+	}
+	var checksBeforePost []int
+	check := func(context.Context) error {
+		checksBeforePost = append(checksBeforePost, len(api.posts)+1)
+		return nil
+	}
+
+	resp, err := runPromoteWithCheck(t, api, []string{"orders"}, check)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{2, 3}, checksBeforePost, "one check before each resent request; the caller checks before the first")
+	assert.ElementsMatch(t, []string{"orders"}, promoted(resp))
+}
+
+func TestPromoteMirrorTopics_SkipsTheCheckWhenTheLostRequestPromotedEverything(t *testing.T) {
+	retrytest.Fast(t)
+	api := &promoteAPI{t: t, status: map[string]string{"orders": MirrorStatusActive}}
+	api.onPromote = func(a *promoteAPI, n int, topics []string, w http.ResponseWriter) {
+		a.status["orders"] = MirrorStatusPendingStopped
+		resetConnection(t, w)
+	}
+	check := func(context.Context) error { return errCRChanged }
+
+	resp, err := runPromoteWithCheck(t, api, []string{"orders"}, check)
+
+	require.NoError(t, err, "no request is resent, so there is nothing to check")
+	assert.ElementsMatch(t, []string{"orders"}, promoted(resp))
+}

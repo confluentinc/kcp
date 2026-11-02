@@ -49,9 +49,9 @@ func (e *env) replaceRoute(t *testing.T, ctx context.Context, route map[string]a
 	require.NoError(t, err)
 	baseline, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
 	require.NoError(t, err, "read the gateway deployment generation")
-	stored, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Value: route}, id)
+	stored, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Value: route}, id, 0)
 	require.NoError(t, err, "patch route %q", e.route)
-	require.Equal(t, id, stored, "the gateway CR must store the configId sent")
+	require.Equal(t, id, stored.ConfigID, "the gateway CR must store the configId sent")
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
 		"the operator must accept the patched route")
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
