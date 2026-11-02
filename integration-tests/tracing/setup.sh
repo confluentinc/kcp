@@ -8,18 +8,17 @@
 # topology is the idempotent-fsm suite's, copied so that suite stays untouched.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
-# from integration-tests/migration (chart 0.1838.0, gateway 1.4.0,
+# from integration-tests/migration (chart 0.2038.1, gateway 1.4.0,
 # SASL_SSL destination, cluster link, REST proxy); the licence/configId/hotReload
 # plumbing is copied from integration-tests/migration-hot-reload. The steps this
 # suite shares with integration-tests/route-conversion (version pins, minikube,
 # images, operator, clusters, licence, client-tls, REST credential, REST class,
 # swap-auth secrets) live in ../lib/cp-e2e-env.sh, which every minikube e2e setup sources.
 #
-# Why chart 0.1838.0 and NOT hot-reload's 0.1718.34: 0.1718.34 predates the
-# dynamic-route CRD (mode: dynamic, plural streamingDomains, rules.routing,
-# unmatchedTopics). 0.1838.0 has BOTH the dynamic-route CRD and spec.configId, so
-# it is the only pin that supports this suite. The configId guard below fails fast
-# if that assumption is ever wrong.
+# Chart 0.2038.1 (CFK 3.4.0) is the first public chart with BOTH the dynamic-route
+# CRD (mode: dynamic, plural streamingDomains, rules.routing) and spec.configId,
+# which this suite needs. The configId guard below fails fast if that assumption
+# is ever wrong.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,7 +76,7 @@ topic_name() { printf '%s%03d' "${TOPIC_PREFIX}" "$1"; }
 
 echo "=== KCP tracing smoke E2E setup ==="
 echo "Profile:        ${PROFILE}"
-echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
+echo "CFK chart:      ${CFK_CHART_VERSION} (${CFK_CHART_REPO})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (${GATEWAY_MODE} mode)"
 echo "Topics:         ${SOURCE_TOPIC_COUNT} source / ${MIRRORED_COUNT} mirrored"
 echo ""

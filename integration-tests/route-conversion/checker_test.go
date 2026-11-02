@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -56,10 +55,6 @@ func consumed(ts int64, value string, partition int32, offset int64) string {
 		ts-5, ts, value, partition, offset)
 }
 
-func batch(ts int64, count int) string {
-	return fmt.Sprintf(`{"timestamp":%d,"name":"records_consumed","count":%d,"partitions":[{"topic":"rc-topic-001","partition":0,"count":%d,"minOffset":0,"maxOffset":0}]}`, ts, count, count)
-}
-
 func committed(ts int64, ok bool) string {
 	if ok {
 		return fmt.Sprintf(`{"timestamp":%d,"name":"offsets_committed","offsets":[{"topic":"rc-topic-001","partition":0,"offset":1}],"success":true}`, ts)
@@ -86,9 +81,9 @@ func mustConsumer(t *testing.T, member, s string) ConsumerLog {
 	return c
 }
 
-func check(t *testing.T, auto bool, b Bounds, w Windows, producer string, members map[string]string) GroupResult {
+func check(t *testing.T, b Bounds, w Windows, producer string, members map[string]string) GroupResult {
 	t.Helper()
-	in := CheckInput{Group: "ct-manual", Topic: "rc-topic-001", ValuePrefix: "7", AutoCommit: auto,
+	in := CheckInput{Group: "ct-manual", Topic: "rc-topic-001", ValuePrefix: "7",
 		Producers: []ProducerLog{mustProducer(t, producer)}, Windows: w, Bounds: b}
 	for m, s := range members {
 		in.Consumers = append(in.Consumers, mustConsumer(t, m, s))
@@ -111,20 +106,19 @@ func TestParseProducerLog_ReadsAckedAndFailedSends(t *testing.T) {
 }
 
 func TestParseConsumerLog_CountsEveryEventKind(t *testing.T) {
-	c := mustConsumer(t, "a", lines(assigned, consumed(95000, "7.0", 0, 754), batch(95001, 1), committed(95002, true),
+	c := mustConsumer(t, "a", lines(assigned, consumed(95000, "7.0", 0, 754), committed(95002, true),
 		committed(161000, false), revoked))
 	require.Len(t, c.Records, 1)
 	require.Equal(t, ConsumedRecord{Topic: "rc-topic-001", Value: "7.0", Read: Read{TimestampMs: 95000, Member: "a", Partition: 0, Offset: 754}}, c.Records[0])
-	require.Equal(t, []Batch{{TimestampMs: 95001, Count: 1}}, c.Batches)
 	require.Equal(t, 1, c.Assignments)
 	require.Equal(t, 1, c.Revocations)
 	require.Equal(t, 1, c.FailedCommits)
 }
 
 func TestCheck_EveryRecordReadOncePasses(t *testing.T) {
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
-		"a": lines(assigned, consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), batch(91101, 2)),
-		"b": lines(assigned, consumed(99100, "7.2", 0, 756), consumed(170100, "7.3", 0, 757), batch(170101, 2)),
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+		"a": lines(assigned, consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755)),
+		"b": lines(assigned, consumed(99100, "7.2", 0, 756), consumed(170100, "7.3", 0, 757)),
 	})
 	require.True(t, r.OK(), r.String())
 	require.Equal(t, 4, r.Acked)
@@ -137,7 +131,7 @@ func TestCheck_EveryRecordReadOncePasses(t *testing.T) {
 }
 
 func TestCheck_AMissedRecordFails(t *testing.T) {
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755)),
 	})
 	require.False(t, r.OK())
@@ -146,12 +140,12 @@ func TestCheck_AMissedRecordFails(t *testing.T) {
 	require.Contains(t, strings.Join(r.Failures, "\n"), "2 acknowledged record(s) never read by group ct-manual")
 }
 
-func TestCheck_FenceOnsetReReadWithinOneBatchPasses(t *testing.T) {
+func TestCheck_FenceOnsetReReadIsClassifiedAndPasses(t *testing.T) {
 	// 7.1 and 7.2 are read in one batch 2s before the fence, their commit is
 	// blocked, and the group reads them again after the switch.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
-		"a": lines(consumed(90100, "7.0", 0, 754), batch(90101, 1),
-			consumed(98000, "7.1", 0, 755), consumed(98000, "7.2", 0, 756), batch(98001, 2),
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+		"a": lines(consumed(90100, "7.0", 0, 754),
+			consumed(98000, "7.1", 0, 755), consumed(98000, "7.2", 0, 756),
 			consumed(163000, "7.1", 0, 755), consumed(163000, "7.2", 0, 756), consumed(170100, "7.3", 0, 757)),
 	})
 	require.True(t, r.OK(), r.String())
@@ -159,36 +153,10 @@ func TestCheck_FenceOnsetReReadWithinOneBatchPasses(t *testing.T) {
 	require.Zero(t, r.ByClass[DupUnexplained])
 }
 
-func TestCheck_FenceOnsetReReadsBeyondTheBatchFail(t *testing.T) {
-	// Two fence-onset re-reads but the member's largest batch around the fence
-	// is one record: more than one batch was lost.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
-		"a": lines(consumed(98000, "7.1", 0, 755), batch(98001, 1), consumed(99000, "7.2", 0, 756), batch(99001, 1),
-			consumed(90100, "7.0", 0, 754), consumed(163000, "7.1", 0, 755), consumed(163000, "7.2", 0, 756), consumed(170100, "7.3", 0, 757)),
-	})
-	require.False(t, r.OK())
-	require.Contains(t, strings.Join(r.Failures, "\n"), "member a re-read 2 record(s) consumed at the fence onset, more than 1")
-}
-
-func TestCheck_AutoCommitFenceOnsetBoundIsIntervalTimesRate(t *testing.T) {
-	b := DefaultBounds()
-	b.AutoCommitInterval, b.ProduceRatePerSec = time.Second, 1 // at most 1 re-read
-	members := map[string]string{
-		"a": lines(consumed(90100, "7.0", 0, 754), consumed(98000, "7.1", 0, 755), consumed(98500, "7.2", 0, 756), batch(98501, 2),
-			consumed(163000, "7.1", 0, 755), consumed(163000, "7.2", 0, 756), consumed(170100, "7.3", 0, 757)),
-	}
-	r := check(t, true, b, fixtureWindows, producerFixture, members)
-	require.False(t, r.OK())
-	require.Contains(t, strings.Join(r.Failures, "\n"), "more than 1")
-
-	b.ProduceRatePerSec = 2
-	require.True(t, check(t, true, b, fixtureWindows, producerFixture, members).OK())
-}
-
-func TestCheck_SwitchReReadUpToOnePollPasses(t *testing.T) {
+func TestCheck_SwitchReReadIsClassifiedAndPasses(t *testing.T) {
 	// 7.3 is fetched from the destination right after the switch, the commit
 	// fails (unknown member), and the member reads it again after rejoining.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
 			consumed(161000, "7.3", 0, 757), committed(161001, false), revoked, consumed(164000, "7.3", 0, 757)),
 	})
@@ -197,35 +165,24 @@ func TestCheck_SwitchReReadUpToOnePollPasses(t *testing.T) {
 	require.Equal(t, 1, r.FailedCommits)
 }
 
-func TestCheck_SwitchReReadsBeyondOnePollFail(t *testing.T) {
-	b := DefaultBounds()
-	b.MaxPollRecords = 1
-	r := check(t, false, b, fixtureWindows, producerFixture, map[string]string{
-		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755),
-			consumed(161000, "7.2", 0, 756), consumed(161000, "7.3", 0, 757),
-			consumed(164000, "7.2", 0, 756), consumed(164000, "7.3", 0, 757)),
-	})
-	require.False(t, r.OK())
-	require.Contains(t, strings.Join(r.Failures, "\n"), "member a re-read 2 record(s) after the switch, more than one poll (1)")
-}
-
-func TestCheck_ReReadOutsideBothWindowsFails(t *testing.T) {
-	// A re-read 40s before the fence: neither the fence nor the switch explains it.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+func TestCheck_ReReadOutsideBothWindowsIsReportedNotFailed(t *testing.T) {
+	// A re-read 40s before the fence: neither the fence nor the switch explains
+	// it, but nothing was missed.
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(60000, "7.0", 0, 754), consumed(61000, "7.0", 0, 754),
 			consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756), consumed(170100, "7.3", 0, 757)),
 	})
-	require.False(t, r.OK())
+	require.True(t, r.OK(), r.String())
 	require.Equal(t, 1, r.ByClass[DupUnexplained])
-	require.Contains(t, strings.Join(r.Failures, "\n"), "re-read outside the fence-onset and switch windows (e.g. 7.0:")
+	require.Contains(t, r.String(), "e.g. [unexplained] 7.0:")
 }
 
-func TestCheck_AThirdReadIsUnexplained(t *testing.T) {
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
-		"a": lines(consumed(98000, "7.2", 0, 756), batch(98001, 1), consumed(161000, "7.2", 0, 756), consumed(164000, "7.2", 0, 756),
+func TestCheck_AThirdReadIsUnexplainedButNotAFailure(t *testing.T) {
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+		"a": lines(consumed(98000, "7.2", 0, 756), consumed(161000, "7.2", 0, 756), consumed(164000, "7.2", 0, 756),
 			consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(170100, "7.3", 0, 757)),
 	})
-	require.False(t, r.OK())
+	require.True(t, r.OK(), r.String())
 	require.Equal(t, 1, r.ByClass[DupUnexplained])
 }
 
@@ -233,7 +190,7 @@ func TestCheck_IgnoresOtherRunsAndTopicsAndTruncatedLines(t *testing.T) {
 	// Records from earlier tests (prefix 6) and another topic are not this run's;
 	// the final line was cut short when the consumer was stopped.
 	other := strings.Replace(consumed(90500, "7.0", 0, 754), "rc-topic-001", "rc-topic-002", 1)
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(80000, "6.0", 0, 1), consumed(80001, "6.0", 0, 1), other,
 			consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
 			consumed(170100, "7.3", 0, 757), consumed(170200, "7.4", 0, 758), `{"timestamp":170300,"name":"record_da`),
@@ -245,7 +202,7 @@ func TestCheck_IgnoresOtherRunsAndTopicsAndTruncatedLines(t *testing.T) {
 }
 
 func TestCheck_NoProducerOutputFailsInsteadOfPassingVacuously(t *testing.T) {
-	r := check(t, false, DefaultBounds(), fixtureWindows, `{"timestamp":1000,"name":"startup_complete"}`+"\n", map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, `{"timestamp":1000,"name":"startup_complete"}`+"\n", map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754)),
 	})
 	require.False(t, r.OK())
@@ -255,22 +212,22 @@ func TestCheck_NoProducerOutputFailsInsteadOfPassingVacuously(t *testing.T) {
 func TestCheck_MissingWindowsFail(t *testing.T) {
 	members := map[string]string{"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755),
 		consumed(99100, "7.2", 0, 756), consumed(170100, "7.3", 0, 757))}
-	r := check(t, false, DefaultBounds(), Windows{SwitchDoneMs: switchAt}, producerFixture, members)
+	r := check(t, DefaultBounds(), Windows{SwitchDoneMs: switchAt}, producerFixture, members)
 	require.False(t, r.OK())
 	require.Contains(t, strings.Join(r.Failures, "\n"), "never saw kcp's conversion fence")
-	r = check(t, false, DefaultBounds(), Windows{FenceOnsetMs: fenceAt}, producerFixture, members)
+	r = check(t, DefaultBounds(), Windows{FenceOnsetMs: fenceAt}, producerFixture, members)
 	require.False(t, r.OK())
 	require.Contains(t, strings.Join(r.Failures, "\n"), "never saw the route static")
 }
 
-func TestCheck_SwitchReReadOfARecordFirstReadLongBeforeTheSwitchFails(t *testing.T) {
+func TestCheck_SwitchReReadOfARecordFirstReadLongBeforeTheSwitchIsUnexplained(t *testing.T) {
 	// 7.0 is first read 20s before the switch (outside the fence-onset window
-	// too) and again just after it: the switch does not explain that.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+	// too) and again just after it: the switch window does not cover it.
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(switchAt-20_000, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
 			consumed(170100, "7.3", 0, 757), consumed(switchAt+3000, "7.0", 0, 754)),
 	})
-	require.False(t, r.OK())
+	require.True(t, r.OK(), r.String())
 	require.Equal(t, 1, r.ByClass[DupUnexplained])
 	require.Zero(t, r.ByClass[DupSwitch])
 }
@@ -278,9 +235,9 @@ func TestCheck_SwitchReReadOfARecordFirstReadLongBeforeTheSwitchFails(t *testing
 func TestCheck_FenceOnsetReReadSevenSecondsAfterOnsetPasses(t *testing.T) {
 	// The CR shows the fence before the pods apply it: 7.1 is read 7s after
 	// onset, its commit blocked, one record in the batch, and re-read after the switch.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(99100, "7.2", 0, 756),
-			consumed(fenceAt+7000, "7.1", 0, 755), batch(fenceAt+7001, 1),
+			consumed(fenceAt+7000, "7.1", 0, 755),
 			consumed(163000, "7.1", 0, 755), consumed(170100, "7.3", 0, 757)),
 	})
 	require.True(t, r.OK(), r.String())
@@ -290,7 +247,7 @@ func TestCheck_FenceOnsetReReadSevenSecondsAfterOnsetPasses(t *testing.T) {
 func TestCheck_NoRecordAckedAfterTheSwitchFails(t *testing.T) {
 	// Every acked record predates the switch and is read: nothing shows that
 	// producing through the converted route worked.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerBeforeSwitchFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerBeforeSwitchFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756)),
 	})
 	require.False(t, r.OK())
@@ -303,7 +260,7 @@ func TestCheck_NoRecordAckedAfterTheSwitchFails(t *testing.T) {
 func TestCheck_TooFewRecordsAckedAfterTheSwitchFail(t *testing.T) {
 	b := DefaultBounds()
 	b.MinAckedAfterSwitch = 2
-	r := check(t, false, b, fixtureWindows, producerFixture, map[string]string{
+	r := check(t, b, fixtureWindows, producerFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
 			consumed(170100, "7.3", 0, 757)),
 	})
@@ -314,7 +271,7 @@ func TestCheck_TooFewRecordsAckedAfterTheSwitchFail(t *testing.T) {
 func TestCheck_ASendErrorFails(t *testing.T) {
 	// Every acked record is read, but one send failed: with the producer's
 	// retries, any send error is a real failure.
-	r := check(t, false, DefaultBounds(), fixtureWindows, producerWithSendErrorFixture, map[string]string{
+	r := check(t, DefaultBounds(), fixtureWindows, producerWithSendErrorFixture, map[string]string{
 		"a": lines(consumed(90100, "7.0", 0, 754), consumed(91100, "7.1", 0, 755), consumed(99100, "7.2", 0, 756),
 			consumed(170100, "7.3", 0, 757)),
 	})
@@ -345,32 +302,15 @@ func switchReReads(n int) (producer, member string) {
 	return lines(p...), lines(first...)
 }
 
-// A 35s fence: the auto-commit member's switch bound is
-// 20/s x (35s + 5s) + 500 = 1300 records.
+// A 35s fence, long enough for a consumer to pile up a large backlog of
+// records it re-reads after the switch.
 var fence35sWindows = Windows{FenceOnsetMs: switchAt - 35_000, SwitchDoneMs: switchAt}
 
-func TestCheck_AutoCommitSwitchReReadsUpToTheFenceBacklogPass(t *testing.T) {
-	// The live finding: an auto-commit member keeps polling after the switch
-	// until its next heartbeat or auto-commit, re-reading the fence's backlog.
-	producer, member := switchReReads(716)
-	r := check(t, true, DefaultBounds(), fence35sWindows, producer, map[string]string{"a": member})
-	require.True(t, r.OK(), r.String())
-	require.Equal(t, 716, r.ByClass[DupSwitch])
-}
-
-func TestCheck_AutoCommitSwitchReReadsBeyondTheFenceBacklogFail(t *testing.T) {
+func TestCheck_AnyNumberOfReReadsPassesWhileNothingIsMissed(t *testing.T) {
 	producer, member := switchReReads(1301)
-	r := check(t, true, DefaultBounds(), fence35sWindows, producer, map[string]string{"a": member})
-	require.False(t, r.OK())
-	require.Contains(t, strings.Join(r.Failures, "\n"), "member a re-read 1301 record(s) after the switch, more than 1300")
-}
-
-func TestCheck_ManualCommitSwitchBoundStaysOnePoll(t *testing.T) {
-	producer, member := switchReReads(716)
-	r := check(t, false, DefaultBounds(), fence35sWindows, producer, map[string]string{"a": member})
-	require.False(t, r.OK())
-	require.Contains(t, strings.Join(r.Failures, "\n"), "member a re-read 716 record(s) after the switch, more than one poll (500)")
-
-	producer, member = switchReReads(500)
-	require.True(t, check(t, false, DefaultBounds(), fence35sWindows, producer, map[string]string{"a": member}).OK())
+	r := check(t, DefaultBounds(), fence35sWindows, producer, map[string]string{"a": member})
+	require.True(t, r.OK(), r.String())
+	require.Empty(t, r.Missed)
+	require.Equal(t, 1301, r.ByClass[DupSwitch])
+	require.Contains(t, r.String(), "DUPLICATED (read more than once): 1301")
 }
