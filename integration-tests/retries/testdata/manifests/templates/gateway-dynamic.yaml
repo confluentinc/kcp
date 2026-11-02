@@ -38,13 +38,6 @@ spec:
   hotReload:
     enabled: true
   podTemplate:
-    resources:
-      requests:
-        cpu: 500m
-        memory: 512Mi
-      limits:
-        cpu: "2"
-        memory: 1536Mi
     envVars:
       - name: GATEWAY_ROOT_LOG_LEVEL
         value: INFO
