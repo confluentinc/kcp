@@ -56,6 +56,14 @@ type TBMActions struct {
 	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
 	// hot-reload moves no Kubernetes signal to wait on.
 	hotReloadTimeout time.Duration
+	// gatewayGeneration is the Gateway CR metadata.generation this run expects:
+	// the one reconcile read, then the one each of kcp's own writes left. It
+	// lives here, not on the verifier, because verifier() builds a fresh one per
+	// call. 0 means unknown, and leaves every patch and check unguarded.
+	gatewayGeneration int64
+	// promoteSubmitted is set once this run has sent a promote request: from
+	// then on some topics may be promoted, so a stop must not say otherwise.
+	promoteSubmitted bool
 
 	clusterLinkService clusterlink.Service
 	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
@@ -125,6 +133,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
+	a.gatewayGeneration = res.GatewayGeneration
 
 	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
 	return nil
@@ -528,7 +537,14 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		a.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
+		// Each promote request is irreversible, so confirm the CR is still the
+		// one kcp's own fence left immediately before sending it: every batch,
+		// every retry.
+		if err := a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+			return err
+		}
 		batches++
+		a.promoteSubmitted = true
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)

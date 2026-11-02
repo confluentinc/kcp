@@ -100,6 +100,60 @@ func staticGatewayConfig() *reconcile.GatewayConfig {
 	}
 }
 
+func TestEngineRun_CarriesGatewayGeneration(t *testing.T) {
+	const gen = int64(12)
+	engine := func(gw *reconcile.GatewayConfig, mirrors map[string]reconcile.MirrorState) *ReconciliationEngine {
+		gw.Generation = gen
+		return NewReconciliationEngine(
+			&fakeGateway{gw: gw},
+			&fakeLister{topics: []string{"orders"}},
+			&fakeLister{topics: []string{"orders"}},
+			&fakeLink{ls: &LinkStatus{Mirrors: mirrors}},
+			&fakeSecretChecker{},
+		)
+	}
+	active := map[string]reconcile.MirrorState{"orders": reconcile.MirrorActive}
+	stopped := map[string]reconcile.MirrorState{"orders": reconcile.MirrorStopped}
+	dynIn := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc", Type: reconcile.TypeDynamic}
+	staticIn := dynIn
+	staticIn.Type = reconcile.TypeStatic
+
+	convert := convertEngine(&fakeGroupLister{}, &fakeGroupLister{})
+	convertGW := convertEngineGateway()
+	convertGW.Generation = gen
+	convert.gateway = &fakeGateway{gw: convertGW}
+
+	cases := []struct {
+		name    string
+		eng     *ReconciliationEngine
+		in      reconcile.ReconcileInput
+		refused bool
+	}{
+		{"dynamic", engine(dynGatewayConfig(), active), dynIn, false},
+		{"static", engine(staticGatewayConfig(), stopped), staticIn, false},
+		{"convert", convert, convertIn, false},
+		// A topic with no mirror on the target is refused.
+		{"refused", engine(dynGatewayConfig(), map[string]reconcile.MirrorState{}), dynIn, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := tc.eng.Run(context.Background(), tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.refused && !plan.Report.Refused() {
+				t.Fatal("expected a refusal")
+			}
+			if plan.GatewayGeneration != gen {
+				t.Errorf("Plan.GatewayGeneration = %d, want %d", plan.GatewayGeneration, gen)
+			}
+			if got := newResult(plan).GatewayGeneration; got != gen {
+				t.Errorf("Result.GatewayGeneration = %d, want %d", got, gen)
+			}
+		})
+	}
+}
+
 func TestEngineRunHappyPath(t *testing.T) {
 	eng := NewReconciliationEngine(
 		&fakeGateway{gw: dynGatewayConfig()},

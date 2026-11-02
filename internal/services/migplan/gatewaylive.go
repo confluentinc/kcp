@@ -75,6 +75,7 @@ func (g *GatewayLive) Load(ctx context.Context) (*reconcile.GatewayConfig, error
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("parsing gateway CR %q: %w", g.crName, err)
 	}
+	generation := gatewayGeneration(doc)
 	cleanGatewayDoc(doc)
 	route, err := findRoute(doc, g.routeName)
 	if err != nil {
@@ -84,7 +85,7 @@ func (g *GatewayLive) Load(ctx context.Context) (*reconcile.GatewayConfig, error
 	if err != nil {
 		return nil, fmt.Errorf("marshalling cleaned gateway CR %q: %w", g.crName, err)
 	}
-	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc, Sync: sync}, nil
+	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc, Sync: sync, Generation: generation}, nil
 }
 
 // toGatewaySync maps the pod check's result onto the reconcile core's.

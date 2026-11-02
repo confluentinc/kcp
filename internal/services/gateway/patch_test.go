@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,11 +43,11 @@ func capturePatch(cs *dynamicfake.FakeDynamicClient) *capturedPatch {
 	return c
 }
 
-func seededGateway(ns, name, route string) *unstructured.Unstructured {
+func seededGateway(ns, name, route string, generation int64) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "platform.confluent.io/v1beta1",
 		"kind":       "Gateway",
-		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"metadata":   map[string]any{"name": name, "namespace": ns, "generation": generation},
 		"spec": map[string]any{
 			"routes": []any{
 				map[string]any{"name": route, "streamingDomain": "cp-a"},
@@ -59,13 +60,13 @@ func TestPatchGatewayRoute(t *testing.T) {
 	const ns, gw, route = "confluent", "test-gateway", "migration-route"
 
 	t.Run("uses JSON Patch with no field manager and no force", func(t *testing.T) {
-		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 1))
 		captured := capturePatch(cs)
 
 		stored, err := patchGatewayRoute(context.Background(), cs, ns, gw,
-			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "kcp-abc123")
+			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "kcp-abc123", 0)
 		require.NoError(t, err)
-		assert.Equal(t, "kcp-abc123", stored)
+		assert.Equal(t, "kcp-abc123", stored.ConfigID)
 
 		require.True(t, captured.called)
 		assert.Equal(t, types.JSONPatchType, captured.patchType)
@@ -80,13 +81,13 @@ func TestPatchGatewayRoute(t *testing.T) {
 	})
 
 	t.Run("writes no configId and returns empty when none supplied", func(t *testing.T) {
-		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 1))
 		captured := capturePatch(cs)
 
 		got, err := patchGatewayRoute(context.Background(), cs, ns, gw,
-			RoutePatch{RouteName: route, Field: "fence", Value: map[string]any{"scope": "all"}}, "")
+			RoutePatch{RouteName: route, Field: "fence", Value: map[string]any{"scope": "all"}}, "", 0)
 		require.NoError(t, err)
-		assert.Empty(t, got)
+		assert.Empty(t, got.ConfigID)
 		require.True(t, captured.called)
 
 		var ops []map[string]any
@@ -110,23 +111,23 @@ func TestPatchGatewayRoute(t *testing.T) {
 		cs := newFakeDynamicClient(noRoutes)
 
 		_, err := patchGatewayRoute(context.Background(), cs, ns, gw,
-			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "")
+			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "", 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "has no spec.routes")
 	})
 
 	t.Run("surfaces ErrApplyUnverified when the server stores a different configId", func(t *testing.T) {
-		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 1))
 		// The route mutation succeeds but the CR comes back carrying a configId
 		// kcp never sent — a mutating webhook or a conflicting controller. The
 		// patch already reached the cluster, so this must be reported as
 		// unverified rather than swallowed.
-		mutated := seededGateway(ns, gw, route)
+		mutated := seededGateway(ns, gw, route, 1)
 		require.NoError(t, unstructured.SetNestedField(mutated.Object, "kcp-someone-else", "spec", "configId"))
 		returnPatched(cs, mutated)
 
 		_, err := patchGatewayRoute(context.Background(), cs, ns, gw,
-			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "kcp-sent")
+			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "kcp-sent", 0)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrApplyUnverified)
 	})
@@ -147,12 +148,12 @@ func TestPatchGatewayConfigID(t *testing.T) {
 	const ns, gw, route = "confluent", "test-gateway", "migration-route"
 
 	t.Run("emits a single add /spec/configId op with no field manager and no force", func(t *testing.T) {
-		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 1))
 		captured := capturePatch(cs)
 
-		stored, err := patchGatewayConfigID(context.Background(), cs, ns, gw, "kcp-cfg1")
+		stored, err := patchGatewayConfigID(context.Background(), cs, ns, gw, "kcp-cfg1", 0)
 		require.NoError(t, err)
-		assert.Equal(t, "kcp-cfg1", stored)
+		assert.Equal(t, "kcp-cfg1", stored.ConfigID)
 
 		require.True(t, captured.called)
 		assert.Equal(t, types.JSONPatchType, captured.patchType)
@@ -177,10 +178,10 @@ func TestPatchGatewayConfigID(t *testing.T) {
 	})
 
 	t.Run("surfaces ErrApplyUnverified when the server drops the configId", func(t *testing.T) {
-		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
-		returnPatched(cs, seededGateway(ns, gw, route)) // comes back with no spec.configId
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 1))
+		returnPatched(cs, seededGateway(ns, gw, route, 1)) // comes back with no spec.configId
 
-		_, err := patchGatewayConfigID(context.Background(), cs, ns, gw, "kcp-cfg1")
+		_, err := patchGatewayConfigID(context.Background(), cs, ns, gw, "kcp-cfg1", 0)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrApplyUnverified)
 	})
@@ -230,5 +231,124 @@ func TestConfirmStoredConfigID(t *testing.T) {
 		_, err := confirmStoredConfigID(specWith(123), gw, want)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrApplyUnverified)
+	})
+}
+
+// bumpThenFail makes the patch bump the tracked object's generation to gen and
+// then fail with err, simulating a concurrent writer winning the race.
+func bumpThenFail(t *testing.T, cs *dynamicfake.FakeDynamicClient, ns, gw string, gen int64, err error) {
+	cs.PrependReactor("patch", "gateways", func(k8stesting.Action) (bool, runtime.Object, error) {
+		// The tracker is used directly: the client's own Get would re-enter the
+		// reactor chain this reactor is running inside.
+		obj, getErr := cs.Tracker().Get(gatewayGVRForTest, ns, gw)
+		require.NoError(t, getErr)
+		cur := obj.(*unstructured.Unstructured).DeepCopy()
+		cur.SetGeneration(gen)
+		require.NoError(t, cs.Tracker().Update(gatewayGVRForTest, cur, ns))
+		return true, nil, err
+	})
+}
+
+func returnPatchError(cs *dynamicfake.FakeDynamicClient, err error) {
+	cs.PrependReactor("patch", "gateways", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, err
+	})
+}
+
+func TestPatchGatewayRoute_WriteGuard(t *testing.T) {
+	const ns, gw, route = "confluent", "test-gateway", "migration-route"
+	rp := RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}
+
+	runGuardTable(t, ns, gw, route, func(cs *dynamicfake.FakeDynamicClient, expected int64) (PatchResult, error) {
+		return patchGatewayRoute(context.Background(), cs, ns, gw, rp, "kcp-abc123", expected)
+	})
+}
+
+func TestPatchGatewayConfigID_WriteGuard(t *testing.T) {
+	const ns, gw, route = "confluent", "test-gateway", "migration-route"
+
+	runGuardTable(t, ns, gw, route, func(cs *dynamicfake.FakeDynamicClient, expected int64) (PatchResult, error) {
+		return patchGatewayConfigID(context.Background(), cs, ns, gw, "kcp-abc123", expected)
+	})
+}
+
+// runGuardTable runs the write-guard cases shared by the route and configId
+// patch paths; run issues the patch under test with the given expected generation.
+func runGuardTable(t *testing.T, ns, gw, route string, run func(cs *dynamicfake.FakeDynamicClient, expected int64) (PatchResult, error)) {
+	t.Helper()
+
+	assertChanged := func(t *testing.T, err error, expected, observed int64) {
+		require.ErrorIs(t, err, ErrGatewayChanged)
+		var gce *GenerationChangedError
+		require.ErrorAs(t, err, &gce)
+		assert.Equal(t, expected, gce.Expected)
+		assert.Equal(t, observed, gce.Observed)
+	}
+
+	t.Run("guard op sent", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		captured := capturePatch(cs)
+		_, err := run(cs, 4)
+		require.NoError(t, err)
+		var ops []map[string]any
+		require.NoError(t, k8sjson.Unmarshal(captured.body, &ops))
+		require.NotEmpty(t, ops)
+		assert.Equal(t, map[string]any{"op": "test", "path": "/metadata/generation", "value": int64(4)}, ops[0])
+	})
+
+	t.Run("no guard when unknown", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		captured := capturePatch(cs)
+		_, err := run(cs, 0)
+		require.NoError(t, err)
+		var ops []map[string]any
+		require.NoError(t, k8sjson.Unmarshal(captured.body, &ops))
+		for _, op := range ops {
+			assert.NotEqual(t, "/metadata/generation", op["path"])
+		}
+	})
+
+	t.Run("moved before the read", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 5))
+		captured := capturePatch(cs)
+		res, err := run(cs, 4)
+		assertChanged(t, err, 4, 5)
+		assert.False(t, captured.called)
+		assert.Equal(t, PatchResult{}, res)
+	})
+
+	t.Run("moved between read and patch", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		bumpThenFail(t, cs, ns, gw, 6, errors.New("the object has been modified"))
+		_, err := run(cs, 4)
+		assertChanged(t, err, 4, 6)
+	})
+
+	t.Run("a failure with the generation unchanged keeps its own error", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		returnPatchError(cs, errors.New("boom"))
+		_, err := run(cs, 4)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrGatewayChanged)
+		assert.Contains(t, err.Error(), "boom")
+	})
+
+	t.Run("generation returned", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		out := seededGateway(ns, gw, route, 5)
+		require.NoError(t, unstructured.SetNestedField(out.Object, "kcp-abc123", "spec", "configId"))
+		returnPatched(cs, out)
+		res, err := run(cs, 4)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), res.Generation)
+		assert.Equal(t, "kcp-abc123", res.ConfigID)
+	})
+
+	t.Run("unverified write still returns its generation", func(t *testing.T) {
+		cs := newFakeDynamicClient(seededGateway(ns, gw, route, 4))
+		returnPatched(cs, seededGateway(ns, gw, route, 5)) // spec.configId missing
+		res, err := run(cs, 4)
+		require.ErrorIs(t, err, ErrApplyUnverified)
+		assert.Equal(t, int64(5), res.Generation)
 	})
 }
