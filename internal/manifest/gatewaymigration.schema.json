@@ -448,7 +448,7 @@
                 },
                 "offsetSyncConcurrency": {
                   "type": "integer",
-                  "description": "Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8."
+                  "description": "Number of workers, each with its own broker connection, reading and writing consumer-group offsets, and reading every source consumer group's committed topics when reconciling (also on --dry-run). 0 (the default) uses 8."
                 },
                 "hotReloadTimeout": {
                   "type": "string",

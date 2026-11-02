@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -91,7 +90,7 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	// alone and is not repeated here.
 	var scope reconcile.LinkScope
 	if err := inSpan(ctx, "d2s.check_link_scope", func(ctx context.Context) error {
-		gf := facts.GroupFacts(committedTopics(first))
+		gf := facts.GroupFacts(first.CommittedTopics())
 		scope = reconcile.CheckLinkScope(reconcile.LinkScopeInput{
 			Mirrors:         facts.Link.LinkMirrors,
 			SourceTopics:    facts.SourceTopics,
@@ -189,20 +188,6 @@ func (a *D2SActions) refuse(config *migration.MigrationConfig, report reconcile.
 		reasons = append(reasons, tv.Topic+": "+tv.Reason)
 	}
 	return fmt.Errorf("%w:\n%s", ErrVerifyRefused, strings.Join(reasons, "\n"))
-}
-
-// committedTopics is, per group in snap, the sorted topics it has committed on: the group rule's input.
-func committedTopics(snap groupoffsets.Snapshot) map[string][]string {
-	out := make(map[string][]string, len(snap))
-	for group, topics := range snap {
-		names := make([]string, 0, len(topics))
-		for t := range topics {
-			names = append(names, t)
-		}
-		sort.Strings(names)
-		out[group] = names
-	}
-	return out
 }
 
 // groupStates is each listed group's state.

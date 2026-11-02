@@ -152,7 +152,8 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 	assert.Equal(t, strconv.Itoa(wantWorkers), apply[0].attrs["kcp.workers"])
 
 	// Each worker's client build is its own span: one per worker actually built (no more than the groups
-	// handed out), under each snapshot and under the apply.
+	// handed out), under each snapshot, under the apply, and under reconcile's committed-topics fetch, which
+	// runs as many workers as the snapshots.
 	opensBy := map[string][]span{}
 	for _, o := range byName["groupoffsets.open_client"] {
 		opensBy[o.parentID] = append(opensBy[o.parentID], o)
@@ -165,6 +166,11 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 			require.NoErrorf(t, err, "%s carries kcp.workers", name)
 			assert.Lenf(t, opensBy[s.spanID], min(workers, groups), "one open_client per worker under %s", name)
 		}
+	}
+	for _, s := range byName["migplan.committed_topics"] {
+		groups, err := strconv.Atoi(s.attrs["kcp.groups"])
+		require.NoError(t, err, "migplan.committed_topics carries kcp.groups")
+		assert.Len(t, opensBy[s.spanID], min(wantWorkers, groups), "one open_client per worker under migplan.committed_topics")
 	}
 
 	// The listings: the source three times (reconcile's, snapshot 1 under verify_fence, snapshot 2 under the
@@ -203,7 +209,7 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 		name, api string
 		workers   int
 	}{
-		{"migplan.committed_topics", "OffsetFetch", 8},
+		{"migplan.committed_topics", "OffsetFetch", wantWorkers},
 		{"groupoffsets.snapshot", "OffsetFetch", wantWorkers},
 		{"groupoffsets.apply", "OffsetCommit", wantWorkers},
 	}
