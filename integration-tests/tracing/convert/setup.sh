@@ -66,7 +66,7 @@ for i in $(seq 1 "${LINK_TOPIC_COUNT}"); do LINK_TOPICS+=("$(topic_name "$i")");
 
 echo "=== KCP tracing dynamic-to-static E2E setup ==="
 echo "Profile:        ${PROFILE}"
-echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
+echo "CFK chart:      ${CFK_CHART_VERSION} (${CFK_CHART_REPO})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, clients through it)"
 echo "Link topics:    ${LINK_TOPICS[*]}"
 echo ""
