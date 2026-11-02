@@ -95,12 +95,9 @@ spec:
             group: source-domain
           # A catch-all condition routes every topic to the source domain, so the
           # engine's OwnerRoute resolves "on source" via a condition and never needs
-          # routing.default. This threads the needle between two incompatible schemas:
-          # the CFK 0.1838.0 CRD forbids routing.default (it models the fallback as
-          # unmatchedTopics), while the gateway app forbids unmatchedTopics (it
-          # wants default). Using conditions only avoids both. The engine's switchover prepends per-batch
-          # conditions ahead of this one (first-match-wins), so migrated topics
-          # resolve to the target.
+          # routing.default. The engine's switchover prepends per-batch conditions
+          # ahead of this one (first-match-wins), so migrated topics resolve to the
+          # target.
           conditions:
             - topicPatterns: [".*"]
               streamingDomain: source-domain
