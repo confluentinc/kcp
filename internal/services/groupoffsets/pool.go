@@ -14,7 +14,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/tracing"
 )
 
 // worker is one pool member: the function that handles an item and the function that releases whatever the
@@ -32,6 +36,10 @@ type worker struct {
 // workers stop retrying instead of using the rest of their retry budget. The returned error is the failure of the
 // lowest-named failed item, leaving out the items stopped by it, so it does not depend on which worker finished
 // first, and it keeps the cause for errors.Is.
+//
+// Each worker runs its items in its own kafka.group_worker span (client.StartGroupWorker), beside its
+// groupoffsets.open_client span. The client's group calls time their coordinator lookups and requests on it, so
+// the span shows where a phase's time went after its clients opened, without a span per group.
 func forEach(ctx context.Context, items []string, n int, setup func() (worker, error)) error {
 	if len(items) == 0 {
 		return nil
@@ -64,12 +72,7 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 
 	jobs := make(chan string)
 	for i := 0; i < n; i++ {
-		var w worker
-		err := retry.Do(runCtx, "kafka.open_client", func(context.Context) error {
-			var err error
-			w, err = setup()
-			return err
-		})
+		w, err := openWorker(runCtx, i, setup)
 		if err != nil {
 			fail(fmt.Sprintf("<worker %d>", i), fmt.Errorf("starting worker: %w", err))
 			break
@@ -80,12 +83,18 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 			if w.release != nil {
 				defer w.release()
 			}
+			workerCtx, gw := client.StartGroupWorker(runCtx, i)
+			var workerErr error
+			defer func() { gw.End(workerErr) }()
 			for item := range jobs {
 				if failed.Load() || ctx.Err() != nil {
 					continue
 				}
-				if err := w.do(runCtx, item); err != nil {
+				if err := w.do(workerCtx, item); err != nil {
+					workerErr = err
 					fail(item, err)
+				} else {
+					gw.GroupDone()
 				}
 			}
 		}()
@@ -112,4 +121,19 @@ func forEach(ctx context.Context, items []string, n int, setup func() (worker, e
 		return fmt.Errorf("%s: %w (and %d more failed)", keys[0], failures[keys[0]], len(keys)-1)
 	}
 	return ctx.Err()
+}
+
+// openWorker builds worker i inside its own groupoffsets.open_client span (a full metadata fetch, and any
+// retries), so the time spent connecting is separate from the time spent on groups. The pool builds its
+// workers one after another, before handing out any group: a phase's connection cost is the sum of its
+// open_client spans.
+func openWorker(ctx context.Context, i int, setup func() (worker, error)) (w worker, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "groupoffsets.open_client", attribute.Int("kcp.worker", i))
+	defer func() { tracing.End(span, err) }()
+	err = retry.Do(ctx, "kafka.open_client", func(context.Context) error {
+		var err error
+		w, err = setup()
+		return err
+	})
+	return w, err
 }

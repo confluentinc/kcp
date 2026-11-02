@@ -39,6 +39,9 @@ For each run: the route is static on the destination afterwards and every seeded
 destination; one trace for the whole run with the run's label; `migration.run` (`kcp.strategy=d2s`, the configured
 workers and window) with the five steps in order — initialize, fence, verify_fence, sync_offsets, switch — and no
 error on the command, the run or any step; the gateway patch and accept spans; the groupoffsets spans present
-(snapshot, rogue-commit detection, destination high-water marks, apply); `wait.rogue_commit_window` configured to and
-lasting the manifest's window (no more than 1s over); one `groupoffsets.apply` syncing every seeded group with the
-configured number of workers; and no attribute carrying a group name.
+(snapshot, rogue-commit detection, destination high-water marks, apply); one `groupoffsets.open_client` per worker
+under each snapshot and the apply; `groupoffsets.list_groups` twice on the source and once on the destination;
+`d2s.gather_facts`, `d2s.check_link_scope` (with every seeded group in scope) and `d2s.check_split_brain` under
+verify_fence; `wait.rogue_commit_window` configured to and lasting the manifest's window (no more than 1s over); one
+`groupoffsets.apply` syncing every seeded group with the configured number of workers; and no attribute carrying a
+group name.
