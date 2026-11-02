@@ -221,7 +221,7 @@ func GenerateGateway() ([]byte, error) {
 		set("hotReloadTimeout", "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.")
 		set("gatewayConfigPort", "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180).")
 		set("detectUnroutedCommitsDuration", "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) skips the check. When set the minimum is 10s.")
-		set("offsetSyncConcurrency", "Number of workers, each with its own broker connection, reading and writing consumer-group offsets. 0 (the default) uses 8.")
+		set("offsetSyncConcurrency", "Number of workers, each with its own broker connection, reading and writing consumer-group offsets, and reading every source consumer group's committed topics when reconciling (also on --dry-run). 0 (the default) uses 8.")
 	}
 	describe(d)
 

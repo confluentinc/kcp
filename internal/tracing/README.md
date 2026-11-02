@@ -154,7 +154,8 @@ kcp migration cutover execute                       root span, one per command
 │  ├─ migplan.gather_facts                  route conversion only: the facts it shares with verify_fence
 │  ├─ groupoffsets.list_groups              route conversion only: the source groups
 │  └─ migplan.committed_topics              route conversion only: every source group's committed offsets; kcp.groups;
-│                                           one kafka.group_worker per worker (8, on one shared client)
+│                                           one groupoffsets.open_client and one kafka.group_worker per worker
+│                                           (offsetSyncConcurrency, each with its own client)
 ├─ migration.build_services                 client setup
 └─ migration.run                            kcp.strategy = aao | tbm | d2s, kcp.migration.id, the run's settings
    │                                        (lag threshold, batch size, detection window, workers), plan counts

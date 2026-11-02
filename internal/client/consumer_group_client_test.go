@@ -8,8 +8,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -236,99 +234,6 @@ func offsetsResponse(blocks map[string]map[int32]int64) *sarama.OffsetFetchRespo
 		}
 	}
 	return r
-}
-
-func TestCommittedTopics_TrackedMeansACommittedOffset(t *testing.T) {
-	f := fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{
-		"app":  offsetsResponse(map[string]map[int32]int64{"orders": {0: 5, 1: -1}, "payments": {0: 0}, "subscribed-only": {0: -1}}),
-		"idle": offsetsResponse(nil),
-	}}
-	got, err := committedTopics(context.Background(), f, []string{"app", "idle"}, 2, nil)
-	require.NoError(t, err)
-	assert.Equal(t, map[string][]string{"app": {"orders", "payments"}, "idle": nil}, got)
-}
-
-func TestCommittedTopics_ManyGroupsConcurrently(t *testing.T) {
-	f := fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{}}
-	var groups []string
-	for i := 0; i < 50; i++ {
-		g := fmt.Sprintf("g%02d", i)
-		groups = append(groups, g)
-		f.resp[g] = offsetsResponse(map[string]map[int32]int64{"t-" + g: {0: 1}})
-	}
-	got, err := committedTopics(context.Background(), f, groups, 8, nil)
-	require.NoError(t, err)
-	require.Len(t, got, 50)
-	assert.Equal(t, []string{"t-g07"}, got["g07"])
-}
-
-func TestCommittedTopics_AnyGroupFailureIsAnError(t *testing.T) {
-	f := fakeOffsetFetcher{
-		resp: map[string]*sarama.OffsetFetchResponse{"ok": offsetsResponse(nil)},
-		errs: map[string]error{"bad": errors.New("coordinator not available")},
-	}
-	_, err := committedTopics(context.Background(), f, []string{"ok", "bad"}, 2, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bad")
-}
-
-func TestCommittedTopics_ABlockErrorIsAnError(t *testing.T) {
-	r := &sarama.OffsetFetchResponse{Blocks: map[string]map[int32]*sarama.OffsetFetchResponseBlock{}}
-	r.AddBlock("orders", 0, &sarama.OffsetFetchResponseBlock{Offset: -1, Err: sarama.ErrTopicAuthorizationFailed})
-	_, err := committedTopics(context.Background(), fakeOffsetFetcher{resp: map[string]*sarama.OffsetFetchResponse{"g": r}}, []string{"g"}, 1, nil)
-	require.ErrorIs(t, err, sarama.ErrTopicAuthorizationFailed)
-}
-
-// countingFetcher fails the groups in failing, answers the rest with an empty
-// response, and counts the calls it receives. If barrier is set, every call
-// waits at it until barrier.n callers have arrived, so a test can hold that many
-// fetches in flight at once.
-type countingFetcher struct {
-	failing map[string]bool
-	calls   atomic.Int64
-	barrier *sync.WaitGroup
-}
-
-func (f *countingFetcher) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
-	f.calls.Add(1)
-	if f.barrier != nil {
-		f.barrier.Done()
-		f.barrier.Wait()
-	}
-	if f.failing[group] {
-		return nil, fmt.Errorf("denied for %s", group)
-	}
-	return offsetsResponse(nil), nil
-}
-
-func TestCommittedTopics_StopsFetchingAfterAFailure(t *testing.T) {
-	f := &countingFetcher{failing: map[string]bool{"g000": true}}
-	var groups []string
-	for i := 0; i < 200; i++ {
-		groups = append(groups, fmt.Sprintf("g%03d", i))
-	}
-	_, err := committedTopics(context.Background(), f, groups, 1, nil)
-	require.Error(t, err)
-	assert.Less(t, f.calls.Load(), int64(10), "a failed group means the run fails; it must not go on to fetch the other ~200 groups")
-}
-
-func TestCommittedTopics_ReportsTheLowestFailedGroupWhenSeveralFail(t *testing.T) {
-	// Hold all three fetches in flight so they fail together, then check the error
-	// does not depend on which worker happened to finish first.
-	for i := 0; i < 20; i++ {
-		barrier := &sync.WaitGroup{}
-		barrier.Add(3)
-		f := &countingFetcher{failing: map[string]bool{"g3": true, "g1": true, "g2": true}, barrier: barrier}
-		_, err := committedTopics(context.Background(), f, []string{"g3", "g1", "g2"}, 3, nil)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "g1", "run %d: want the error for the lowest-named failed group", i)
-	}
-}
-
-func TestCommittedTopics_NoGroups(t *testing.T) {
-	got, err := committedTopics(context.Background(), fakeOffsetFetcher{}, nil, 4, nil)
-	require.NoError(t, err)
-	assert.Empty(t, got)
 }
 
 // fakeGroupDescriber answers DescribeConsumerGroups from a canned result and records what it was asked.
@@ -890,7 +795,7 @@ func TestCommitGroupOffsets_RecoversWhenTheCoordinatorResetsItsConnection(t *tes
 	assert.Len(t, commitRequests(mb), 2)
 }
 
-func TestCommittedTopics_AllParallelFetchesRecoverWhenTheCoordinatorResetsItsConnection(t *testing.T) {
+func TestCommittedOffsets_RecoversWhenTheCoordinatorResetsItsConnection(t *testing.T) {
 	retrytest.Fast(t)
 	groups := []string{"g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7"}
 	ln := testsupport.NewCutListener(t)
@@ -912,19 +817,20 @@ func TestCommittedTopics_AllParallelFetchesRecoverWhenTheCoordinatorResetsItsCon
 			"OffsetFetchRequest":     of,
 		}
 	})
-	want := map[string][]string{}
+	want := map[string]map[int32]CommittedOffset{"orders": {0: at(7)}}
 	for _, g := range groups {
-		want[g] = []string{"orders"}
+		got, err := c.CommittedOffsets(context.Background(), g)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
 	}
-	got, err := c.CommittedTopics(context.Background(), groups)
-	require.NoError(t, err)
-	require.Equal(t, want, got)
 
 	ln.Cut()
 
-	got, err = c.CommittedTopics(context.Background(), groups)
-	require.NoError(t, err, "every fetch sharing the reset coordinator must recover")
-	assert.Equal(t, want, got)
+	for _, g := range groups {
+		got, err := c.CommittedOffsets(context.Background(), g)
+		require.NoError(t, err, "the retry must reach the coordinator on a fresh connection, not the one it reset")
+		assert.Equal(t, want, got)
+	}
 }
 
 // fakeCommitSender is the coordinator the offset-commit probe talks to.
@@ -1126,41 +1032,6 @@ func TestOnBroker_RetriesAResetAndStopsOnSuccess(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, calls)
-}
-
-// stormFetcher fails retrying's fetches with a connection reset on every call and denied's with a permanent
-// error, but only once retrying's first fetch has failed, so that fetch is retrying when denied fails.
-type stormFetcher struct {
-	retrying, denied string
-	started          chan struct{}
-	once             sync.Once
-}
-
-func (f *stormFetcher) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
-	switch group {
-	case f.retrying:
-		f.once.Do(func() { close(f.started) })
-		return nil, connReset
-	case f.denied:
-		<-f.started
-		return nil, fmt.Errorf("denied for %s", group)
-	}
-	return offsetsResponse(nil), nil
-}
-
-func TestCommittedTopics_APermanentFailureStopsTheOtherFetchesRetrying(t *testing.T) {
-	// The real retry schedule: without the stop, g1's fetch retries for the whole 2-minute budget.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	f := &stormFetcher{retrying: "g1", denied: "g2", started: make(chan struct{})}
-
-	start := time.Now()
-	_, err := committedTopics(ctx, f, []string{"g1", "g2"}, 2, nil)
-
-	require.Error(t, err)
-	assert.Less(t, time.Since(start), 5*time.Second, "g1's retries must stop once g2 has failed for good")
-	assert.Contains(t, err.Error(), "denied for g2", "the error must be g2's, not g1's stopped retries")
-	assert.NotErrorIs(t, err, context.Canceled)
 }
 
 func TestOnBroker_ClosesTheBrokerThatFailedBeforeRetrying(t *testing.T) {
