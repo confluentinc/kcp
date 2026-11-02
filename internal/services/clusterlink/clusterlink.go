@@ -155,7 +155,7 @@ type Service interface {
 	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
 	ListConfigs(ctx context.Context, config Config) (map[string]string, error)
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
-	PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error)
+	PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string, opts ...PromoteOption) (*PromoteMirrorTopicsResponse, error)
 
 	// CreateMirrorTopic creates a mirror topic on the link via POST .../mirrors.
 	CreateMirrorTopic(ctx context.Context, config Config, sourceTopic, mirrorTopic string) error
@@ -376,16 +376,19 @@ func translateAlterError(config Config, alteration ConfigAlteration, err error) 
 // status is read again, topics now PENDING_STOPPED or STOPPED count as accepted, and only the rest are sent
 // again, within the retry budget (internal/retry). The response lists every topic once: those accepted by an
 // earlier request whose answer was lost with error code 0, the rest as the last request answered them.
-func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (_ *PromoteMirrorTopicsResponse, err error) {
+// CheckBeforeResend runs a caller's check immediately before each request sent again.
+func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string, opts ...PromoteOption) (_ *PromoteMirrorTopicsResponse, err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "clusterlink.promote_mirror_topics", attribute.Int("kcp.batch.size", len(topicNames)))
 	defer func() { tracing.End(span, err) }()
 	if len(topicNames) == 0 {
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
 
+	o := ApplyPromoteOptions(opts...)
 	merged := &PromoteMirrorTopicsResponse{}
 	pending := topicNames
 	unanswered := false // the last promote request failed in a way that may still have reached the cluster
+	sent := false
 	err = retry.Do(ctx, "rest.promote", func(ctx context.Context) error {
 		if unanswered {
 			still, err := s.notYetPromoted(ctx, config, pending, merged)
@@ -397,6 +400,13 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 				return nil
 			}
 		}
+		if sent && o.BeforeResend != nil {
+			// The backoff before a resend leaves time for the world to change; a failed check is not retried.
+			if err := o.BeforeResend(ctx); err != nil {
+				return err
+			}
+		}
+		sent = true
 		resp, err := s.postPromote(ctx, config, pending)
 		if err != nil {
 			unanswered = retry.Retryable(err)
@@ -409,6 +419,33 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 		return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
 	}
 	return merged, nil
+}
+
+// PromoteOption configures one PromoteMirrorTopics call.
+type PromoteOption func(*PromoteOptions)
+
+// PromoteOptions holds what a call's PromoteOption values set. Implementations of Service read it with
+// ApplyPromoteOptions.
+type PromoteOptions struct {
+	// BeforeResend, if set, runs immediately before each promote request sent again (see CheckBeforeResend).
+	BeforeResend func(ctx context.Context) error
+}
+
+// ApplyPromoteOptions returns the options opts set.
+func ApplyPromoteOptions(opts ...PromoteOption) PromoteOptions {
+	var o PromoteOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
+// CheckBeforeResend runs check immediately before each promote request PromoteMirrorTopics sends again after a
+// retryable failure. The first request is the caller's to check. A promote is irreversible, so a check that
+// fails stops the call with no further request: its error is returned (wrapped) and is not retried, unless
+// internal/retry would retry it itself.
+func CheckBeforeResend(check func(ctx context.Context) error) PromoteOption {
+	return func(o *PromoteOptions) { o.BeforeResend = check }
 }
 
 // postPromote sends one promote request for topicNames, bounded by PromoteTimeout.

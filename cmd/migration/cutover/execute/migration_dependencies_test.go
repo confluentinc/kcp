@@ -137,7 +137,7 @@ func (stubClusterLinkServiceImpl) ValidateTopics([]string, []string) error {
 	return fmt.Errorf("stubClusterLinkServiceImpl.ValidateTopics not implemented")
 }
 
-func (stubClusterLinkServiceImpl) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+func (stubClusterLinkServiceImpl) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string, _ ...clusterlink.PromoteOption) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 	return promoteAll(topicNames), nil
 }
 
@@ -180,7 +180,7 @@ type recordingClusterLinkService struct {
 	batches []int
 }
 
-func (r *recordingClusterLinkService) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+func (r *recordingClusterLinkService) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string, _ ...clusterlink.PromoteOption) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 	r.mu.Lock()
 	r.batches = append(r.batches, len(topicNames))
 	r.mu.Unlock()

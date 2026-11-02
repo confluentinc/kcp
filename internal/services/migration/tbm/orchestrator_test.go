@@ -1441,3 +1441,42 @@ func TestStoppedAt(t *testing.T) {
 		})
 	}
 }
+
+// A promote request lost to a connection-level failure is resent by PromoteMirrorTopics after a backoff. The CR
+// can move during that backoff, so the resend is checked too.
+func TestTBMOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *testing.T) {
+	orch, gw, res, out, _ := generationRunTBM(t, false)
+	var mu sync.Mutex
+	sent := 0
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteWithOptionsFn: func(ctx context.Context, _ clusterlink.Config, _ []string, opts clusterlink.PromoteOptions) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			sent++ // the first request's answer is lost; the CR moves during the backoff
+			mu.Unlock()
+			require.NotNil(t, opts.BeforeResend, "the resend must be checked")
+			if err := opts.BeforeResend(ctx); err != nil {
+				return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+			}
+			return nil, fmt.Errorf("the resend must not be sent")
+		},
+	}
+	var patches []gateway.RoutePatch
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if sent == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, 1, sent, "only the first request was sent")
+	require.Len(t, patches, 1, "the fence only: no unfence")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
+	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}

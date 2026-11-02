@@ -521,7 +521,7 @@ func TestOrchestrator_Execute_RestoreOffsetSync_FiresAfterSwitch(t *testing.T) {
 			}
 			return nil
 		},
-		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+		promoteMirrorTopicsFn: promoteVia(originalCL),
 	}
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
@@ -566,7 +566,7 @@ func TestOrchestrator_Execute_RestoreFails_StopsAtSwitched(t *testing.T) {
 			}
 			return nil
 		},
-		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+		promoteMirrorTopicsFn: promoteVia(originalCL),
 	}
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
@@ -1290,7 +1290,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 				orch.actions.clusterLinkService = &mockClusterLinkService{
 					listMirrorTopicsFn:    originalCL.ListMirrorTopics,
 					validateTopicsFn:      originalCL.ValidateTopics,
-					promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+					promoteMirrorTopicsFn: promoteVia(originalCL),
 					listConfigsFn:         enableTrue,
 					alterConfigsFn:        alterOK,
 				}
@@ -1351,7 +1351,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 				orch.actions.clusterLinkService = &mockClusterLinkService{
 					listMirrorTopicsFn:    originalCL.ListMirrorTopics,
 					validateTopicsFn:      originalCL.ValidateTopics,
-					promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+					promoteMirrorTopicsFn: promoteVia(originalCL),
 					listConfigsFn:         enableTrue,
 					alterConfigsFn:        alterOK,
 				}
@@ -2139,7 +2139,7 @@ func alterRecorder(orch *MigrationOrchestrator) *[]string {
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
 		listMirrorTopicsFn:    originalCL.ListMirrorTopics,
-		promoteMirrorTopicsFn: originalCL.PromoteMirrorTopics,
+		promoteMirrorTopicsFn: promoteVia(originalCL),
 		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -2717,4 +2717,45 @@ func TestStoppedAt(t *testing.T) {
 			assert.Equal(t, tt.want, stoppedAt(tt.state, tt.fencedAtStart, tt.mayBePromoted))
 		})
 	}
+}
+
+// A promote request lost to a connection-level failure is resent by PromoteMirrorTopics after a backoff. The CR
+// can move during that backoff, so the resend is checked too.
+func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *testing.T) {
+	orch, config, out, _, alters := generationRun(t)
+	var mu sync.Mutex
+	sent := 0
+	link := orch.actions.clusterLinkService.(*mockClusterLinkService)
+	link.promoteWithOptionsFn = func(ctx context.Context, _ clusterlink.Config, _ []string, opts clusterlink.PromoteOptions) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		mu.Lock()
+		sent++ // the first request's answer is lost; the CR moves during the backoff
+		mu.Unlock()
+		require.NotNil(t, opts.BeforeResend, "the resend must be checked")
+		if err := opts.BeforeResend(ctx); err != nil {
+			return nil, fmt.Errorf("failed to promote mirror topics: %w", err)
+		}
+		return nil, fmt.Errorf("the resend must not be sent")
+	}
+	var patches []gateway.RoutePatch
+	gw := gatewayMock(orch)
+	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if sent == 0 {
+			return 5, nil
+		}
+		return 6, nil
+	}
+	res := resultFromConfig(config)
+	res.GatewayGeneration = 4
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
+	assert.Equal(t, 1, sent, "only the first request was sent")
+	require.Len(t, patches, 1, "the fence only: no unfence")
+	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
+	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
 }

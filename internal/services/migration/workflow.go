@@ -1045,13 +1045,17 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 
 		// Each promote request is irreversible, so confirm the CR is still the
 		// one kcp's own fence left immediately before sending it: every batch,
-		// every retry.
-		if err := s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote"); err != nil {
+		// every retry, and every request PromoteMirrorTopics resends after a
+		// connection-level failure.
+		checkGeneration := func(ctx context.Context) error {
+			return s.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote")
+		}
+		if err := checkGeneration(ctx); err != nil {
 			return err
 		}
 		batches++
 		s.promoteSubmitted = true
-		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
+		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkGeneration))
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
