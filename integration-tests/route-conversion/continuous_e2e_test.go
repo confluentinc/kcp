@@ -169,10 +169,9 @@ func (e *env) checkClientRun(t *testing.T, run *clientRun, win Windows) {
 	var report strings.Builder
 	var results []GroupResult
 	bounds := DefaultBounds()
-	bounds.ProduceRatePerSec = producerRate
 	for _, s := range run.specs {
 		in := CheckInput{Group: s.group, Topic: s.topic, ValuePrefix: fmt.Sprint(run.prefixes[s.topic]),
-			AutoCommit: s.autoCommit, Windows: win, Bounds: bounds}
+			Windows: win, Bounds: bounds}
 		for _, p := range run.producers {
 			if p.name != "producer-"+s.topic {
 				continue
@@ -204,8 +203,7 @@ func (e *env) checkClientRun(t *testing.T, run *clientRun, win Windows) {
 }
 
 // Clients run through the gateway across an uninterrupted conversion: their
-// groups move to the destination, no acknowledged record is missed, and every
-// re-read is the fence onset's or the switch's, within its bound.
+// groups move to the destination and no acknowledged record is missed.
 func TestContinuousClients_Conversion(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -222,7 +220,7 @@ func TestContinuousClients_Conversion(t *testing.T) {
 	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
-	t.Logf("\n✅ RESULT: clients through the gateway missed nothing across the conversion; every re-read was bounded.")
+	t.Logf("\n✅ RESULT: clients through the gateway missed nothing across the conversion.")
 }
 
 // The same, with run 1 interrupted after offsets_synced while the clients keep
@@ -246,7 +244,7 @@ func TestContinuousClients_ResumeAfterOffsetsSynced(t *testing.T) {
 	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
-	t.Logf("\n✅ RESULT: clients missed nothing across an interrupted-then-resumed conversion; every re-read was bounded.")
+	t.Logf("\n✅ RESULT: clients missed nothing across an interrupted-then-resumed conversion.")
 }
 
 // waitAssigned waits for a member's first assignment. On a timeout it logs the

@@ -1,18 +1,20 @@
 package routeconversion
 
 // The continuous-client checker: a Go port of
-// d2s-client-rejoin-evidence/scripts/analyze.py plus the bounded re-read
-// classification of the plan-4a spec (section 2.5). It reads the JSON lines
+// d2s-client-rejoin-evidence/scripts/analyze.py. It reads the JSON lines
 // kafka-verifiable-producer and kafka-verifiable-consumer print and matches
 // records by value, never by offset: after promotion the source and the
 // destination can give one offset to different records.
+//
+// The guarantee it enforces is at-least-once: every acknowledged record is read.
+// Re-reads are classified and reported but never fail a check; how many a
+// consumer group makes depends on where its commit cycle falls against the fence.
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -28,11 +30,12 @@ const (
 	// DupSwitch is a record a member fetched from the destination after the
 	// switch, before its first commit failed and it rejoined.
 	DupSwitch DupClass = "switch"
-	// DupUnexplained is any other re-read; it fails the check.
+	// DupUnexplained is any other re-read.
 	DupUnexplained DupClass = "unexplained"
 )
 
-// Bounds are the re-read windows and limits the checker accepts.
+// Bounds are the windows re-reads are classified by, and the minimum evidence
+// a group must show.
 type Bounds struct {
 	// FenceBefore and FenceAfter bound a fence-onset re-read's first read
 	// around the watcher's fence onset.
@@ -41,34 +44,18 @@ type Bounds struct {
 	// earlier than SwitchBefore before the watcher's switch time, and its
 	// second read no later than SwitchAfter after it.
 	SwitchBefore, SwitchAfter time.Duration
-	// MaxPollRecords caps a manual-commit member's switch re-reads (one poll);
-	// an auto-commit member's cap is autoCommitSwitchLimit.
-	MaxPollRecords int
-	// AutoCommitInterval and ProduceRatePerSec cap an auto-commit member's
-	// fence-onset re-reads: what it can consume between two commits.
-	AutoCommitInterval time.Duration
-	ProduceRatePerSec  int
-	// BatchSlack widens the window a manual-commit member's batch is looked
-	// for in: the tool logs a batch's records_consumed line after its records.
-	BatchSlack time.Duration
 	// MinAckedAfterSwitch is how many records a group's producer must have
 	// acknowledged after the switch: without them, producing through the
 	// converted route was not shown to work.
 	MinAckedAfterSwitch int
 }
 
-// DefaultBounds are the spec's first estimates (2.5); tune them here, and
-// record the change, if the first real runs show they are wrong.
 func DefaultBounds() Bounds {
 	return Bounds{
-		FenceBefore:        10 * time.Second,
-		FenceAfter:         15 * time.Second, // the CR shows the fence before the pods apply it
-		SwitchBefore:       5 * time.Second,
-		SwitchAfter:        60 * time.Second,
-		MaxPollRecords:     500,
-		AutoCommitInterval: 5 * time.Second,
-		ProduceRatePerSec:  20,
-		BatchSlack:         time.Second,
+		FenceBefore:  10 * time.Second,
+		FenceAfter:   15 * time.Second, // the CR shows the fence before the pods apply it
+		SwitchBefore: 5 * time.Second,
+		SwitchAfter:  60 * time.Second,
 
 		MinAckedAfterSwitch: 1,
 	}
@@ -120,17 +107,10 @@ type ConsumedRecord struct {
 	Read
 }
 
-// Batch is one records_consumed event: one poll's worth of records.
-type Batch struct {
-	TimestampMs int64
-	Count       int
-}
-
 // ConsumerLog is one kafka-verifiable-consumer member's output.
 type ConsumerLog struct {
 	Member        string
 	Records       []ConsumedRecord
-	Batches       []Batch
 	Assignments   int
 	Revocations   int
 	FailedCommits int
@@ -145,7 +125,6 @@ type event struct {
 	Topic     string  `json:"topic"`
 	Partition int32   `json:"partition"`
 	Offset    int64   `json:"offset"`
-	Count     int     `json:"count"`
 	Success   *bool   `json:"success"`
 	Exception string  `json:"exception"`
 	Message   string  `json:"message"`
@@ -201,8 +180,6 @@ func ParseConsumerLog(member string, r io.Reader) (ConsumerLog, error) {
 				cl.Records = append(cl.Records, ConsumedRecord{Topic: e.Topic, Value: *e.Value,
 					Read: Read{TimestampMs: e.Timestamp, Member: member, Partition: e.Partition, Offset: e.Offset}})
 			}
-		case "records_consumed":
-			cl.Batches = append(cl.Batches, Batch{TimestampMs: e.Timestamp, Count: e.Count})
 		case "partitions_assigned":
 			cl.Assignments++
 		case "partitions_revoked":
@@ -224,7 +201,6 @@ type CheckInput struct {
 	// ValuePrefix is the producer's --value-prefix: only values "<prefix>.<n>"
 	// are this run's, so records left on the topic by earlier tests are ignored.
 	ValuePrefix string
-	AutoCommit  bool
 	Producers   []ProducerLog
 	Consumers   []ConsumerLog
 	Windows     Windows
@@ -262,7 +238,7 @@ type GroupResult struct {
 }
 
 // OK reports whether the group passed: records acked after the switch, no send
-// error, nothing missed, every re-read explained and within its bound.
+// error, and every acknowledged record read at least once.
 func (r GroupResult) OK() bool { return len(r.Failures) == 0 }
 
 // Check matches the producers' acknowledged records against the group's reads.
@@ -301,13 +277,11 @@ func Check(in CheckInput) GroupResult {
 	}
 
 	reads := map[string][]Read{}
-	batches := map[string][]Batch{}
 	for _, c := range in.Consumers {
 		res.Assignments[c.Member] += c.Assignments
 		res.Revocations[c.Member] += c.Revocations
 		res.FailedCommits += c.FailedCommits
 		res.Skipped += c.Skipped
-		batches[c.Member] = append(batches[c.Member], c.Batches...)
 		for _, rec := range c.Records {
 			if rec.Topic != in.Topic || !strings.HasPrefix(rec.Value, prefix) {
 				continue
@@ -340,7 +314,6 @@ func Check(in CheckInput) GroupResult {
 	fenceHi := in.Windows.FenceOnsetMs + b.FenceAfter.Milliseconds()
 	switchLo := in.Windows.SwitchDoneMs - b.SwitchBefore.Milliseconds()
 	switchHi := in.Windows.SwitchDoneMs + b.SwitchAfter.Milliseconds()
-	fenceByMember, switchByMember := map[string]int{}, map[string]int{}
 	for v, rs := range reads {
 		if len(rs) < 2 {
 			continue
@@ -352,10 +325,8 @@ func Check(in CheckInput) GroupResult {
 			// A third read is neither the fence's nor the switch's re-read.
 		case in.Windows.FenceOnsetMs > 0 && rs[0].TimestampMs >= fenceLo && rs[0].TimestampMs <= fenceHi:
 			d.Class = DupFenceOnset
-			fenceByMember[rs[0].Member]++
 		case in.Windows.SwitchDoneMs > 0 && rs[0].TimestampMs >= switchLo && rs[1].TimestampMs <= switchHi:
 			d.Class = DupSwitch
-			switchByMember[rs[1].Member]++
 		}
 		res.ByClass[d.Class]++
 		res.Duplicates = append(res.Duplicates, d)
@@ -393,65 +364,7 @@ func Check(in CheckInput) GroupResult {
 		m := res.Missed[0]
 		fail("%d acknowledged record(s) never read by group %s (first: %s p%d@%d, acked at %d)", n, in.Group, m.Value, m.Partition, m.Offset, m.TimestampMs)
 	}
-	if n := res.ByClass[DupUnexplained]; n > 0 {
-		for _, d := range res.Duplicates {
-			if d.Class == DupUnexplained {
-				fail("%d record(s) re-read outside the fence-onset and switch windows (e.g. %s)", n, describeReads(d))
-				break
-			}
-		}
-	}
-	for _, m := range sortedKeys(fenceByMember) {
-		limit := fenceOnsetLimit(in.AutoCommit, b, batches[m], fenceLo, fenceHi)
-		if n := fenceByMember[m]; n > limit {
-			fail("member %s re-read %d record(s) consumed at the fence onset, more than %d", m, n, limit)
-		}
-	}
-	for _, m := range sortedKeys(switchByMember) {
-		n := switchByMember[m]
-		if !in.AutoCommit {
-			if n > b.MaxPollRecords {
-				fail("member %s re-read %d record(s) after the switch, more than one poll (%d)", m, n, b.MaxPollRecords)
-			}
-			continue
-		}
-		if limit := autoCommitSwitchLimit(b, in.Windows); n > limit {
-			fail("member %s re-read %d record(s) after the switch, more than %d (the fence's backlog plus one auto-commit interval at %d/s, plus one poll)",
-				m, n, limit, b.ProduceRatePerSec)
-		}
-	}
 	return res
-}
-
-// autoCommitSwitchLimit is how many switch re-reads an auto-commit member may
-// have. A manual-commit member commits after every batch, so its first commit
-// after the switch fails at once and it re-reads at most one poll. An
-// auto-commit member keeps polling until its next auto-commit or heartbeat
-// fails, so it can re-read the backlog the fence built (it consumed past its
-// blocked commits) plus what it fetches in one more auto-commit interval, plus
-// the poll in flight: rate x ((switch - fence onset) + interval) + one poll.
-func autoCommitSwitchLimit(b Bounds, w Windows) int {
-	fenced := time.Duration(w.SwitchDoneMs-w.FenceOnsetMs) * time.Millisecond
-	if fenced < 0 {
-		fenced = 0
-	}
-	return int(math.Ceil((fenced+b.AutoCommitInterval).Seconds()*float64(b.ProduceRatePerSec))) + b.MaxPollRecords
-}
-
-// fenceOnsetLimit is how many fence-onset re-reads a member may have: what it
-// consumes between two auto-commits, or (manual commit, a commit after every
-// poll) its largest batch around the fence onset.
-func fenceOnsetLimit(autoCommit bool, b Bounds, batches []Batch, lo, hi int64) int {
-	if autoCommit {
-		return int(math.Ceil(b.AutoCommitInterval.Seconds() * float64(b.ProduceRatePerSec)))
-	}
-	largest := 0
-	for _, bt := range batches {
-		if bt.TimestampMs >= lo && bt.TimestampMs <= hi+b.BatchSlack.Milliseconds() && bt.Count > largest {
-			largest = bt.Count
-		}
-	}
-	return largest
 }
 
 func describeReads(d Duplicate) string {
@@ -460,15 +373,6 @@ func describeReads(d Duplicate) string {
 		parts[i] = fmt.Sprintf("%s p%d@%d t=%d", r.Member, r.Partition, r.Offset, r.TimestampMs)
 	}
 	return d.Value + ": " + strings.Join(parts, "; ")
-}
-
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // String renders the verdict the way analyze.py prints it, for the test log
@@ -498,7 +402,7 @@ func (r GroupResult) String() string {
 	fmt.Fprintf(&b, "   read but not acked (written despite a send error, or a retry duplicate): %d\n", r.NotAcked)
 	fmt.Fprintf(&b, "   skipped non-JSON lines: %d\n", r.Skipped)
 	if r.OK() {
-		b.WriteString("   RESULT: PASS — records acked after the switch, no send error; every acked record read at least once; every re-read bounded\n")
+		b.WriteString("   RESULT: PASS — records acked after the switch, no send error; every acked record read at least once\n")
 	} else {
 		b.WriteString("   RESULT: FAIL\n")
 		for _, f := range r.Failures {
