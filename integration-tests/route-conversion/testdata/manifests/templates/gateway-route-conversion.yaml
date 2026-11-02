@@ -33,6 +33,8 @@ spec:
   configId: rc-initial
   hotReload:
     enabled: true
+    # DIAGNOSTIC: is CFK 3.4.0's canary what misses hot reloads in CI?
+    enableCanary: false
   podTemplate:
     resources:
       requests:
