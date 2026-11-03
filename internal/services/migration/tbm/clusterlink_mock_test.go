@@ -18,10 +18,12 @@ type mockClusterLinkService struct {
 	listConfigsFn         func(ctx context.Context, config clusterlink.Config) (map[string]string, error)
 	validateTopicsFn      func(topics []string, clusterLinkTopics []string) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
-	alterConfigsFn        func(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error
-	createMirrorTopicFn   func(ctx context.Context, config clusterlink.Config, sourceTopic, mirrorTopic string) error
-	listTopicsFn          func(ctx context.Context, config clusterlink.Config) ([]string, error)
-	createTopicFn         func(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error
+	// promoteWithOptionsFn, if set, is called in place of promoteMirrorTopicsFn with the call's options.
+	promoteWithOptionsFn func(ctx context.Context, config clusterlink.Config, topicNames []string, opts clusterlink.PromoteOptions) (*clusterlink.PromoteMirrorTopicsResponse, error)
+	alterConfigsFn       func(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error
+	createMirrorTopicFn  func(ctx context.Context, config clusterlink.Config, sourceTopic, mirrorTopic string) error
+	listTopicsFn         func(ctx context.Context, config clusterlink.Config) ([]string, error)
+	createTopicFn        func(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error
 }
 
 func (m *mockClusterLinkService) GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error) {
@@ -52,7 +54,10 @@ func (m *mockClusterLinkService) ValidateTopics(topics []string, clusterLinkTopi
 	return fmt.Errorf("mockClusterLinkService.ValidateTopics not configured")
 }
 
-func (m *mockClusterLinkService) PromoteMirrorTopics(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+func (m *mockClusterLinkService) PromoteMirrorTopics(ctx context.Context, config clusterlink.Config, topicNames []string, opts ...clusterlink.PromoteOption) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+	if m.promoteWithOptionsFn != nil {
+		return m.promoteWithOptionsFn(ctx, config, topicNames, clusterlink.ApplyPromoteOptions(opts...))
+	}
 	if m.promoteMirrorTopicsFn != nil {
 		return m.promoteMirrorTopicsFn(ctx, config, topicNames)
 	}

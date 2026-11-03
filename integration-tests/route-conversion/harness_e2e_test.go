@@ -27,7 +27,7 @@ const (
 	idleGroupWarning   = "exist on the destination with committed offsets but no members"
 	gatewayUnfenced    = "Gateway unfenced — traffic restored to pre-fence state"
 	rogueCommitsError  = "committed offsets changed after the fence"
-	rogueCommitsReason = "Direct commits detected — removing fence"
+	rogueCommitsReason = "Direct commits detected — attempting to remove the fence"
 )
 
 // reset puts the environment back in the state setup.sh leaves, before every

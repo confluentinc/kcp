@@ -73,7 +73,11 @@ CLI flag can override for a single run, without editing the file.
   dynamic route fences and switches only the selected topics.
 - **Promote is the point of no return.** If a step fails after the fence is up
   but before the promote step starts, kcp removes the fence and restores offset
-  sync so traffic returns to the source. After promote starts, kcp never removes
+  sync so traffic returns to the source. The exception is a Gateway CR that
+  changed while the run was under way (its `metadata.generation` is not the
+  one kcp's own last write left): kcp then stops without writing to the
+  Gateway, leaving the fence in place, and the next run checks the Gateway
+  again before doing anything. After promote starts, kcp never removes
   the fence, even if no topic was promoted yet, because doing so would split those
   clients from the target. The same applies from the start of a re-run that
   finds a topic already promoted or promoting. Fix the cause and re-run
