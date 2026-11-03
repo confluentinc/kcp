@@ -75,6 +75,6 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	e.requireConvertedRoute(t, ctx, security)
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR static; operator behind; nothing written)", seeds)
 
-	t.Logf("\n✅ RESULT: drift refused — the CR is static at generation %d, the operator last observed generation %d, "+
+	t.Logf("\nRESULT: drift refused — the CR is static at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }

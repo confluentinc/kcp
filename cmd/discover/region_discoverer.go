@@ -36,7 +36,7 @@ func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService Regi
 }
 
 func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCosts bool) (*types.DiscoveredRegion, error) {
-	fmt.Printf("🔍 Discovering region %s\n", region)
+	fmt.Printf("Discovering region %s\n", region)
 	discoveredRegion := types.DiscoveredRegion{
 		Name: region,
 	}
@@ -50,7 +50,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCos
 	discoveredRegion.Configurations = configurations
 
 	if skipCosts {
-		fmt.Printf("  ⏭️  Skipping cost discovery\n")
+		fmt.Printf("  Skipping cost discovery\n")
 		discoveredRegion.Costs = types.CostInformation{}
 	} else {
 		regionCosts, err := rd.discoverCosts(ctx, region)
@@ -97,7 +97,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 }
 
 func (rd *RegionDiscoverer) discoverClusterArns(ctx context.Context, maxResults int32) ([]string, error) {
-	fmt.Printf("  🔍 Listing clusters\n")
+	fmt.Printf("  Listing clusters\n")
 
 	clusters, err := rd.mskService.ListClusters(ctx, maxResults)
 	if err != nil {

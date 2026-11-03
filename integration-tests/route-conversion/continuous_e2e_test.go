@@ -220,7 +220,7 @@ func TestContinuousClients_Conversion(t *testing.T) {
 	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
-	t.Logf("\n✅ RESULT: clients through the gateway missed nothing across the conversion.")
+	t.Logf("\nRESULT: clients through the gateway missed nothing across the conversion.")
 }
 
 // The same, with run 1 interrupted after offsets_synced while the clients keep
@@ -244,7 +244,7 @@ func TestContinuousClients_ResumeAfterOffsetsSynced(t *testing.T) {
 	win := e.finishClientRun(t, w, run)
 	e.requireConvertedRoute(t, ctx, security)
 	e.checkClientRun(t, run, win)
-	t.Logf("\n✅ RESULT: clients missed nothing across an interrupted-then-resumed conversion.")
+	t.Logf("\nRESULT: clients missed nothing across an interrupted-then-resumed conversion.")
 }
 
 // waitAssigned waits for a member's first assignment. On a timeout it logs the

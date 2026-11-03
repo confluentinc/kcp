@@ -31,7 +31,7 @@ func operatorFenceOn(topics []string) map[string]any {
 func (e *env) addOperatorFence(t *testing.T, ctx context.Context, entry map[string]any) {
 	t.Helper()
 	e.patchFencing(t, ctx, func(fencing []any) []any { return append(fencing, entry) })
-	t.Logf("\n✍️  OPERATOR FENCE ADDED ▸ %v", entry)
+	t.Logf("\nOPERATOR FENCE ADDED ▸ %v", entry)
 	t.Cleanup(func() {
 		e.patchFencing(t, context.Background(), func(fencing []any) []any {
 			kept := make([]any, 0, len(fencing))
@@ -42,7 +42,7 @@ func (e *env) addOperatorFence(t *testing.T, ctx context.Context, entry map[stri
 			}
 			return kept
 		})
-		t.Logf("\n🧹 OPERATOR FENCE REMOVED ▸ %v", entry)
+		t.Logf("\nOPERATOR FENCE REMOVED ▸ %v", entry)
 	})
 }
 
@@ -105,7 +105,7 @@ func TestOperatorFence_SurvivesAResumedMigration(t *testing.T) {
 		require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED after the migration completes", tp)
 		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched to the target domain", tp)
 	}
-	t.Logf("\n✅ RESULT: the operator's fence on the batch's topics survived the fence, the resume and the switch.")
+	t.Logf("\nRESULT: the operator's fence on the batch's topics survived the fence, the resume and the switch.")
 }
 
 // An operator's produce-only fence over exactly the batch's topics, kept
@@ -140,7 +140,7 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 		require.Equalf(t, "ACTIVE", ms[tp], "%s must still be ACTIVE — nothing was promoted", tp)
 		require.Falsef(t, e.isSwitchedToTarget(t, cr, tp), "%s must still route to the source after a rollback", tp)
 	}
-	t.Logf("\n✅ RESULT: the operator's fence on the batch's topics survived the rollback.")
+	t.Logf("\nRESULT: the operator's fence on the batch's topics survived the rollback.")
 }
 
 // setStaticFence sets the live static route's fence to fence, as an operator
@@ -152,7 +152,7 @@ func (e *env) setStaticFence(t *testing.T, ctx context.Context, fence map[string
 	require.NoError(t, err, "set the route's fence")
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
 		"gateway must accept the fence")
-	t.Logf("\n✍️  OPERATOR FENCE SET ▸ %v", fence)
+	t.Logf("\nOPERATOR FENCE SET ▸ %v", fence)
 	t.Cleanup(func() { e.resetStaticRoute(t, context.Background()) })
 }
 
@@ -190,5 +190,5 @@ func TestOperatorFence_StaticRouteIsRefused(t *testing.T) {
 	for _, tp := range topics {
 		require.Equalf(t, mirrorsBefore[tp], mirrorsAfter[tp], "a refused run must not change %s's mirror", tp)
 	}
-	t.Logf("\n✅ RESULT: the static route fenced by an operator was refused and left as it was.")
+	t.Logf("\nRESULT: the static route fenced by an operator was refused and left as it was.")
 }

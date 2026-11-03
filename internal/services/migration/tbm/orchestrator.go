@@ -52,12 +52,12 @@ var canonicalWorkflow = []WorkflowStep{
 // stepHeaders maps a workflow event to the banner the Execute loop prints as
 // it walks canonicalWorkflow. Mirrors migration.stepHeaders.
 var stepHeaders = map[string]string{
-	EventInitialize:  "🔍 Initializing TBM migration...",
-	EventWaitForLags: "🔍 Checking replication lags...",
-	EventFence:       "🔍 Fencing batch...",
-	EventVerifyFence: "🔍 Verifying fence...",
-	EventPromote:     "🔍 Promoting batch...",
-	EventSwitch:      "🔍 Switching batch...",
+	EventInitialize:  "Initializing TBM migration...",
+	EventWaitForLags: "Checking replication lags...",
+	EventFence:       "Fencing batch...",
+	EventVerifyFence: "Verifying fence...",
+	EventPromote:     "Promoting batch...",
+	EventSwitch:      "Switching batch...",
 }
 
 // ExecutionParams holds the per-run runtime parameters a transition may need.
@@ -209,7 +209,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 		// checkpoint, so the live resume suite is left with the partial world an
 		// abrupt exit right after this step would leave. No-op in production.
 		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
-			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			slog.Warn("test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
 			cancel()
 			return ctx.Err()
 		}
@@ -221,7 +221,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 		}
 	}
 
-	o.reporter.complete("✅ TBM migration complete!")
+	o.reporter.complete("TBM migration complete!")
 	return nil
 }
 
@@ -299,7 +299,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 			if errors.Is(err, gateway.ErrGatewayChanged) {
 				return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())
 			}
-			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			slog.Error("failed to unfence gateway during rollback", "error", err)
 			return stepFailure
 		}
 		o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
@@ -317,7 +317,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 	if err != nil {
 		rollbackErr = err
-		slog.Error("❌ failed to roll back to initialized", "error", err)
+		slog.Error("failed to roll back to initialized", "error", err)
 		return stepFailure
 	}
 
@@ -351,7 +351,7 @@ func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 		if errors.Is(err, gateway.ErrGatewayChanged) {
 			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
 		}
-		slog.Error("❌ failed to remove an unconfirmed fence", "error", err)
+		slog.Error("failed to remove an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
@@ -501,7 +501,7 @@ func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		// A changed CR is reported by handleStepFailure's stopOnGatewayChange.
 		if !errors.Is(err, gateway.ErrGatewayChanged) {
-			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			slog.Error("failed to unfence gateway during rollback", "error", err)
 		}
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return

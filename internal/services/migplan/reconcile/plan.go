@@ -73,7 +73,7 @@ type PreconditionResult struct {
 	// permission denial reading a live resource) rather than confirmed to
 	// pass. Always paired with OK: true — a skip is advisory, never a
 	// refusal reason — but callers rendering the report must not show it as
-	// a plain "✓ passed" the way a real pass is shown, since that would
+	// a plain "[OK] passed" the way a real pass is shown, since that would
 	// claim a verification that never happened.
 	Skipped bool
 	// Evidence is what was observed, one fact per line, shown under a failed

@@ -38,7 +38,7 @@ type reportSection struct {
 	mode     string // "destination" / "source" / "new"
 	name     string // test case name, e.g. "D2=scram256"
 	checks   string // one-sentence "what it checks"
-	result   string // "✅ PASS" / "❌ FAIL"
+	result   string // "[PASS]" / "[FAIL]"
 	body     string // the full markdown section body
 }
 
@@ -334,15 +334,15 @@ type resultBlock struct {
 
 // buildSection turns a sectionInput into a reportSection (markdown body + row).
 func buildSection(in sectionInput) reportSection {
-	result := "✅ PASS"
+	result := "[PASS]"
 	if in.deferred {
 		// A documentation-only case that runs no live apply: it neither passes nor
 		// fails a live assertion, so render it as DEFERRED. A genuine failure still
 		// wins (a deferred case should never have failed an assertion, but be safe).
-		result = "⏭ DEFERRED"
+		result = "[DEFERRED]"
 	}
 	if !in.pass {
-		result = "❌ FAIL"
+		result = "[FAIL]"
 	}
 
 	// NOTE: the section's H2 heading (with its display number + anchor) is written

@@ -89,7 +89,7 @@ func HoldAfter(ctx context.Context, checkpoint string) error {
 	if err := os.WriteFile(file+".held", nil, 0o600); err != nil {
 		return fmt.Errorf("test hold point: creating %s.held: %w", file, err)
 	}
-	slog.Warn("⚠️ test hold point reached — waiting for release", "afterState", checkpoint, "file", file)
+	slog.Warn("test hold point reached — waiting for release", "afterState", checkpoint, "file", file)
 
 	ticker := time.NewTicker(holdPollInterval)
 	defer ticker.Stop()

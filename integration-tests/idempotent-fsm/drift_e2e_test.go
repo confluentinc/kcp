@@ -98,7 +98,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 
 	acks, firstErr := produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
 	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says switched")
-	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
+	t.Logf("\nDATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
 
 	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
@@ -116,7 +116,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	require.Zerof(t, acks, "clients are still fenced: the refusal changes nothing (first error: %v)", firstErr)
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; pods still fenced; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
+	t.Logf("\nRESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }
 
@@ -187,7 +187,7 @@ func TestDrift_TBMStalledSwitchRerunIsRefused(t *testing.T) {
 	require.Equal(t, obs1, obs3, "the operator is still stopped")
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; operator behind; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: TBM drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
+	t.Logf("\nRESULT: TBM drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }
 
@@ -246,7 +246,7 @@ func TestDrift_UnfenceStalledRerunIsRefused(t *testing.T) {
 
 	acks, firstErr := produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
 	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says unfenced (the same producer got %d acks before run 1)", acks0)
-	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s (%d/5 before run 1); first error: %v", e.gatewayBootstrap(), acks0, firstErr)
+	t.Logf("\nDATA PLANE ▸ 0/5 produce attempts acked through %s (%d/5 before run 1); first error: %v", e.gatewayBootstrap(), acks0, firstErr)
 
 	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
@@ -264,7 +264,7 @@ func TestDrift_UnfenceStalledRerunIsRefused(t *testing.T) {
 	require.Equal(t, obs1, obs3, "the operator is still stopped")
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR unfenced; pods still fenced; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: reverse drift refused — the CR is unfenced at generation %d, the operator last observed generation %d, "+
+	t.Logf("\nRESULT: reverse drift refused — the CR is unfenced at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }
 
@@ -338,7 +338,7 @@ func TestDrift_TrialLicenceSwitchRerunIsRefused(t *testing.T) {
 		require.Equalf(t, gateway.PodsOutOfSync, ps.Verdict, "the pods must not load the switched route (detail: %s)", ps.Detail)
 		require.Equal(t, want, ps.Detail, "every pod must still report the previous configId")
 		if time.Now().After(end) {
-			t.Logf("\n🔍 GATEWAY PODS ▸ 30s after the switch every pod still reports configId %s, the CR's is %s:\n%s",
+			t.Logf("\nGATEWAY PODS ▸ 30s after the switch every pod still reports configId %s, the CR's is %s:\n%s",
 				prevID, newID, indentLines(strings.Join(ps.Evidence, "\n"), "      "))
 			break
 		}
@@ -374,7 +374,7 @@ func TestDrift_TrialLicenceSwitchRerunIsRefused(t *testing.T) {
 	require.Equal(t, obs1, obs3)
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; pods on the previous configId; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: hot-reload drift refused — the operator observed the switch at generation %d, every pod still reports configId %s "+
+	t.Logf("\nRESULT: hot-reload drift refused — the operator observed the switch at generation %d, every pod still reports configId %s "+
 		"instead of the CR's %s, and the dry-run and the re-run both refused without writing to the gateway.", gen1, prevID, newID)
 }
 
@@ -430,7 +430,7 @@ func (e *env) dropGatewayLicence(t *testing.T, ctx context.Context) {
 		idx, licenceEnvVar, idx)
 	_, err = e.gatewayResource(t).Patch(ctx, e.gateway, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 	require.NoErrorf(t, err, "remove %s from the gateway CR's pod template", licenceEnvVar)
-	t.Logf("\n✍️  GATEWAY LICENCE REMOVED ▸ %s dropped from the pod template; waiting for the pods to roll onto trial limits", licenceEnvVar)
+	t.Logf("\nGATEWAY LICENCE REMOVED ▸ %s dropped from the pod template; waiting for the pods to roll onto trial limits", licenceEnvVar)
 	e.waitForGatewayRolled(t, ctx, depGen, uids)
 }
 
@@ -452,7 +452,7 @@ func (e *env) restoreGatewayLicence(t *testing.T, ctx context.Context, entry map
 	_, err = e.gatewayResource(t).Patch(ctx, e.gateway, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 	require.NoErrorf(t, err, "put %s back on the gateway CR's pod template", licenceEnvVar)
 	e.waitForGatewayRolled(t, ctx, depGen, uids)
-	t.Logf("\n🧹 GATEWAY LICENCE RESTORED ▸ %s back on the pod template; the pods rolled and report the CR's configId", licenceEnvVar)
+	t.Logf("\nGATEWAY LICENCE RESTORED ▸ %s back on the pod template; the pods rolled and report the CR's configId", licenceEnvVar)
 }
 
 // gatewayRollTimeout bounds waitForGatewayRolled's wait.
@@ -512,7 +512,7 @@ func (e *env) waitForGatewayRolled(t *testing.T, ctx context.Context, baseline i
 	ps, err := e.svc.CheckPodSync(ctx, e.namespace, e.gateway, raw, gateway.DefaultGatewayConfigPort)
 	require.NoError(t, err, "read every gateway pod's /config")
 	require.Equalf(t, gateway.PodsInSync, ps.Verdict, "the rolled pods must load the current CR (detail: %s)", ps.Detail)
-	t.Logf("\n🔁 GATEWAY PODS ROLLED ▸ in %s; %s", time.Since(start).Round(time.Second), ps.Detail)
+	t.Logf("\nGATEWAY PODS ROLLED ▸ in %s; %s", time.Since(start).Round(time.Second), ps.Detail)
 }
 
 // gatewayInSyncTimeout bounds waitForGatewayInSync's wait.
@@ -534,7 +534,7 @@ func (e *env) waitForGatewayInSync(t *testing.T, ctx context.Context) {
 			last = "read every gateway pod's /config: " + err.Error()
 		} else if ps.Verdict == gateway.PodsInSync {
 			if waited := time.Since(start).Round(time.Second); waited > 0 {
-				t.Logf("\n🔁 GATEWAY PODS IN SYNC ▸ after %s; %s", waited, ps.Detail)
+				t.Logf("\nGATEWAY PODS IN SYNC ▸ after %s; %s", waited, ps.Detail)
 			}
 			return
 		} else {
@@ -587,7 +587,7 @@ func (e *env) switchByHand(t *testing.T, ctx context.Context, topics []string) s
 	stored, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "rules", Value: value}, id, 0)
 	require.NoError(t, err, "patch the switched rules onto route %q", e.route)
 	require.Equal(t, id, stored.ConfigID, "the gateway CR must store the configId sent")
-	t.Logf("\n✍️  SWITCHED BY HAND ▸ route %q routes %d topic(s) to %q, kcp's fence dropped, spec.configId %s: metadata.generation %d → %d",
+	t.Logf("\nSWITCHED BY HAND ▸ route %q routes %d topic(s) to %q, kcp's fence dropped, spec.configId %s: metadata.generation %d → %d",
 		e.route, len(topics), e.destDomain, id, before, stored.Generation)
 	return id
 }
@@ -627,7 +627,7 @@ func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	require.NoError(t, err3, "once the gateway settles the dry-run must pass")
 	require.NotContains(t, out3, "is still terminating", "no gateway pod may be terminating once settled")
 
-	t.Logf("\n✅ RESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
+	t.Logf("\nRESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
 }
 
 // TestDrift_GatewayPodRestartRerunProceeds pins that a restarted hot-reload
@@ -650,7 +650,7 @@ func TestDrift_GatewayPodRestartRerunProceeds(t *testing.T) {
 
 		out, err := e.runKCP(t, "kcp-run-dry-run-after-restart.log", "", "migration", "cutover", "execute", "--migration-yaml", e.manifestPath("drift-pod-restart.yaml"), "--dry-run")
 		require.NoError(t, err, "the dry-run must pass: the restarted pods report the CR's configId")
-		require.Contains(t, out, "✓ gateway pods serve the CR", "the pod check must pass, not be skipped")
+		require.Contains(t, out, "[OK] gateway pods serve the CR", "the pod check must pass, not be skipped")
 		require.NotContains(t, out, "nothing to compare", "no restarted pod may report a missing configId")
 	})
 }
@@ -699,7 +699,7 @@ func (e *env) restartGatewayPods(t *testing.T, ctx context.Context) {
 		require.Falsef(t, time.Now().After(deadline), "the gateway pods must be replaced within 3m (last seen: %s)", last)
 		time.Sleep(2 * time.Second)
 	}
-	t.Logf("\n🔁 GATEWAY PODS RESTARTED ▸ %d pod(s) deleted and replaced; every replacement Ready", want)
+	t.Logf("\nGATEWAY PODS RESTARTED ▸ %d pod(s) deleted and replaced; every replacement Ready", want)
 }
 
 // The CFK operator, as e2e_install_operator installs it
@@ -778,14 +778,14 @@ func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 		// pushes the config to the pods (about 11s on CI). A run started in
 		// that gap is refused by the pod check, correctly.
 		e.waitForGatewayInSync(t, ctx)
-		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1, the gateway CR accepted and its pods serve it", operatorDeployment)
+		t.Logf("\nCFK OPERATOR RESTORED ▸ %s scaled back to 1, the gateway CR accepted and its pods serve it", operatorDeployment)
 	})
 	e.scaleOperator(t, ctx, cs, 0)
 	require.Eventually(t, func() bool {
 		pods, err := e.operatorPods(ctx, cs)
 		return err == nil && len(pods) == 0
 	}, 2*time.Minute, 2*time.Second, "every operator pod must be gone")
-	t.Logf("\n✍️  CFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
+	t.Logf("\nCFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
 }
 
 // crGenerations reads the live gateway CR's metadata.generation and
@@ -835,7 +835,7 @@ func (e *env) requireGatewayCarriesProduce(t *testing.T, topic string) int {
 		time.Sleep(5 * time.Second)
 	}
 	require.GreaterOrEqualf(t, acks, 1, "the gateway must carry produce traffic before the migration, or a fenced-probe later proves nothing (first error: %v)", firstErr)
-	t.Logf("\n🔍 DATA PLANE ▸ %d/5 produce attempts acked through %s before the migration", acks, e.gatewayBootstrap())
+	t.Logf("\nDATA PLANE ▸ %d/5 produce attempts acked through %s before the migration", acks, e.gatewayBootstrap())
 	return acks
 }
 

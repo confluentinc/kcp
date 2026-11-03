@@ -98,7 +98,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	// SecretExistenceChecker's own doc comment for why this distinction
 	// matters. Reconcile also threads secretCheckSkipped into the "staged
 	// auth secrets exist" precondition itself (Skipped: true), so the
-	// rendered report never shows a green ✓ for a check that never ran —
+	// rendered report never shows a green [OK] for a check that never ran —
 	// this warning and that precondition are two views of the same fact,
 	// not a contradiction.
 	if secretCheckSkipped != "" {
