@@ -131,7 +131,8 @@ type DynamicToStaticPolicies struct {
 	// Separate from detectUnroutedProducersDuration, which watches log-end offsets.
 	DetectUnroutedCommitsDuration time.Duration `yaml:"detectUnroutedCommitsDuration,omitempty" json:"detectUnroutedCommitsDuration,omitempty"`
 	// OffsetSyncConcurrency is how many workers, each with its own broker
-	// connection, read and write consumer-group offsets. 0 uses the built-in 8.
+	// connection, read and write consumer-group offsets, and read every source
+	// group's committed topics when reconciling. 0 uses the built-in 8.
 	OffsetSyncConcurrency int `yaml:"offsetSyncConcurrency,omitempty" json:"offsetSyncConcurrency,omitempty"`
 	CommonPolicies        `yaml:",inline"`
 }
