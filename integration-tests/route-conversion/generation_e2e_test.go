@@ -44,7 +44,7 @@ func runGenerationStop(t *testing.T, name, state, stopped string) {
 	e.requireNoDestOffsets(t, seeds, "a run stopped before sync_offsets")
 	gen, _ := e.crGenerations(t, ctx)
 	require.Equal(t, bumped, gen, "kcp must write nothing to the gateway CR after the change: metadata.generation is still the change's")
-	t.Logf("\n✅ RESULT: the CR changed while the run was held after %s; kcp stopped with no gateway write (generation %d), the fence up and nothing synced.", state, gen)
+	t.Logf("\nRESULT: the CR changed while the run was held after %s; kcp stopped with no gateway write (generation %d), the fence up and nothing synced.", state, gen)
 }
 
 // Held after fenced: verify_fence's gather reads the CR and finds the change.

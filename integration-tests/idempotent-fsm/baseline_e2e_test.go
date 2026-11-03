@@ -56,5 +56,5 @@ func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	requireNothingToDo(t, out3)
 	require.Equal(t, string(crBefore), string(e.readCR(t, ctx)), "a nothing-to-do run must not touch the gateway CR")
 
-	t.Logf("\n✅ RESULT: uninterrupted migration completed; re-reconcile plans zero work and a re-run finds nothing to do (idempotent baseline).")
+	t.Logf("\nRESULT: uninterrupted migration completed; re-reconcile plans zero work and a re-run finds nothing to do (idempotent baseline).")
 }

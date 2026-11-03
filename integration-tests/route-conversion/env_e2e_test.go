@@ -390,14 +390,14 @@ func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 		}, 3*time.Minute, 2*time.Second, "the operator must come back Ready")
 		require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
 			"the restored operator must accept the gateway CR")
-		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
+		t.Logf("\nCFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
 	})
 	e.scaleOperator(t, ctx, cs, 0)
 	require.Eventually(t, func() bool {
 		pods, err := e.operatorPods(ctx, cs)
 		return err == nil && len(pods) == 0
 	}, 2*time.Minute, 2*time.Second, "every operator pod must be gone")
-	t.Logf("\n✍️  CFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
+	t.Logf("\nCFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
 }
 
 // execute runs `kcp migration cutover execute --migration-yaml manifest` with s (nil

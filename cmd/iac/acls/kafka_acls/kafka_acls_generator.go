@@ -35,7 +35,7 @@ func NewKafkaAclsGenerator(opts MigrateKafkaAclsOpts) *KafkaAclsGenerator {
 }
 
 func (kg *KafkaAclsGenerator) Run() error {
-	fmt.Printf("🚀 Generating Terraform files for Kafka ACLs\n")
+	fmt.Printf("Generating Terraform files for Kafka ACLs\n")
 
 	outputDir := kg.opts.OutputDir
 	if outputDir == "" {
@@ -91,7 +91,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	fmt.Printf("✅ Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
+	fmt.Printf("Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
 
 	return nil
 }

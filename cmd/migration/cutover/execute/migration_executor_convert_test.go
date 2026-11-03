@@ -212,7 +212,7 @@ func TestExecute_ConvertMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	out, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(gw, w))
 
 	require.NoError(t, err)
-	assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1")
+	assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1")
 	assert.Equal(t, map[string]groupoffsets.Offsets{"orders-app": {"orders": {0: {Offset: 5}}}}, w.commits)
 	assert.Equal(t, []string{"rules", ""}, gw.patched(), "the fence (a rules patch), then the switch (a whole-route replace)")
 }
@@ -261,7 +261,7 @@ func TestExecute_ConvertMode_ADisabledCommitsWindowSkipsTheCheckEndToEnd(t *test
 			})
 
 			require.NoError(t, err)
-			assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1")
+			assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1")
 			assert.Contains(t, console, "Detection disabled (spec.dynamicToStaticConversion.policies.detectUnroutedCommitsDuration=0)")
 			assert.NotContains(t, console, "Watching committed offsets")
 			assert.NotContains(t, console, "no direct commits detected")
@@ -309,7 +309,7 @@ func TestExecute_ConvertMode_AVerifyRefusalRemovesTheFenceAndFails(t *testing.T)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to execute route conversion")
 	assert.Contains(t, err.Error(), "destination credential can write consumer-group offsets")
-	assert.Contains(t, out, "✗ destination credential can write consumer-group offsets", "the refusal is rendered to the command's output")
+	assert.Contains(t, out, "[FAIL] destination credential can write consumer-group offsets", "the refusal is rendered to the command's output")
 	assert.NotContains(t, out, "Route conversion completed")
 	assert.Equal(t, []string{"rules", "rules"}, gw.patched(), "the fence, then the rollback")
 	assert.Empty(t, w.commits)

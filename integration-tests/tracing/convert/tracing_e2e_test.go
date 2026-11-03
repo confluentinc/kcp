@@ -256,7 +256,7 @@ func (e *env) runAndCheckTrace(t *testing.T, r conversionRun) {
 	for n, ss := range byName {
 		counts[n] = len(ss)
 	}
-	t.Logf("\n✅ RESULT [%s]: %d spans in one trace; steps %v; per-name counts %v; trace file %s", r.label, len(spans), stepNames, counts, traceFile)
+	t.Logf("\nRESULT [%s]: %d spans in one trace; steps %v; per-name counts %v; trace file %s", r.label, len(spans), stepNames, counts, traceFile)
 }
 
 // intAttr is span s's integer attribute key.

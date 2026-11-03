@@ -49,7 +49,7 @@ func runResumeCase(t *testing.T, name string, c resumeCase) {
 	e.snapshot(t, ctx, "after-resume", "AFTER the resume (expect static on the destination, offsets synced)", seeds)
 	e.requireConvertedRoute(t, ctx, security)
 	e.requireSynced(t, seeds)
-	t.Logf("\n✅ RESULT: interrupted after %s, the re-run finished the conversion with the baseline's end state.", c.state)
+	t.Logf("\nRESULT: interrupted after %s, the re-run finished the conversion with the baseline's end state.", c.state)
 }
 
 func TestResume_AfterInitialized(t *testing.T) {

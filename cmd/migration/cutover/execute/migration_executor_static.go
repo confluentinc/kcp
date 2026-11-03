@@ -55,6 +55,6 @@ func runStaticBranch(
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s\n", config.MigrationId)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Migration completed: %s\n", config.MigrationId)
 	return nil
 }

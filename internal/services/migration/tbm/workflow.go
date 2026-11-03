@@ -144,14 +144,13 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 // lagThreshold. Mirrors migration.MigrationActions.CheckLags.
 func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.MigrationConfig, lagThreshold int64) error {
 	a.reporter.blank()
-	a.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
-		color.CyanString("⏳"),
+	a.reporter.line(fmt.Sprintf("Checking replication lag across %s (threshold: %s)",
 		color.CyanString("%d topics", len(config.Topics)),
 		color.YellowString("%d", lagThreshold)))
 	a.reporter.blank()
 
 	if len(config.Topics) == 0 {
-		a.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		a.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("[OK]")))
 		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
@@ -184,7 +183,7 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			select {
 			case <-ctx.Done():
@@ -208,7 +207,7 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 		if allBelowThreshold {
 			a.reporter.blank()
 			a.reporter.line(fmt.Sprintf("%s All topic lags below threshold (%d)",
-				color.GreenString("✔"),
+				color.GreenString("[OK]"),
 				lagThreshold))
 			return nil
 		}
@@ -352,7 +351,7 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 // WaitForLags already threads LagThreshold.
 func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
 	if detectUnroutedProducersDuration <= 0 {
-		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		slog.Debug("unrouted producer detection disabled, skipping")
 		a.reporter.Detail("Detection disabled (spec.dynamicMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
 		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
@@ -492,7 +491,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			if err := tracing.Wait(ctx, "promote_poll", a.promotePollInterval); err != nil {
 				return err
@@ -559,7 +558,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 				promoteErrors++
 				retryCount[topic.MirrorTopicName]++
 				a.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
-					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
+					color.RedString("[FAIL]"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName, "errorCode", topic.ErrorCode,
 					"errorMessage", topic.ErrorMessage, "attempt", retryCount[topic.MirrorTopicName])
@@ -580,7 +579,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		// ErrUnroutedProducers → handleStepFailure does not roll back), so the
 		// partial world is left intact for a resume. No-op in production.
 		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
-			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			slog.Warn("test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
 			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
 		}
 

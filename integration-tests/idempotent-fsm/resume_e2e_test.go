@@ -62,7 +62,7 @@ func runResumeScenarioWith(t *testing.T, e *env, checkpoint, name string, topics
 	if assertFinal != nil {
 		assertFinal(t, ctx)
 	}
-	t.Logf("\n✅ RESULT: interrupted at %q, re-run drove to completion (mirrors STOPPED, route switched, fence cleared).", checkpoint)
+	t.Logf("\nRESULT: interrupted at %q, re-run drove to completion (mirrors STOPPED, route switched, fence cleared).", checkpoint)
 	return out2
 }
 

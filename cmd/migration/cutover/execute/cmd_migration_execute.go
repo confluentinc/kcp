@@ -164,7 +164,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 		if res.Refused {
 			return fmt.Errorf("dry-run: reconcile plan refused (see reasons above)")
 		}
-		cmd.Printf("✅ dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
+		cmd.Printf("dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
 		return nil
 	}
 
@@ -222,12 +222,12 @@ func executePlan(
 	// its target. No state machine runs and no service is built.
 	if reconcileResult.NothingToDo {
 		if t == manifest.MigrationTypeDynamicToStatic {
-			slog.Info("✅ nothing to do: the route is already static on its target domain", "migration_id", config.MigrationId)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Route conversion completed: %s — nothing to do: the route is already static on its target domain\n", config.MigrationId)
+			slog.Info("nothing to do: the route is already static on its target domain", "migration_id", config.MigrationId)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Route conversion completed: %s — nothing to do: the route is already static on its target domain\n", config.MigrationId)
 			return nil
 		}
-		slog.Info("✅ nothing to do: no topic in the migration still needs migrating", "migration_id", config.MigrationId)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Migration completed: %s — nothing to do: no topic in it still needs migrating\n", config.MigrationId)
+		slog.Info("nothing to do: no topic in the migration still needs migrating", "migration_id", config.MigrationId)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Migration completed: %s — nothing to do: no topic in it still needs migrating\n", config.MigrationId)
 		return nil
 	}
 

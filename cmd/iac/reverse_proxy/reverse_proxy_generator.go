@@ -30,7 +30,7 @@ func NewReverseProxyAssetGenerator(opts ReverseProxyOpts) *ReverseProxyAssetGene
 }
 
 func (rp *ReverseProxyAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating reverse proxy assets\n")
+	fmt.Printf("Generating reverse proxy assets\n")
 
 	outputDir := "reverse_proxy"
 	if err := utils.ValidateOutputDir(outputDir); err != nil {
@@ -77,7 +77,7 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	}
 	slog.Debug("wrote generate_dns_entries.sh")
 
-	fmt.Printf("✅ Reverse proxy assets generated: %s\n", outputDir)
+	fmt.Printf("Reverse proxy assets generated: %s\n", outputDir)
 
 	return nil
 }

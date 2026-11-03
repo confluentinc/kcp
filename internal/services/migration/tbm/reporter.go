@@ -53,13 +53,13 @@ func (r *reporter) section(msg string) {
 	r.mirror(msg)
 }
 
-// Success prints an indented green-✔ line. Exported so this reporter
+// Success prints an indented green-[OK] line. Exported so this reporter
 // satisfies gateway.Reporter, letting gateway.TransitionVerifier's shared
 // apply/wait/verify logic report through it without this package depending
 // on migration's own reporter shape.
 func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.GreenString("✔"), msg)
+	r.printf("   %s %s\n", color.GreenString("[OK]"), msg)
 	r.mirror(msg)
 }
 
@@ -70,26 +70,26 @@ func (r *reporter) Detail(format string, a ...any) {
 	r.mirror(msg)
 }
 
-// warn prints an indented yellow-⚠️ line to stdout (in-flow caution). Called
+// warn prints an indented yellow-line to stdout (in-flow caution). Called
 // by onAbortFence when verify_fence detects unrouted producers.
 func (r *reporter) warn(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
+	r.printf("   %s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
-// Remediation prints a yellow-⚠️ soft-fail note to stderr. The body may
+// Remediation prints a yellow-soft-fail note to stderr. The body may
 // contain newlines for indented continuation lines; it is not indented on the
 // first line. Exported — see Success.
 func (r *reporter) Remediation(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
+	r.errf("%s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
 // stepDone prints the per-step completion marker.
 func (r *reporter) stepDone() {
-	r.printf("%s\n", color.GreenString("✅ Done"))
+	r.printf("%s\n", color.GreenString("Done"))
 }
 
 // complete prints the final green completion banner (blank line first).
