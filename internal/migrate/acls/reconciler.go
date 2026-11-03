@@ -106,7 +106,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	for _, a := range r.cfg.Desired {
 		mapped, ok := principalMap[a.Principal]
 		if !ok {
-			slog.Debug("⏭️ skipping ACL: source principal has no resolved target identity", "principal", a.Principal)
+			slog.Debug("skipping ACL: source principal has no resolved target identity", "principal", a.Principal)
 			continue
 		}
 		a.Principal = mapped

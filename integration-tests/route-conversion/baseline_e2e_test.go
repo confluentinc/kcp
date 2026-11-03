@@ -50,5 +50,5 @@ func TestConversion_Baseline(t *testing.T) {
 	out, err = e.execute(t, "kcp-run-3-rerun.log", mani, nil, nil)
 	requireNothingToDo(t, out, err, id)
 	require.Equal(t, specBefore, e.readSpec(t, ctx), "a nothing-to-do run must not touch the gateway CR")
-	t.Logf("\n✅ RESULT: the route converted to static, every seeded offset reached the destination, and a re-run found nothing to do.")
+	t.Logf("\nRESULT: the route converted to static, every seeded offset reached the destination, and a re-run found nothing to do.")
 }

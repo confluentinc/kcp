@@ -32,16 +32,16 @@ func TestRenderReportTopicCentric(t *testing.T) {
 	for _, want := range []string{
 		`Migration plan · route "migration-route" → cc`,
 		"Route checks",
-		"✓ route is dynamic",
+		"[OK] route is dynamic",
 		"Topics · 4 requested",
-		"✗ team-b.audit",
+		"[FAIL] team-b.audit",
 		"blocked",
 		"↳ not on the cluster link",
 		"+ team-a.orders",
 		"ready",
 		"= done",
 		"unchanged",
-		`⚠ existing condition for "team-a.orders"`, // shadow warning attached to its topic
+		`existing condition for "team-a.orders"`, // shadow warning attached to its topic
 		"Plan: 2 to migrate, 1 blocked, 1 unchanged  (refused — no artifacts)",
 	} {
 		if !strings.Contains(out, want) {
@@ -67,7 +67,7 @@ func TestRenderReportGateFailure(t *testing.T) {
 	var buf bytes.Buffer
 	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "gcp"})
 	out := buf.String()
-	if !strings.Contains(out, "✗ target domain is bound — \"gcp\" is not bound") {
+	if !strings.Contains(out, "[FAIL] target domain is bound — \"gcp\" is not bound") {
 		t.Errorf("missing failed gate line; got:\n%s", out)
 	}
 	if !strings.Contains(out, "Refused at route checks — 1 failed") {
@@ -92,7 +92,7 @@ func TestRenderReportGateFailureKeepsWarnings(t *testing.T) {
 	var buf bytes.Buffer
 	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "gcp"})
 	out := buf.String()
-	if !strings.Contains(out, `⚠ route "migration-route" still carries kcp's conversion fence`) {
+	if !strings.Contains(out, `route "migration-route" still carries kcp's conversion fence`) {
 		t.Errorf("a refusal must still print its warnings; got:\n%s", out)
 	}
 	if !strings.Contains(out, "Refused at route checks — 1 failed") {
@@ -102,7 +102,7 @@ func TestRenderReportGateFailureKeepsWarnings(t *testing.T) {
 
 // TestRenderReportSkippedPrecondition proves a Skipped precondition (a live
 // check that could not be run, e.g. a permission denial) renders as a
-// yellow ⚠ — never the green ✓ a real pass gets, since that would claim a
+// yellow — never the green [OK] a real pass gets, since that would claim a
 // verification that never happened — and, being advisory (OK: true), does
 // not stop the run at the route-checks gate the way a real failure does.
 func TestRenderReportSkippedPrecondition(t *testing.T) {
@@ -118,11 +118,11 @@ func TestRenderReportSkippedPrecondition(t *testing.T) {
 	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "cc"})
 	out := buf.String()
 
-	if !strings.Contains(out, "⚠ staged auth secrets exist — no permission to read secrets") {
-		t.Errorf("skipped precondition must render as ⚠ with its detail; got:\n%s", out)
+	if !strings.Contains(out, "staged auth secrets exist — no permission to read secrets") {
+		t.Errorf("skipped precondition must render as with its detail; got:\n%s", out)
 	}
-	if strings.Contains(out, "✓ staged auth secrets exist") {
-		t.Errorf("a skipped precondition must never render as a plain ✓ pass; got:\n%s", out)
+	if strings.Contains(out, "[OK] staged auth secrets exist") {
+		t.Errorf("a skipped precondition must never render as a plain [OK] pass; got:\n%s", out)
 	}
 	if strings.Contains(out, "Refused at route checks") {
 		t.Errorf("a skip is advisory and must not refuse at the route-checks gate; got:\n%s", out)
@@ -322,7 +322,7 @@ func TestRenderReport_ConversionBlockedTopicRefuses(t *testing.T) {
 	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Conversion: true})
 	out := buf.String()
 
-	for _, want := range []string{"Link topics · 2", "✗ clicks", "blocked", "Plan: 2 link topics, 1 blocked  (refused — no artifacts)"} {
+	for _, want := range []string{"Link topics · 2", "[FAIL] clicks", "blocked", "Plan: 2 link topics, 1 blocked  (refused — no artifacts)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q; got:\n%s", want, out)
 		}

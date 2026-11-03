@@ -289,7 +289,7 @@ func TestMigrateApply_TopicsMirrorSource_DryRun(t *testing.T) {
 // (source broker, sourceClusterID) occupying the second mirror's target name. The
 // INBOUND link then rejects that mirror create (the topic already exists) while the
 // other mirror is created cleanly. Apply reports `mirrorTopics: 1 created, …,
-// 1 failed`, prints a ✖ line, exits non-zero — and the good mirror survives.
+// 1 failed`, prints an 'x failed' line, exits non-zero — and the good mirror survives.
 func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
 	dir := t.TempDir()
 	link := uniqueLinkName("mts-fail")
@@ -321,9 +321,9 @@ func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
 
 	srcTopics := []string{"orders-1", tooLong}
 	rep := newSourceMirrorReporter(link,
-		"source-initiated include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives.",
+		"source-initiated include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints an 'x failed' line, and kcp exits non-zero; the good mirror survives.",
 		m, link, srcTopics)
-	rep.expected("orders-1 mirror created on migration-dest; oversized mirror fails (name > 249 chars); output shows 'mirrorTopics: 1 created, …, 1 failed' and '✖'; exit non-zero")
+	rep.expected("orders-1 mirror created on migration-dest; oversized mirror fails (name > 249 chars); output shows 'mirrorTopics: 1 created, …, 1 failed' and 'x failed'; exit non-zero")
 	defer rep.commit(t, migDestPoller)
 
 	out, err := runKCP(t, m)
@@ -332,7 +332,7 @@ func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
 	// Scope to the mirrorTopics outcome line: a bare "1 failed" would also match the
 	// clusterLink line. The full rendered line proves the mirror create failed.
 	require.Contains(t, out, "mirrorTopics: 1 created, 0 unchanged, 0 drift, 1 failed", out)
-	require.Contains(t, out, "✖", out)
+	require.Contains(t, out, "x failed", out)
 
 	// Despite the failure, the good mirror was created on the migration-dest.
 	migDestPoller.requireLinkActive(t, sourceClusterID, link)

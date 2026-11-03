@@ -243,7 +243,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 		}
 		if dataPoints == 0 {
 			if mq.Overridden {
-				slog.Warn("⚠️ Overridden Prometheus metric returned no data points — check the configured metric-name override", "label", mq.Label, "query", query)
+				slog.Warn("Overridden Prometheus metric returned no data points — check the configured metric-name override", "label", mq.Label, "query", query)
 			} else {
 				slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
 			}
@@ -254,7 +254,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 			if mq.GroupByConnector {
 				connector := result.Labels["connector"]
 				if connector == "" {
-					slog.Warn("⚠️ per-connector query result missing 'connector' label, skipping series", "label", mq.Label)
+					slog.Warn("per-connector query result missing 'connector' label, skipping series", "label", mq.Label)
 					continue
 				}
 				label = fmt.Sprintf("%s (%s)", mq.Label, connector)

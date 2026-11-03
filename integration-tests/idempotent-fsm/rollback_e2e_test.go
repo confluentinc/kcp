@@ -54,7 +54,7 @@ func TestRollback_OnResume_LiftsTheFence(t *testing.T) {
 		require.Falsef(t, e.isSwitchedToTarget(t, cr, tp), "%s must still route to the source after a rollback", tp)
 		require.Equalf(t, "ACTIVE", ms[tp], "%s must still be ACTIVE — nothing was promoted", tp)
 	}
-	t.Logf("\n✅ RESULT: the resume's pre-promote failure rolled back and lifted the interrupted run's fence.")
+	t.Logf("\nRESULT: the resume's pre-promote failure rolled back and lifted the interrupted run's fence.")
 }
 
 // A step failure on a MID-BATCH resume. promoteBatchSize 2 and a kill right
@@ -113,7 +113,7 @@ func TestRollback_OnMidBatchResume_KeepsTheFence(t *testing.T) {
 		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched to the target domain", tp)
 		require.Falsef(t, e.isFenced(t, cr, tp), "%s must not be fenced after completion", tp)
 	}
-	t.Logf("\n✅ RESULT: the partly promoted resume kept its fence on failure, and a re-run completed the migration.")
+	t.Logf("\nRESULT: the partly promoted resume kept its fence on failure, and a re-run completed the migration.")
 }
 
 // failBeforeFenceStep is the workflow step TestRollback_OnResume_FailureBeforeTheFenceStep
@@ -174,7 +174,7 @@ func TestRollback_OnResume_FailureBeforeTheFenceStep_LiftsTheFence(t *testing.T)
 	if e.mode == "static" {
 		require.Equal(t, "true", e.linkOffsetSync(t, ctx), "the rollback must set consumer offset sync back to the baseline (enabled)")
 	}
-	t.Logf("\n✅ RESULT: the resume failed before its own fence step, rolled back and lifted the interrupted run's fence.")
+	t.Logf("\nRESULT: the resume failed before its own fence step, rolled back and lifted the interrupted run's fence.")
 }
 
 // liftSliceFence puts the slice back as a fresh run finds it, whatever a

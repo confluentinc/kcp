@@ -11,7 +11,7 @@ import (
 )
 
 // reporter owns the conversion's terminal output, with TBM's conventions (tbm/reporter.go): a cyan banner per
-// step, indented ✔ and ↳ lines, ⚠️ cautions, and every line mirrored into kcp.log.
+// step, indented [OK] and ↳ lines, cautions, and every line mirrored into kcp.log.
 type reporter struct {
 	out io.Writer
 	err io.Writer
@@ -46,10 +46,10 @@ func (r *reporter) section(msg string) {
 	r.mirror(msg)
 }
 
-// Success prints an indented green ✔ line. Exported so the reporter satisfies gateway.Reporter.
+// Success prints an indented green [OK] line. Exported so the reporter satisfies gateway.Reporter.
 func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.GreenString("✔"), msg)
+	r.printf("   %s %s\n", color.GreenString("[OK]"), msg)
 	r.mirror(msg)
 }
 
@@ -60,23 +60,23 @@ func (r *reporter) Detail(format string, a ...any) {
 	r.mirror(msg)
 }
 
-// warn prints an indented yellow ⚠️ line to stdout.
+// warn prints an indented yellow line to stdout.
 func (r *reporter) warn(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
+	r.printf("   %s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
-// Remediation prints a yellow ⚠️ note to stderr. Exported — see Success.
+// Remediation prints a yellow note to stderr. Exported — see Success.
 func (r *reporter) Remediation(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
+	r.errf("%s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
 // stepDone prints the per-step completion marker.
 func (r *reporter) stepDone() {
-	r.printf("%s\n", color.GreenString("✅ Done"))
+	r.printf("%s\n", color.GreenString("Done"))
 }
 
 // complete prints the final green banner.

@@ -1171,7 +1171,7 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 
 // TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage is the
 // regression test for the reported bug: kcp printed "No pod restart required"
-// then "✅ Migration complete!" while the gateway was still fenced, because the
+// then "Migration complete!" while the gateway was still fenced, because the
 // Deployment-based readiness wait cannot see that the operator refused the
 // switchover CR. SwitchGateway must now fail, and fail with the operator's own
 // diagnosis.

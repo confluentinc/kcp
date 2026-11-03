@@ -17,7 +17,7 @@ import (
 // Lines kcp prints that the tests assert on (cmd/migration/cutover/execute,
 // internal/services/migration/d2s, internal/services/migplan).
 const (
-	completedLine     = "✅ Route conversion completed: %s"
+	completedLine     = "Route conversion completed: %s"
 	nothingToDoSuffix = " — nothing to do: the route is already static on its target domain"
 )
 
@@ -33,7 +33,7 @@ func (e *env) reset(t *testing.T, ctx context.Context) {
 	e.requirePostTBM(t, ctx, "after the reset")
 	e.deleteAllGroups(t, sourceCluster)
 	e.deleteAllGroups(t, destCluster)
-	t.Logf("♻️  RESET ▸ link fully promoted, route %q post-TBM over %v, no consumer groups", e.route, e.linkTopics(t, ctx))
+	t.Logf("RESET ▸ link fully promoted, route %q post-TBM over %v, no consumer groups", e.route, e.linkTopics(t, ctx))
 }
 
 // requireCompleted asserts a run converted the route in this run (not a

@@ -10,7 +10,7 @@
 // ("serviceAccounts: N created, ..." / "acls: N created, 0 unchanged, 0 drift,
 // 0 failed", counts hardcoded per scenario); re-applies and asserts "0 created,
 // N unchanged" — the idempotency that proves the product recognises its own
-// previously-created (CC-numeric) ACLs, so the TEST never resolves numeric↔sa;
+// previously-created (CC-numeric) ACLs, so the TEST never resolves numeric<->sa;
 // reads concrete facts back off the target scoped to the run's unique resource
 // name(s), asserting translation properties (host→"*", DENY preserved,
 // LITERAL/PREFIXED preserved, dropped ACLs absent) without asserting the
@@ -690,7 +690,7 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 
 	// 4. Idempotency — re-apply is a full no-op. This is what proves KCP
 	// recognises its own previously-created (CC-numeric) ACLs; the test itself
-	// never resolves numeric↔sa.
+	// never resolves numeric<->sa.
 	out, err = runKCP(t, mf)
 	require.NoError(t, err, out)
 	require.Contains(t, out, "serviceAccounts: 0 created, 1 unchanged, 0 drift, 0 failed", out)

@@ -433,7 +433,7 @@ func warnIfGroupOrWorldReadable(path, what string) {
 		return
 	}
 	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		slog.Warn(fmt.Sprintf("⚠️ %s is group- or world-readable", what),
+		slog.Warn(fmt.Sprintf("%s is group- or world-readable", what),
 			"path", path, "mode", fmt.Sprintf("%#o", perm))
 	}
 }

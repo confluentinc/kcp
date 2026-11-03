@@ -141,7 +141,7 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	var groupScanner client.ConsumerGroupScanner
 	groupClient, err := s.createConsumerGroupClient(clusterCreds, authType)
 	if err != nil {
-		slog.Warn("⚠️ failed to create consumer group client; skipping consumer group discovery", "cluster", clusterCreds.ID, "error", err)
+		slog.Warn("failed to create consumer group client; skipping consumer group discovery", "cluster", clusterCreds.ID, "error", err)
 	} else {
 		groupScanner = groupClient
 		defer func() { _ = groupClient.Close() }()

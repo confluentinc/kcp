@@ -45,7 +45,7 @@ func openAppend(path string) (*os.File, error) {
 func Setup(ctx context.Context) {
 	c := resolveConfig(os.Getenv, openAppend)
 	for _, w := range c.warnings {
-		slog.Warn("⚠️ " + w)
+		slog.Warn("" + w)
 	}
 	if !c.enabled {
 		return
@@ -56,7 +56,7 @@ func Setup(ctx context.Context) {
 		tp, err = newProvider(ctx, c, res)
 	}
 	if err != nil {
-		slog.Warn("⚠️ tracing could not start; continuing without it", "error", err)
+		slog.Warn("tracing could not start; continuing without it", "error", err)
 		if c.file != nil {
 			_ = c.file.Close()
 		}
@@ -65,17 +65,17 @@ func Setup(ctx context.Context) {
 	warn := slog.Default()
 	otel.SetTracerProvider(tp)
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		warn.Warn("⚠️ telemetry export failed", "error", err)
+		warn.Warn("telemetry export failed", "error", err)
 	}))
 	active = &session{provider: tp, warn: warn}
 	if c.otlp {
 		if lp, err := newLogProvider(ctx, res); err != nil {
-			slog.Warn("⚠️ log export could not start; continuing without it", "error", err)
+			slog.Warn("log export could not start; continuing without it", "error", err)
 		} else {
 			active.logs = lp
 		}
 	}
-	slog.Info("✅ tracing enabled", "file", c.filePath, "otlp", c.otlp)
+	slog.Info("tracing enabled", "file", c.filePath, "otlp", c.otlp)
 }
 
 // newResource describes the process: spans and log records share it.
@@ -93,7 +93,7 @@ func newResource(ctx context.Context) (*resource.Resource, error) {
 	case errors.Is(err, resource.ErrPartialResource):
 		// A malformed entry (e.g. run:x for run=x) is dropped; say so, or the run
 		// goes unlabelled with no hint why.
-		slog.Warn("⚠️ some OTEL_RESOURCE_ATTRIBUTES entries were ignored", "error", err)
+		slog.Warn("some OTEL_RESOURCE_ATTRIBUTES entries were ignored", "error", err)
 	case err != nil:
 		return nil, err
 	}
@@ -161,6 +161,6 @@ func flush(warn *slog.Logger, what string, shutdown func(context.Context) error)
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := shutdown(ctx); err != nil {
-		warn.Warn("⚠️ failed to flush "+what, "error", err)
+		warn.Warn("failed to flush "+what, "error", err)
 	}
 }

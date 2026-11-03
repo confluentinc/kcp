@@ -130,7 +130,7 @@ func (e *env) resetStaticRoute(t *testing.T, ctx context.Context) {
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
 		"gateway must accept the route reset")
 
-	t.Logf("\n♻️  STATIC ROUTE RESET ▸ %q flipped back to source domain %q, fence dropped (next migration starts clean)", e.route, e.sourceDomain)
+	t.Logf("\nSTATIC ROUTE RESET ▸ %q flipped back to source domain %q, fence dropped (next migration starts clean)", e.route, e.sourceDomain)
 	e.snapshot(t, ctx, "", "AFTER static route reset (expect route → source-domain, fence cleared)", nil)
 }
 

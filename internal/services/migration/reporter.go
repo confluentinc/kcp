@@ -55,19 +55,19 @@ func (r *reporter) mirrorWarn(msg string) {
 }
 
 // section prints a blank line then a cyan banner announcing a major step. The
-// caller includes the leading emoji in msg (e.g. "🔍 Initializing migration...").
+// caller supplies the section text in msg (e.g. "Initializing migration...").
 func (r *reporter) section(msg string) {
 	r.printf("\n%s\n", color.CyanString(msg))
 	r.mirror(msg)
 }
 
-// Success prints an indented green-✔ line. The text may embed its own colour.
+// Success prints an indented green-[OK] line. The text may embed its own colour.
 // Exported so this reporter satisfies gateway.Reporter, letting
 // gateway.TransitionVerifier's shared apply/wait/verify logic report through
 // it without this package depending on gateway's own reporter shape.
 func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.GreenString("✔"), msg)
+	r.printf("   %s %s\n", color.GreenString("[OK]"), msg)
 	r.mirror(msg)
 }
 
@@ -78,27 +78,27 @@ func (r *reporter) Detail(format string, a ...any) {
 	r.mirror(msg)
 }
 
-// warn prints an indented yellow-⚠️ line to stdout (in-flow caution).
+// warn prints an indented yellow [WARN] line to stdout (in-flow caution).
 func (r *reporter) warn(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
+	r.printf("   %s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
-// Remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
+// Remediation prints a yellow-soft-fail note to stderr. The body may contain
 // newlines for indented continuation lines; it is not indented on the first
 // line. Used for offset-sync guidance printed on top of a run's own error
 // (the abort_fence rollback's restore, the failed-run pause reminder).
 // Exported — see Success.
 func (r *reporter) Remediation(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
+	r.errf("%s %s\n", color.YellowString("[WARN]"), msg)
 	r.mirrorWarn(msg)
 }
 
 // stepDone prints the per-step completion marker.
 func (r *reporter) stepDone() {
-	r.printf("%s\n", color.GreenString("✅ Done"))
+	r.printf("%s\n", color.GreenString("Done"))
 }
 
 // complete prints the final green migration-complete banner (blank line first).

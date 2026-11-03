@@ -140,7 +140,7 @@ func (e *env) insert(t *testing.T, label string, rule []string) (func(), error) 
 		return nil, fmt.Errorf("insert fault rule (%s): %w: %s", label, err, out)
 	}
 	faultLog.Lock()
-	t.Logf("⚡ FAULT ON  %s  [%s]", label, time.Now().UTC().Format("15:04:05.000"))
+	t.Logf("FAULT ON  %s  [%s]", label, time.Now().UTC().Format("15:04:05.000"))
 	faultLog.Unlock()
 	var once sync.Once
 	return func() {
@@ -149,10 +149,10 @@ func (e *env) insert(t *testing.T, label string, rule []string) (func(), error) 
 			faultLog.Lock()
 			defer faultLog.Unlock()
 			if err != nil {
-				t.Logf("⚠️ could not remove fault rule (%s): %v: %s", label, err, out)
+				t.Logf("could not remove fault rule (%s): %v: %s", label, err, out)
 				return
 			}
-			t.Logf("🩹 FAULT OFF %s  [%s]", label, time.Now().UTC().Format("15:04:05.000"))
+			t.Logf("FAULT OFF %s  [%s]", label, time.Now().UTC().Format("15:04:05.000"))
 		})
 	}, nil
 }
@@ -180,7 +180,7 @@ func (e *env) blipUntilRetried(t *testing.T, run *liveRun, tg target, kind fault
 		time.Sleep(25 * time.Millisecond)
 	}
 	step = stepOfFirstRetryAfter(run.output(), before)
-	t.Logf("↩️  kcp retried in step %q; holding the fault %s longer", step, hold)
+	t.Logf("kcp retried in step %q; holding the fault %s longer", step, hold)
 	time.Sleep(hold)
 	return step
 }
@@ -192,7 +192,7 @@ func (e *env) flushFaults(t *testing.T) {
 	t.Cleanup(func() {
 		for _, chain := range []string{"INPUT", "OUTPUT"} {
 			if out, err := iptables("-F", chain); err != nil {
-				t.Logf("⚠️ could not flush %s: %v: %s", chain, err, out)
+				t.Logf("could not flush %s: %v: %s", chain, err, out)
 			}
 		}
 	})
