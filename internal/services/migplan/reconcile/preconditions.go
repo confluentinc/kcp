@@ -58,6 +58,12 @@ type GatewayConfig struct {
 	// The reconcile core still does not mutate it.
 	RawObj map[string]any
 
+	// Generation is the CR's metadata.generation as read, before
+	// cleanGatewayDoc stripped it from RawYAML and RawObj; 0 when the
+	// document carries none. The reconcile core does not read it — it is the
+	// generation a run's gateway patches are first conditioned on.
+	Generation int64
+
 	// Sync is the pod check's verdict on whether the gateway pods serve this
 	// CR. The zero value (SyncUnchecked) means no check ran and the core
 	// applies nothing.
