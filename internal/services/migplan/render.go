@@ -56,15 +56,15 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		switch {
 		case p.Skipped:
 			// Advisory, never a refusal reason (OK is always true here) — but
-			// must not render as a plain "✓ passed" the way a real pass does,
+			// must not render as a plain "[OK] passed" the way a real pass does,
 			// since that would claim a verification that never happened.
-			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprintf("%s — %s", p.Name, p.Detail))
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("[WARN]"), yellow.Sprintf("%s — %s", p.Name, p.Detail))
 			renderEvidence(w, faint, p.Evidence)
 		case p.OK:
-			_, _ = fmt.Fprintf(w, "  %s %s\n", green.Sprint("✓"), p.Name)
+			_, _ = fmt.Fprintf(w, "  %s %s\n", green.Sprint("[OK]"), p.Name)
 		default:
 			failedGates++
-			_, _ = fmt.Fprintf(w, "  %s %s\n", red.Sprint("✗"), red.Sprintf("%s — %s", p.Name, p.Detail))
+			_, _ = fmt.Fprintf(w, "  %s %s\n", red.Sprint("[FAIL]"), red.Sprintf("%s — %s", p.Name, p.Detail))
 			renderEvidence(w, faint, p.Evidence)
 		}
 	}
@@ -77,7 +77,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		// No topic lines to attach warnings to, but a refusal's warnings can
 		// matter most (e.g. a route kcp left fenced): print them all.
 		for _, wn := range r.Warnings {
-			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("[WARN]"), yellow.Sprint(wn))
 		}
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, red.Sprintf("Refused at route checks — %d failed. No topics evaluated, no artifacts.", failedGates))
@@ -121,12 +121,12 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 				faint.Sprintf("source %s · mirror %s · target %s · routes %s", tv.S, tv.M, tv.T, tv.R))
 		}
 		for _, wn := range warningsForTopic(tv.Topic, r.Warnings) {
-			_, _ = fmt.Fprintf(w, "      %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+			_, _ = fmt.Fprintf(w, "      %s %s\n", yellow.Sprint("[WARN]"), yellow.Sprint(wn))
 		}
 	}
 
 	for _, tv := range r.FailFast {
-		renderTopic("✗", red, "blocked", tv, true)
+		renderTopic("[FAIL]", red, "blocked", tv, true)
 	}
 	for _, tv := range r.Migratable {
 		renderTopic("+", green, "ready", tv, false)
@@ -143,7 +143,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 
 	// Any warning that doesn't reference a listed topic (rare) → trailing note.
 	for _, wn := range unattachedWarnings(r) {
-		_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprint(wn))
+		_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("[WARN]"), yellow.Sprint(wn))
 	}
 
 	// Footer — Terraform-style counts, blocked shown only when there are any.

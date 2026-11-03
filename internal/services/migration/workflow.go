@@ -307,14 +307,13 @@ func (s *MigrationActions) CheckLags(
 	}
 
 	s.reporter.blank()
-	s.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
-		color.CyanString("⏳"),
+	s.reporter.line(fmt.Sprintf("Checking replication lag across %s (threshold: %s)",
 		color.CyanString("%d topics", len(config.Topics)),
 		color.YellowString("%d", lagThreshold)))
 	s.reporter.blank()
 
 	if len(config.Topics) == 0 {
-		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("[OK]")))
 		tracing.MarkSkipped(ctx, "no_topics")
 		return nil
 	}
@@ -347,7 +346,7 @@ func (s *MigrationActions) CheckLags(
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			// Deliberately not ticker.C: a slow failing sweep can outlast the
 			// tick interval, leaving a tick buffered in the ticker's channel —
@@ -375,7 +374,7 @@ func (s *MigrationActions) CheckLags(
 		if allBelowThreshold {
 			s.reporter.blank()
 			s.reporter.line(fmt.Sprintf("%s All topic lags below threshold (%d)",
-				color.GreenString("✔"),
+				color.GreenString("[OK]"),
 				lagThreshold))
 			return nil
 		}
@@ -709,7 +708,7 @@ func (s *MigrationActions) PauseOffsetSync(
 	restAuth clusterlink.Authenticator,
 ) error {
 	if !config.PauseConsumerOffsetSync {
-		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
+		slog.Debug("consumer offset sync pause not requested, skipping")
 		s.reporter.Detail("Offset-sync pause not requested — skipping")
 		tracing.MarkSkipped(ctx, "offset_sync_pause_not_requested")
 		return nil
@@ -718,7 +717,7 @@ func (s *MigrationActions) PauseOffsetSync(
 	// (reconcile emitted fence work). Read the plan (FenceYAML), never the
 	// live link.
 	if config.FenceYAML == "" {
-		slog.Debug("⏭️ no cutover in flight, skipping offset-sync pause")
+		slog.Debug("no cutover in flight, skipping offset-sync pause")
 		s.reporter.Detail("No cutover in flight — offset-sync pause skipped")
 		tracing.MarkSkipped(ctx, "no_fence_in_plan")
 		return nil
@@ -726,7 +725,7 @@ func (s *MigrationActions) PauseOffsetSync(
 
 	clCfg := BuildClusterLinkConfig(config, restAuth)
 
-	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
+	s.reporter.section("Pausing consumer.offset.sync on cluster link...")
 
 	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
 	// with sync still enabled before disabling it. The fence has frozen the
@@ -781,7 +780,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 		return nil
 	}
 	r := newReporter()
-	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	r.section("Restoring consumer.offset.sync on cluster link...")
 	want, err := setOffsetSyncBaseline(context.WithoutCancel(ctx), s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
 	if err != nil {
 		r.Remediation("Gateway unfenced but %v — re-apply manually.", err)
@@ -803,16 +802,16 @@ func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *Migrat
 	if !config.RestoreOffsetSync {
 		tracing.MarkSkipped(ctx, "nothing_to_restore")
 		if !config.PauseConsumerOffsetSync {
-			slog.Debug("⏭️ consumer offset sync pause not requested, nothing to restore")
+			slog.Debug("consumer offset sync pause not requested, nothing to restore")
 			s.reporter.Detail("Offset-sync pause not requested — nothing to restore")
 		} else {
-			slog.Debug("⏭️ consumer offset sync already at its baseline, nothing to restore")
+			slog.Debug("consumer offset sync already at its baseline, nothing to restore")
 			s.reporter.Detail("Consumer offset sync already at its baseline — nothing to restore")
 		}
 		return nil
 	}
 
-	s.reporter.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	s.reporter.section("Restoring consumer.offset.sync on cluster link...")
 	want, err := setOffsetSyncBaseline(ctx, s.clusterLinkService, BuildClusterLinkConfig(config, restAuth), config)
 	if err != nil {
 		return err
@@ -835,7 +834,7 @@ func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *Migrat
 // reconcile forbids one) is the orchestrator's handleStepFailure.
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
-		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		slog.Debug("unrouted producer detection disabled, skipping")
 		s.reporter.Detail("Detection disabled (spec.staticMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
 		tracing.MarkSkipped(ctx, "detection_disabled")
 		return nil
@@ -990,7 +989,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			if err := tracing.Wait(ctx, "promote_poll", s.promotePollInterval); err != nil {
 				return err
@@ -1065,7 +1064,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 				promoteErrors++
 				retryCount[topic.MirrorTopicName]++
 				s.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
-					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
+					color.RedString("[FAIL]"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName,
 					"errorCode", topic.ErrorCode,
@@ -1088,7 +1087,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		// Returns a plain error so the partial world is left for a resume. No-op
 		// in production.
 		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
-			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			slog.Warn("test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
 			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
 		}
 

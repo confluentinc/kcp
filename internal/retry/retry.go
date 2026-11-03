@@ -142,7 +142,7 @@ func Do(ctx context.Context, operation string, fn func(ctx context.Context) erro
 		elapsed := now().Sub(firstFailure)
 		if elapsed+next > s.Budget {
 			tracing.SetAttributes(ctx, attribute.Int("kcp.retry.attempts", attempt), attribute.Bool("kcp.retry.gave_up", true))
-			slog.Warn("❌ giving up after connection errors", "operation", operation, "attempts", attempt,
+			slog.Warn("giving up after connection errors", "operation", operation, "attempts", attempt,
 				"elapsed", elapsed.Round(time.Millisecond), "error", err)
 			return &GaveUpError{Operation: operation, Attempts: attempt, Elapsed: elapsed, Err: err}
 		}
@@ -153,7 +153,7 @@ func Do(ctx context.Context, operation string, fn func(ctx context.Context) erro
 			attribute.String("kcp.retry.error", err.Error()),
 		}, o.attrs...)
 		trace.SpanFromContext(ctx).AddEvent("retry.attempt", trace.WithAttributes(attrs...))
-		slog.Warn("⚠️ connection error, retrying", "operation", operation, "attempt", attempt, "wait", next, "error", err)
+		slog.Warn("connection error, retrying", "operation", operation, "attempt", attempt, "wait", next, "error", err)
 		if werr := wait(ctx, next); werr != nil {
 			recordAttempts(ctx, attempt)
 			return errors.Join(werr, err)

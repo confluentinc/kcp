@@ -467,7 +467,7 @@ func TestExecute_DestinationKafkaUsesItsClusterCredentials(t *testing.T) {
 	assert.Equal(t, "CC_SECRET", dst.AuthMethod.SASLPlain.Password)
 }
 
-// TestExecute_DestSASLPlainDefaultsToTLS is the ⚠️ backward-compat fix (A.3):
+// TestExecute_DestSASLPlainDefaultsToTLS is the backward-compat fix (A.3):
 // the old destination client always dialled SASL_SSL over the public trust
 // store. AdminOptionForAuthMethod maps sasl_plain with no ca_cert/tls to
 // cleartext SASL_PLAINTEXT, so destinationConn must default UseTLS=true when
@@ -829,7 +829,7 @@ func TestExecutePlan_ConversionNothingToDo(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Zero(t, builds.total())
-	assert.Contains(t, out, "✅ Route conversion completed: msk-prod-to-cc-batch-1 — nothing to do: the route is already static on its target domain")
+	assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1 — nothing to do: the route is already static on its target domain")
 	assert.NotContains(t, out, "Migration completed")
 }
 

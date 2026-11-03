@@ -748,8 +748,8 @@ func TestMigrateApply_TopicsMirror_ContinueOnError(t *testing.T) {
 	defer poller.deleteLink(t, destClusterID, link)
 
 	srcTopics := []string{"orders-1", tooLong}
-	rep := newMirrorReporter(link, "include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives the failure.", m, link, srcTopics)
-	rep.expected("orders-1 mirror created; oversized mirror fails (name > 249 chars); output shows '1 created' and '1 failed' and '✖'; exit non-zero")
+	rep := newMirrorReporter(link, "include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints an 'x failed' line, and kcp exits non-zero; the good mirror survives the failure.", m, link, srcTopics)
+	rep.expected("orders-1 mirror created; oversized mirror fails (name > 249 chars); output shows '1 created' and '1 failed' and 'x failed'; exit non-zero")
 	defer rep.commit(t, poller)
 
 	out, err := runKCP(t, m)
@@ -759,7 +759,7 @@ func TestMigrateApply_TopicsMirror_ContinueOnError(t *testing.T) {
 	// also match the engine's `clusterLink: 1 created, …` line, so the test could
 	// pass even if mirrorTopics created nothing — assert the full rendered line.
 	require.Contains(t, out, "mirrorTopics: 1 created, 0 unchanged, 0 drift, 1 failed", out)
-	require.Contains(t, out, "✖", out)
+	require.Contains(t, out, "x failed", out)
 
 	// Despite the failure, the good mirror was created.
 	poller.requireLinkActive(t, destClusterID, link)
