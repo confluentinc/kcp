@@ -746,8 +746,8 @@ func (e *env) operatorPods(ctx context.Context, cs kubernetes.Interface) ([]core
 // is listed, so not even a terminating pod can still reconcile a CR change.
 // The gateway pods keep running, but no change to the gateway CR reaches
 // them. When the test ends it scales the operator back to 1, waits for it to
-// be Ready, then waits for it to accept the gateway CR, so the next test
-// starts from a settled gateway.
+// be Ready, then waits for it to accept the gateway CR and for the gateway
+// pods to serve it, so the next test starts from a settled gateway.
 func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 	t.Helper()
 	cs := kubeClient(t)
@@ -772,7 +772,13 @@ func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 		}, 3*time.Minute, 2*time.Second, "the operator must come back Ready")
 		require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
 			"the restored operator must accept the gateway CR")
-		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
+		// Accepted is not served. A switch made while the operator was down
+		// set a new configId; on a hot-reload gateway CFK 3.4.0 marks the CR
+		// observed first, then runs its hot-reload canary and only then
+		// pushes the config to the pods (about 11s on CI). A run started in
+		// that gap is refused by the pod check, correctly.
+		e.waitForGatewayInSync(t, ctx)
+		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1, the gateway CR accepted and its pods serve it", operatorDeployment)
 	})
 	e.scaleOperator(t, ctx, cs, 0)
 	require.Eventually(t, func() bool {
