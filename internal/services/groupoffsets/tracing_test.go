@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -193,4 +194,23 @@ type fetchFunc func(ctx context.Context, group string) (Offsets, error)
 
 func (f fetchFunc) CommittedOffsets(ctx context.Context, group string) (Offsets, error) {
 	return f(ctx, group)
+}
+
+func TestTracing_CommittedTopics_SpansEachWorkerWithoutASnapshotSpan(t *testing.T) {
+	rec := tracingtest.Install(t)
+	offs := Offsets{"orders": {0: at(5)}}
+	groups := []string{"orders-app", "billing-app", "audit-app"}
+	factory, _, _ := factoryFor(&fakeFetcher{offsets: map[string]Offsets{groups[0]: offs, groups[1]: offs, groups[2]: offs}})
+	ctx, parent := tracing.Start(context.Background(), "test", "migplan.committed_topics")
+
+	_, err := CommittedTopics(ctx, factory, groups, 2)
+	require.NoError(t, err)
+	parent.End()
+
+	spans := tracingtest.Spans(rec)
+	assert.ElementsMatch(t,
+		[]string{"groupoffsets.open_client", "groupoffsets.open_client", "kafka.group_worker", "kafka.group_worker"},
+		tracingtest.Names(tracingtest.Children(spans, tracingtest.Find(t, spans, "migplan.committed_topics"))),
+		"the conversion's two snapshots are the only groupoffsets.snapshot spans")
+	tracingtest.AssertNoValues(t, spans, "orders-app", "billing-app", "audit-app", "orders")
 }

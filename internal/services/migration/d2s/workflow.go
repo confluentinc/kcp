@@ -111,6 +111,10 @@ type D2SActions struct {
 	rolloutTimeout time.Duration
 	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
 	hotReloadTimeout time.Duration
+	// gatewayGeneration is the Gateway CR metadata.generation this run expects: the one reconcile read, then the
+	// one each of kcp's own writes left. It lives here because verifier() builds a fresh verifier per call. 0
+	// means unknown, and leaves every patch and check unguarded.
+	gatewayGeneration int64
 
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
 	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
@@ -171,6 +175,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 
 	config.Topics, config.MigrateTopics, config.AwaitStopped = nil, nil, nil
 	config.Route = res.Route
+	a.gatewayGeneration = res.GatewayGeneration
 	config.GatewayYAML = res.GatewayYAML
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
@@ -239,8 +244,9 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.Migra
 
 // ErrSwitchUnconfirmed marks a switch whose patch reached the Gateway CR but could not be confirmed (the
 // operator rejected or never accepted it, the stored configId could not be read back, or the pods never
-// reported it). The CR already holds the static route, so a re-run's reconcile reports "nothing to do" while
-// the pods may still run the fenced dynamic route: the operator must fix the Gateway, not re-run.
+// reported it). The CR already holds the static route while the pods may still serve the fenced dynamic route.
+// A re-run's reconcile checks the pods before doing anything: it refuses while they don't serve the CR, and
+// finishes once they do.
 var ErrSwitchUnconfirmed = errors.New("the static route reached the Gateway CR but could not be confirmed")
 
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular

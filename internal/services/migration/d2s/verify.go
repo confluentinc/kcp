@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -56,6 +56,12 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		if facts == nil || facts.Link == nil {
 			return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
 		}
+		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
+		// would roll back); it stops the run with no further gateway write.
+		// A nil gateway falls through to CheckPreconditions, which refuses it as a missing route.
+		if facts.Gateway != nil && facts.Gateway.Generation > 0 && a.gatewayGeneration > 0 && facts.Gateway.Generation != a.gatewayGeneration {
+			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gatewayGeneration, Observed: facts.Gateway.Generation}
+		}
 		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
 		view = v
 		report.Preconditions = routeChecks
@@ -91,7 +97,7 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 	// alone and is not repeated here.
 	var scope reconcile.LinkScope
 	if err := inSpan(ctx, "d2s.check_link_scope", func(ctx context.Context) error {
-		gf := facts.GroupFacts(committedTopics(first))
+		gf := facts.GroupFacts(first.CommittedTopics())
 		scope = reconcile.CheckLinkScope(reconcile.LinkScopeInput{
 			Mirrors:         facts.Link.LinkMirrors,
 			SourceTopics:    facts.SourceTopics,
@@ -189,20 +195,6 @@ func (a *D2SActions) refuse(config *migration.MigrationConfig, report reconcile.
 		reasons = append(reasons, tv.Topic+": "+tv.Reason)
 	}
 	return fmt.Errorf("%w:\n%s", ErrVerifyRefused, strings.Join(reasons, "\n"))
-}
-
-// committedTopics is, per group in snap, the sorted topics it has committed on: the group rule's input.
-func committedTopics(snap groupoffsets.Snapshot) map[string][]string {
-	out := make(map[string][]string, len(snap))
-	for group, topics := range snap {
-		names := make([]string, 0, len(topics))
-		for t := range topics {
-			names = append(names, t)
-		}
-		sort.Strings(names)
-		out[group] = names
-	}
-	return out
 }
 
 // groupStates is each listed group's state.

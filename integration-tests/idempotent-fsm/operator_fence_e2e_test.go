@@ -59,7 +59,7 @@ func (e *env) patchFencing(t *testing.T, ctx context.Context, edit func([]any) [
 	fencing, _ := rules["fencing"].([]any)
 	rules["fencing"] = edit(fencing)
 
-	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "rules", Value: rules}, "")
+	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "rules", Value: rules}, "", 0)
 	require.NoError(t, err, "patch the route's rules.fencing")
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
 		"gateway must accept the rules.fencing change")
@@ -128,7 +128,7 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 	out, err := e.runKCPFailingAt(t, "kcp-run-1-fails.log", failStep, "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.Error(t, err, "the failed step must fail the run")
 	require.Contains(t, out, killpoint.FailEnvVar, "the failure must be the hook's")
-	require.Contains(t, out, "removing fence to restore traffic", "nothing is promoted, so the run rolls back")
+	require.Contains(t, out, "attempting to remove the fence to restore traffic", "nothing is promoted, so the run rolls back")
 
 	e.snapshot(t, ctx, "after-rollback", "AFTER the rollback (expect kcp's fence gone, the operator's fence kept, mirrors ACTIVE)", topics)
 	cr := e.readCR(t, ctx)
@@ -148,7 +148,7 @@ func TestOperatorFence_SurvivesARollback(t *testing.T) {
 // the test ends.
 func (e *env) setStaticFence(t *testing.T, ctx context.Context, fence map[string]any) {
 	t.Helper()
-	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "fence", Value: fence}, "")
+	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, gateway.RoutePatch{RouteName: e.route, Field: "fence", Value: fence}, "", 0)
 	require.NoError(t, err, "set the route's fence")
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
 		"gateway must accept the fence")

@@ -162,11 +162,11 @@ type patchRecordingGateway struct {
 	fields []string
 }
 
-func (r *patchRecordingGateway) PatchGatewayRoute(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+func (r *patchRecordingGateway) PatchGatewayRoute(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string, _ int64) (gateway.PatchResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fields = append(r.fields, rp.Field)
-	return "", nil
+	return gateway.PatchResult{}, nil
 }
 
 func (r *patchRecordingGateway) patched() []string {

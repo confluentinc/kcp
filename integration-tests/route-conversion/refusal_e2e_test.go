@@ -145,7 +145,7 @@ func TestRefusal_GroupActiveOnTheDestinationDuringTheWindow(t *testing.T) {
 	}
 	require.Error(t, err, "a destination member joining during the window must fail the run")
 	require.Contains(t, out, group+" (Stable) exist on the source and already have members on the destination")
-	require.Contains(t, out, "Conversion check failed after the fence — removing fence")
+	require.Contains(t, out, "Conversion check failed after the fence — attempting to remove the fence")
 	require.Contains(t, out, gatewayUnfenced)
 	e.requirePostTBM(t, ctx, "the fence must come off after the refusal")
 	// As above, the destination member commits its own offsets for seeds[1].

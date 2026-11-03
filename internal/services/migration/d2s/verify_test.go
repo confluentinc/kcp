@@ -300,3 +300,23 @@ func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
 	assert.Contains(t, out.String(), "consumer group(s) orders-app exist on the destination with committed offsets but no members")
 	assert.Equal(t, 1, strings.Count(out.String(), "orders-app exist on the destination"), "printed once")
 }
+
+// The generation check reads the gathered gateway before CheckPreconditions, which tolerates a nil gateway:
+// a gather that returns none must reach that path (a refused "route exists" check), not panic.
+func TestVerifyFence_ANilGatheredGatewayFallsThroughToThePreconditions(t *testing.T) {
+	w := cleanWorld()
+	w.facts.Gateway = nil
+
+	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a.reporter = quietReporter()
+	a.gatewayGeneration = 7
+
+	var err error
+	require.NotPanics(t, func() {
+		err = a.VerifyFence(context.Background(), testConfig(), testPolicy())
+	})
+
+	require.ErrorIs(t, err, ErrVerifyRefused)
+	assert.Contains(t, err.Error(), "route exists: ", "the existing precondition handling refuses a missing route")
+	assert.Zero(t, w.src.lists, "refused before any snapshot")
+}

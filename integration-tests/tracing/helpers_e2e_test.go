@@ -122,7 +122,7 @@ func (e *env) resetStaticRoute(t *testing.T, ctx context.Context) {
 	delete(route, "fence") // the pristine (pre-migration) route carries no kcp fence
 
 	rp := gateway.RoutePatch{RouteName: e.route, Value: route} // Field "" ⇒ whole-route replace
-	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, "")
+	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, "", 0)
 	require.NoErrorf(t, err, "reset static route %q to source domain %q", e.route, e.sourceDomain)
 
 	// Let the operator accept the rewritten route before the next migration

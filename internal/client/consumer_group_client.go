@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -291,108 +289,6 @@ func (c *ConsumerGroupClient) fetcher() adminFetcher {
 	return adminFetcher{ClusterAdmin: c.admin, client: c.client}
 }
 
-// committedTopicsWorkers is the fixed fetch concurrency. The cost of one
-// OffsetFetch per group is unmeasured; making this configurable is future work.
-const committedTopicsWorkers = 8
-
-// CommittedTopics returns, for each group, the sorted topics it has committed an
-// offset on. A conversion checks only these topics, so a failure to read any
-// group is an error: skipping it would leave its topics unverified. Each group's fetch is retried (see
-// retryGroupOp).
-func (c *ConsumerGroupClient) CommittedTopics(ctx context.Context, groups []string) (map[string][]string, error) {
-	return committedTopics(ctx, c.fetcher(), groups, committedTopicsWorkers, c.resetCoordinator)
-}
-
-// committedTopics fetches each group's committed topics on workers goroutines, each in its own
-// kafka.group_worker span (at most one per group). reset, if set, is called with the group before each retry of
-// that group's fetch.
-func committedTopics(ctx context.Context, f groupOffsetFetcher, groups []string, workers int, reset func(group string)) (map[string][]string, error) {
-	if workers < 1 {
-		workers = 1
-	}
-	type result struct {
-		group  string
-		topics []string
-		err    error
-	}
-	jobs := make(chan string)
-	results := make(chan result, len(groups))
-	// failed stops the run once any group fails: the call returns an error
-	// either way, so fetching the rest of a large cluster's groups is wasted.
-	// stop ends the fetches in flight, so they stop retrying too.
-	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	var failed atomic.Bool
-	var wg sync.WaitGroup
-	if workers > len(groups) {
-		workers = len(groups)
-	}
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			workerCtx, w := StartGroupWorker(runCtx, i)
-			var workerErr error
-			defer func() { w.End(workerErr) }()
-			for g := range jobs {
-				if failed.Load() {
-					continue
-				}
-				topics, err := committedTopicsOf(workerCtx, f, g, resetFor(reset, g))
-				if err != nil {
-					workerErr = err
-					if failed.Load() && ctx.Err() == nil && errors.Is(err, context.Canceled) {
-						continue // stopped by an earlier failure, which is the one to report
-					}
-					failed.Store(true)
-					stop()
-				} else {
-					w.GroupDone()
-				}
-				results <- result{group: g, topics: topics, err: err}
-			}
-		}()
-	}
-	go func() {
-		for _, g := range groups {
-			if failed.Load() {
-				break
-			}
-			jobs <- g
-		}
-		close(jobs)
-		wg.Wait()
-		close(results)
-	}()
-
-	out := make(map[string][]string, len(groups))
-	var firstGroup string
-	var firstErr error
-	for r := range results {
-		if r.err != nil {
-			// Several fetches can fail at once; report the lowest-named group so
-			// the error does not depend on which worker finished first.
-			if firstErr == nil || r.group < firstGroup {
-				firstGroup, firstErr = r.group, r.err
-			}
-			continue
-		}
-		out[r.group] = r.topics
-	}
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	return out, nil
-}
-
-// resetFor binds reset to group, or returns nil when reset is nil.
-func resetFor(reset func(group string), group string) func() {
-	if reset == nil {
-		return nil
-	}
-	return func() { reset(group) }
-}
-
 // CommittedOffset is one partition's committed position and the metadata string the committing client
 // stored with it (Kafka Streams keeps per-partition stream time there). Both are carried to the destination.
 type CommittedOffset struct {
@@ -447,20 +343,6 @@ func fetchCommittedOffsets(ctx context.Context, f groupOffsetFetcher, group stri
 		}
 	}
 	return out, nil
-}
-
-// committedTopicsOf is the topics of committedOffsetsOf, sorted.
-func committedTopicsOf(ctx context.Context, f groupOffsetFetcher, group string, reset func()) ([]string, error) {
-	offsets, err := committedOffsetsOf(ctx, f, group, reset)
-	if err != nil {
-		return nil, err
-	}
-	var topics []string
-	for topic := range offsets {
-		topics = append(topics, topic)
-	}
-	sort.Strings(topics)
-	return topics, nil
 }
 
 // CommittedOffsets returns one group's committed offsets and their metadata, topic -> partition -> committed

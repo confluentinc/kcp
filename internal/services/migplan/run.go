@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
@@ -71,6 +72,12 @@ type Result struct {
 	// against this directly to detect drift since the plan was computed — once
 	// cleaned, the whole document is stable enough to diff as-is.
 	GatewayYAML string
+
+	// GatewayGeneration is the metadata.generation of the CR GatewayYAML was
+	// pulled from (stripped from GatewayYAML itself by cleanGatewayDoc). Set
+	// on both success and refusal, like GatewayYAML. It is the generation the
+	// run's gateway patches are first conditioned on.
+	GatewayGeneration int64
 
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
 	// uses it). In-code callers can ignore it and use the fields above.
@@ -231,7 +238,8 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 
 func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
-		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, GatewayGeneration: plan.GatewayGeneration,
+		Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics
 		r.AwaitStopped = plan.Artifacts.AwaitStopped
@@ -465,9 +473,10 @@ func buildTopicLister(conn types.KafkaSourceConn) (TopicLister, io.Closer, error
 
 // buildGroupLister opens a consumer-group client for conn (pinned at Kafka
 // 3.8.0 for ListGroups v5 — see client.NewConsumerGroupClient) and wraps its
-// strict listing as a GroupLister. The returned io.Closer is the client; the
-// caller owns closing it.
-func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error) {
+// strict listing as a GroupLister. The lister reads committed topics on workers
+// workers, each opening its own client for conn and closing it when done. The
+// returned io.Closer is the listing client; the caller owns closing it.
+func buildGroupLister(conn types.KafkaSourceConn, workers int) (GroupLister, io.Closer, error) {
 	region, authOpt, err := adminAuth(conn)
 	if err != nil {
 		return nil, nil, err
@@ -476,7 +485,24 @@ func buildGroupLister(conn types.KafkaSourceConn) (GroupLister, io.Closer, error
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
 	}
-	return NewKafkaGroupLister(cg), cg, nil
+	fetchers := func() (groupoffsets.GroupOffsetFetcher, func(), error) {
+		c, err := client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("connecting consumer-group client: %w", err)
+		}
+		return c, func() { _ = c.Close() }, nil
+	}
+	return NewKafkaGroupLister(cg, fetchers, workers), cg, nil
+}
+
+// offsetSyncWorkers is the conversion's offset sync worker count: reconcile reads
+// the source groups' committed topics with as many workers as the conversion's
+// snapshots read their offsets.
+func offsetSyncWorkers(g *manifest.GatewayMigration) int {
+	if c := g.Spec.DynamicToStaticConversion; c != nil {
+		return c.Policies.EffectiveOffsetSyncConcurrency()
+	}
+	return manifest.DefaultOffsetSyncConcurrency
 }
 
 // BuildReconcileInput is buildReconcileInput for callers outside this package:
@@ -530,7 +556,7 @@ func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource,
 	if err != nil {
 		return fail(err)
 	}
-	srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn)
+	srcGroups, srcGroupsCloser, err := buildGroupLister(srcConn, offsetSyncWorkers(g))
 	if err != nil {
 		return fail(err)
 	}
@@ -539,7 +565,7 @@ func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource,
 	if err != nil {
 		return fail(err)
 	}
-	tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn)
+	tgtGroups, tgtGroupsCloser, err := buildGroupLister(tgtConn, offsetSyncWorkers(g))
 	if err != nil {
 		return fail(err)
 	}
