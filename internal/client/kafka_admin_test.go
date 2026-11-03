@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -18,6 +20,11 @@ import (
 
 	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/retry"
+	"github.com/confluentinc/kcp/internal/retry/retrytest"
+	"github.com/confluentinc/kcp/internal/testsupport"
+	"github.com/confluentinc/kcp/internal/tracing"
+	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -1137,4 +1144,172 @@ func TestAdminOptionForAuthMethod(t *testing.T) {
 		opt(&cfg)
 		assert.True(t, cfg.disableTLS)
 	})
+}
+
+// ListTopicInternalFlags reports every topic of the all-topics metadata
+// response with the broker's own IsInternal flag, unfiltered: callers that need
+// user topics only (migplan) drop the flagged ones themselves.
+func TestListTopicInternalFlags(t *testing.T) {
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_1_0_0
+	cfg.ApiVersionsRequest = false
+
+	seed := sarama.NewMockBroker(t, 1)
+	defer seed.Close()
+
+	md := &sarama.MetadataResponse{
+		Version:      sarama.NewMetadataRequest(cfg.Version, nil).Version,
+		ControllerID: 1,
+	}
+	md.AddBroker(seed.Addr(), 1)
+	md.AddTopic("orders", sarama.ErrNoError)
+	md.AddTopic("__consumer_offsets", sarama.ErrNoError)
+	for _, tm := range md.Topics {
+		if tm.Name == "__consumer_offsets" {
+			tm.IsInternal = true
+		}
+	}
+	seed.SetHandlerByMap(map[string]sarama.MockResponse{
+		"MetadataRequest": sarama.NewMockWrapper(md),
+	})
+
+	admin, err := sarama.NewClusterAdmin([]string{seed.Addr()}, cfg)
+	require.NoError(t, err)
+	defer func() { _ = admin.Close() }()
+
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+	got, err := k.ListTopicInternalFlags(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"orders": false, "__consumer_offsets": true}, got)
+}
+
+func TestBuildKafkaClientConfig_TopicAutoCreationIsOnlyOffWhenAsked(t *testing.T) {
+	def, _, err := buildKafkaClientConfig("", sarama.V2_6_0_0, WithUnauthenticatedPlaintextAuth())
+	require.NoError(t, err)
+	assert.True(t, def.Metadata.AllowAutoTopicCreation, "every existing client keeps sarama's default")
+
+	off, _, err := buildKafkaClientConfig("", sarama.V2_6_0_0, WithUnauthenticatedPlaintextAuth(), WithTopicAutoCreationDisabled())
+	require.NoError(t, err)
+	assert.False(t, off.Metadata.AllowAutoTopicCreation)
+}
+
+// The option must reach the wire: a metadata refresh for a named topic is the request sarama would send while
+// sweeping a topic deleted mid-run, and it must not ask the broker to create it.
+func TestNewKafkaClient_WithTopicAutoCreationDisabledNeverAsksToCreate(t *testing.T) {
+	mb := sarama.NewMockBroker(t, 1)
+	t.Cleanup(mb.Close)
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t).SetApiKeys([]sarama.ApiVersionsResponseKey{
+			{ApiKey: 18, MinVersion: 0, MaxVersion: 3},
+			{ApiKey: 3, MinVersion: 0, MaxVersion: 10},
+		}),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(mb.Addr(), mb.BrokerID()).
+			SetController(mb.BrokerID()).
+			SetLeader("orders", 0, mb.BrokerID()),
+	})
+
+	c, err := NewKafkaClient([]string{mb.Addr()}, "", WithUnauthenticatedPlaintextAuth(), WithTopicAutoCreationDisabled())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	require.NoError(t, c.RefreshMetadata("orders"))
+
+	var named []*sarama.MetadataRequest
+	for _, rr := range mb.History() {
+		if r, ok := rr.Request.(*sarama.MetadataRequest); ok && len(r.Topics) > 0 {
+			named = append(named, r)
+		}
+	}
+	require.NotEmpty(t, named, "the refresh for orders must have reached the broker")
+	for _, r := range named {
+		assert.GreaterOrEqual(t, r.Version, int16(4), "below v4 the request has no auto-create flag")
+		assert.False(t, r.AllowAutoTopicCreation, "the client must never ask the broker to create %v", r.Topics)
+	}
+}
+
+func TestListTopicInternalFlags_RecoversWhenTheControllerResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	ln := testsupport.NewCutListener(t)
+	mb := sarama.NewMockBrokerListener(t, 1, ln)
+	t.Cleanup(mb.Close)
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(mb.Addr(), mb.BrokerID()).SetController(mb.BrokerID()).SetLeader("orders", 0, mb.BrokerID()),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V3_6_0_0
+	admin, err := sarama.NewClusterAdmin([]string{mb.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+	_, err = k.ListTopicInternalFlags(context.Background())
+	require.NoError(t, err)
+
+	ln.Cut()
+
+	flags, err := k.ListTopicInternalFlags(context.Background())
+	require.NoError(t, err, "the retry must reach the controller on a fresh connection")
+	assert.Equal(t, map[string]bool{"orders": false}, flags)
+}
+
+func TestClusterID_ReturnsANonConnectionErrorAtOnce(t *testing.T) {
+	retrytest.Fast(t)
+	mb := sarama.NewMockBroker(t, 1)
+	t.Cleanup(mb.Close)
+	// The mock's metadata carries no cluster id: a real answer, not a connection error.
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":    sarama.NewMockMetadataResponse(t).SetBroker(mb.Addr(), mb.BrokerID()).SetController(mb.BrokerID()),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V3_6_0_0
+	admin, err := sarama.NewClusterAdmin([]string{mb.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+
+	_, err = k.ClusterID(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster ID not available")
+	var gave *retry.GaveUpError
+	assert.False(t, errors.As(err, &gave), "a missing cluster id is an answer, not something to retry")
+}
+
+func TestClusterID_RecoversWhenTheControllerResetsItsConnection(t *testing.T) {
+	retrytest.Fast(t)
+	rec := tracingtest.Install(t)
+	ln := testsupport.NewCutListener(t)
+	mb := sarama.NewMockBrokerListener(t, 1, ln)
+	t.Cleanup(mb.Close)
+	// NewMockMetadataResponse sets no cluster id, so the metadata is a fixed v7 response, the version sarama
+	// sends for Kafka 2.1 and getClusterIDFromBroker always sends.
+	id := "lkc-cut"
+	md := &sarama.MetadataResponse{Version: 7, ClusterID: &id, ControllerID: mb.BrokerID()}
+	md.AddBroker(mb.Addr(), mb.BrokerID())
+	mb.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":    sarama.NewMockWrapper(md),
+	})
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_1_0_0
+	admin, err := sarama.NewClusterAdmin([]string{mb.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close() })
+	k := &KafkaAdminClient{admin: admin, saramaConfig: cfg}
+	got, err := k.ClusterID(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, id, got)
+
+	ln.Cut()
+
+	ctx, span := tracing.Start(context.Background(), "test", "step.cluster_id")
+	got, err = k.ClusterID(ctx)
+	span.End()
+	require.NoError(t, err, "the retry must reach the controller on a fresh connection")
+	assert.Equal(t, id, got)
+	attempts, ok := tracingtest.Attr(tracingtest.Find(t, tracingtest.Spans(rec), "step.cluster_id"), "kcp.retry.attempts")
+	require.True(t, ok, "the read after the reset needed a retry")
+	assert.Equal(t, int64(2), attempts.AsInt64())
 }

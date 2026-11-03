@@ -1,0 +1,155 @@
+package connectorutility
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+var (
+	stateFile string
+	clusterId string
+	outputDir string
+)
+
+func NewGenerateCmd() *cobra.Command {
+	connectorUtilityCmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Export discovered connector configs for the Connect Migration Utility",
+		Long:  "Emit a JSON file per MSK cluster containing its discovered connector configs, in the format expected by the [Connect Migration Utility](https://github.com/confluentinc/connect-migration-utility).",
+		Example: `  # All MSK clusters in the state file
+  kcp iac connectors connector-utility generate --state-file kcp-state.json
+
+  # Single cluster, custom output directory
+  kcp iac connectors connector-utility generate \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --output-dir connector-configs`,
+		SilenceErrors: true,
+		PreRunE:       preRunConnectorUtility,
+		RunE:          runConnectorUtility,
+	}
+
+	groups := map[*pflag.FlagSet]string{}
+
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
+	connectorUtilityCmd.Flags().AddFlagSet(requiredFlags)
+	groups[requiredFlags] = "Required Flags"
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster to generate the connector configs JSON from.")
+	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the connector configs JSON will be written to")
+	connectorUtilityCmd.Flags().AddFlagSet(optionalFlags)
+	groups[optionalFlags] = "Optional Flags"
+
+	connectorUtilityCmd.SetUsageFunc(func(c *cobra.Command) error {
+		fmt.Printf("%s\n\n", c.Short)
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
+		groupNames := []string{"Required Flags", "Optional Flags"}
+
+		for i, fs := range flagOrder {
+			usage := fs.FlagUsages()
+			if usage != "" {
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+			}
+		}
+
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+
+		return nil
+	})
+
+	_ = connectorUtilityCmd.MarkFlagRequired("state-file")
+
+	return connectorUtilityCmd
+}
+
+func hasSelfManagedConnectors(info types.KafkaAdminClientInformation) bool {
+	for _, cc := range info.ConnectClusters {
+		if len(cc.Connectors) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func preRunConnectorUtility(cmd *cobra.Command, args []string) error {
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runConnectorUtility(cmd *cobra.Command, args []string) error {
+	opts, err := parseConnectorUtilityOpts()
+	if err != nil {
+		return fmt.Errorf("failed to parse connector utility opts: %v", err)
+	}
+
+	connectorUtility := NewConnectorUtility(*opts)
+	if err := connectorUtility.Run(); err != nil {
+		return fmt.Errorf("failed to run connector utility: %v", err)
+	}
+
+	return nil
+}
+
+func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
+	}
+
+	var state types.State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
+	}
+
+	clustersByArn := make(map[string]*types.DiscoveredCluster)
+
+	if clusterId != "" {
+		cluster, err := state.GetClusterByArn(clusterId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cluster: %w", err)
+		}
+
+		hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
+			hasSelfManagedConnectors(cluster.KafkaAdminClientInformation)
+
+		if !hasConnectors {
+			return nil, fmt.Errorf("no connectors found for cluster %s in %s. The cluster exists but has no MSK Connect or self-managed connectors", cluster.Name, stateFile)
+		}
+		clustersByArn[clusterId] = cluster
+	} else if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
+			for i := range region.Clusters {
+				cluster := &region.Clusters[i]
+				// Include cluster if it has any connectors (MSK Connect or self-managed)
+				hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
+					hasSelfManagedConnectors(cluster.KafkaAdminClientInformation)
+				if hasConnectors {
+					clustersByArn[cluster.Arn] = cluster
+				}
+			}
+		}
+	}
+
+	if outputDir == "" {
+		outputDir = "discovered-connector-configs"
+	}
+
+	return &ConnectorUtilityOpts{
+		ClustersByArn: clustersByArn,
+		OutputDir:     outputDir,
+	}, nil
+}

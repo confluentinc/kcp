@@ -88,25 +88,42 @@ func BrokerMetricDefinitions(overrides map[string]string) MetricDefinitions {
 }
 
 // ConnectMetricDefinitions returns metric definitions for Kafka Connect workers.
-func ConnectMetricDefinitions() MetricDefinitions {
-	return MetricDefinitions{
+// overrides maps a logical Connect label (e.g. "task-count") to the MBean object
+// name this cluster's Jolokia agent actually exposes; an entry with an empty value
+// is ignored. Per-connector overrides must retain their connector=*,task=* wildcards.
+// Pass nil for the defaults.
+func ConnectMetricDefinitions(overrides map[string]string) MetricDefinitions {
+	overridden := map[string]bool{}
+	name := func(label, def string) string {
+		if v, ok := overrides[label]; ok && v != "" {
+			overridden[label] = true
+			return v
+		}
+		return def
+	}
+
+	defs := MetricDefinitions{
 		Gauges: []GaugeMBeanConfig{
-			{"connector-count", "kafka.connect:type=connect-worker-metrics", "connector-count"},
-			{"task-count", "kafka.connect:type=connect-worker-metrics", "task-count"},
+			{"connector-count", name("connector-count", "kafka.connect:type=connect-worker-metrics"), "connector-count"},
+			{"task-count", name("task-count", "kafka.connect:type=connect-worker-metrics"), "task-count"},
 		},
 		Aggregates: []AggregateMBeanConfig{
-			{"incoming-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "incoming-byte-rate"},
-			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
-			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
-			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+			{"incoming-byte-rate", name("incoming-byte-rate", "kafka.connect:client-id=*,type=connect-metrics"), "incoming-byte-rate"},
+			{"outgoing-byte-rate", name("outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics"), "outgoing-byte-rate"},
+			{"connection-count", name("connection-count", "kafka.connect:client-id=*,type=connect-metrics"), "connection-count"},
+			{"request-rate", name("request-rate", "kafka.connect:client-id=*,type=connect-metrics"), "request-rate"},
 		},
 		PerConnectorAggregates: []AggregateMBeanConfig{
-			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
-			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
-			{"sink-record-read-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate"},
-			{"sink-record-send-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-send-rate"},
+			{"source-record-write-rate", name("source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*"), "source-record-write-rate"},
+			{"source-record-poll-rate", name("source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*"), "source-record-poll-rate"},
+			{"sink-record-read-rate", name("sink-record-read-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*"), "sink-record-read-rate"},
+			{"sink-record-send-rate", name("sink-record-send-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*"), "sink-record-send-rate"},
 		},
 	}
+	if len(overridden) > 0 {
+		defs.OverriddenNames = overridden
+	}
+	return defs
 }
 
 // rawSample holds raw counter and gauge readings from a single poll.

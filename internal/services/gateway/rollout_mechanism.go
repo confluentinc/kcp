@@ -6,9 +6,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // RolloutMechanism names how a gateway config change reached the pods, as
@@ -64,7 +65,7 @@ var gatewayRollConfirmationWindow = 10 * time.Second
 // decided to replace the pods" that holds even when the roll starts and
 // finishes between two polls.
 func (s *K8sService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build config: %w", err)
 	}
@@ -99,10 +100,14 @@ func getGatewayDeploymentGeneration(ctx context.Context, clientset kubernetes.In
 //
 // The returned Deployment is the last one read, so callers do not have to
 // re-fetch it to start their convergence loop.
-func observeRolloutMechanism(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval time.Duration) (RolloutMechanism, *appsv1.Deployment, error) {
+func observeRolloutMechanism(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval time.Duration) (mechanism RolloutMechanism, dep *appsv1.Deployment, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.observe_rollout")
+	defer func() {
+		span.SetAttributes(attribute.Bool("kcp.gateway.rolled", mechanism == MechanismPodRoll))
+		tracing.End(span, err)
+	}()
 	deadline := time.Now().Add(gatewayRollConfirmationWindow)
 
-	var dep *appsv1.Deployment
 	for {
 		select {
 		case <-ctx.Done():

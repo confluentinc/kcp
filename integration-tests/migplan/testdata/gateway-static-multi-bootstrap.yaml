@@ -1,0 +1,39 @@
+# Permutation fixture: a static route whose target domain (cc) declares TWO
+# bootstrap server ids. kcp cannot pick one for a multi-homed domain, so the
+# "target domain declares exactly one bootstrap server id" precondition must
+# fail and refuse.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static-multi-bootstrap
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29092
+          - id: CC2
+            endpoint: localhost:29093
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: msk
+        bootstrapServerId: MSK
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk

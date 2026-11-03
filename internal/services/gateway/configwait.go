@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -104,7 +103,7 @@ type ConfigWaitOptions struct {
 // WaitForGatewayConfigID blocks until every Ready gateway pod reports
 // opts.ConfigID, or fails.
 func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error {
-	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
 	}
@@ -114,9 +113,11 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	client := newConfigProbeClient(configProbeRequestTimeout)
+	pods := clientset.CoreV1().Pods(namespace)
 	probe := func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error) {
-		return probeGatewayConfig(ctx, client, gatewayConfigAddr(endpoint.IP, opts.Port))
+		ctx, cancel := context.WithTimeout(ctx, configProbeRequestTimeout)
+		defer cancel()
+		return probeGatewayConfig(ctx, pods, endpoint.Name, opts.Port)
 	}
 
 	return waitForGatewayConfigID(ctx, clientset, probe, namespace, gatewayName, opts)

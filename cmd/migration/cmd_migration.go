@@ -1,47 +1,26 @@
 package migration
 
 import (
-	"github.com/confluentinc/kcp/cmd/migration/execute"
-	"github.com/confluentinc/kcp/cmd/migration/executetbm"
-	i "github.com/confluentinc/kcp/cmd/migration/init"
-	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
-	"github.com/confluentinc/kcp/cmd/migration/list"
+	"github.com/confluentinc/kcp/cmd/migration/cutover"
+	"github.com/confluentinc/kcp/cmd/migration/resources"
+	"github.com/confluentinc/kcp/internal/utils"
 
 	"github.com/spf13/cobra"
 )
 
 func NewMigrationCmd() *cobra.Command {
-	migrationCmd := &cobra.Command{
+	migrationCmd := utils.NewGroupCmd(&cobra.Command{
 		Use:   "migration",
-		Short: "Commands for migrating using CPC Gateway.",
-		Long: `Execute end-to-end Kafka migrations to Confluent Cloud using the Confluent Platform Connect (CPC) Gateway.
+		Short: "Commands for migrating clients using the Confluent Gateway and Kafka resources directly.",
+		Long: `Migrate Kafka workloads to Confluent Cloud.
 
-The migration workflow follows a defined lifecycle managed by a finite state machine:
-
-1. **Initialize** — validate cluster link and gateway CRs, persist migration config (` + "`kcp migration init --migration-yaml gateway-migration.yaml`" + `).
-2. **Check Lags** — compare source and destination offsets until lag drops below the configured threshold.
-3. **Fence Gateway** — apply the fenced gateway CR to block traffic during cutover.
-4. **Pause Offset Sync** — with ` + "`spec.clusterLink.pauseConsumerOffsetSync`" + `, pause cluster-link consumer offset sync (passes through otherwise); on failure the fence is rolled back automatically.
-5. **Verify Fence** — monitor source offsets to catch producers bypassing the gateway; on detection the fence is rolled back and any paused offset sync restored.
-6. **Promote Topics** — promote mirror topics at zero lag.
-7. **Switch Gateway** — apply the switchover gateway CR to route traffic to Confluent Cloud.
-
-If execution is interrupted at any step, re-running ` + "`kcp migration execute`" + ` resumes from the last completed step.
-
-Supporting documentation:
-
-- [Gateway Switchover Examples](../../gateway-switchover/index.md) — Gateway CR YAML templates for each supported authentication combination.
-- [Getting Started with Zero-Cut Migrations](../../getting-started-with-zero-cut-migrations.md) — end-to-end reference for the KCP + Gateway approach, including networking and auth pre-requisites.`,
-		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-	}
+- ` + "`kcp migration cutover`" + ` — cut clients over through the Confluent Gateway, promoting cluster-linked mirror topics.
+- ` + "`kcp migration resources`" + ` — create Kafka resources (cluster links, topics, service accounts, ACLs) directly against Confluent Cloud or Confluent Platform.`,
+	})
 
 	migrationCmd.AddCommand(
-		i.NewMigrationInitCmd(),
-		execute.NewMigrationExecuteCmd(),
-		executetbm.NewMigrationExecuteTBMCmd(),
-		lagcheck.NewMigrationLagCheckCmd(),
-		list.NewMigrationListCmd(),
+		cutover.NewMigrationCutoverCmd(),
+		resources.NewMigrationResourcesCmd(),
 	)
 
 	return migrationCmd

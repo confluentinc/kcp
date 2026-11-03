@@ -18,7 +18,9 @@ func NewUpdateCmd() *cobra.Command {
 		Short: "Update the kcp binary to the latest version",
 		Long: `Updates the kcp binary to the latest version by downloading the latest release from GitHub and installing it. A backup of the current binary is created automatically and restored on failure.
 
-If kcp is installed in a system directory (e.g. ` + "`/usr/local/bin`" + `), re-run with ` + "`sudo`" + ` — the command checks permissions early and exits with an error if elevation is required.`,
+If kcp is installed in a system directory (e.g. ` + "`/usr/local/bin`" + `), re-run with ` + "`sudo`" + ` — the command checks permissions early and exits with an error if elevation is required.
+
+In the official Docker image, kcp can't replace its own binary. ` + "`--check-only`" + ` reports the latest version and the image to pull; to upgrade, pull the newer ` + "`confluentinc/kcp`" + ` tag.`,
 		Example: `  # Check for updates (no install)
   kcp update --check-only
 
@@ -31,6 +33,7 @@ If kcp is installed in a system directory (e.g. ` + "`/usr/local/bin`" + `), re-
   # Update when kcp is installed in /usr/local/bin
   sudo kcp update`,
 		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE:          runUpdate,
 	}
 

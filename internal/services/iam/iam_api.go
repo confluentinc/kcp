@@ -8,7 +8,7 @@ import (
 
 // iamAPI is the subset of the AWS SDK v2 IAM client surface this package
 // (and the migrate-apply effective-access checker in
-// cmd/migrate/apply/cmd_migrate_apply.go) invokes. Widening the functions in
+// cmd/migration/resources/create/cmd_migration_resources_create.go) invokes. Widening the functions in
 // this package from the concrete *iam.Client to this interface lets tests
 // inject a fake implementation instead of talking to real AWS IAM.
 //
@@ -28,7 +28,7 @@ type iamAPI interface {
 	GetUser(ctx context.Context, params *iam.GetUserInput, optFns ...func(*iam.Options)) (*iam.GetUserOutput, error)
 
 	// SimulatePrincipalPolicy is called by the migrate-apply effective-access
-	// checker (cmd/migrate/apply/cmd_migrate_apply.go), not by anything in
+	// checker (cmd/migration/resources/create/cmd_migration_resources_create.go), not by anything in
 	// this package, but it belongs on the same "IAM API surface KCP uses"
 	// interface so that checker can share it.
 	SimulatePrincipalPolicy(ctx context.Context, params *iam.SimulatePrincipalPolicyInput, optFns ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error)

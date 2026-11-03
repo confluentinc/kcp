@@ -85,7 +85,7 @@ const (
 	MigrateTopicsModeNew    = "new"
 )
 
-// MirrorTopicsRequest carries the inputs for `kcp create-asset migrate-topics` in
+// MirrorTopicsRequest carries the inputs for `kcp iac topics generate` in
 // both --mode mirror and --mode new. The name is kept for backward compatibility
 // with the UI wire format; consider renaming to MigrateTopicsRequest in a future change.
 type MirrorTopicsRequest struct {

@@ -1,6 +1,6 @@
 # Example: ACLs — IAM (auto-discovery)
 
-Same outcome as [`acls-iam-explicit`](../acls-iam-explicit/), but instead of
+Same outcome as [`acls-iam-explicit`](../acls-iam-explicit/README.md), but instead of
 naming roles individually, `discoverAllRoles: true` enumerates **every workload
 IAM role in the account** — AWS service-linked roles and SSO-provisioned roles
 are excluded automatically. Discovered grants are scoped to `clusterArn`: roles
@@ -13,7 +13,7 @@ only the grants that are effectively allowed.
 `principalArns` and `discoverAllRoles` are mutually exclusive; exactly one is
 required whenever `spec.acls.iam` is present.
 
-The shell running `kcp migrate` needs the same AWS credentials as the explicit
+The shell running `kcp migration resources` needs the same AWS credentials as the explicit
 case (`iam:GetRole`, `iam:GetPolicy`, `iam:GetPolicyVersion`,
 `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies`,
 `iam:SimulatePrincipalPolicy`), plus `iam:GetAccountAuthorizationDetails` for
@@ -35,9 +35,9 @@ shell's AWS credentials, not this file. See the
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml   # structural check
-kcp migrate apply -f migration.yaml --dry-run   # preview, change nothing
-kcp migrate apply -f migration.yaml             # migrate the ACLs
+kcp migration resources validate -f migration.yaml   # structural check
+kcp migration resources create -f migration.yaml --dry-run   # preview, change nothing
+kcp migration resources create -f migration.yaml             # migrate the ACLs
 ```
 
 > Credential paths here point at the shared catalog (`../../credentials/…`) to

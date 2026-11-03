@@ -24,24 +24,21 @@ func mustReadFile(t *testing.T, envKey string) []byte {
 	return data
 }
 
-// stripServerFields removes the server-managed metadata a CR fetched from the
-// cluster carries, which server-side apply rejects. It mirrors the migration
-// workflow's cleanInitialCR; duplicated rather than exported because widening
-// kcp's public surface for a test is the wrong trade.
-func stripServerFields(t *testing.T, crYAML []byte) []byte {
+// routeObject returns the route named routeName from a rendered gateway CR's
+// spec.routes.
+func routeObject(t *testing.T, cr []byte, routeName string) map[string]any {
 	t.Helper()
-
-	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(crYAML, &obj))
-
-	delete(obj, "status")
-	if md, ok := obj["metadata"].(map[string]any); ok {
-		for _, k := range []string{"managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink"} {
-			delete(md, k)
+	var obj struct {
+		Spec struct {
+			Routes []map[string]any `yaml:"routes"`
+		} `yaml:"spec"`
+	}
+	require.NoError(t, yaml.Unmarshal(cr, &obj), "parsing the rendered gateway CR")
+	for _, route := range obj.Spec.Routes {
+		if route["name"] == routeName {
+			return route
 		}
 	}
-
-	out, err := yaml.Marshal(obj)
-	require.NoError(t, err)
-	return out
+	require.Failf(t, "route not found", "route %q is not in the rendered gateway CR's spec.routes", routeName)
+	return nil
 }

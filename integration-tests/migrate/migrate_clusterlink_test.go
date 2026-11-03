@@ -1,7 +1,7 @@
 //go:build integration
 
 // Package migrate is a live, end-to-end auth matrix for
-// `kcp migrate apply` against cluster links, run against the cp-server brokers
+// `kcp migration resources create` against cluster links, run against the cp-server brokers
 // brought up by `make test-migrate`.
 //
 // The matrix sweeps each independent authentication surface on its own, holding
@@ -210,7 +210,7 @@ func writeRestCreds(t *testing.T, dir, name string, e restEndpoint) string {
 // this directory (so the manifest's ./certs/* relative paths resolve).
 func runKCP(t *testing.T, manifest string, extra ...string) (string, error) {
 	t.Helper()
-	args := append([]string{"migrate", "apply", "-f", manifest}, extra...)
+	args := append([]string{"migration", "resources", "create", "-f", manifest}, extra...)
 	cmd := exec.Command("../../kcp", args...)
 	b, err := cmd.CombinedOutput()
 	return string(b), err

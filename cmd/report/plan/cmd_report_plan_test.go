@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,4 +91,54 @@ func TestIsPostLegacyVersion(t *testing.T) {
 	for _, c := range cases {
 		assert.Equal(t, c.want, isPostLegacyVersion(c.v), c.v)
 	}
+}
+
+const demoScan = "../../../docs/assets/report-plan-examples/demo-scan.json"
+
+// runPlanIn runs `report plan` with the given flag globals inside a temp dir and
+// returns the plan-inputs.yaml path and the error.
+func runPlanIn(t *testing.T, state, inputs string, cluster, region string) (string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	prev := []string{stateFile, planInputs, outputDir, output, filterCluster, filterRegion}
+	t.Cleanup(func() {
+		stateFile, planInputs, outputDir, output, filterCluster, filterRegion = prev[0], prev[1], prev[2], prev[3], prev[4], prev[5]
+	})
+	stateFile, planInputs, outputDir, output = state, filepath.Join(dir, "plan-inputs.yaml"), filepath.Join(dir, "out"), "md,json"
+	filterCluster, filterRegion = cluster, region
+	if inputs != "" {
+		require.NoError(t, os.WriteFile(planInputs, []byte(inputs), 0o644))
+	}
+	return planInputs, runReportPlan(nil, nil)
+}
+
+// A --cluster-id / --region filter chooses which plans are rendered; it must not
+// delete the other clusters' answers from plan-inputs.yaml.
+func TestRunReportPlan_FilterKeepsOtherClustersAnswers(t *testing.T) {
+	inputs := `clusters:
+  orders-prod:
+    use_case_breadth: few-teams
+  clickstream:
+    use_case_breadth: shared-fabric
+  logs-ingest:
+    use_case_breadth: one-app
+`
+	for _, f := range [][2]string{{"orders-prod", ""}, {"", "us-west-2"}} {
+		path, err := runPlanIn(t, demoScan, inputs, f[0], f[1])
+		require.NoError(t, err)
+		out, err := os.ReadFile(path)
+		require.NoError(t, err)
+		for _, want := range []string{"orders-prod:", "clickstream:", "logs-ingest:", "use_case_breadth: few-teams", "use_case_breadth: shared-fabric", "use_case_breadth: one-app"} {
+			assert.Contains(t, string(out), want, "filter=%v", f)
+		}
+	}
+}
+
+// Without --state-file the only cluster is "your-cluster"; any other key would be
+// silently dropped, so it is a hard error that names the valid one.
+func TestRunReportPlan_ScanlessRejectsUnknownClusterKey(t *testing.T) {
+	_, err := runPlanIn(t, "", "clusters:\n  orders:\n    use_case_breadth: few-teams\n", "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"orders"`)
+	assert.Contains(t, err.Error(), `"your-cluster"`)
 }

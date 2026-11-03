@@ -159,6 +159,11 @@ func TestOSKScanPrometheusMetricNameOverride(t *testing.T) {
 	require.NotNil(t, agg.Maximum, "BytesInPerSec should have a maximum")
 	assert.Greater(t, *agg.Maximum, 1_000_000.0,
 		"BytesInPerSec must reflect the relabelled series' magnitude (~9,000,000), proving the override drove the query rather than the default series")
+
+	globalAgg, ok := c.ClusterMetrics.Aggregates["GlobalPartitionCount"]
+	require.True(t, ok, "GlobalPartitionCount must be collected via the overridden flattened series — a regression here means the {name=\"GlobalPartitionCount\"} discriminator is being appended to an override again")
+	require.NotNil(t, globalAgg.Maximum)
+	assert.Equal(t, 77.0, *globalAgg.Maximum, "GlobalPartitionCount must reflect the seeded flattened series' constant value")
 }
 
 // TestOSKScanMetricNameOverrideValidation proves the "prove errors" path: an

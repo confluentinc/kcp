@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -25,8 +24,11 @@ func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 				HotReloadDeclaredIn: []string{"the live gateway CR"},
 			}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			*applied = append(*applied, configID)
+			return configID, nil
+		},
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
 	}
@@ -36,11 +38,18 @@ func hotReloadConfig() *MigrationConfig {
 	return &MigrationConfig{
 		K8sNamespace:  "confluent",
 		InitialCrName: "gw-1",
-		// A real routed CR: FenceGateway's cleanInitialCR + gateway.FenceRoutesObj
-		// derive the fenced CR from it, which needs spec.routes to inject onto.
-		InitialCrYAML:     []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n"),
-		FenceRoutes:       []string{"migration-route"},
-		SwitchoverTargets: testSwitchoverTargets,
+		// A real routed CR: FenceGateway's deriveFencedCRYAML splices FenceYAML
+		// onto Route, which needs spec.routes to contain it.
+		GatewayYAML:       "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n",
+		Route:             "migration-route",
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
+		RollbackFenceYAML: testRollbackFenceYAML,
+		// Non-empty so FenceGateway/SwitchGateway's plan-driven no-op guard
+		// (config.FenceYAML == "" / config.SwitchoverYAML == "") does not
+		// short-circuit these tests before they reach the hot-reload/configId
+		// behaviour under test.
+		Topics: []string{"topic-a", "topic-b", "topic-c"},
 	}
 }
 
@@ -168,7 +177,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	t.Run("an apply failure is not an unconfirmed fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("k8s API unavailable")
 		}
 
@@ -183,13 +192,13 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	})
 
 	t.Run("an apply that landed but could not be confirmed IS an unconfirmed fence", func(t *testing.T) {
-		// Unlike the case above: gateway.ApplyGatewayYAML's post-apply read-back
-		// guards run AFTER the server-side apply persists, so this error means
-		// the fenced spec IS live in the cluster — the opposite of "an apply
-		// failure" above, despite both surfacing from the same call.
+		// Unlike the case above: PatchGatewayRoute's post-patch read-back guards
+		// run AFTER the JSON Patch persists, so this error means the fenced spec
+		// IS live in the cluster — the opposite of "an apply failure" above,
+		// despite both surfacing from the same call.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified, "gw-1")
 		}
 
@@ -335,22 +344,21 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 func TestVerifyHotReloadCapability(t *testing.T) {
 	t.Run("applies a fresh configId alone, never the live spec", func(t *testing.T) {
 		// Safe at any point in a migration, including a resume: the only field
-		// this check ever owns is spec.configId, under its own field manager
-		// (see gateway.ApplyGatewayConfigID) — never the fence/switchover/unfence
-		// manager, so it can never leave a later apply from that manager with
-		// something to prune.
+		// this check ever touches is spec.configId, via a JSON Patch
+		// (see gateway.PatchGatewayConfigID) — never the fence/switchover/unfence
+		// path, so it can never leave a later apply with something to prune.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 		gw.getGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("must not read the live CR — the check no longer re-applies it")
 			return nil, nil
 		}
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
-			t.Fatal("must not apply a full CR — only ApplyGatewayConfigID")
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("must not apply a full CR — only PatchGatewayConfigID")
 			return "", nil
 		}
 		var appliedConfigIDs []string
-		gw.applyGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
+		gw.patchGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
 			appliedConfigIDs = append(appliedConfigIDs, configID)
 			return configID, nil
 		}
@@ -374,7 +382,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
-			applyGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
+			patchGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
 				t.Fatal("must not touch the cluster when hot-reload is not in use")
 				return "", nil
 			},
@@ -431,50 +439,5 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		out := stdout + stderr
 		assert.Contains(t, out, "logs -l app=gw-1", "the hint must select the gateway pods by app label")
 		assert.NotContains(t, out, " -c ", "the hint must not pass a container name — the gateway CR name is not the container name")
-	})
-}
-
-func TestCleanInitialCR(t *testing.T) {
-	t.Run("removes every server-managed field", func(t *testing.T) {
-		in := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: gw-1
-  managedFields:
-    - manager: kcp-migration
-  resourceVersion: "123"
-  uid: 1234-5678
-  creationTimestamp: "2026-01-01T00:00:00Z"
-  generation: 7
-spec:
-  replicas: 3
-status:
-  observedGeneration: 7
-`)
-		obj, err := cleanInitialCR(in)
-		require.NoError(t, err)
-		out, err := yaml.Marshal(obj)
-		require.NoError(t, err)
-
-		body := string(out)
-		for _, field := range []string{"managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "status"} {
-			assert.NotContains(t, body, field)
-		}
-		assert.Contains(t, body, "gw-1", "the identity must survive")
-		assert.Contains(t, body, "replicas", "the spec must survive")
-	})
-
-	t.Run("tolerates a CR with no metadata block", func(t *testing.T) {
-		obj, err := cleanInitialCR([]byte("apiVersion: v1\nkind: Gateway\nspec: {}\n"))
-		require.NoError(t, err)
-		out, err := yaml.Marshal(obj)
-		require.NoError(t, err)
-		assert.Contains(t, string(out), "Gateway")
-	})
-
-	t.Run("rejects unparseable YAML", func(t *testing.T) {
-		_, err := cleanInitialCR([]byte("\tnot: [valid"))
-		require.Error(t, err)
 	})
 }

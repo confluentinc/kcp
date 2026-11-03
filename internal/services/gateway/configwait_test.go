@@ -20,7 +20,7 @@ const (
 // staticProber answers every pod with the same configId.
 func staticProber(configID string) podProber {
 	return func(_ context.Context, e GatewayPodEndpoint) (ProbeResult, error) {
-		return ProbeResult{Addr: e.IP, Outcome: ProbeApplied, ConfigID: configID}, nil
+		return ProbeResult{Addr: e.Name, Outcome: ProbeApplied, ConfigID: configID}, nil
 	}
 }
 
@@ -31,7 +31,7 @@ func perPodProber(byPod map[string]string, fallback string) podProber {
 		if !ok {
 			id = fallback
 		}
-		return ProbeResult{Addr: e.IP, Outcome: ProbeApplied, ConfigID: id}, nil
+		return ProbeResult{Addr: e.Name, Outcome: ProbeApplied, ConfigID: id}, nil
 	}
 }
 

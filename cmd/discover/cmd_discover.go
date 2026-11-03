@@ -88,7 +88,9 @@ func NewDiscoverCmd() *cobra.Command {
 	discoverCmd := &cobra.Command{
 		Use:   "discover",
 		Short: "Multi-region, multi cluster discovery scan of AWS MSK",
-		Long:  "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics",
+		Long: "Performs a full Discovery of all MSK clusters across multiple regions, and their associated resources, costs and metrics.\n\n" +
+			"Discovery also writes `msk-credentials.yaml`, enabling one of the authentication methods each cluster supports. Before running `kcp scan clusters`, check that exactly one method is enabled per cluster and fill in any missing credentials (SASL/SCRAM entries are written with an empty username and password). " +
+			"See [Getting started](../getting-started.md) for the full workflow.",
 		Example: `  # Scan a single region
   kcp discover --region us-east-1
 

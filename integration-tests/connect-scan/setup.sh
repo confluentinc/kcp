@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Stand up the Connect env: 1 plaintext broker + four single-node Connect workers
-# (unauthenticated, HTTP-Basic, mTLS, and HTTPS+Basic), and create a test connector
-# on each so the scanner has something to find. Each worker is its own Connect group
-# (distinct group.id + internal topics), so they don't rebalance against each other.
-# The Go test (connect_scan_test.go) assumes this ran.
+# (unauthenticated, HTTP-Basic, mTLS, and HTTPS+Basic), a Prometheus instance
+# seeded with a relabelled Connect series, and a test connector on each Connect
+# worker so the scanner has something to find. Each worker is its own Connect
+# group (distinct group.id + internal topics), so they don't rebalance against
+# each other. The Go test (connect_scan_test.go) assumes this ran.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,6 +113,39 @@ for i in $(seq 1 30); do
     break
   fi
   [ "$i" = "30" ] && echo "WARNING: Jolokia not ready in time; the metrics subtest may fail"
+  sleep 2
+done
+
+# ── Prometheus (:9390), seeded with the relabelled Connect series ───────────
+# used by the prometheus.connect_metric_names override test. The
+# prometheus-seeder container runs seed-connect-prometheus-data.sh once
+# Prometheus itself is ready and exits; wait for that exit first.
+echo "Waiting for Prometheus seeder to finish..."
+for i in $(seq 1 60); do
+  status=$(docker inspect -f '{{.State.Status}}' kcp-test-connect-prometheus-seeder 2>/dev/null || echo "missing")
+  if [ "$status" = "exited" ]; then
+    echo "  Prometheus seeder finished."
+    break
+  fi
+  [ "$i" = "60" ] && echo "WARNING: Prometheus seeder did not finish in time; the Prometheus override test may fail"
+  sleep 2
+done
+
+# The seeder writes TSDB blocks directly to disk (promtool tsdb
+# create-blocks-from) rather than through Prometheus's ingestion path, and
+# Prometheus only discovers new on-disk blocks on its own periodic reload
+# cycle (roughly once a minute) — the seeder's own /-/reload kick and the
+# container exiting do NOT guarantee the data is queryable yet. Poll the
+# actual series so we don't hand off to the tests before it's visible.
+echo "Waiting for seeded Connect Prometheus data to become queryable..."
+for i in $(seq 1 90); do
+  if curl -s --connect-timeout 3 --max-time 5 \
+       "http://localhost:9390/api/v1/query?query=acme_connect_task_count" 2>/dev/null \
+       | grep -q '"value"'; then
+    echo "  Seeded data is queryable."
+    break
+  fi
+  [ "$i" = "90" ] && echo "WARNING: seeded Connect Prometheus data not queryable in time; the Prometheus override test may fail"
   sleep 2
 done
 

@@ -41,7 +41,7 @@ mkdir -p "${RENDERED_DIR}"
 
 # The runner reuses a small image already present in the node so nothing has to
 # be pulled; any image with a shell will do.
-RUNNER_IMAGE="${RUNNER_IMAGE:-confluentinc/confluent-init-container:${INIT_TAG:-3.3.0}}"
+RUNNER_IMAGE="${RUNNER_IMAGE:-confluentinc/confluent-init-container:${INIT_TAG:-3.4.0}}"
 echo "Starting the runner pod (${RUNNER_IMAGE})..."
 sed -e "s|__RUNNER_IMAGE__|${RUNNER_IMAGE}|g" "${MANIFESTS_DIR}/kcp-runner.yaml" \
   | kubectl --context "${PROFILE}" apply -f - >/dev/null

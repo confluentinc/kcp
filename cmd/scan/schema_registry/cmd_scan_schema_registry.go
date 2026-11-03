@@ -39,8 +39,6 @@ func schemaRegistryIAMAnnotation() string {
 		[]string{
 			"glue:ListSchemas",
 			"glue:ListSchemaVersions",
-			"glue:GetSchema",
-			"glue:GetSchemaByDefinition",
 			"glue:GetSchemaVersion",
 			"glue:GetRegistry",
 		},

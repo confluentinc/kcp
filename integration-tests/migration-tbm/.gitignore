@@ -1,0 +1,7 @@
+# Generated per-run by setup.sh — never committed.
+.env
+.rendered/
+# Cross-compiled binaries staged into the runner pod.
+.kcp-linux
+.setconfig-linux
+.tbm-e2e.test

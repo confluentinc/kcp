@@ -1,14 +1,11 @@
 package gateway
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestNewConfigID(t *testing.T) {
@@ -88,140 +85,4 @@ func TestValidateConfigID(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func TestPrepareGatewayApply(t *testing.T) {
-	const ns, gw = "confluent", "test-gateway"
-
-	minimalCR := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: some-other-name
-  namespace: some-other-namespace
-spec:
-  replicas: 3
-`)
-
-	t.Run("injects the configId into spec", func(t *testing.T) {
-		obj, err := prepareGatewayApply(minimalCR, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		got, found, err := unstructured.NestedString(obj.Object, "spec", gatewayConfigIDField)
-		require.NoError(t, err)
-		require.True(t, found, "spec.configId must be present")
-		assert.Equal(t, "kcp-abc123", got)
-	})
-
-	t.Run("leaves spec.configId absent when no id is supplied", func(t *testing.T) {
-		// The VerifyRollout path on a pre-hot-reload cluster: server-side apply
-		// hard-fails on an undeclared field, so kcp must not write one at all.
-		obj, err := prepareGatewayApply(minimalCR, ns, gw, "")
-		require.NoError(t, err)
-
-		_, found, err := unstructured.NestedString(obj.Object, "spec", gatewayConfigIDField)
-		require.NoError(t, err)
-		assert.False(t, found, "spec.configId must not be written when no id is supplied")
-	})
-
-	t.Run("overwrites a configId already present in the user's YAML", func(t *testing.T) {
-		withID := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-spec:
-  configId: users-own-value
-  replicas: 3
-`)
-		obj, err := prepareGatewayApply(withID, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		got, _, err := unstructured.NestedString(obj.Object, "spec", gatewayConfigIDField)
-		require.NoError(t, err)
-		assert.Equal(t, "kcp-abc123", got, "kcp owns the field for the duration of a migration")
-	})
-
-	t.Run("preserves a user configId when kcp is not injecting", func(t *testing.T) {
-		withID := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-spec:
-  configId: users-own-value
-`)
-		obj, err := prepareGatewayApply(withID, ns, gw, "")
-		require.NoError(t, err)
-
-		got, _, err := unstructured.NestedString(obj.Object, "spec", gatewayConfigIDField)
-		require.NoError(t, err)
-		assert.Equal(t, "users-own-value", got)
-	})
-
-	t.Run("creates the spec block when the CR has none", func(t *testing.T) {
-		noSpec := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: x
-`)
-		obj, err := prepareGatewayApply(noSpec, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		got, found, err := unstructured.NestedString(obj.Object, "spec", gatewayConfigIDField)
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, "kcp-abc123", got)
-	})
-
-	t.Run("forces name and namespace to the migration target", func(t *testing.T) {
-		obj, err := prepareGatewayApply(minimalCR, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		assert.Equal(t, gw, obj.GetName())
-		assert.Equal(t, ns, obj.GetNamespace())
-	})
-
-	t.Run("preserves the rest of the spec", func(t *testing.T) {
-		obj, err := prepareGatewayApply(minimalCR, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		spec, ok := obj.Object["spec"].(map[string]any)
-		require.True(t, ok)
-		// Read the raw value rather than using unstructured.NestedInt64: goccy
-		// decodes YAML integers as uint64, and NestedInt64 type-asserts to int64.
-		// This is why injectConfigID writes the map directly instead of using
-		// unstructured.SetNestedField, whose deep copy would panic on uint64.
-		assert.Equal(t, "3", fmt.Sprint(spec["replicas"]))
-	})
-
-	t.Run("rejects an invalid configId before touching the cluster", func(t *testing.T) {
-		_, err := prepareGatewayApply(minimalCR, ns, gw, "not+valid")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "configId")
-	})
-
-	t.Run("rejects unparseable YAML", func(t *testing.T) {
-		_, err := prepareGatewayApply([]byte("\tnot: [valid"), ns, gw, "kcp-abc123")
-		require.Error(t, err)
-	})
-
-	t.Run("rejects a CR whose spec is not a map", func(t *testing.T) {
-		// Without a guard this would panic or silently discard the CR body.
-		badSpec := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-spec: "a string, not a map"
-`)
-		_, err := prepareGatewayApply(badSpec, ns, gw, "kcp-abc123")
-		require.Error(t, err)
-	})
-
-	t.Run("injected id survives a YAML round trip", func(t *testing.T) {
-		// The object is handed to server-side apply; make sure the injected field
-		// is real structured data and not lost in re-serialisation.
-		obj, err := prepareGatewayApply(minimalCR, ns, gw, "kcp-abc123")
-		require.NoError(t, err)
-
-		out, err := yaml.Marshal(obj.Object)
-		require.NoError(t, err)
-		assert.Contains(t, string(out), "kcp-abc123")
-	})
 }

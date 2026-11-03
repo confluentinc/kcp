@@ -6,7 +6,7 @@
 // against a REAL MSK source and CC target (make test-migrate-acls-live),
 // following the house pattern of migrate_topics_new_test.go. Each scenario:
 // builds an acls-only manifest scoped to its own seeded ACL(s); runs the real
-// `kcp migrate apply` and asserts the command's OWN reported summary
+// `kcp migration resources create` and asserts the command's OWN reported summary
 // ("serviceAccounts: N created, ..." / "acls: N created, 0 unchanged, 0 drift,
 // 0 failed", counts hardcoded per scenario); re-applies and asserts "0 created,
 // N unchanged" — the idempotency that proves the product recognises its own

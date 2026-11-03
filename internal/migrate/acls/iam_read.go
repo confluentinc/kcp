@@ -17,8 +17,8 @@ import (
 type PrincipalPolicyFetcher func(ctx context.Context, principalArn string) (*iamservice.PrincipalPolicies, error)
 
 // NormalizePrincipalARNs normalizes a list of discovered IAM principal ARNs
-// into deduplicated role/user ARN form, mirroring create-asset's
-// evaluatePrincipal (cmd/create_asset/migrate_acls/iam_acls/cmd_migrate_iam_acls.go):
+// into deduplicated role/user ARN form, mirroring `kcp iac acls iam`'s
+// evaluatePrincipal (cmd/iac/acls/iam_acls/cmd_migrate_iam_acls.go):
 //
 //   - An STS assumed-role ARN's "arn:aws:sts::" prefix is rewritten to
 //     "arn:aws:iam::" and its ":assumed-role/" segment to ":role/", so
@@ -38,7 +38,7 @@ func NormalizePrincipalARNs(in []string) []string {
 		arn := strings.Replace(principal, "arn:aws:sts::", "arn:aws:iam::", 1)
 		arn = strings.Replace(arn, ":assumed-role/", ":role/", 1)
 
-		// KNOWN LIMITATION (Finding 3 / task-7, inherited from create-asset's
+		// KNOWN LIMITATION (Finding 3 / task-7, inherited from `kcp iac acls iam`'s
 		// evaluatePrincipal — not changed here): this trims to the first two
 		// "/"-segments unconditionally, so a PATH-BEARING role ARN like
 		// "arn:aws:iam::acct:role/team/AppRole" loses "AppRole" and normalizes

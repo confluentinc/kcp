@@ -15,19 +15,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// topicGroupBlock is the topicGroup stanza in the canonical doc; tests replace
-// it to vary spec.topicGroup.
-const topicGroupBlock = `  topicGroup:
-    - topics:
-        - t1.order
-        - t1.inventory
-      route: migration-route
-      targetStreamingDomain: confluent-cloud
+// topicGroupEntryBlock is the topicGroup stanza of a migration section; tests
+// replace it to vary the topic selection.
+const topicGroupEntryBlock = `    topicGroup:
+      - topics:
+          - t1.order
+          - t1.inventory
 `
 
-// validGatewayDoc is the canonical manifest from the design §4, minus the
-// optional blocks. Tests mutate a copy of it to exercise one rule at a time.
-const validGatewayDoc = `apiVersion: kcp.confluent.io/v1alpha1
+const routeRefBlock = "    route:\n      name: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+
+const (
+	dynamicMigrationBlock = "  dynamicMigration:\n" + routeRefBlock + topicGroupEntryBlock
+	staticMigrationBlock  = "  staticMigration:\n" + routeRefBlock + topicGroupEntryBlock
+	conversionBlock       = "  dynamicToStaticConversion:\n" + routeRefBlock
+)
+
+// gatewayDocBase is the canonical manifest up to and including spec.gateway;
+// append exactly one section block to make it valid. Every credentials slot is a
+// file path; validation does no I/O, so these placeholder paths satisfy the
+// structural rules. Tests that RESOLVE credentials use gatewayDocWithCreds to
+// point the slots at real files.
+const gatewayDocBase = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
   name: msk-prod-to-cc-batch-1
@@ -36,11 +45,7 @@ spec:
     type: msk
     bootstrapServers:
       - b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096
-    credentials:
-      sasl_scram:
-        username: admin
-        password: secret
-        mechanism: SHA512
+    credentials: ./source-creds.yaml
   target:
     type: confluent-cloud
     clusterId: lkc-abc123
@@ -48,17 +53,26 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      credentials:
-        sasl_plain:
-          username: CC_KEY
-          password: CC_SECRET
-          tls: true
+      clusterCredentials: ./dest-kafka-creds.yaml
   clusterLink:
     name: msk-to-cc
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    linkCredentials: ./link-creds.yaml
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-` + topicGroupBlock
+`
+
+// validGatewayDoc is the canonical valid manifest: a dynamicMigration (TBM).
+const validGatewayDoc = gatewayDocBase + dynamicMigrationBlock
+
+// Default credential-file bodies for the canonical document.
+const (
+	defaultSourceCreds   = "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"
+	defaultDestKafkaCred = "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n"
+	defaultLinkCred      = "api_key: CC_KEY\napi_secret: CC_SECRET\n"
+)
 
 func parseGateway(t *testing.T, doc string) *GatewayMigration {
 	t.Helper()
@@ -67,21 +81,36 @@ func parseGateway(t *testing.T, doc string) *GatewayMigration {
 	return g
 }
 
+// gatewayDocWithCreds writes the three credential files into a temp dir (using
+// the given bodies, or the canonical defaults for empty ones) and returns a
+// validGatewayDoc whose slots point at them, so the resolver methods can read
+// them. Slots a test does not resolve keep working from the default files.
+func gatewayDocWithCreds(t *testing.T, source, destKafka, link string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body, def string) string {
+		if body == "" {
+			body = def
+		}
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
+	doc := validGatewayDoc
+	doc = strings.Replace(doc, "credentials: ./source-creds.yaml",
+		"credentials: "+write("source.yaml", source, defaultSourceCreds), 1)
+	doc = strings.Replace(doc, "clusterCredentials: ./dest-kafka-creds.yaml",
+		"clusterCredentials: "+write("dest-kafka.yaml", destKafka, defaultDestKafkaCred), 1)
+	doc = strings.Replace(doc, "linkCredentials: ./link-creds.yaml",
+		"linkCredentials: "+write("link.yaml", link, defaultLinkCred), 1)
+	return doc
+}
+
 // withField replaces the first occurrence of old with new in the canonical doc.
 func withField(t *testing.T, old, new string) string {
 	t.Helper()
 	require.Contains(t, validGatewayDoc, old, "fixture drift: %q not in the canonical doc", old)
 	return strings.Replace(validGatewayDoc, old, new, 1)
-}
-
-// withRestCredentials splices a restCredentials block into spec.target.kafka,
-// which is where it belongs — appending to the document would land it under
-// spec:, several levels too high.
-func withRestCredentials(t *testing.T, block string) string {
-	t.Helper()
-	const anchor = "  clusterLink:\n"
-	require.Contains(t, validGatewayDoc, anchor)
-	return strings.Replace(validGatewayDoc, anchor, block+anchor, 1)
 }
 
 func TestGateway_CanonicalManifestValidates(t *testing.T) {
@@ -96,13 +125,16 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, []string{"b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096"}, g.Spec.Source.BootstrapServers)
 	assert.Equal(t, "lkc-abc123", g.Spec.Target.ClusterID)
 	assert.Equal(t, "msk-to-cc", g.Spec.ClusterLink.Name)
+	assert.Equal(t, []string{"pkc-xxxxx.us-east-1.aws.confluent.cloud:9092"}, g.Spec.ClusterLink.BootstrapServers)
+	assert.Equal(t, "./link-creds.yaml", g.Spec.ClusterLink.LinkCredentials.Path)
+	assert.Equal(t, "./dest-kafka-creds.yaml", g.Spec.Target.Kafka.ClusterCredentials.Path)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CrName)
-	require.Len(t, g.Spec.TopicGroup, 1)
-	assert.Equal(t, "migration-route", g.Spec.TopicGroup[0].Route)
-	assert.Equal(t, "confluent-cloud", g.Spec.TopicGroup[0].TargetStreamingDomain)
-	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.TopicGroup[0].Topics)
+	assert.Equal(t, "migration-route", g.Spec.DeclaredRoute().Name)
+	assert.Equal(t, "confluent-cloud", g.Spec.DeclaredRoute().TargetStreamingDomain)
+	require.Len(t, g.Spec.DeclaredTopicGroup(), 1)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.DeclaredTopicGroup()[0].Topics)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -146,22 +178,19 @@ func TestGateway_RejectsUnknownSourceType(t *testing.T) {
 
 // TestGateway_RejectsIAMOnApacheKafkaSource is the §2.4 tightening: iam is
 // MSK-only, so declaring it against an apache-kafka source is a typo, not a
-// working configuration.
+// working configuration. The gate runs when the source credentials resolve
+// (Validate does no I/O), so it surfaces on SourceCredentials().
 func TestGateway_RejectsIAMOnApacheKafkaSource(t *testing.T) {
-	doc := withField(t, "    type: msk", "    type: apache-kafka")
-	doc = strings.Replace(doc,
-		"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-		"      iam:\n        region: us-east-1", 1)
-	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "iam")
+	doc := gatewayDocWithCreds(t, "iam:\n  region: us-east-1\n", "", "")
+	doc = strings.Replace(doc, "    type: msk", "    type: apache-kafka", 1)
+	_, errs := parseGateway(t, doc).SourceCredentials()
+	requireErrContains(t, errs, "iam")
 }
 
 func TestGateway_AcceptsIAMOnMSKSource(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc,
-		"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-		"      iam:\n        region: us-east-1", 1)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
+	doc := gatewayDocWithCreds(t, "iam:\n  region: us-east-1\n", "", "")
+	_, errs := parseGateway(t, doc).SourceCredentials()
+	require.Empty(t, errs)
 }
 
 // TestGateway_SourceTypeConfluentPlatformIsNotOffered — the gateway migration
@@ -180,9 +209,7 @@ func TestGateway_RequiresSourceBootstrapServers(t *testing.T) {
 }
 
 func TestGateway_RequiresSourceCredentials(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc,
-		"    credentials:\n      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-		"    credentials: \"\"", 1)
+	doc := strings.Replace(validGatewayDoc, "    credentials: ./source-creds.yaml", "    credentials: \"\"", 1)
 	g := parseGateway(t, doc)
 	requireErrContains(t, g.Validate(), "spec.source.credentials")
 }
@@ -220,12 +247,17 @@ func TestGateway_RequiresTargetKafkaBootstrapServers(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.target.kafka.bootstrapServers")
 }
 
+func TestGateway_RequiresTargetKafkaClusterCredentials(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc,
+		"      clusterCredentials: ./dest-kafka-creds.yaml", "      clusterCredentials: \"\"", 1)
+	g := parseGateway(t, doc)
+	requireErrContains(t, g.Validate(), "spec.target.kafka.clusterCredentials")
+}
+
 // TestGateway_AcceptsEveryDestinationMethodExceptIAM. All the auth/TLS
-// machinery on the destination Kafka leg already exists and is now routed
-// through AdminOptionForAuthMethod, the same mapper the source leg uses — so
-// sasl_scram, mtls, and both unauthenticated forms validate like any other
-// leg. Non-sasl_plain destinations can no longer derive restCredentials (there
-// is no principal to derive from), so each case supplies an explicit block.
+// machinery on the destination Kafka leg is routed through
+// AdminOptionForAuthMethod, the same mapper the source leg uses — so sasl_scram,
+// mtls, and both unauthenticated forms resolve like any other leg.
 func TestGateway_AcceptsEveryDestinationMethodExceptIAM(t *testing.T) {
 	certDir := t.TempDir()
 	cert := filepath.Join(certDir, "client.pem")
@@ -234,18 +266,17 @@ func TestGateway_AcceptsEveryDestinationMethodExceptIAM(t *testing.T) {
 	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
 
 	for name, block := range map[string]string{
-		"sasl_scram":                "        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
-		"mtls":                      "        mtls:\n          client_cert: " + cert + "\n          client_key: " + key,
-		"unauthenticated_plaintext": "        unauthenticated_plaintext: {}",
-		"unauthenticated_tls":       "        unauthenticated_tls: {}",
+		"sasl_scram":                "sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA512\n",
+		"mtls":                      "mtls:\n  client_cert: " + cert + "\n  client_key: " + key + "\n",
+		"unauthenticated_plaintext": "unauthenticated_plaintext: {}\n",
+		"unauthenticated_tls":       "unauthenticated_tls: {}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			doc := withRestCredentials(t, "      restCredentials:\n        api_key: K\n        api_secret: S\n")
-			doc = strings.Replace(doc,
-				"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-				block, 1)
+			doc := gatewayDocWithCreds(t, "", block, "")
 			g := parseGateway(t, doc)
-			assert.Empty(t, g.Validate())
+			require.Empty(t, g.Validate())
+			_, errs := g.DestinationKafkaCredentials()
+			require.Empty(t, errs)
 		})
 	}
 }
@@ -254,175 +285,102 @@ func TestGateway_AcceptsEveryDestinationMethodExceptIAM(t *testing.T) {
 // AWS), and the destination is Confluent Cloud or Confluent Platform — never
 // MSK — so it would otherwise fail opaquely at connection time.
 func TestGateway_RejectsIAMDestination(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc,
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        iam:\n          region: us-east-1",
-		1)
-	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "iam")
+	doc := gatewayDocWithCreds(t, "", "iam:\n  region: us-east-1\n", "")
+	_, errs := parseGateway(t, doc).DestinationKafkaCredentials()
+	requireErrContains(t, errs, "iam")
 }
 
-// TestGateway_AllowsDestinationSASLPlainCACert — the validator relaxation in
-// A.1 unlocks a private-CA sasl_plain destination now that
-// createDestinationOffset routes through AdminOptionForAuthMethod instead of
-// a hardcoded empty-CA client.
+// TestGateway_AllowsDestinationSASLPlainCACert — a private-CA sasl_plain
+// destination is allowed: the destination leg dials through
+// AdminOptionForAuthMethod, which honours its ca_cert.
 func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
 	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
 	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
 
-	doc := strings.Replace(validGatewayDoc,
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
-		1)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-
-	mc, errs := g.DestinationKafkaCredentials()
+	doc := gatewayDocWithCreds(t, "",
+		"sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: "+ca+"\n", "")
+	mc, errs := parseGateway(t, doc).DestinationKafkaCredentials()
 	require.Empty(t, errs)
 	assert.Equal(t, ca, mc.SASLPlain.CACert)
 }
 
-// TestGateway_AllowsDestinationSASLPlainTLS keeps the counterpart honest: tls
-// names the exact transport the destination already uses, so it is honoured, not
-// dropped, and must stay valid (it is part of the canonical valid document).
-func TestGateway_AllowsDestinationSASLPlainTLS(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	require.Empty(t, g.Validate())
-}
+// --- cluster-link REST credentials (linkCredentials) ---
 
-// --- restCredentials derivation (decision 29) ---
-
-// TestGateway_DerivesRestCredentialsWhenOmitted: one flag pair feeds both
-// destination legs today, so omitting restCredentials must not mean "no REST
-// credentials".
-func TestGateway_DerivesRestCredentialsWhenOmitted(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	require.Empty(t, g.Validate())
-
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
-	assert.Equal(t, "CC_KEY", rest.APIKey)
-	assert.Equal(t, "CC_SECRET", rest.APISecret)
-}
-
-// TestGateway_DerivedRestCredentialsInheritInsecureSkip preserves today's
-// single-flag fan-out: --insecure-skip-tls-verify reaches all three legs, so a
-// derived REST leg must not silently verify while the Kafka leg does not.
-func TestGateway_DerivedRestCredentialsInheritInsecureSkip(t *testing.T) {
+// TestGateway_RequiresLinkCredentials — the cluster-link REST credential is
+// always required; it is not derived from the Kafka leg.
+func TestGateway_RequiresLinkCredentials(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
-		"      credentials:\n        sasl_plain:",
-		"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
+		"    linkCredentials: ./link-creds.yaml", "    linkCredentials: \"\"", 1)
 	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
-	assert.True(t, rest.InsecureSkipVerify)
+	requireErrContains(t, g.Validate(), "spec.clusterLink.linkCredentials")
 }
 
-// TestGateway_DerivedRestCredentialsInheritCACert closes the gap A.5 fixes:
-// derivation copied insecure_skip_tls_verify but not ca_cert, so a private-CA
-// sasl_plain destination would derive a Kafka leg that trusts the CA and a
-// REST leg that does not — a TLS failure against the very same cluster.
-func TestGateway_DerivedRestCredentialsInheritCACert(t *testing.T) {
-	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
-	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
-
+// TestGateway_LinkCredentialsRequiredEvenUnderSaslPlain — the old shortcut that
+// let restCredentials be derived from a sasl_plain Kafka leg is gone:
+// RestCredentials() itself never reads spec.target.kafka, so a blank
+// linkCredentials fails to resolve regardless of the destination Kafka leg's
+// auth method. Unlike TestGateway_RequiresLinkCredentials (which checks
+// Validate()'s presence-only rule), this exercises the resolver directly (AE3).
+func TestGateway_LinkCredentialsRequiredEvenUnderSaslPlain(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
-		1)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
-	assert.Equal(t, ca, rest.CACert)
-}
-
-// TestGateway_RestCredentialsRequiredWhenNotSASLPlain — there is no principal
-// to derive a REST credential from when the Kafka leg isn't sasl_plain, so
-// omitting restCredentials must fail with a clear, field-naming error rather
-// than silently deriving nothing.
-func TestGateway_RestCredentialsRequiredWhenNotSASLPlain(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc,
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
-		1)
-	g := parseGateway(t, doc)
-
-	requireErrContains(t, g.Validate(), "spec.target.kafka.restCredentials")
-
-	_, err := g.RestCredentials()
+		"    linkCredentials: ./link-creds.yaml", "    linkCredentials: \"\"", 1)
+	// The default target Kafka leg (./dest-kafka-creds.yaml, unresolved here) is
+	// sasl_plain-shaped; RestCredentials() must still fail, since it has no
+	// derivation fallback to reach for.
+	_, err := parseGateway(t, doc).RestCredentials()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "restCredentials")
+	assert.Contains(t, err.Error(), "must not be empty")
 }
 
-// TestGateway_DerivedEqualsHandWritten is the §7.1 parity test: a derived block
-// must produce a byte-identical targets.Credentials to the equivalent explicit one.
-func TestGateway_DerivedEqualsHandWritten(t *testing.T) {
-	derived, err := parseGateway(t, validGatewayDoc).RestCredentials()
+// TestGateway_RestCredentialsResolveFromClusterLink — RestCredentials() reads
+// spec.clusterLink.linkCredentials, never anything under spec.target.kafka (AE2).
+func TestGateway_RestCredentialsResolveFromClusterLink(t *testing.T) {
+	// A distinctive link credential, and a target Kafka leg that is NOT
+	// api_key-shaped, so a value read from target.kafka could not masquerade as
+	// the REST leg.
+	doc := gatewayDocWithCreds(t,
+		"", // source default
+		"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA512\n",
+		"api_key: LINK_KEY\napi_secret: LINK_SECRET\n")
+	rest, err := parseGateway(t, doc).RestCredentials()
 	require.NoError(t, err)
-
-	explicitDoc := withRestCredentials(t, `      restCredentials:
-        api_key: CC_KEY
-        api_secret: CC_SECRET
-`)
-	explicit, err := parseGateway(t, explicitDoc).RestCredentials()
-	require.NoError(t, err)
-
-	assert.Equal(t, explicit, derived)
+	assert.Equal(t, "LINK_KEY", rest.APIKey)
+	assert.Equal(t, "LINK_SECRET", rest.APISecret)
 }
 
-// TestGateway_ExplicitRestCredentialsSurviveUntouched — full-or-nothing, never
-// per-field: a present block is used exactly as written even when it differs.
-func TestGateway_ExplicitRestCredentialsSurviveUntouched(t *testing.T) {
-	doc := withRestCredentials(t, `      restCredentials:
-        api_key: DIFFERENT_KEY
-        api_secret: DIFFERENT_SECRET
-`)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
+// TestGateway_AcceptsEveryRestCredentialsForm. targets.Credentials implements
+// Authenticator/HTTPClient for basic, bearer, mtls and api_key, so a CP
+// destination behind RBAC or mTLS can be reached via linkCredentials.
+func TestGateway_AcceptsEveryRestCredentialsForm(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
 
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
-	assert.Equal(t, "DIFFERENT_KEY", rest.APIKey)
-	assert.Equal(t, "DIFFERENT_SECRET", rest.APISecret)
-	assert.False(t, rest.InsecureSkipVerify)
+	for name, body := range map[string]string{
+		"api_key": "api_key: K\napi_secret: S\n",
+		"bearer":  "bearer:\n  token: TOK\n",
+		"basic":   "basic:\n  username: u\n  password: p\n",
+		"mtls":    "mtls:\n  client_cert: " + cert + "\n  client_key: " + key + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := parseGateway(t, gatewayDocWithCreds(t, "", "", body))
+			require.Empty(t, g.Validate())
+			_, err := g.RestCredentials()
+			require.NoError(t, err)
+		})
+	}
 }
 
-// TestGateway_ExplicitRestCredentialsAreNotPartiallyDerived — a present block
-// that omits insecure_skip_verify does NOT acquire it from the Kafka leg.
-// Partial derivation would mean a block that reads as complete but silently
-// acquires fields from elsewhere.
-func TestGateway_ExplicitRestCredentialsAreNotPartiallyDerived(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc,
-		"      credentials:\n        sasl_plain:",
-		"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
-	doc = strings.Replace(doc, "  clusterLink:\n", `      restCredentials:
-        api_key: K
-        api_secret: S
-`+"  clusterLink:\n", 1)
-	g := parseGateway(t, doc)
-	rest, err := g.RestCredentials()
-	require.NoError(t, err)
-	assert.False(t, rest.InsecureSkipVerify, "an explicit block is used exactly as written")
-}
-
-// TestGateway_RestCredentialsAcceptPrivateCA is §2.1(a): the one case
-// derivation cannot cover.
+// TestGateway_RestCredentialsAcceptPrivateCA — a linkCredentials api_key form
+// with a private CA resolves and carries the CA through.
 func TestGateway_RestCredentialsAcceptPrivateCA(t *testing.T) {
 	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
 	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
 
-	doc := withRestCredentials(t, `      restCredentials:
-        api_key: K
-        api_secret: S
-        ca_cert: `+ca+`
-`)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-	rest, err := g.RestCredentials()
+	doc := gatewayDocWithCreds(t, "", "", "api_key: K\napi_secret: S\nca_cert: "+ca+"\n")
+	rest, err := parseGateway(t, doc).RestCredentials()
 	require.NoError(t, err)
 	assert.Equal(t, ca, rest.CACert)
 }
@@ -432,11 +390,6 @@ func TestGateway_RestCredentialsAcceptPrivateCA(t *testing.T) {
 func TestGateway_RequiresClusterLinkName(t *testing.T) {
 	g := parseGateway(t, withField(t, "    name: msk-to-cc", "    name: \"\""))
 	requireErrContains(t, g.Validate(), "spec.clusterLink.name")
-}
-
-func TestGateway_PauseConsumerOffsetSyncDefaultsFalse(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	assert.False(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
 }
 
 func TestGateway_RequiresGatewayNamespace(t *testing.T) {
@@ -480,17 +433,17 @@ func TestGateway_RejectsRetiredKeys(t *testing.T) {
 // rejected. (>1 entry is future multi-route work, not this piece.)
 func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 	t.Run("omitted", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "", 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "", 1))
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 	t.Run("empty list", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "  topicGroup: []\n", 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    topicGroup: []\n", 1))
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 	t.Run("more than one", func(t *testing.T) {
-		second := "    - topics:\n        - t2.orders\n      route: second-route\n      targetStreamingDomain: confluent-cloud\n"
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, topicGroupBlock+second, 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		second := "      - topics:\n          - t2.orders\n"
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+second, 1))
+		requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 	})
 }
 
@@ -498,8 +451,8 @@ func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 // fail at fence time; catch it at parse.
 func TestGateway_RejectsBlankRoute(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"      route: migration-route\n", "      route: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+		"      name: migration-route\n", "      name: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.route.name")
 }
 
 // TestGateway_RejectsBlankTargetStreamingDomain — an empty target domain name
@@ -508,31 +461,31 @@ func TestGateway_RejectsBlankRoute(t *testing.T) {
 func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
 		"      targetStreamingDomain: confluent-cloud\n", "      targetStreamingDomain: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.route.targetStreamingDomain")
 }
 
 // TestGateway_RejectsEntryWithNeitherTopicsNorPatterns requires at least one of
 // topics/topicPatterns is required on every entry (both modes). Both absent is
 // a structural error, no mode knowledge needed.
 func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
-	block := "  topicGroup:\n    - route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - {}\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_TopicsPresentButEmptyIsRejected — an explicitly empty topics list
 // means the opposite of "all topics" and is rejected, matching the old
 // spec.topics semantics.
 func TestGateway_TopicsPresentButEmptyIsRejected(t *testing.T) {
-	block := "  topicGroup:\n    - topics: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topics: []\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicName(t *testing.T) {
-	block := "  topicGroup:\n    - topics:\n        - t1.order\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topics:\n          - t1.order\n          - '  '\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_TopicsOnlyValidates — topics set, topicPatterns omitted, is the
@@ -540,40 +493,40 @@ func TestGateway_RejectsBlankTopicName(t *testing.T) {
 func TestGateway_TopicsOnlyValidates(t *testing.T) {
 	g := parseGateway(t, validGatewayDoc)
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.Nil(t, g.Spec.TopicGroup[0].TopicPatterns)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.Nil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
 }
 
 // TestGateway_TopicPatternsOnlyValidates — topicPatterns set, topics omitted,
 // satisfies the at-least-one rule on its own.
 func TestGateway_TopicPatternsOnlyValidates(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
-	assert.Nil(t, g.Spec.TopicGroup[0].Topics)
+	require.NotNil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
+	assert.Nil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
 }
 
 // TestGateway_TopicPatternsPresentButEmptyIsRejected mirrors the topics case.
 func TestGateway_TopicPatternsPresentButEmptyIsRejected(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns: []\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n          - '  '\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_RejectsInvalidTopicPatternRegex — each pattern must compile
 // as an anchored RE2 full-match, a cheap guard mirroring the Gateway's
 // parse-time rejection. A bare `*` has nothing to repeat and fails to compile.
 func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - '*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - '*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestGateway_RejectsAnchorEscapingPattern rejects a
@@ -582,9 +535,9 @@ func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 // promotes a top-level alternation, escaping the intended full-match anchor. The
 // pattern is validated on its own terms first, so a malformed one is rejected.
 func TestGateway_RejectsAnchorEscapingPattern(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'foo)|(evil'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'foo)|(evil'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.dynamicMigration.topicGroup")
 }
 
 // TestAnchoredPattern_IsAFullMatch pins the anchoring: a compiled topicPattern
@@ -605,19 +558,19 @@ func TestAnchoredPattern_IsAFullMatch(t *testing.T) {
 // TestGateway_MatchAllTopicPatternCompiles — the "all topics" token is `.*`
 // which must compile cleanly (a bare `*` would not).
 func TestGateway_MatchAllTopicPatternCompiles(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - '.*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topicPatterns:\n          - '.*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
 }
 
 // TestGateway_BothTopicsAndPatternsIsAllowed — both set is a combined set,
 // not a structural error, on either mode.
 func TestGateway_BothTopicsAndPatternsIsAllowed(t *testing.T) {
-	block := "  topicGroup:\n    - topics:\n        - t1.order\n      topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topics:\n          - t1.order\n        topicPatterns:\n          - 'orders\\..*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	assert.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
+	assert.NotNil(t, g.Spec.DeclaredTopicGroup()[0].Topics)
+	assert.NotNil(t, g.Spec.DeclaredTopicGroup()[0].TopicPatterns)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a
@@ -636,104 +589,85 @@ func TestGateway_KubeconfigTildeIsExpanded(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
 }
 
-func TestGateway_KubeconfigEmptyStaysEmpty(t *testing.T) {
+// TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig: an unset
+// spec.gateway.kubeconfig outside a pod resolves to ~/.kube/config, for every
+// Kubernetes client kcp builds from the manifest.
+func TestGateway_KubeconfigUnsetOffAPodIsTheHomeKubeconfig(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "") // not in a pod
 	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
 	require.NoError(t, err)
-	assert.Empty(t, got)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".kube", "config"), got)
+}
+
+// TestGateway_KubeconfigUnsetInAPodIsInCluster: in a pod an unset
+// spec.gateway.kubeconfig resolves to the empty path, which client-go reads as
+// the pod's in-cluster service account — ~/.kube/config does not exist there.
+func TestGateway_KubeconfigUnsetInAPodIsInCluster(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
+	require.NoError(t, err)
+	assert.Empty(t, got, "an unset kubeconfig in a pod must resolve to in-cluster (empty path)")
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
-	doc := validGatewayDoc + `  defaultPolicies:
-    lagThreshold: 0
-    promoteBatchSize: 100
-    rolloutTimeout: 10m
-    detectUnroutedProducersDuration: 30s
-    consumerOffsetSyncDrainDuration: 15s
+	doc := gatewayDocBase + staticMigrationBlock + `    policies:
+      lagThreshold: 0
+      promoteBatchSize: 100
+      rolloutTimeout: 10m
+      detectUnroutedProducersDuration: 30s
+      consumerOffsetSyncDrainDuration: 15s
 `
 	g := parseGateway(t, doc)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, 100, g.Spec.DefaultPolicies.PromoteBatchSize)
-	assert.Equal(t, 10*time.Minute, g.Spec.DefaultPolicies.RolloutTimeout)
-	assert.Equal(t, 30*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
-}
-
-// TestGateway_PolicyOmittedIsZeroValued — every policy knob is optional and 0
-// carries meaning (0 = promote all at once / no deadline / check skipped).
-func TestGateway_PolicyOmittedIsZeroValued(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc)
-	require.Empty(t, g.Validate())
-	assert.Equal(t, DefaultPolicies{}, g.Spec.DefaultPolicies)
+	assert.Equal(t, 100, g.Spec.StaticMigration.Policies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Minute, g.Spec.StaticMigration.Policies.RolloutTimeout)
+	assert.Equal(t, 30*time.Second, g.Spec.StaticMigration.Policies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.StaticMigration.Policies.ConsumerOffsetSyncDrainDuration)
 }
 
 // TestGateway_RejectsSubTenSecondDetectDuration mirrors the retired flag's
 // documented minimum, which existed because a shorter window cannot observe a
 // producer's metadata refresh.
 func TestGateway_RejectsSubTenSecondDetectDuration(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n")
+	g := parseGateway(t, validGatewayDoc+"    policies:\n      detectUnroutedProducersDuration: 5s\n")
 	requireErrContains(t, g.Validate(), "detectUnroutedProducersDuration")
 }
 
 func TestGateway_AcceptsZeroDetectDurationMeaningSkipped(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 0s\n")
+	g := parseGateway(t, validGatewayDoc+"    policies:\n      detectUnroutedProducersDuration: 0s\n")
 	require.Empty(t, g.Validate())
 }
 
 func TestGateway_RejectsNegativePolicyNumbers(t *testing.T) {
-	for _, line := range []string{"    lagThreshold: -1", "    promoteBatchSize: -1"} {
+	for _, line := range []string{"      lagThreshold: -1", "      promoteBatchSize: -1"} {
 		t.Run(strings.TrimSpace(line), func(t *testing.T) {
-			g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n"+line+"\n")
+			g := parseGateway(t, validGatewayDoc+"    policies:\n"+line+"\n")
 			require.NotEmpty(t, g.Validate())
 		})
 	}
 }
 
-// --- interpolation on the manifest itself ---
+// --- no environment substitution (the interpolate mechanism is removed) ---
 
-func TestGateway_InterpolatesInlineCredentialsWhenOptedIn(t *testing.T) {
-	t.Setenv("MSK_USERNAME", "admin")
-	t.Setenv("MSK_PASSWORD", "s3cret")
+// TestGateway_RejectsTopLevelInterpolateKey — the retired top-level interpolate:
+// field is now an unknown field, so a stale manifest that still sets it fails the
+// strict decode rather than being silently ignored.
+func TestGateway_RejectsTopLevelInterpolateKey(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc, "kind: GatewayMigration",
 		"kind: GatewayMigration\ninterpolate: true", 1)
-	doc = strings.Replace(doc, "        username: admin\n        password: secret",
-		"        username: ${MSK_USERNAME}\n        password: ${MSK_PASSWORD}", 1)
-
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-	creds, errs := g.SourceCredentials()
-	require.Empty(t, errs)
-	assert.Equal(t, "admin", creds.SASLScram.Username)
-	assert.Equal(t, "s3cret", creds.SASLScram.Password)
-}
-
-func TestGateway_NoInterpolationByDefault(t *testing.T) {
-	t.Setenv("MSK_PASSWORD", "s3cret")
-	doc := strings.Replace(validGatewayDoc, "        password: secret",
-		"        password: ${MSK_PASSWORD}", 1)
-	g := parseGateway(t, doc)
-	creds, errs := g.SourceCredentials()
-	require.Empty(t, errs)
-	assert.Equal(t, "${MSK_PASSWORD}", creds.SASLScram.Password)
-}
-
-// TestGateway_InterpolatesTopLevelStringFields — the reflective pass reaches
-// ordinary manifest strings too, not only credentials.
-func TestGateway_InterpolatesTopLevelStringFields(t *testing.T) {
-	t.Setenv("LINK_NAME", "msk-to-cc-prod")
-	doc := strings.Replace(validGatewayDoc, "kind: GatewayMigration",
-		"kind: GatewayMigration\ninterpolate: true", 1)
-	doc = strings.Replace(doc, "    name: msk-to-cc", "    name: ${LINK_NAME}", 1)
-	g := parseGateway(t, doc)
-	assert.Equal(t, "msk-to-cc-prod", g.Spec.ClusterLink.Name)
-}
-
-func TestGateway_InterpolateUndefinedVariableIsParseError(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "kind: GatewayMigration",
-		"kind: GatewayMigration\ninterpolate: true", 1)
-	doc = strings.Replace(doc, "    name: msk-to-cc", "    name: ${KCP_UNSET_LINK}", 1)
 	_, err := ParseGatewayMigration([]byte(doc))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "KCP_UNSET_LINK")
+	require.Error(t, err, "interpolate: is no longer a valid manifest field")
+}
+
+// TestGateway_NoEnvSubstitution — a literal ${VAR}-shaped string in a manifest
+// field is kept verbatim; there is no environment-variable substitution.
+func TestGateway_NoEnvSubstitution(t *testing.T) {
+	t.Setenv("LINK_NAME", "msk-to-cc-prod")
+	g := parseGateway(t, strings.Replace(validGatewayDoc, "    name: msk-to-cc", "    name: ${LINK_NAME}", 1))
+	assert.Equal(t, "${LINK_NAME}", g.Spec.ClusterLink.Name)
 }
 
 // --- ParseKind dispatch ---
@@ -769,7 +703,7 @@ func TestParseKind_ErrorsOnMalformedYAML(t *testing.T) {
 }
 
 // TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage — pointing
-// `kcp migration init -f` at a kcp migrate manifest must say so, not produce a
+// `kcp migration cutover execute` at a kcp migration resources manifest must say so, not produce a
 // field-by-field unknown-key dump.
 func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing.T) {
 	_, err := ParseGatewayMigration(readFixture(t, "valid_cc.yaml"))
@@ -777,6 +711,9 @@ func TestParseGatewayMigration_RejectsMigrationKindWithAUsefulMessage(t *testing
 	msg := err.Error()
 	assert.Contains(t, msg, KindMigration)
 	assert.Contains(t, msg, KindGatewayMigration)
+	for _, cmd := range []string{"execute", "lag-check"} {
+		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
+	}
 	assert.NotContains(t, msg, "unknown field", "a wrong-kind file must not produce an unknown-field dump")
 }
 
@@ -785,29 +722,30 @@ func TestParse_RejectsGatewayMigrationKindWithAUsefulMessage(t *testing.T) {
 	require.Error(t, err)
 	msg := err.Error()
 	assert.Contains(t, msg, KindGatewayMigration)
+	for _, cmd := range []string{"execute", "lag-check"} {
+		assert.Contains(t, msg, cmd, "every command that reads a GatewayMigration file must be named")
+	}
 	assert.NotContains(t, msg, "unknown field")
 }
 
 // --- credential persistence boundary ---
 
-// TestGateway_ResolvedCredentialsAreNotOnTheManifestStruct is the highest-value
-// test in the change (§7.2): inlining puts credentials one struct-copy away
-// from being persisted into migration-state.json. Nothing that a caller may
-// serialise may hold a resolved secret.
+// TestGateway_ResolvedCredentialsAreNotOnTheManifestStruct is a high-value
+// regression guard (§7.2): a resolved secret must never be reachable from the
+// manifest struct a caller might persist into migration-state.json. Credentials
+// are file paths, so the struct only ever holds the path — this test fails if
+// CredentialsRef ever regains a field that caches resolved secret material.
 func TestGateway_ResolvedCredentialsAreNotOnTheManifestStruct(t *testing.T) {
-	t.Setenv("MSK_PASSWORD", "resolved-secret-value")
-	doc := strings.Replace(validGatewayDoc, "kind: GatewayMigration",
-		"kind: GatewayMigration\ninterpolate: true", 1)
-	doc = strings.Replace(doc, "        password: secret", "        password: ${MSK_PASSWORD}", 1)
-
+	doc := gatewayDocWithCreds(t,
+		"sasl_scram:\n  username: admin\n  password: resolved-secret-value\n  mechanism: SHA512\n", "", "")
 	g := parseGateway(t, doc)
 	creds, errs := g.SourceCredentials()
 	require.Empty(t, errs)
 	require.Equal(t, "resolved-secret-value", creds.SASLScram.Password, "resolution must have happened")
 
-	rendered, err := renderStruct(g)
+	rendered, err := yaml.Marshal(g)
 	require.NoError(t, err)
-	assert.NotContains(t, rendered, "resolved-secret-value",
+	assert.NotContains(t, string(rendered), "resolved-secret-value",
 		"a resolved secret must never be reachable from the manifest struct a caller might persist")
 }
 
@@ -821,46 +759,23 @@ func requireErrContains(t *testing.T, errs []error, want string) {
 	assert.Contains(t, strings.Join(joined, "; "), want)
 }
 
-// renderStruct serialises everything reachable from the manifest struct,
-// including the raw bytes of inline credential blocks, so the persistence-
-// boundary test can assert a resolved secret appears nowhere in it.
-func renderStruct(g *GatewayMigration) (string, error) {
-	b, err := yaml.Marshal(g)
-	if err != nil {
-		return "", err
-	}
-	var sb strings.Builder
-	sb.Write(b)
-	sb.Write(g.Spec.Source.Credentials.Inline)
-	if k := g.Spec.Target.Kafka; k != nil {
-		sb.Write(k.Credentials.Inline)
-		if k.RestCredentials != nil {
-			sb.Write(k.RestCredentials.Inline)
-		}
-	}
-	return sb.String(), nil
-}
-
-// TestGateway_OmittedScramMechanismIsRejected — the gateway kind now follows
-// the same rule as kcp migrate: an omitted mechanism is rejected rather than
+// TestGateway_OmittedScramMechanismIsRejected — the gateway kind follows the
+// same rule as kcp migration resources: an omitted mechanism is rejected rather than
 // silently defaulted. Inferring SHA512 hid a wrong guess (a SHA256 source)
 // behind an opaque auth failure, so the config file must state the mechanism.
 //
-// The rejection surfaces on SourceCredentials(), not Validate(): the latter
-// only peeks and does not run the full credentials rules.
+// The rejection surfaces on SourceCredentials() (which reads the file), not
+// Validate(), which does no I/O.
 func TestGateway_OmittedScramMechanismIsRejected(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512\n", "", 1)
-	g := parseGateway(t, doc)
-	require.Empty(t, g.Validate())
-
-	_, errs := g.SourceCredentials()
+	doc := gatewayDocWithCreds(t, "sasl_scram:\n  username: admin\n  password: secret\n", "", "")
+	_, errs := parseGateway(t, doc).SourceCredentials()
 	require.NotEmpty(t, errs, "an omitted mechanism must be rejected")
 }
 
 // TestGateway_ExplicitScramMechanismIsAccepted — an explicit mechanism resolves
 // through unchanged.
 func TestGateway_ExplicitScramMechanismIsAccepted(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA256", 1)
+	doc := gatewayDocWithCreds(t, "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA256\n", "", "")
 	creds, errs := parseGateway(t, doc).SourceCredentials()
 	require.Empty(t, errs)
 	assert.Equal(t, "SHA256", creds.SASLScram.Mechanism)
@@ -869,22 +784,7 @@ func TestGateway_ExplicitScramMechanismIsAccepted(t *testing.T) {
 // TestGateway_InvalidScramMechanismIsStillRejected — an unsupported mechanism
 // is rejected; this is one of execute's three ported preRunE errors.
 func TestGateway_InvalidScramMechanismIsStillRejected(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
-	_, errs := parseGateway(t, doc).SourceCredentials()
-	require.NotEmpty(t, errs)
-}
-
-// TestGateway_OmittedScramMechanismInReferencedFileIsRejectedToo — the inline
-// and referenced-file spellings must not diverge: a referenced creds file that
-// omits the mechanism is rejected exactly as an inline block is.
-func TestGateway_OmittedScramMechanismInReferencedFileIsRejectedToo(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "creds.yaml")
-	require.NoError(t, os.WriteFile(p,
-		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
-
-	doc := strings.Replace(validGatewayDoc,
-		"    credentials:\n      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-		"    credentials: "+p, 1)
+	doc := gatewayDocWithCreds(t, "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA1\n", "", "")
 	_, errs := parseGateway(t, doc).SourceCredentials()
 	require.NotEmpty(t, errs)
 }
@@ -899,61 +799,15 @@ func TestMigrateKind_RequiresAnExplicitMechanism(t *testing.T) {
 	require.NotEmpty(t, errs)
 }
 
-// TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets: an unrelated typo in
-// the OUTER manifest still renders an excerpt that can span an inline
-// credentials block a few lines away.
-func TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "  clusterLink:", "  clusterLinkTYPO:", 1)
-	doc = strings.Replace(doc, "          password: CC_SECRET", "          password: DEST_SECRET_VALUE", 1)
-
-	_, err := ParseGatewayMigration([]byte(doc))
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "DEST_SECRET_VALUE",
-		"the manifest is secret-bearing when credentials are inline")
-}
-
-// --- security review F3: a restCredentials form kcp cannot honour must be refused ---
-
-// TestGateway_AcceptsEveryRestCredentialsForm. targets.Credentials already
-// implements Authenticator/HTTPClient for basic, bearer and mtls — B.4 stops
-// refusing them so a CP destination behind RBAC or mTLS can be reached.
-func TestGateway_AcceptsEveryRestCredentialsForm(t *testing.T) {
-	certDir := t.TempDir()
-	cert := filepath.Join(certDir, "client.pem")
-	key := filepath.Join(certDir, "client-key.pem")
-	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
-	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
-
-	for name, block := range map[string]string{
-		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n",
-		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n",
-		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: " + cert + "\n          client_key: " + key + "\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			g := parseGateway(t, withRestCredentials(t, block))
-			assert.Empty(t, g.Validate())
-
-			_, err := g.RestCredentials()
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestGateway_AcceptsAPIKeyRestCredentials(t *testing.T) {
-	g := parseGateway(t, withRestCredentials(t,
-		"      restCredentials:\n        api_key: K\n        api_secret: S\n"))
-	require.Empty(t, g.Validate())
-}
-
 // --- security review F2/F4: TLS trust is per-leg, not one global boolean ---
 
-// TestGateway_InsecureSkipIsPerLeg. The manifest spells
-// insecure_skip_tls_verify as a per-block sibling, so relaxing it for a
-// self-signed SOURCE must not disable verification on the destination legs,
-// which carry the destination API key.
+// TestGateway_InsecureSkipIsPerLeg. Each leg is its own credentials file, so
+// relaxing verification for a self-signed SOURCE must not disable it on the
+// destination legs, which carry the destination API key.
 func TestGateway_InsecureSkipIsPerLeg(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "    credentials:\n      sasl_scram:",
-		"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+	doc := gatewayDocWithCreds(t,
+		"insecure_skip_tls_verify: true\nsasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n",
+		"", "")
 	g := parseGateway(t, doc)
 
 	src, errs := g.SourceCredentials()
@@ -1031,36 +885,4 @@ func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
-}
-
-// TestParseKind_SyntaxErrorDoesNotEchoSecrets. ParseKind decodes the ENTIRE
-// secret-bearing manifest and runs before parseStrict, so a YAML *syntax* error
-// never reaches the strict decode at all — it fails at the envelope first. An
-// indentation slip is the single most common YAML mistake, and its excerpt
-// window is wider than a strict error's.
-func TestParseKind_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "        password: secret", "        password: SRC_PASSWORD_LEAKME", 1)
-	doc = strings.Replace(doc, "        mechanism: SHA512", "         mechanism: SHA512", 1) // one-space slip
-
-	_, err := ParseKind([]byte(doc))
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "SRC_PASSWORD_LEAKME")
-}
-
-func TestParseGatewayMigration_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, "        password: secret", "        password: SRC_PASSWORD_LEAKME", 1)
-	doc = strings.Replace(doc, "        mechanism: SHA512", "         mechanism: SHA512", 1)
-
-	_, err := ParseGatewayMigration([]byte(doc))
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "SRC_PASSWORD_LEAKME")
-}
-
-// TestParse_SyntaxErrorDoesNotEchoSecrets — kcp migrate's Parse inherits the
-// same envelope path.
-func TestParse_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
-	doc := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nspec:\n  source:\n    credentials:\n      sasl_scram:\n        password: MIGRATE_SECRET_LEAKME\n         mechanism: SHA512\n"
-	_, err := Parse([]byte(doc))
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "MIGRATE_SECRET_LEAKME")
 }

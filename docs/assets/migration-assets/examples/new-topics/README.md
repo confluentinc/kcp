@@ -6,7 +6,7 @@ count and explicitly-set (non-default) configs. Topics are created at the
 target's default replication factor (Confluent Cloud uses RF=3). It needs **no
 cluster link**, so there is no `spec.clusterLink` block.
 
-Apply is additive: it only creates absent topics. An existing target topic whose
+`create` is additive: it only creates absent topics. An existing target topic whose
 partition count differs from the source is reported as **drift** and left
 untouched; it is never altered or deleted.
 
@@ -23,9 +23,9 @@ REST credential works for the target. See the [credential catalog](../../credent
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml   # structural check
-kcp migrate apply -f migration.yaml --dry-run   # preview, change nothing
-kcp migrate apply -f migration.yaml             # create the topics
+kcp migration resources validate -f migration.yaml   # structural check
+kcp migration resources create -f migration.yaml --dry-run   # preview, change nothing
+kcp migration resources create -f migration.yaml             # create the topics
 ```
 
 > Credential paths here point at the shared catalog (`../../credentials/…`) to

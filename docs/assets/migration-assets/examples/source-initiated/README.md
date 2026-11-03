@@ -1,6 +1,6 @@
 # Example: mirror topics (source-initiated link)
 
-Same `mode: mirror` outcome as the [destination-initiated example](../mirror-topics/),
+Same `mode: mirror` outcome as the [destination-initiated example](../mirror-topics/README.md),
 but the link is **source-initiated** (`mode: source`). Use this when the
 destination **cannot reach the source inbound** — e.g. a private or firewalled
 Confluent Platform cluster. The source initiates the link **outbound** to the
@@ -29,7 +29,7 @@ See the full [credential catalog](../../credentials/README.md) for every auth me
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml
-kcp migrate apply -f migration.yaml --dry-run
-kcp migrate apply -f migration.yaml
+kcp migration resources validate -f migration.yaml
+kcp migration resources create -f migration.yaml --dry-run
+kcp migration resources create -f migration.yaml
 ```

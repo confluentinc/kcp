@@ -1,0 +1,386 @@
+package reconcile
+
+import (
+	"fmt"
+	"slices"
+
+	"github.com/goccy/go-yaml"
+)
+
+// RulesTree is the route's `rules` subtree held as a fidelity-preserving tree
+// (map[string]any / []any). Lists keep their order (first-match-wins is
+// load-bearing) and every field passes through untouched on serialize.
+type RulesTree struct {
+	root map[string]any
+}
+
+func ParseRules(raw map[string]any) (*RulesTree, error) {
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	return &RulesTree{root: raw}, nil
+}
+
+func mapField(m map[string]any, k string) (map[string]any, bool) {
+	v, ok := m[k].(map[string]any)
+	return v, ok
+}
+
+func sliceField(m map[string]any, k string) ([]any, bool) {
+	v, ok := m[k].([]any)
+	return v, ok
+}
+
+func stringField(m map[string]any, k string) string {
+	s, _ := m[k].(string)
+	return s
+}
+
+func stringList(m map[string]any, k string) []string {
+	raw, ok := m[k].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (rt *RulesTree) routing() map[string]any {
+	r, _ := mapField(rt.root, "routing")
+	return r
+}
+
+// Project builds the typed read-only view the core reasons over.
+func (rt *RulesTree) Project() RouteView {
+	v := RouteView{}
+	routing := rt.routing()
+	if routing == nil {
+		return v
+	}
+	v.DefaultDomain = stringField(routing, "default")
+	conds, _ := sliceField(routing, "conditions")
+	for _, raw := range conds {
+		c, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		v.Conditions = append(v.Conditions, Condition{
+			Topics:        stringList(c, "topics"),
+			TopicPatterns: stringList(c, "topicPatterns"),
+			Domain:        stringField(c, "streamingDomain"),
+		})
+	}
+	return v
+}
+
+func (rt *RulesTree) CoordinationGroup() string {
+	routing := rt.routing()
+	if routing == nil {
+		return ""
+	}
+	coord, ok := mapField(routing, "coordination")
+	if !ok {
+		return ""
+	}
+	return stringField(coord, "group")
+}
+
+// Clone deep-copies the tree (via a marshal/unmarshal round trip) so fence and
+// switchover mutations are independent. Returns an error rather than a
+// silently corrupt copy if the tree contains something that cannot be
+// marshaled — callers must not proceed to mutate a clone built from a
+// discarded error, since a nil/empty root would panic on the first write.
+func (rt *RulesTree) Clone() (*RulesTree, error) {
+	b, err := yaml.Marshal(rt.root)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling rules tree to clone: %w", err)
+	}
+	var cp map[string]any
+	if err := yaml.Unmarshal(b, &cp); err != nil {
+		return nil, fmt.Errorf("unmarshaling cloned rules tree: %w", err)
+	}
+	return &RulesTree{root: cp}, nil
+}
+
+func (rt *RulesTree) ensureRouting() map[string]any {
+	// Replace routing when it is absent OR present but not a map[string]any (a
+	// scalar/list/map[any]any from hand-written YAML): mapField returns ok=false
+	// for both, and returning a nil map here would panic the callers' writes.
+	r, ok := mapField(rt.root, "routing")
+	if !ok {
+		r = map[string]any{}
+		rt.root["routing"] = r
+	}
+	return r
+}
+
+func asAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// PrependFence adds a batch fence entry (all traffic, exact names) at the head
+// of rules.fencing, preserving the operator's existing entries. blocked: true
+// is set directly on the entry — the CFK Gateway CRD requires
+// rules.fencing[].blocked, and a batch fence entry always means "block these
+// topics," so every consumer applying FenceYAML/SwitchoverYAML to a live
+// Gateway CR can do so unmodified.
+//
+// Idempotent: any pre-existing entry kcp itself would have authored for this
+// exact topic set (see isKcpFenceFor) is dropped before the fresh one is
+// prepended, so reconciling an already-fenced route on a resume does not
+// accumulate duplicate fences. Operator entries never match and are preserved
+// in order.
+func (rt *RulesTree) PrependFence(topics []string) {
+	entry := map[string]any{"topics": asAnySlice(topics), "blocked": true}
+	existing, _ := sliceField(rt.root, "fencing")
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			continue // drop our own prior identical fence to prevent doubling
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = append([]any{entry}, kept...)
+}
+
+// DropFence removes kcp's own fence entry for exactly this topic set, leaving
+// operator-authored fences untouched. The switchover artifact uses it so the
+// switched state is unfenced for our topics: on a resume the base rules already
+// carry kcp's fence (from the interrupted run), which must not persist onto the
+// switched route. A no-op when kcp's fence is absent (e.g. a first run built
+// from a pristine base).
+func (rt *RulesTree) DropFence(topics []string) {
+	existing, ok := sliceField(rt.root, "fencing")
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = kept
+}
+
+// HasFence reports whether the rules carry kcp's own fence for exactly this
+// topic set (see isKcpFenceFor).
+func (rt *RulesTree) HasFence(topics []string) bool {
+	existing, _ := sliceField(rt.root, "fencing")
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			return true
+		}
+	}
+	return false
+}
+
+// convertFencePattern is the one topic pattern kcp's conversion fence carries:
+// every topic on the route.
+const convertFencePattern = ".*"
+
+// PrependConvertFence adds kcp's whole-route conversion fence —
+// {topicPatterns: ['.*'], blocked: true} — at the head of rules.fencing,
+// keeping every other entry in order. Idempotent like PrependFence: a convert
+// fence already present (an interrupted run's) is dropped before the fresh one
+// is prepended.
+func (rt *RulesTree) PrependConvertFence() {
+	entry := map[string]any{"topicPatterns": []any{convertFencePattern}, "blocked": true}
+	existing, _ := sliceField(rt.root, "fencing")
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = append([]any{entry}, kept...)
+}
+
+// DropConvertFence removes kcp's conversion fence, leaving every other entry.
+// A no-op when it is absent.
+func (rt *RulesTree) DropConvertFence() {
+	existing, ok := sliceField(rt.root, "fencing")
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = kept
+}
+
+// HasConvertFence reports whether the rules carry kcp's conversion fence.
+func (rt *RulesTree) HasConvertFence() bool {
+	existing, _ := sliceField(rt.root, "fencing")
+	for _, e := range existing {
+		if isKcpConvertFence(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// ForeignFences returns the rules.fencing entries that are not kcp's
+// conversion fence (empty entries ignored): anything an operator, or a
+// different kcp run, wrote. A conversion drops the whole rules tree at switch,
+// so it refuses rather than silently discarding these.
+func (rt *RulesTree) ForeignFences() []any {
+	existing, _ := sliceField(rt.root, "fencing")
+	var out []any
+	for _, e := range existing {
+		if isKcpConvertFence(e) || isEmptyValue(e) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// isKcpConvertFence reports whether e is exactly the fence PrependConvertFence
+// writes: only topicPatterns and blocked, blocked true, and the single '.*'
+// pattern.
+func isKcpConvertFence(e any) bool {
+	m, ok := e.(map[string]any)
+	if !ok {
+		return false
+	}
+	if !hasOnlyKeys(m, "topicPatterns", "blocked") {
+		return false
+	}
+	if b, _ := m["blocked"].(bool); !b {
+		return false
+	}
+	return sameStringSet(stringList(m, "topicPatterns"), []string{convertFencePattern})
+}
+
+// isKcpFenceFor reports whether e is a fence entry kcp itself would author for
+// exactly this topic set: only the keys kcp writes (topics and blocked),
+// blocked==true, and the same topics as a set. Any other entry is an
+// operator's — including one over the same topics that also sets trafficType
+// or topicPatterns — so PrependFence and DropFence leave it in place.
+//
+// The exact match is kcp's only notion of fence ownership on a shared route,
+// so an interrupted batch must be resumed with the same resolved topic set: a
+// run with a different set treats the earlier run's fence as
+// operator-authored, and it survives the switchover.
+func isKcpFenceFor(e any, topics []string) bool {
+	m, ok := e.(map[string]any)
+	if !ok {
+		return false
+	}
+	if !hasOnlyKeys(m, "topics", "blocked") {
+		return false
+	}
+	if b, _ := m["blocked"].(bool); !b {
+		return false
+	}
+	return sameStringSet(stringList(m, "topics"), topics)
+}
+
+// hasOnlyKeys reports whether every key of m outside allowed is empty: null,
+// "", or an empty list or map. A live CR can read an unset key back empty, so
+// an empty key does not make an entry someone else's.
+func hasOnlyKeys(m map[string]any, allowed ...string) bool {
+	for k, v := range m {
+		if !slices.Contains(allowed, k) && !isEmptyValue(v) {
+			return false
+		}
+	}
+	return true
+}
+
+func isEmptyValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
+}
+
+// sameStringSet reports whether a and b contain the same elements irrespective
+// of order (topic lists carry no duplicates, so multiplicity is not compared).
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		seen[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// PrependCondition adds an exact-name routing condition at the head of
+// rules.routing.conditions, preserving the operator's existing conditions.
+//
+// Idempotent: a pre-existing condition kcp itself would author for this exact
+// topic set AND target domain (see isKcpConditionFor) is dropped before the
+// fresh one is prepended, so a resume does not accumulate duplicate switchover
+// conditions. Any other condition is an operator's and is preserved.
+func (rt *RulesTree) PrependCondition(topics []string, domain string) {
+	routing := rt.ensureRouting()
+	entry := map[string]any{"topics": asAnySlice(topics), "streamingDomain": domain}
+	existing, _ := sliceField(routing, "conditions")
+	kept := make([]any, 0, len(existing))
+	for _, c := range existing {
+		if isKcpConditionFor(c, topics, domain) {
+			continue // drop our own prior identical condition to prevent doubling
+		}
+		kept = append(kept, c)
+	}
+	routing["conditions"] = append([]any{entry}, kept...)
+}
+
+// isKcpConditionFor reports whether c is a routing condition kcp itself would
+// author for exactly this topic set and target domain: only the keys kcp writes
+// (topics and streamingDomain), the same domain, and the same topics as a set.
+// A condition to a different domain, over a different topic set, or that also
+// sets topicPatterns is an operator's.
+func isKcpConditionFor(c any, topics []string, domain string) bool {
+	m, ok := c.(map[string]any)
+	if !ok {
+		return false
+	}
+	if !hasOnlyKeys(m, "topics", "streamingDomain") {
+		return false
+	}
+	if stringField(m, "streamingDomain") != domain {
+		return false
+	}
+	return sameStringSet(stringList(m, "topics"), topics)
+}
+
+// Serialize renders the artifact as the whole hot-reloadable `rules` subtree,
+// wrapped under a top-level `rules:` key — the KCP-patched subtree the gateway
+// consumes (see Gateway Dynamic Routing Configuration). The caller applies it as
+// a whole-subtree replacement of the route's `rules`, which is also what reverts
+// the batch fence at switchover.
+func (rt *RulesTree) Serialize() ([]byte, error) {
+	return yaml.Marshal(map[string]any{"rules": rt.root})
+}

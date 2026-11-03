@@ -23,11 +23,11 @@ This shows three different credential files in one migration. See the full
 ## Run
 
 ```bash
-kcp migrate validate -f migration.yaml
-kcp migrate apply -f migration.yaml --dry-run   # preview the link + mirror plan
-kcp migrate apply -f migration.yaml             # create the link + mirror topics
+kcp migration resources validate -f migration.yaml
+kcp migration resources create -f migration.yaml --dry-run   # preview the link + mirror plan
+kcp migration resources create -f migration.yaml             # create the link + mirror topics
 ```
 
 An existing mirror is reported `Present`; a name already taken on the destination
 (by a plain topic, or a mirror on another link) is reported as **drift** and
-skipped — apply never blindly recreates it.
+skipped — `create` never blindly recreates it.

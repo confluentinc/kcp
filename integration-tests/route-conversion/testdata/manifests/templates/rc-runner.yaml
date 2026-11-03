@@ -1,0 +1,149 @@
+# Runner pod for the route-conversion suite, and the RBAC kcp and the harness
+# need. setup.sh renders __GATEWAY_IP__ (the gateway Service's ClusterIP) and
+# applies it once the gateway and the two truststore secrets exist.
+#
+# The test binary runs IN the cluster: reconcile reads the live gateway CR with
+# in-cluster config, and kcp and the harness verify a hot reload on each gateway
+# pod through the API server (pods/proxy). The image is cp-server, not alpine,
+# because the continuous-client tests run kafka-verifiable-producer and
+# kafka-verifiable-consumer as subprocesses of the test; the Go binaries are
+# static and run on it as they are.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kcp-runner
+  namespace: confluent
+---
+# CRD reads are cluster-scoped: kcp's capability detection reads the Gateway CRD
+# to tell a configId-capable operator from an old one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kcp-runner-crd-reader
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kcp-runner-crd-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kcp-runner-crd-reader
+subjects:
+- kind: ServiceAccount
+  name: kcp-runner
+  namespace: confluent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kcp-runner
+  namespace: confluent
+rules:
+- apiGroups: ["platform.confluent.io"]
+  resources: ["gateways"]
+  # patch covers the JSON patches kcp and the harness write.
+  verbs: ["get", "list", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  # How kcp and the harness reach each gateway pod's /config endpoint through
+  # the API server; get on pods alone does not cover this subresource.
+  resources: ["pods/proxy"]
+  verbs: ["get"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kcp-runner
+  namespace: confluent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kcp-runner
+subjects:
+- kind: ServiceAccount
+  name: kcp-runner
+  namespace: confluent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rc-runner
+  namespace: confluent
+  labels:
+    app: rc-runner
+spec:
+  serviceAccountName: kcp-runner
+  # Clients reach the gateway by the route's SNI names; they resolve to the
+  # gateway Service.
+  hostAliases:
+  - ip: "__GATEWAY_IP__"
+    hostnames:
+    - bootstrap.gw.local
+    - broker0.gw.local
+    - broker1.gw.local
+    - broker2.gw.local
+    - broker3.gw.local
+    - broker4.gw.local
+    - broker5.gw.local
+    - broker6.gw.local
+    - broker7.gw.local
+    - broker8.gw.local
+    - broker9.gw.local
+  containers:
+  - name: runner
+    image: docker.io/confluentinc/cp-server:8.1.2
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "infinity"]
+    workingDir: /workspace
+    # The destination SASL credential reaches the runner ONLY here, from the
+    # tbm-rest-credentials Secret — never on a kubectl exec argv (apiserver
+    # audit-log leak).
+    env:
+    - name: KCP_RC_DEST_SASL_USER
+      valueFrom:
+        secretKeyRef:
+          name: tbm-rest-credentials
+          key: username
+    - name: KCP_RC_DEST_SASL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: tbm-rest-credentials
+          key: password
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    - name: gw-trust
+      mountPath: /etc/rc-gw-trust
+      readOnly: true
+    - name: dest-tls
+      mountPath: /etc/rc-dest-tls
+      readOnly: true
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "3Gi"
+  volumes:
+  - name: workspace
+    emptyDir: {}
+  # The truststore for the gateway's self-signed client-tls certificate.
+  - name: gw-trust
+    secret:
+      secretName: rc-gw-truststore
+  # The destination's CA truststore, for a client that talks to the
+  # destination directly (the split-brain refusal test).
+  - name: dest-tls
+    secret:
+      secretName: destination-kafka-tls

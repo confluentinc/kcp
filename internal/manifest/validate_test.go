@@ -305,21 +305,15 @@ func TestValidate_CCTargetRequiresRestEndpoint(t *testing.T) {
 	require.True(t, errorContains(m.Validate(), "spec.target.kafka.restEndpoint"))
 }
 
-func TestValidate_TargetKafkaCredentialsRejectedForMigrationKind(t *testing.T) {
-	// A baseline kind: Migration manifest sets no kafka credentials and is valid.
-	require.False(t, errorContains(validCC().Validate(), "spec.target.kafka.credentials"))
+func TestValidate_TargetKafkaClusterCredentialsRejectedForMigrationKind(t *testing.T) {
+	// A baseline kind: Migration manifest sets no kafka cluster credentials and is valid.
+	require.False(t, errorContains(validCC().Validate(), "spec.target.kafka.clusterCredentials"))
 
-	// spec.target.kafka.credentials belongs to kind: GatewayMigration; kcp migrate
-	// ignores it, so it must be rejected rather than silently dropped at apply.
+	// spec.target.kafka.clusterCredentials belongs to kind: GatewayMigration; kcp
+	// migrate ignores it, so it must be rejected rather than silently dropped at apply.
 	m := validCC()
-	m.Spec.Target.Kafka.Credentials = NewCredentialsPath("./dest-creds.yaml")
-	require.True(t, errorContains(m.Validate(), "spec.target.kafka.credentials"))
-
-	// Same for restCredentials.
-	m = validCC()
-	rest := NewCredentialsPath("./dest-rest-creds.yaml")
-	m.Spec.Target.Kafka.RestCredentials = &rest
-	require.True(t, errorContains(m.Validate(), "spec.target.kafka.restCredentials"))
+	m.Spec.Target.Kafka.ClusterCredentials = NewCredentialsPath("./dest-creds.yaml")
+	require.True(t, errorContains(m.Validate(), "spec.target.kafka.clusterCredentials"))
 }
 
 func TestValidate_CPTargetRejectsCluster(t *testing.T) {

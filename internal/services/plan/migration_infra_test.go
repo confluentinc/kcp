@@ -1,0 +1,193 @@
+package plan
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/confluentinc/kcp/internal/services/plan/engine"
+	"github.com/confluentinc/kcp/internal/services/report"
+)
+
+// enterprisePlan is a settled Enterprise plan result (the common target tier), for
+// exercising the migration-infra wrapper. The topology matrix itself is tested in
+// the engine (engine.MigrationInfraDecision).
+func enterprisePlan() engine.PlanResult {
+	return engine.PlanResult{ClusterType: engine.ClusterTypeResult{Value: engine.TierEnterprise, Tier: engine.TierEnterprise}}
+}
+
+func TestMigrationInfraFor(t *testing.T) {
+	scram := engine.Profile{SourceAuthTypes: []string{engineAuthSCRAM}}
+
+	// Delegates to the engine decision: private SCRAM + Enterprise -> type 2.
+	if got := migrationInfraFor(scram, enterprisePlan()).Type; got != 2 {
+		t.Errorf("private scram enterprise: type=%d, want 2", got)
+	}
+
+	// A withheld plan never auto-maps a type.
+	if got := migrationInfraFor(scram, engine.PlanResult{Withheld: true}).Type; got != 0 {
+		t.Errorf("withheld plan: type=%d, want 0", got)
+	}
+
+	// A Replicator migration (Standard/Basic target: Cluster Linking unavailable)
+	// builds no cluster link, so there is no migration-infra type.
+	repl := enterprisePlan()
+	repl.Switchover = engine.SwitchoverResult{Value: "Confluent Replicator", Replicator: true}
+	if got := migrationInfraFor(scram, repl); got.Type != 0 {
+		t.Errorf("replicator migration: type=%d, want 0 (no cluster link)", got.Type)
+	}
+	// Start-fresh needs no migration infrastructure either.
+	fresh := enterprisePlan()
+	fresh.Switchover = engine.SwitchoverResult{Value: "Start fresh", StartFresh: true}
+	if got := migrationInfraFor(scram, fresh); got.Type != 0 {
+		t.Errorf("start-fresh: type=%d, want 0", got.Type)
+	}
+
+	// Gov cloud flips cc-type (and the engine routes it to a specialist).
+	gov := migrationInfraFor(engine.Profile{SourceAuthTypes: []string{engineAuthSCRAM}, TargetIsGovCloud: "Yes"}, enterprisePlan())
+	if gov.CCType != "government" {
+		t.Errorf("gov cc-type = %q, want government", gov.CCType)
+	}
+
+	// The command carries the type, source, and cluster id.
+	cp := ClusterPlan{ClusterID: "orders", Arn: "arn:aws:kafka:...:cluster/orders/abc",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	cmd := migrationInfraCommand(cp, "kcp-state.json")
+	for _, want := range []string{"--type 2", "--source-type msk", "arn:aws:kafka", "--cc-type commercial", "--target-environment-id"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command missing %q:\n%s", want, cmd)
+		}
+	}
+
+	// Scanless run (no state file): the source is only inferred, so --source-type is a
+	// placeholder rather than an asserted "msk".
+	scanless := migrationInfraCommand(cp, "")
+	if !strings.Contains(scanless, "--source-type <msk|apache-kafka>") {
+		t.Errorf("scanless command should carry a --source-type placeholder:\n%s", scanless)
+	}
+	if strings.Contains(scanless, "--source-type msk") {
+		t.Errorf("scanless command must not assert --source-type msk:\n%s", scanless)
+	}
+}
+
+// An Apache Kafka (OSK/CP) source must print every flag the CLI marks required for
+// --source-type apache-kafka (unlike MSK, which back-fills them from scanned state):
+// type 2 needs --vpc-id/--region/--subnet-id/--security-group-id, and a non-SCRAM
+// source needs --source-sasl-scram-mechanism. MSK must NOT carry any of them.
+func TestMigrationInfraCommand_OSKFlags(t *testing.T) {
+	scram := engine.Profile{SourceAuthTypes: []string{engineAuthSCRAM}}
+
+	// OSK type 2 with a non-SCRAM (mTLS) source: all AWS networking flags + the SCRAM
+	// mechanism placeholder (the recommended new listener supplies it).
+	oskMTLS := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthMTLS},
+		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	cmd := migrationInfraCommand(oskMTLS, "kcp-state.json")
+	for _, want := range []string{"--source-type apache-kafka", "--vpc-id", "--region",
+		"--subnet-id", "--security-group-id", "--source-sasl-scram-mechanism"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("OSK type-2 (mTLS) command missing %q:\n%s", want, cmd)
+		}
+	}
+
+	// OSK type 2 with a SCRAM source: mechanism comes from state, so no placeholder.
+	oskSCRAM := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthSCRAM}, scanScramMechanism: "SCRAM-SHA-512",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	if c := migrationInfraCommand(oskSCRAM, "kcp-state.json"); strings.Contains(c, "--source-sasl-scram-mechanism") {
+		t.Errorf("OSK SCRAM source must not carry --source-sasl-scram-mechanism:\n%s", c)
+	}
+
+	// SCRAM declared by an answer (the scan recorded no mechanism): the state file
+	// can't supply it, so the command names it.
+	oskDeclared := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		effectiveSourceAuths: []string{SourceAuthSCRAM},
+		MigrationInfra:       migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	if c := migrationInfraCommand(oskDeclared, "kcp-state.json"); !strings.Contains(c, "--source-sasl-scram-mechanism <SCRAM-SHA-256|SCRAM-SHA-512>") {
+		t.Errorf("OSK SCRAM source with no scanned mechanism must name it:\n%s", c)
+	}
+
+	// MSK derives all of these from state; the command must carry none of them.
+	msk := ClusterPlan{ClusterID: "orders", Arn: "arn:aws:kafka:...:cluster/orders/abc",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	mskCmd := migrationInfraCommand(msk, "kcp-state.json")
+	for _, unwanted := range []string{"--vpc-id", "--region", "--subnet-id", "--security-group-id", "--source-sasl-scram-mechanism"} {
+		if strings.Contains(mskCmd, unwanted) {
+			t.Errorf("MSK command must not carry %q (derived from state):\n%s", unwanted, mskCmd)
+		}
+	}
+}
+
+// migrate-topics: mirror mode must carry --cluster-link-name and --mode mirror;
+// new mode must carry --mode new and must NOT carry --cluster-link-name (the CLI
+// rejects it). Both need the required cluster/target flags.
+func TestMigrateTopicsCommand(t *testing.T) {
+	cp := ClusterPlan{
+		ClusterID:      "orders",
+		Arn:            "arn:aws:kafka:us-east-1:1:cluster/orders/abc",
+		MigrationInfra: MigrationInfra{CCType: "commercial"},
+	}
+	required := []string{"--source-type msk", "--state-file kcp-state.json", "arn:aws:kafka", "--cc-type commercial", "--target-cluster-id", "--target-rest-endpoint"}
+
+	mirror := migrateTopicsCommand(cp, migrateTopicsModeMirror, "kcp-state.json")
+	for _, want := range append([]string{"--mode mirror", "--cluster-link-name"}, required...) {
+		if !strings.Contains(mirror, want) {
+			t.Errorf("mirror command missing %q:\n%s", want, mirror)
+		}
+	}
+
+	fresh := migrateTopicsCommand(cp, migrateTopicsModeNew, "kcp-state.json")
+	if !strings.Contains(fresh, "--mode new") {
+		t.Errorf("new command missing --mode new:\n%s", fresh)
+	}
+	if strings.Contains(fresh, "--cluster-link-name") {
+		t.Errorf("new command must not carry --cluster-link-name (CLI rejects it):\n%s", fresh)
+	}
+	for _, want := range required {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("new command missing %q:\n%s", want, fresh)
+		}
+	}
+}
+
+// A jump-cluster type (5, IAM on Serverless) must print every flag the CLI marks
+// required, or the command the plan tells the user to run fails PreRunE.
+func TestMigrationInfraCommand_JumpClusterFlags(t *testing.T) {
+	cp := ClusterPlan{
+		ClusterID:    "orders",
+		Arn:          "arn:aws:kafka:us-east-1:1:cluster/orders/abc",
+		IsServerless: true,
+		Plan:         enterprisePlan(),
+		MigrationInfra: MigrationInfra{
+			Type: 5, CCType: "commercial", JumpCluster: true,
+			Label: "Private source with jump cluster (IAM)",
+		},
+	}
+	cmd := migrationInfraCommand(cp, "kcp-state.json")
+	for _, want := range []string{
+		"--type 5",
+		"--target-environment-id",
+		"--target-bootstrap-endpoint",
+		"--existing-private-link-vpce-id",
+		"--jump-cluster-broker-subnet-cidr",
+		"--jump-cluster-setup-host-subnet-cidr",
+		"--jump-cluster-iam-auth-role-name",
+		"--jump-cluster-instance-type",  // Serverless-only
+		"--jump-cluster-broker-storage", // Serverless-only
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("type-5 serverless command missing %q:\n%s", want, cmd)
+		}
+	}
+}
+
+// Only a recorded SCRAM mechanism counts: another SASL mechanism (PLAIN) leaves the
+// command to name one.
+func TestScannedScramMechanism(t *testing.T) {
+	for in, want := range map[string]string{"SHA512": "SCRAM-SHA-512", "SCRAM-SHA-256": "SCRAM-SHA-256", "PLAIN": "", "": ""} {
+		var c report.ProcessedCluster
+		c.KafkaAdminClientInformation.SaslMechanism = in
+		if got := scannedScramMechanism(c); got != want {
+			t.Errorf("scannedScramMechanism(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -396,7 +396,7 @@ const linkNotPropagated = "does not have a link named"
 // to the destination and checks the INBOUND link is present; cp-server propagates
 // that link asynchronously, so the OUTBOUND create can momentarily 400. We retry
 // that specific transient (source side only) with backoff until it propagates, so
-// a single `kcp migrate apply` is reliable rather than requiring a manual re-run.
+// a single `kcp migration resources create` is reliable rather than requiring a manual re-run.
 // All other errors — and the destination-side create — fail immediately.
 func (r *Reconciler) createClusterLink(ctx context.Context, tgt target, req svclink.CreateClusterLinkRequest, onSource bool) error {
 	deadline := time.Now().Add(linkPropagationRetryTimeout)

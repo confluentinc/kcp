@@ -1,0 +1,37 @@
+# Gateway CR fixture for the UNCHANGED resume verdict.
+#
+# Identical to gateway.yaml except the routing already sends resume.switchonly
+# to the TARGET domain (cc). Paired with the durable STOPPED mirror seeded by
+# setup.sh, that makes resume.switchonly satisfy UNCHANGED:
+#   Stopped && routesToTarget && onTarget  (a completed, already-switched topic).
+# The engine must classify it Unchanged and plan zero work (nil Artifacts) — the
+# no-op that a re-run of a finished migration relies on.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-e2e
+spec:
+  routes:
+    - name: migration-route
+      mode: dynamic
+      streamingDomains:
+        - name: msk
+          bootstrapServers: localhost:19092
+        - name: cc
+          bootstrapServers: localhost:29092
+      rules:
+        # operator's own fences — must survive untouched
+        fencing:
+          - trafficType: TRANSACTION
+          - topics: [ops-audit]
+        routing:
+          coordination:
+            group: msk
+          conditions:
+            # operator's own namespace rule
+            - topicPatterns: ["team-a.*"]
+              streamingDomain: msk
+            # resume.switchonly is already switched to the target (cc)
+            - topicPatterns: ["resume.switchonly"]
+              streamingDomain: cc
+          default: msk

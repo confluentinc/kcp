@@ -1,5 +1,5 @@
 // Package iampolicy renders AWS IAM policy documentation for commands that
-// have multiple variants (e.g. create-asset target-infra, migration-infra).
+// have multiple variants (e.g. `kcp iac target-infra`, `migration-infra`).
 // It is consumed by the AnnotationKey annotation on each command and injected
 // into generated markdown by cmd/gen-docs.
 package iampolicy

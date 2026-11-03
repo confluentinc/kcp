@@ -1,0 +1,37 @@
+# Permutation fixture: a static route whose singular streamingDomain binding
+# is ALREADY the target domain (cc) — the switch this fixture would drive
+# would be a no-op. The "route is not already bound to the target domain"
+# precondition must fail and refuse.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static-already-bound
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29092
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: cc
+        bootstrapServerId: CC
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth
+      rules:
+        routing:
+          coordination:
+            group: cc
+          default: cc

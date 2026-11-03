@@ -15,7 +15,7 @@ import (
 //   - https://docs.aws.amazon.com/msk/latest/developerguide/kafka-actions.html
 //   - https://docs.aws.amazon.com/service-authorization/latest/reference/list_apachekafkaapisforamazonmskclusters.html
 //
-// types.AclMap is a SHIPPED dependency of `create-asset migrate-acls` — this
+// types.AclMap is a SHIPPED dependency of `iac acls` — this
 // test intentionally does NOT modify it. It exists to (a) pin AclMap's
 // current behaviour so future edits are caught, and (b) surface any
 // semantic mismatch against the authoritative table for a human to triage.
@@ -53,7 +53,7 @@ func TestAclMap_MatchesAuthoritativeTable(t *testing.T) {
 		// this to "IDEMPOTENT_WRITE CLUSTER" — same Cluster-scoped shape as the
 		// four entries above, all of which have RequiresPattern: false (a
 		// cluster is a single fixed-name resource; AclMap's own generator,
-		// cmd/create_asset/migrate_acls/iam_acls/iam_acls_generator.go, always
+		// cmd/iac/acls/iam_acls/iam_acls_generator.go, always
 		// resolves Cluster to the literal resource name "kafka-cluster"
 		// regardless of this flag, so behaviour is unaffected either way).
 		// AclMap's actual value is RequiresPattern: true, which breaks that

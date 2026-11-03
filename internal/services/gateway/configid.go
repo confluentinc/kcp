@@ -5,9 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
-
-	"github.com/goccy/go-yaml"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const (
@@ -55,93 +52,6 @@ func validateConfigID(id string) error {
 	if !configIDPattern.MatchString(id) {
 		return fmt.Errorf("gateway configId does not match the CRD-enforced pattern %s", configIDPattern)
 	}
-
-	return nil
-}
-
-// prepareGatewayApply parses a Gateway CR and returns the object to hand to
-// server-side apply: retargeted at the migration's gateway, and carrying
-// configID at spec.configId when one is supplied.
-//
-// An empty configID leaves spec.configId untouched, which is what the
-// VerifyRollout path needs — on a pre-hot-reload cluster the field is not in
-// the CRD, and server-side apply rejects an undeclared field outright.
-//
-// Kept as a pure function so the whole of the object preparation is unit
-// testable without a cluster or a fake client.
-func prepareGatewayApply(yamlData []byte, namespace, gatewayName, configID string) (*unstructured.Unstructured, error) {
-	if configID != "" {
-		if err := validateConfigID(configID); err != nil {
-			return nil, err
-		}
-	}
-
-	var obj unstructured.Unstructured
-	if err := yaml.Unmarshal(yamlData, &obj.Object); err != nil {
-		return nil, fmt.Errorf("failed to parse gateway YAML: %w", err)
-	}
-
-	// Ensure metadata matches the expected resource.
-	obj.SetName(gatewayName)
-	obj.SetNamespace(namespace)
-
-	if configID != "" {
-		if err := injectConfigID(&obj, configID); err != nil {
-			return nil, err
-		}
-	}
-
-	return &obj, nil
-}
-
-// prepareConfigIDOnlyApply builds the minimal Gateway object for the
-// hot-reload capability check: apiVersion, kind, name, namespace and
-// spec.configId — nothing else. Applying this instead of the live spec is
-// what lets the check run under its own field manager without ever taking
-// ownership of a field the fence, switchover or unfence CR would need to
-// prune (see hotReloadCheckFieldManager).
-func prepareConfigIDOnlyApply(namespace, gatewayName, configID string) (*unstructured.Unstructured, error) {
-	if err := validateConfigID(configID); err != nil {
-		return nil, err
-	}
-
-	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": GatewayGroup + "/" + GatewayVersion,
-		"kind":       GatewayKind,
-		"metadata": map[string]any{
-			"name":      gatewayName,
-			"namespace": namespace,
-		},
-		"spec": map[string]any{
-			gatewayConfigIDField: configID,
-		},
-	}}, nil
-}
-
-// injectConfigID sets spec.configId on obj, creating the spec block if needed.
-//
-// The map is written directly rather than via unstructured.SetNestedField:
-// goccy decodes YAML integers as uint64, which is not one of the types
-// runtime.DeepCopyJSON accepts, so the deep copy inside SetNestedField would
-// panic on any CR carrying a number (replicas, ports, nodeIdRanges...). The
-// apply path itself is unaffected — the dynamic client JSON-encodes the object
-// instead of deep-copying it.
-func injectConfigID(obj *unstructured.Unstructured, configID string) error {
-	if obj.Object == nil {
-		obj.Object = map[string]any{}
-	}
-
-	existing, found := obj.Object["spec"]
-	if !found || existing == nil {
-		obj.Object["spec"] = map[string]any{gatewayConfigIDField: configID}
-		return nil
-	}
-
-	spec, ok := existing.(map[string]any)
-	if !ok {
-		return fmt.Errorf("gateway CR spec is %T, expected a mapping", existing)
-	}
-	spec[gatewayConfigIDField] = configID
 
 	return nil
 }

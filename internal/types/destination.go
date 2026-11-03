@@ -8,7 +8,7 @@ import (
 // ----- Confluent Cloud destination type -----
 
 // DestinationType identifies which Confluent Cloud variant a migration targets.
-// It gates linking-based create-asset paths that are unavailable on Confluent
+// It gates linking-based `kcp iac` paths that are unavailable on Confluent
 // Cloud for Government (Cluster Linking, Schema Linking).
 type DestinationType string
 

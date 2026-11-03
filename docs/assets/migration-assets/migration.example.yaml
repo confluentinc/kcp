@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
 # migration.yaml — describes the desired end state of a migration (MSK → Confluent Cloud).
-# Validate with: kcp migrate validate -f migration.yaml
-# Preview with:  kcp migrate apply -f migration.yaml --dry-run   (changes nothing)
-# Apply with:    kcp migrate apply -f migration.yaml
+# Validate with: kcp migration resources validate -f migration.yaml
+# Preview with:  kcp migration resources create -f migration.yaml --dry-run   (changes nothing)
+# Create with:   kcp migration resources create -f migration.yaml
 apiVersion: kcp.confluent.io/v1alpha1
 kind: Migration
 metadata:
