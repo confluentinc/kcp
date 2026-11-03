@@ -67,7 +67,7 @@ func TestDetection_OnMidBatchResume_WatchesPromotedTopics(t *testing.T) {
 		require.Truef(t, e.isSwitchedToTarget(t, cr, tp), "%s must be switched to the target domain", tp)
 		require.Falsef(t, e.isFenced(t, cr, tp), "%s must not be fenced after completion", tp)
 	}
-	t.Logf("\n✅ RESULT: the resume caught a producer writing straight to promoted topics (%d records), kept the fence, and a re-run completed.", sent)
+	t.Logf("\nRESULT: the resume caught a producer writing straight to promoted topics (%d records), kept the fence, and a re-run completed.", sent)
 }
 
 // waitForPromoted waits until exactly n of topics are STOPPED (a promote

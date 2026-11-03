@@ -75,12 +75,12 @@ var canonicalWorkflow = []WorkflowStep{
 // pass-through paths, so PauseOffsetSync and RestoreOffsetSync each own their
 // banner-or-skip-line output.
 var stepHeaders = map[string]string{
-	EventInitialize:  "🔍 Initializing migration...",
-	EventWaitForLags: "⏳ Checking replication lags...",
-	EventFence:       "🚧 Fencing gateway...",
-	EventVerifyFence: "🔍 Checking for unrouted producers...",
-	EventPromote:     "📤 Promoting mirror topics...",
-	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
+	EventInitialize:  "Initializing migration...",
+	EventWaitForLags: "Checking replication lags...",
+	EventFence:       "Fencing gateway...",
+	EventVerifyFence: "Checking for unrouted producers...",
+	EventPromote:     "Promoting mirror topics...",
+	EventSwitch:      "Switching gateway to Confluent Cloud...",
 }
 
 // ExecutionParams holds the per-run runtime parameters a transition may need.
@@ -255,13 +255,13 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		// the partial world an abrupt exit right after this step's mutation
 		// would leave. No-op in production.
 		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
-			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			slog.Warn("test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
 			cancel()
 			return ctx.Err()
 		}
 	}
 
-	o.reporter.complete("✅ Migration complete!")
+	o.reporter.complete("Migration complete!")
 	return nil
 }
 
@@ -346,7 +346,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		tracing.End(abortSpan, err)
 		if err != nil {
 			rollbackErr = err
-			slog.Error("❌ failed to roll back to initialized", "error", err)
+			slog.Error("failed to roll back to initialized", "error", err)
 			return stepFailure
 		}
 	} else {
@@ -361,7 +361,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		}
 		if err != nil {
 			rollbackErr = err
-			slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+			slog.Error("failed to unfence gateway during rollback", "error", err)
 			return stepFailure
 		}
 		o.reporter.Success("Gateway unfenced — traffic restored to pre-migration state")
@@ -432,7 +432,7 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
-		slog.Error("❌ failed to restore the gateway after an unconfirmed fence", "error", err)
+		slog.Error("failed to restore the gateway after an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
 	}
 
@@ -542,7 +542,7 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 	// success line. abort_fence fires for any halting pre-promote error, so the
 	// reason can't be inferred from the source state here.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		slog.Error("failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}

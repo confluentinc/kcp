@@ -50,7 +50,7 @@ func TestRefusal_UnpromotedLinkTopic(t *testing.T) {
 
 	out, err := e.execute(t, "kcp-run-1-refused.log", mani, nil, nil)
 	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds, topic+" cannot be converted", "ACTIVE, not promoted")
-	t.Logf("\n✅ RESULT: an ACTIVE link mirror refused the conversion and nothing changed.")
+	t.Logf("\nRESULT: an ACTIVE link mirror refused the conversion and nothing changed.")
 }
 
 // A group with a commit on a topic that is not on the link refuses the
@@ -67,7 +67,7 @@ func TestRefusal_GroupCommitsOutsideTheLink(t *testing.T) {
 	out, err := e.execute(t, "kcp-run-1-refused.log", mani, nil, nil)
 	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds,
 		"outside-orphan ("+e.orphanTopic+")", "have committed offsets on topics that are not on the cluster link")
-	t.Logf("\n✅ RESULT: a group committing outside the link refused the conversion and nothing changed.")
+	t.Logf("\nRESULT: a group committing outside the link refused the conversion and nothing changed.")
 }
 
 // An in-scope source group with live members on the destination refuses the
@@ -104,7 +104,7 @@ func refuseGroupActiveOnTheDestination(t *testing.T, name, protocol string) {
 	// seeds[0] is checked for the absence of kcp's sync.
 	e.requireRefusedUnchanged(t, ctx, out, err, routeBefore, seeds[:1],
 		group+" (Stable) exist on the source and already have members on the destination")
-	t.Logf("\n✅ RESULT: an in-scope %s group live on the destination refused the conversion and nothing changed.", protocol)
+	t.Logf("\nRESULT: an in-scope %s group live on the destination refused the conversion and nothing changed.", protocol)
 }
 
 // A destination member that joins an in-scope group during verify_fence's
@@ -150,7 +150,7 @@ func TestRefusal_GroupActiveOnTheDestinationDuringTheWindow(t *testing.T) {
 	e.requirePostTBM(t, ctx, "the fence must come off after the refusal")
 	// As above, the destination member commits its own offsets for seeds[1].
 	e.requireNoDestOffsets(t, seeds[:1], "a refused run")
-	t.Logf("\n✅ RESULT: a destination member joining during the window was caught, the fence came off, and nothing was synced.")
+	t.Logf("\nRESULT: a destination member joining during the window was caught, the fence came off, and nothing was synced.")
 }
 
 // A client committing straight to the source while the fence is up is caught
@@ -203,7 +203,7 @@ func TestRefusal_DirectCommitDuringTheWindow(t *testing.T) {
 	require.Contains(t, out, gatewayUnfenced)
 	e.requirePostTBM(t, ctx, "the fence must come off after the direct-commit failure")
 	e.requireNoDestOffsets(t, seeds, "a failed run")
-	t.Logf("\n✅ RESULT: a direct commit during the window failed the run, the fence came off, and nothing was synced.")
+	t.Logf("\nRESULT: a direct commit during the window failed the run, the fence came off, and nothing was synced.")
 }
 
 // A refusal while kcp's fence is already up (left by an interrupted run) warns
@@ -232,5 +232,5 @@ func TestRefusal_WithKcpFenceAlreadyUp(t *testing.T) {
 	requireCompleted(t, out, err, id)
 	e.requireConvertedRoute(t, ctx, security)
 	e.requireSynced(t, seeds)
-	t.Logf("\n✅ RESULT: the refusal kept kcp's fence and warned; with the cause removed, a re-run converted the route.")
+	t.Logf("\nRESULT: the refusal kept kcp's fence and warned; with the cause removed, a re-run converted the route.")
 }

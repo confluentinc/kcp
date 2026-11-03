@@ -145,7 +145,7 @@ func (c *ConsumerGroupClient) listGroupsPerBroker() []brokerListing {
 		}
 		resp, err := b.ListGroups(&sarama.ListGroupsRequest{Version: 5})
 		if IsUnsupportedListGroupsVersion(err) {
-			slog.Debug("⏭️ broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
+			slog.Debug("broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
 			resp, err = b.ListGroups(&sarama.ListGroupsRequest{Version: 4})
 		}
 		out = append(out, brokerListing{broker: b, addr: b.Addr(), resp: resp, err: err})
@@ -177,7 +177,7 @@ func mergeListings(results []brokerListing, strict bool) ([]types.ConsumerGroupL
 			if strict {
 				return nil, fmt.Errorf("listing consumer groups on broker %s: %w", r.addr, err)
 			}
-			slog.Warn("⚠️ failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", r.addr, "error", err)
+			slog.Warn("failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", r.addr, "error", err)
 			lastErr = err
 			continue
 		}
@@ -373,7 +373,7 @@ func (c *ConsumerGroupClient) resetCoordinator(group string) {
 		_ = b.Close()
 	}
 	if err := c.client.RefreshCoordinator(group); err != nil {
-		slog.Warn("⚠️ could not look up the coordinator again before retrying", "group", group, "error", err)
+		slog.Warn("could not look up the coordinator again before retrying", "group", group, "error", err)
 	}
 }
 

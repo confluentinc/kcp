@@ -209,7 +209,7 @@ func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, nam
 		return "", fmt.Errorf("failed to marshal gateway JSON patch: %w", err)
 	}
 
-	slog.Debug("🔍 patching gateway CR (JSON patch)", "namespace", namespace, "gateway", gatewayName, "route", rp.RouteName, "field", rp.Field, "configId", configID)
+	slog.Debug("patching gateway CR (JSON patch)", "namespace", namespace, "gateway", gatewayName, "route", rp.RouteName, "field", rp.Field, "configId", configID)
 	start := time.Now()
 	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
@@ -252,7 +252,7 @@ func patchGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, 
 		return "", fmt.Errorf("failed to marshal gateway configId patch: %w", err)
 	}
 
-	slog.Debug("🔍 patching gateway configId (JSON patch)", "namespace", namespace, "gateway", gatewayName, "configId", configID)
+	slog.Debug("patching gateway configId (JSON patch)", "namespace", namespace, "gateway", gatewayName, "configId", configID)
 	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
 	if err != nil {
@@ -444,13 +444,13 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		case rejection != nil && firstFailureAt.IsZero():
 			firstFailureAt = time.Now()
 			pending = rejection
-			slog.Warn("⚠️ gateway condition reports a failure; waiting to see whether the operator recovers",
+			slog.Warn("gateway condition reports a failure; waiting to see whether the operator recovers",
 				"gateway", gatewayName, "reason", rejection.Reason, "message", rejection.Message,
 				"settleWindow", gatewayRejectionSettleWindow)
 		case rejection != nil:
 			pending = rejection
 			if time.Since(firstFailureAt) >= gatewayRejectionSettleWindow {
-				slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
+				slog.Error("gateway spec rejected by the operator", "gateway", gatewayName,
 					"reason", rejection.Reason, "message", rejection.Message,
 					"generation", generation, "observedGeneration", observed)
 				return rejection

@@ -155,7 +155,7 @@ func (t *Service) getMany(ctx context.Context, topics []string) (map[string]map[
 				_ = b.Close() // a close's own error is not a result; the next lookup reopens the broker
 			}
 			if err := t.client.RefreshMetadata(refresh...); err != nil {
-				slog.Warn("⚠️ could not refresh metadata before retrying the offset fetch", "cluster", t.cluster, "error", err)
+				slog.Warn("could not refresh metadata before retrying the offset fetch", "cluster", t.cluster, "error", err)
 			}
 		}),
 	)

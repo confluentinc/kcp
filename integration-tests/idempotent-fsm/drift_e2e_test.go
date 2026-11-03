@@ -104,7 +104,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 
 	acks, firstErr = produceThroughGateway(t, e.gatewayBootstrap(), probe, 5)
 	require.Zerof(t, acks, "the pods must still serve the fence even though the CR says switched")
-	t.Logf("\n🔍 DATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
+	t.Logf("\nDATA PLANE ▸ 0/5 produce attempts acked through %s; first error: %v", e.gatewayBootstrap(), firstErr)
 
 	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.Error(t, err3, "the dry-run must refuse: the pods may not serve the CR")
@@ -122,7 +122,7 @@ func TestDrift_StalledSwitchRerunIsRefused(t *testing.T) {
 	require.Zerof(t, acks, "clients are still fenced: the refusal changes nothing (first error: %v)", firstErr)
 	e.snapshot(t, ctx, "after-rerun", "AFTER the refused re-run (CR switched; pods still fenced; nothing written)", topics)
 
-	t.Logf("\n✅ RESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
+	t.Logf("\nRESULT: drift refused — the CR is switched at generation %d, the operator last observed generation %d, "+
 		"and the dry-run and the re-run both refused without writing to the gateway.", gen1, obs1)
 }
 
@@ -161,7 +161,7 @@ func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	require.NoError(t, err3, "once the gateway settles the dry-run must pass")
 	require.NotContains(t, out3, "is still terminating", "no gateway pod may be terminating once settled")
 
-	t.Logf("\n✅ RESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
+	t.Logf("\nRESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
 }
 
 // TestDrift_GatewayPodRestartRerunProceeds pins that a restarted hot-reload
@@ -184,7 +184,7 @@ func TestDrift_GatewayPodRestartRerunProceeds(t *testing.T) {
 
 		out, err := e.runKCP(t, "kcp-run-dry-run-after-restart.log", "", "migration", "cutover", "execute", "--migration-yaml", e.manifestPath("drift-pod-restart.yaml"), "--dry-run")
 		require.NoError(t, err, "the dry-run must pass: the restarted pods report the CR's configId")
-		require.Contains(t, out, "✓ gateway pods serve the CR", "the pod check must pass, not be skipped")
+		require.Contains(t, out, "[OK] gateway pods serve the CR", "the pod check must pass, not be skipped")
 		require.NotContains(t, out, "nothing to compare", "no restarted pod may report a missing configId")
 	})
 }
@@ -233,7 +233,7 @@ func (e *env) restartGatewayPods(t *testing.T, ctx context.Context) {
 		require.Falsef(t, time.Now().After(deadline), "the gateway pods must be replaced within 3m (last seen: %s)", last)
 		time.Sleep(2 * time.Second)
 	}
-	t.Logf("\n🔁 GATEWAY PODS RESTARTED ▸ %d pod(s) deleted and replaced; every replacement Ready", want)
+	t.Logf("\nGATEWAY PODS RESTARTED ▸ %d pod(s) deleted and replaced; every replacement Ready", want)
 }
 
 // The CFK operator, as e2e_install_operator installs it
@@ -305,13 +305,13 @@ func (e *env) stopOperator(t *testing.T, ctx context.Context) {
 		}, 3*time.Minute, 2*time.Second, "the operator must come back Ready")
 		require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 3*time.Minute),
 			"the restored operator must accept the gateway CR")
-		t.Logf("\n🧹 CFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
+		t.Logf("\nCFK OPERATOR RESTORED ▸ %s scaled back to 1 and the gateway CR accepted", operatorDeployment)
 	})
 	require.Eventually(t, func() bool {
 		pods, err := e.operatorPods(ctx, cs)
 		return err == nil && len(pods) == 0
 	}, 2*time.Minute, 2*time.Second, "every operator pod must be gone")
-	t.Logf("\n✍️  CFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
+	t.Logf("\nCFK OPERATOR STOPPED ▸ %s scaled to 0, no operator pod left: gateway CR changes no longer reach the pods", operatorDeployment)
 }
 
 // crGenerations reads the live gateway CR's metadata.generation and

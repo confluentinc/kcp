@@ -37,11 +37,11 @@ var canonicalWorkflow = []WorkflowStep{
 
 // stepHeaders is the banner Execute prints as it starts each step.
 var stepHeaders = map[string]string{
-	EventInitialize:  "🔍 Initializing route conversion...",
-	EventFence:       "🔍 Fencing route...",
-	EventVerifyFence: "🔍 Verifying fence...",
-	EventSyncOffsets: "🔍 Syncing committed offsets...",
-	EventSwitch:      "🔍 Switching route to static...",
+	EventInitialize:  "Initializing route conversion...",
+	EventFence:       "Fencing route...",
+	EventVerifyFence: "Verifying fence...",
+	EventSyncOffsets: "Syncing committed offsets...",
+	EventSwitch:      "Switching route to static...",
 }
 
 // ExecutionParams is passed to fsm.Event and read back by the callbacks.
@@ -144,13 +144,13 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 		o.reporter.stepDone()
 
 		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
-			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			slog.Warn("test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
 			cancel()
 			return ctx.Err()
 		}
 	}
 
-	o.reporter.complete("✅ Route conversion complete!")
+	o.reporter.complete("Route conversion complete!")
 	return nil
 }
 

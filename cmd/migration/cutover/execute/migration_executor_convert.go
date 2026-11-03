@@ -66,6 +66,6 @@ func runConvertBranch(
 		return fmt.Errorf("failed to execute route conversion: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✅ Route conversion completed: %s\n", config.MigrationId)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Route conversion completed: %s\n", config.MigrationId)
 	return nil
 }

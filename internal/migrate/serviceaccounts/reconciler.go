@@ -128,7 +128,7 @@ func (r *Reconciler) mappingTargetMissing(ctx context.Context, id string) (bool,
 		}
 		return !exists, nil
 	default:
-		slog.Warn("⚠️ mapping target existence not verified; using it as-is (Confluent Cloud identity pools cannot be looked up by id)", "id", id)
+		slog.Warn("mapping target existence not verified; using it as-is (Confluent Cloud identity pools cannot be looked up by id)", "id", id)
 		return false, nil
 	}
 }
@@ -235,7 +235,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		}
 
 		if p == "User:*" || p == "User:ANONYMOUS" {
-			slog.Warn("⚠️ source principal has no Confluent Cloud equivalent; its ACLs will be skipped", "principal", p)
+			slog.Warn("source principal has no Confluent Cloud equivalent; its ACLs will be skipped", "principal", p)
 			continue
 		}
 

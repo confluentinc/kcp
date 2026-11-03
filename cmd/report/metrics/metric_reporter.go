@@ -47,7 +47,7 @@ func NewMetricReporter(reportService ReportService, opts MetricReporterOpts) *Me
 }
 
 func (r *MetricReporter) Run() error {
-	fmt.Printf("🔍 Processing clusters: %v (from %s to %s)\n", r.clusterIds, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+	fmt.Printf("Processing clusters: %v (from %s to %s)\n", r.clusterIds, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
 	processedClusterMetrics := []types.ProcessedClusterMetrics{}

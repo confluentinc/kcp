@@ -47,7 +47,7 @@ func runUnfencingRollback(t *testing.T, name, step, reason string) {
 	requireCompleted(t, out, err, id)
 	e.requireConvertedRoute(t, ctx, security)
 	e.requireSynced(t, seeds)
-	t.Logf("\n✅ RESULT: %s failed, the fence came off, and a plain re-run converted the route.", step)
+	t.Logf("\nRESULT: %s failed, the fence came off, and a plain re-run converted the route.", step)
 }
 
 func TestRollback_FailAtVerifyFence(t *testing.T) {
@@ -80,7 +80,7 @@ func TestRollback_FailAtSwitchKeepsFence(t *testing.T) {
 	requireCompleted(t, out, err, id)
 	e.requireConvertedRoute(t, ctx, security)
 	e.requireSynced(t, seeds)
-	t.Logf("\n✅ RESULT: the failed switch kept the fence and a plain re-run finished the conversion.")
+	t.Logf("\nRESULT: the failed switch kept the fence and a plain re-run finished the conversion.")
 }
 
 // Run 1 is interrupted after the fence; run 2 fails at its own fence step,
@@ -110,5 +110,5 @@ func TestRollback_FailAtFenceOnRerunRemovesEarlierFence(t *testing.T) {
 	requireCompleted(t, out, err, id)
 	e.requireConvertedRoute(t, ctx, security)
 	e.requireSynced(t, seeds)
-	t.Logf("\n✅ RESULT: a re-run failing at its fence step removed the earlier run's fence, and run 3 converted the route.")
+	t.Logf("\nRESULT: a re-run failing at its fence step removed the earlier run's fence, and run 3 converted the route.")
 }

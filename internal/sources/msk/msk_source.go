@@ -125,7 +125,7 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 	var groupScanner client.ConsumerGroupScanner
 	groupClient, err := createConsumerGroupClient(authType, brokerAddresses, region, clusterAuth)
 	if err != nil {
-		slog.Warn("⚠️ failed to create consumer group client; skipping consumer group discovery", "clusterArn", clusterAuth.Arn, "error", err)
+		slog.Warn("failed to create consumer group client; skipping consumer group discovery", "clusterArn", clusterAuth.Arn, "error", err)
 	} else {
 		groupScanner = groupClient
 		defer func() { _ = groupClient.Close() }()

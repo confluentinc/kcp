@@ -73,7 +73,7 @@ func TestVerifyFence_RefusesOnTheGatheredFactsBeforeTheFirstSnapshot(t *testing.
 
 			require.ErrorIs(t, err, ErrVerifyRefused)
 			assert.Contains(t, err.Error(), tc.check+": ", "the error carries the failed check and its detail")
-			assert.Contains(t, w.rendered.String(), "✗ "+tc.check, "rendered as --dry-run renders it")
+			assert.Contains(t, w.rendered.String(), "[FAIL] "+tc.check, "rendered as --dry-run renders it")
 			assert.Zero(t, w.src.lists, "no snapshot is taken on listings a refused check says may be partial")
 			assert.Nil(t, a.handoff)
 		})
@@ -163,7 +163,7 @@ func TestVerifyFence_SplitBrainSeenOnlyAfterTheWaitRefuses(t *testing.T) {
 	assert.Equal(t, []time.Duration{10 * time.Second}, w.waits, "seen only after the wait")
 	out := w.rendered.String()
 	assert.Equal(t, 1, strings.Count(out, reconcile.GroupSplitBrainCheckName), "the fresh result replaces the first check's line:\n%s", out)
-	assert.Contains(t, out, "✗ "+reconcile.GroupSplitBrainCheckName)
+	assert.Contains(t, out, "[FAIL] "+reconcile.GroupSplitBrainCheckName)
 	assert.Contains(t, out, "orders-app (Stable)")
 	assert.Nil(t, a.handoff)
 }
@@ -266,7 +266,7 @@ func TestVerifyFence_RefusesWhenTheRouteNoLongerCarriesKcpsFence(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrVerifyRefused)
 	assert.Contains(t, err.Error(), convertFenceCheckName+": the route no longer carries kcp's conversion fence — it was removed or reverted after the fence step")
-	assert.Contains(t, w.rendered.String(), "✗ "+convertFenceCheckName)
+	assert.Contains(t, w.rendered.String(), "[FAIL] "+convertFenceCheckName)
 	assert.Zero(t, w.src.lists, "refused before any snapshot")
 	assert.Nil(t, a.handoff)
 }
@@ -281,7 +281,7 @@ func TestVerifyFence_RefusesAShareGroupNameClash(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrVerifyRefused)
 	assert.Contains(t, err.Error(), reconcile.GroupShareClashCheckName+": ")
-	assert.Contains(t, w.rendered.String(), "✗ "+reconcile.GroupShareClashCheckName)
+	assert.Contains(t, w.rendered.String(), "[FAIL] "+reconcile.GroupShareClashCheckName)
 	assert.Empty(t, w.waits, "refused before the detection window")
 	assert.Nil(t, a.handoff)
 }

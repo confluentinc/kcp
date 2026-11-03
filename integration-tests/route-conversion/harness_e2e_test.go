@@ -18,7 +18,7 @@ import (
 // internal/services/migration/d2s, internal/services/migplan).
 const (
 	killPointLine      = "kill-point"
-	completedLine      = "✅ Route conversion completed: %s"
+	completedLine      = "Route conversion completed: %s"
 	nothingToDoSuffix  = " — nothing to do: the route is already static on its target domain"
 	watchingLine       = "Watching committed offsets for %s"
 	commitsCleanLine   = "no direct commits detected"
@@ -42,7 +42,7 @@ func (e *env) reset(t *testing.T, ctx context.Context) {
 	e.requirePostTBM(t, ctx, "after the reset")
 	e.deleteAllGroups(t, sourceCluster)
 	e.deleteAllGroups(t, destCluster)
-	t.Logf("♻️  RESET ▸ link fully promoted, route %q post-TBM over %v, no consumer groups", e.route, e.linkTopics(t, ctx))
+	t.Logf("RESET ▸ link fully promoted, route %q post-TBM over %v, no consumer groups", e.route, e.linkTopics(t, ctx))
 }
 
 // requireCompleted asserts a run converted the route in this run (not a

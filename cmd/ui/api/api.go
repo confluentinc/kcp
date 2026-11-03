@@ -140,7 +140,7 @@ func (ui *UI) Run() error {
 	serverAddr := bindAddress(ui.host, ui.port)
 	fullURL := browserURL(ui.host, ui.port)
 	if shouldWarnNonLocalBind(ui.host) {
-		slog.Warn(fmt.Sprintf("⚠️ The kcp UI has no authentication and is now reachable from other machines (bound to %s). In Docker, limit exposure with -p 127.0.0.1:%s:%s; otherwise use --host localhost.", serverAddr, ui.port, ui.port))
+		slog.Warn(fmt.Sprintf("The kcp UI has no authentication and is now reachable from other machines (bound to %s). In Docker, limit exposure with -p 127.0.0.1:%s:%s; otherwise use --host localhost.", serverAddr, ui.port, ui.port))
 	}
 	fmt.Printf("\nkcp ui is available at %s\n", color.New(color.FgGreen).Sprint(fullURL))
 
