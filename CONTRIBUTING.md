@@ -234,9 +234,10 @@ Non-pictographic structural glyphs are not emojis and may be used where they
 aid terminal layout: tree arrows (`→`, `↳`), box-drawing and sparkline
 characters, and math symbols (`≤`, `≥`). When in doubt, prefer plain ASCII.
 
-This rule is enforced automatically: `make lint` (and the pre-commit hook and CI)
-run `go run ./cmd/lint-emoji`, which fails if any Go source contains an emoji.
-It ignores the frontend, docs, and generated/local-only trees.
+This rule is enforced automatically: the `internal/noemoji` guard test fails if
+any Go source contains an emoji. It runs in `make test-go`, `make lint`, the
+pre-commit hook, and CI. Run it on its own with
+`go test -count=1 ./internal/noemoji/`.
 
 ## Pull requests
 

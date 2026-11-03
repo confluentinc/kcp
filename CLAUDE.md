@@ -186,4 +186,4 @@ Express status and severity as text tokens, not emoji — e.g. the plan report u
 
 Non-pictographic structural glyphs are **not** emojis and stay allowed where they aid terminal layout: tree arrows (`→`, `↳`), box-drawing and sparkline characters, and math symbols (`≤`, `≥`). If in doubt, prefer plain ASCII.
 
-**Enforcement:** `cmd/lint-emoji` scans all Go source for emoji and fails on any hit; it is wired into `make lint`, the pre-commit hook, and the CI static-analysis job. It flags pictographic runes only and deliberately never flags the allowed structural glyphs above (the exact allow/ban set is pinned by `cmd/lint-emoji/main_test.go`). The frontend, docs, and vendored/generated/local-only trees are outside its surface.
+**Enforcement:** the guard test `internal/noemoji` fails on any emoji in a Go file git does not ignore. It runs in `make test-go` (so CI), `make lint`, and the pre-commit hook. It bans the Unicode emoji blocks plus the FE0F/keycap combiners (the `emojiBlocks` table is the spec); the structural glyphs above sit outside them. The frontend and docs are outside its surface.
