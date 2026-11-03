@@ -5,15 +5,17 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type fakeStrictClient struct {
 	groups        []types.ConsumerGroupListing
 	err           error
-	tracked       map[string][]string
 	canDescribe   bool
 	canTopics     bool
 	partitions    map[string]int
@@ -33,52 +35,89 @@ func (f *fakeStrictClient) ListGroupsAllBrokers(context.Context) ([]types.Consum
 	return f.groups, f.err
 }
 
-func (f *fakeStrictClient) CommittedTopics(context.Context, []string) (map[string][]string, error) {
-	return f.tracked, f.err
-}
-
 func TestKafkaGroupLister_UsesTheStrictListing(t *testing.T) {
 	want := []types.ConsumerGroupListing{{GroupID: "g1", State: "Stable"}}
-	got, err := NewKafkaGroupLister(&fakeStrictClient{groups: want}).ListGroups(context.Background())
+	got, err := NewKafkaGroupLister(&fakeStrictClient{groups: want}, nil, 0).ListGroups(context.Background())
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("ListGroups = %v, %v; want %v", got, err, want)
 	}
 	boom := errors.New("broker b2 failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).ListGroups(context.Background()); !errors.Is(err, boom) {
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}, nil, 0).ListGroups(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("ListGroups error = %v, want the strict listing's error", err)
 	}
 }
 
-func TestKafkaGroupLister_CommittedTopicsUsesTheClient(t *testing.T) {
-	want := map[string][]string{"g1": {"orders"}}
-	got, err := NewKafkaGroupLister(&fakeStrictClient{tracked: want}).CommittedTopics(context.Background(), []string{"g1"})
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("CommittedTopics = %v, %v; want %v", got, err, want)
+// offsetsFetcher is one worker's client: each group's committed offsets, or the error.
+type offsetsFetcher struct {
+	offsets map[string]groupoffsets.Offsets
+	err     error
+}
+
+func (f offsetsFetcher) CommittedOffsets(_ context.Context, group string) (groupoffsets.Offsets, error) {
+	return f.offsets[group], f.err
+}
+
+func TestKafkaGroupLister_CommittedTopicsReadsOnOneClientPerWorker(t *testing.T) {
+	offsets := map[string]groupoffsets.Offsets{}
+	groups := []string{"g1", "g2", "g3", "g4", "g5", "g6"}
+	for _, g := range groups {
+		offsets[g] = groupoffsets.Offsets{"orders": {0: {Offset: 1}}}
+	}
+	var built, released atomic.Int64
+	fetchers := func() (groupoffsets.GroupOffsetFetcher, func(), error) {
+		built.Add(1)
+		return offsetsFetcher{offsets: offsets}, func() { released.Add(1) }, nil
+	}
+
+	got, err := NewKafkaGroupLister(&fakeStrictClient{}, fetchers, 3).CommittedTopics(context.Background(), groups)
+
+	if err != nil || len(got) != 6 || !reflect.DeepEqual(got["g1"], []string{"orders"}) {
+		t.Fatalf("CommittedTopics = %v, %v; want every group tracking orders", got, err)
+	}
+	if built.Load() != 3 || released.Load() != 3 {
+		t.Fatalf("built %d clients and released %d, want one per worker (3): workers sharing a client wait on each other's connections", built.Load(), released.Load())
 	}
 	boom := errors.New("coordinator not available")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CommittedTopics(context.Background(), []string{"g1"}); !errors.Is(err, boom) {
-		t.Fatalf("CommittedTopics error = %v, want the client's error", err)
+	failing := func() (groupoffsets.GroupOffsetFetcher, func(), error) { return offsetsFetcher{err: boom}, nil, nil }
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{}, failing, 3).CommittedTopics(context.Background(), groups); !errors.Is(err, boom) {
+		t.Fatalf("CommittedTopics error = %v, want the fetch's error", err)
+	}
+}
+
+func TestOffsetSyncWorkers_FollowsTheConversionsConcurrency(t *testing.T) {
+	conversion := func(n int) *manifest.GatewayMigration {
+		return &manifest.GatewayMigration{Spec: manifest.GatewaySpec{DynamicToStaticConversion: &manifest.DynamicToStaticConversion{
+			Policies: manifest.DynamicToStaticPolicies{OffsetSyncConcurrency: n}}}}
+	}
+	if got := offsetSyncWorkers(conversion(16)); got != 16 {
+		t.Fatalf("offsetSyncWorkers = %d, want the manifest's 16", got)
+	}
+	if got := offsetSyncWorkers(conversion(0)); got != manifest.DefaultOffsetSyncConcurrency {
+		t.Fatalf("offsetSyncWorkers = %d, want the default %d when unset", got, manifest.DefaultOffsetSyncConcurrency)
+	}
+	if got := offsetSyncWorkers(&manifest.GatewayMigration{}); got != manifest.DefaultOffsetSyncConcurrency {
+		t.Fatalf("offsetSyncWorkers = %d, want the default %d without a conversion section", got, manifest.DefaultOffsetSyncConcurrency)
 	}
 }
 
 func TestKafkaGroupLister_CanDescribeAnyGroupUsesTheClient(t *testing.T) {
-	got, err := NewKafkaGroupLister(&fakeStrictClient{canDescribe: true}).CanDescribeAnyGroup(context.Background())
+	got, err := NewKafkaGroupLister(&fakeStrictClient{canDescribe: true}, nil, 0).CanDescribeAnyGroup(context.Background())
 	if err != nil || !got {
 		t.Fatalf("CanDescribeAnyGroup = %v, %v; want true", got, err)
 	}
 	boom := errors.New("describe failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CanDescribeAnyGroup(context.Background()); !errors.Is(err, boom) {
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}, nil, 0).CanDescribeAnyGroup(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("CanDescribeAnyGroup error = %v, want the client's error", err)
 	}
 }
 
 func TestKafkaGroupLister_CanDescribeAnyTopicUsesTheClient(t *testing.T) {
-	got, err := NewKafkaGroupLister(&fakeStrictClient{canTopics: true}).CanDescribeAnyTopic(context.Background())
+	got, err := NewKafkaGroupLister(&fakeStrictClient{canTopics: true}, nil, 0).CanDescribeAnyTopic(context.Background())
 	if err != nil || !got {
 		t.Fatalf("CanDescribeAnyTopic = %v, %v; want true", got, err)
 	}
 	boom := errors.New("probe failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CanDescribeAnyTopic(context.Background()); !errors.Is(err, boom) {
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}, nil, 0).CanDescribeAnyTopic(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("CanDescribeAnyTopic error = %v, want the client's error", err)
 	}
 }
@@ -147,7 +186,7 @@ func (f *fakeStrictClient) PartitionCounts(_ context.Context, topics []string) (
 
 func TestKafkaGroupLister_PartitionCountsUsesTheClient(t *testing.T) {
 	c := &fakeStrictClient{partitions: map[string]int{"orders": 3}}
-	got, err := NewKafkaGroupLister(c).PartitionCounts(context.Background(), []string{"orders"})
+	got, err := NewKafkaGroupLister(c, nil, 0).PartitionCounts(context.Background(), []string{"orders"})
 	if err != nil || !reflect.DeepEqual(got, map[string]int{"orders": 3}) {
 		t.Fatalf("PartitionCounts = %v, %v; want orders=3", got, err)
 	}
@@ -155,7 +194,7 @@ func TestKafkaGroupLister_PartitionCountsUsesTheClient(t *testing.T) {
 		t.Errorf("client asked about %v, want [orders]", c.partitionsFor)
 	}
 	boom := errors.New("metadata failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).PartitionCounts(context.Background(), []string{"orders"}); !errors.Is(err, boom) {
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}, nil, 0).PartitionCounts(context.Background(), []string{"orders"}); !errors.Is(err, boom) {
 		t.Fatalf("PartitionCounts error = %v, want the client's error", err)
 	}
 }
@@ -165,12 +204,12 @@ func (f *fakeStrictClient) CanCommitAnyOffsets(context.Context) (bool, error) {
 }
 
 func TestKafkaGroupLister_CanCommitAnyOffsetsUsesTheClient(t *testing.T) {
-	got, err := NewKafkaGroupLister(&fakeStrictClient{canCommit: true}).CanCommitAnyOffsets(context.Background())
+	got, err := NewKafkaGroupLister(&fakeStrictClient{canCommit: true}, nil, 0).CanCommitAnyOffsets(context.Background())
 	if err != nil || !got {
 		t.Fatalf("CanCommitAnyOffsets = %v, %v; want true", got, err)
 	}
 	boom := errors.New("probe failed")
-	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}).CanCommitAnyOffsets(context.Background()); !errors.Is(err, boom) {
+	if _, err := NewKafkaGroupLister(&fakeStrictClient{err: boom}, nil, 0).CanCommitAnyOffsets(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("CanCommitAnyOffsets error = %v, want the client's error", err)
 	}
 }

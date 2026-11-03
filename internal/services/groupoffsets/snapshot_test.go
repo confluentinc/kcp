@@ -162,3 +162,57 @@ func TestTakeSnapshot_APermanentFailureStopsTheOtherWorkersRetrying(t *testing.T
 	assert.Contains(t, err.Error(), "denied for g2", "the error must be g2's, not g1's stopped retries")
 	assert.NotErrorIs(t, err, context.Canceled)
 }
+
+func TestSnapshot_CommittedTopicsIsEachGroupsSortedTopics(t *testing.T) {
+	snap := Snapshot{
+		"a": {"payments": {0: at(1)}, "orders": {0: at(2)}},
+		"b": {"orders": {0: at(1)}},
+	}
+	assert.Equal(t, map[string][]string{"a": {"orders", "payments"}, "b": {"orders"}}, snap.CommittedTopics())
+	assert.Empty(t, Snapshot{}.CommittedTopics())
+}
+
+func TestCommittedTopics_EachGroupsSortedTopicsAndOmitsGroupsWithNoCommits(t *testing.T) {
+	f := &fakeFetcher{offsets: map[string]Offsets{
+		"a":    {"payments": {0: at(5)}, "orders": {0: at(6)}},
+		"b":    {"orders": {0: at(1)}},
+		"idle": {},
+	}}
+	factory, _, _ := factoryFor(f)
+
+	topics, err := CommittedTopics(context.Background(), factory, []string{"a", "b", "idle"}, 2)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{"a": {"orders", "payments"}, "b": {"orders"}}, topics,
+		"a group with no commits tracks no topics, as in the fence check's snapshot")
+}
+
+func TestCommittedTopics_EachWorkerGetsItsOwnFetcherAndReleasesIt(t *testing.T) {
+	f := &fakeFetcher{offsets: map[string]Offsets{}}
+	groups := names(6)
+	for _, g := range groups {
+		f.offsets[g] = Offsets{"orders": {0: at(1)}}
+	}
+	factory, built, released := factoryFor(f)
+
+	_, err := CommittedTopics(context.Background(), factory, groups, 3)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, built.Load(), "one client per worker, so no worker waits on another's connection")
+	assert.EqualValues(t, 3, released.Load())
+}
+
+func TestCommittedTopics_AFailedGroupFailsTheWholeRead(t *testing.T) {
+	boom := errors.New("not authorized")
+	f := &fakeFetcher{
+		offsets: map[string]Offsets{"ok": {"orders": {0: at(1)}}},
+		errs:    map[string]error{"bad": boom},
+	}
+	factory, _, _ := factoryFor(f)
+
+	topics, err := CommittedTopics(context.Background(), factory, []string{"ok", "bad"}, 1)
+
+	require.ErrorIs(t, err, boom)
+	assert.Contains(t, err.Error(), "bad")
+	assert.Nil(t, topics, "a partial result would leave a group's topics unchecked")
+}
