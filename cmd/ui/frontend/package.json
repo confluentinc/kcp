@@ -54,6 +54,7 @@
     "lodash-es": "^4.18.0",
     "fast-uri": "^3.1.6",
     "source-map-js": "^1.2.2",
+    "minimatch": "^11.0.1",
     "@rjsf/core/nanoid": "^6.0.0",
     "@rjsf/utils/nanoid": "^6.0.0",
     "**/postcss/nanoid": "^6.0.0"
@@ -69,7 +70,6 @@
     "eslint-plugin-react-hooks": "5.2.0",
     "eslint-plugin-react-refresh": "0.4.20",
     "globals": "17.0.0",
-    "shadcn": "4.0.5",
     "tw-animate-css": "1.3.7",
     "typescript": "5.8.3",
     "typescript-eslint": "8.41.0",
