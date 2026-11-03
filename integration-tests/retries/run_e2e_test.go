@@ -122,15 +122,15 @@ func (r *liveRun) retryLines() int {
 
 // stepOfFirstRetryAfter returns the step banner ("Verifying fence", "Promoting batch", ...)
 // kcp was in when it logged its first retry warning after the first `before` ones, or ""
-// when it has not logged that many. Step banners are the lines that start a step: an
-// emoji, the step's name and "...".
+// when it has not logged that many. Step banners are the lines that start a step: the
+// step's name and "...". Detail lines also end in "..." but start with the "↳" marker.
 func stepOfFirstRetryAfter(out string, before int) string {
 	step := ""
 	seen := 0
 	for _, line := range strings.Split(out, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "") && strings.HasSuffix(trimmed, "...") {
-			step = strings.TrimSuffix(strings.TrimPrefix(trimmed, ""), "...")
+		if !strings.HasPrefix(trimmed, "↳") && strings.HasSuffix(trimmed, "...") {
+			step = strings.TrimSuffix(trimmed, "...")
 		}
 		if strings.Contains(line, retryLine) {
 			seen++
