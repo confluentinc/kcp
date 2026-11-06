@@ -43,7 +43,7 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["events"]
-    verbs: ["get", "list"]
+    verbs: ["list"]
 ```
 
 | Resource and verb     | Needed when                                                                                                                            |
@@ -55,7 +55,7 @@ rules:
 | `pods`: `list`        | Always, including `--dry-run`. kcp lists the Gateway's pods to check that they serve the Gateway CR.                                   |
 | `pods/proxy`: `get`   | The Gateway has `spec.hotReload.enabled: true`, including `--dry-run`. kcp reads each pod's `/config` through the API server to check the pods' revision, and again after each change to confirm the new one. |
 | `secrets`: `get`      | Optional, static migrations only. See below.                                                                                           |
-| `events`: `get`, `list` | Optional. kcp reads the operator's hot reload events to time the canary and promotion on its traces; without it, those timings are left out and nothing else changes. |
+| `events`: `list`      | Optional. kcp reads the operator's hot reload events to time the canary and promotion on its traces; without it, those timings are left out and nothing else changes. |
 
 Every run, including `--dry-run`, first checks that the Gateway's pods serve the Gateway CR as it stands. With hot reload off, kcp checks that the operator has caught up with the CR, that the Deployment has finished rolling out, and that no replaced pod is still terminating. With hot reload on, it checks that the operator has caught up and that every Ready pod reports the CR's `spec.configId`. If any of these fails, kcp refuses the run and shows what it observed. Re-run once the rollout has completed.
 

@@ -39,7 +39,7 @@ func TestReadHotReloadSignals(t *testing.T) {
 	assert.Equal(t, "Succeeded", s.Condition.Reason)
 	assert.True(t, s.Condition.LastTransitionTime.Equal(ltt))
 	require.Len(t, s.Events, 1)
-	assert.Equal(t, OperatorEvent{Reason: EventHotReloadSucceeded, Count: 4, LastSeen: last}, s.Events[0])
+	assert.Equal(t, OperatorEvent{Name: "e1", Reason: EventHotReloadSucceeded, Count: 4, LastSeen: last}, s.Events[0])
 }
 
 func TestReadHotReloadSignals_SeriesCountsWin(t *testing.T) {

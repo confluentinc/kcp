@@ -35,6 +35,8 @@ type mockService struct {
 	// configWaitProgress is replayed through ConfigWaitOptions.OnProgress by
 	// WaitForGatewayConfigID, as the real wait reports each poll.
 	configWaitProgress []ConfigWaitProgress
+	// readinessProgress is replayed through WaitForGatewayReady's onProgress.
+	readinessProgress []GatewayReadinessProgress
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -111,7 +113,12 @@ func (m *mockService) WaitForGatewayPods(context.Context, string, string, map[ty
 	return nil
 }
 
-func (m *mockService) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(GatewayReadinessProgress)) error {
+func (m *mockService) WaitForGatewayReady(_ context.Context, _ string, _ string, _ int64, _ time.Duration, _ time.Duration, onProgress func(GatewayReadinessProgress)) error {
+	for _, p := range m.readinessProgress {
+		if onProgress != nil {
+			onProgress(p)
+		}
+	}
 	return nil
 }
 

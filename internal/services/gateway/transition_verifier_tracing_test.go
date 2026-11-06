@@ -58,20 +58,68 @@ func TestTracing_WaitForConfigApplied_RecordsPodTimes(t *testing.T) {
 	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, ApplyResult{ConfigID: "c1"}, "fence"))
 
 	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.wait_config_applied")
-	all, ok := tracingtest.Attr(span, "kcp.gateway.all_pods_ms")
-	require.True(t, ok)
-	assert.Equal(t, int64(4000), all.AsInt64())
+	_, ok := tracingtest.Attr(span, "kcp.gateway.all_pods_ms")
+	assert.True(t, ok)
+	from, _ := tracingtest.Attr(span, "kcp.gateway.timed_from")
+	assert.Equal(t, "wait_start", from.AsString(), "an ApplyResult with no patch time is timed from the wait's start")
+}
+
+// A gateway without hot reload is verified by the rollout wait; its span carries the rollout timing.
+func TestTracing_VerifyTransition_RolloutRecordsAllPods(t *testing.T) {
+	rec := tracingtest.Install(t)
+	svc := &mockService{readinessProgress: []GatewayReadinessProgress{
+		{InitialPodCount: 3, PodsReady: 2, RolloutDetected: true},
+		{InitialPodCount: 3, PodsReady: 3, RolloutDetected: true, Ready: true},
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}}
+	require.NoError(t, v.VerifyTransition(context.Background(), "confluent", "gw", 9180, ApplyResult{PatchedAt: time.Now()}, "fence"))
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.verify_transition")
+	_, ok := tracingtest.Attr(span, "kcp.gateway.all_pods_ms")
+	assert.True(t, ok)
+	mech, _ := tracingtest.Attr(span, "kcp.gateway.observed_mechanism")
+	assert.Equal(t, "pod-roll", mech.AsString())
+}
+
+// Each read of the operator's signals runs inside the wait's poll and is bounded, so a slow API
+// server can't hold up the wait.
+func TestTracing_HotReloadReadsAreBounded(t *testing.T) {
+	tracingtest.Install(t)
+	var deadlines []time.Duration
+	svc := &readerService{
+		mockService: &mockService{configWaitProgress: []ConfigWaitProgress{
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 3, Elapsed: 2 * time.Second, Converged: true},
+		}},
+		read: func(int) (HotReloadSignals, error) { return HotReloadSignals{}, nil },
+	}
+	svc.onRead = func(ctx context.Context) {
+		dl, ok := ctx.Deadline()
+		require.True(t, ok, "a read without a deadline")
+		deadlines = append(deadlines, time.Until(dl))
+	}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: hotReloadCapability}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	applied.ConfigID = "c1"
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, applied, "fence"))
+	require.Len(t, deadlines, 2)
+	for _, d := range deadlines {
+		assert.LessOrEqual(t, d, time.Second)
+	}
 }
 
 // readerService is a mockService that also reads the operator's hot reload signals.
 type readerService struct {
 	*mockService
-	read  func(call int) (HotReloadSignals, error)
-	calls int
+	read   func(call int) (HotReloadSignals, error)
+	onRead func(ctx context.Context)
+	calls  int
 }
 
-func (r *readerService) ReadHotReloadSignals(context.Context, string, string) (HotReloadSignals, error) {
+func (r *readerService) ReadHotReloadSignals(ctx context.Context, _, _ string) (HotReloadSignals, error) {
 	r.calls++
+	if r.onRead != nil {
+		r.onRead(ctx)
+	}
 	return r.read(r.calls)
 }
 

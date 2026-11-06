@@ -44,6 +44,10 @@ type ApplyResult struct {
 	HotReloadBaseline *HotReloadSignals
 }
 
+// hotReloadSignalReadTimeout bounds each read of the operator's hot reload
+// signals, which run inside the wait's poll loop and are for timing only.
+const hotReloadSignalReadTimeout = time.Second
+
 // hotReloadBaseline reads the operator's hot reload signals just before a
 // patch, for timing only: any failure (most often a role without events
 // permissions) is logged at debug and returns nil, never an error.
@@ -52,7 +56,9 @@ func (v *TransitionVerifier) hotReloadBaseline(ctx context.Context, namespace, c
 	if !ok || !v.Capability.HotReloadEnabled {
 		return nil
 	}
-	s, err := reader.ReadHotReloadSignals(ctx, namespace, crName)
+	rctx, cancel := context.WithTimeout(ctx, hotReloadSignalReadTimeout)
+	defer cancel()
+	s, err := reader.ReadHotReloadSignals(rctx, namespace, crName)
 	if err != nil {
 		slog.Debug("could not read the gateway's hot reload status before applying; "+
 			"this change's hot reload timings are left out", "step", step, "error", err)
@@ -233,23 +239,26 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 // applied configId.
 func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_config_applied", stepAttr(step))
-	timing := newTransitionTiming(span)
+	timing := newTransitionTiming(span, applied.PatchedAt)
 	defer func() {
 		timing.end()
 		tracing.End(span, err)
 	}()
 	// The operator's hot reload signals, for timing only: read on each poll
-	// while they can be, and never again in this wait after a failed read.
+	// until this change's outcome is seen, each read bounded so it can't hold
+	// up the poll, and never again in this wait after a failed read.
 	reader, readOperator := v.Service.(HotReloadSignalReader)
 	readOperator = readOperator && applied.HotReloadBaseline != nil
 	if readOperator {
-		timing.watchOperator(*applied.HotReloadBaseline, applied.PatchedAt)
+		timing.watchOperator(*applied.HotReloadBaseline)
 	}
 	observeOperator := func() {
-		if !readOperator {
+		if !readOperator || timing.outcomeKnown() {
 			return
 		}
-		s, err := reader.ReadHotReloadSignals(ctx, namespace, crName)
+		rctx, cancel := context.WithTimeout(ctx, hotReloadSignalReadTimeout)
+		s, err := reader.ReadHotReloadSignals(rctx, namespace, crName)
+		cancel()
 		if err != nil {
 			slog.Debug("could not read the gateway's hot reload status; the rest of this change's hot reload timings are left out",
 				"step", step, "error", err)
@@ -281,7 +290,7 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 		HotReloadTimeout: v.HotReloadTimeoutOrDefault(),
 		RollTimeout:      v.RolloutTimeout,
 		OnProgress: func(p ConfigWaitProgress) {
-			timing.observePods(p)
+			timing.observePods(p, time.Now())
 			observeOperator()
 			v.printConfigWaitProgress(p)
 		},
@@ -314,8 +323,13 @@ func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, cr
 	slog.Debug("waiting for gateway readiness", "step", step, "rolloutTimeout", v.RolloutTimeout,
 		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
 
+	timing := newTransitionTiming(span, applied.PatchedAt)
+	defer timing.end()
 	if err := v.Service.WaitForGatewayReady(ctx, namespace, crName,
-		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printGatewayReadinessProgress); err != nil {
+		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, func(p GatewayReadinessProgress) {
+			timing.observeRollout(p, time.Now())
+			v.printGatewayReadinessProgress(p)
+		}); err != nil {
 		return fmt.Errorf("failed waiting for gateway readiness during %s: %w", step, err)
 	}
 	return nil

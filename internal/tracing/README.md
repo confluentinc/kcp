@@ -184,8 +184,9 @@ kcp migration cutover execute                       root span, one per command
 | `gateway.resolve_capability` | `kcp.gateway.mode`, `kcp.gateway.hot_reload`, `kcp.gateway.crd_supports_config_id` |
 | `gateway.verify_hot_reload` | Only when the gateway hot-reloads; contains `gateway.wait_accepted`, `gateway.wait_config_applied` |
 | `gateway.patch_cr` | `kcp.gateway.config_id_injected` |
-| `gateway.wait_accepted`, `gateway.wait_config_applied` | — |
-| `gateway.verify_transition` | `kcp.gateway.mechanism` = `config_id` \| `rollout`; contains `gateway.wait_config_applied` or `gateway.wait_ready` (→ `gateway.observe_rollout`, `kcp.gateway.rolled`) |
+| `gateway.wait_accepted` | — |
+| `gateway.wait_config_applied` | How the change reached the pods. `kcp.gateway.first_pod_ms`, `kcp.gateway.all_pods_ms`, `kcp.gateway.observed_mechanism` (`no-roll-observed` \| `pod-roll`); event `gateway.config_progress` each time the count of pods at the new configId changes (`kcp.gateway.pods_at_config`, `pods_ready`, `pods_total`, `elapsed_ms`). With hot reload and the `events` permission: `kcp.gateway.hot_reload.canary_started_ms`, `kcp.gateway.hot_reload.promoted_ms`, `kcp.gateway.hot_reload.outcome` (the operator's event reason), and events `gateway.hot_reload_status` (`kcp.gateway.hot_reload.reason`, `source` = `condition` \| `event`, `server_time`, `kcp.gateway.elapsed_ms`). Every `_ms` counts from the patch on kcp's clock (`kcp.gateway.timed_from` = `patch`, or `wait_start` when the patch time is unknown); a time never seen is absent, not 0 |
+| `gateway.verify_transition` | `kcp.gateway.mechanism` = `config_id` \| `rollout`; contains `gateway.wait_config_applied` or `gateway.wait_ready` (→ `gateway.observe_rollout`, `kcp.gateway.rolled`). On the rollout path also `kcp.gateway.all_pods_ms`, `kcp.gateway.observed_mechanism`, `kcp.gateway.timed_from` and events `gateway.rollout_progress` (`kcp.gateway.pods_ready`, `pods_total`, `elapsed_ms`) as the ready pod count changes |
 | `gateway.wait_pods` | Static fence with producer detection |
 | every `gateway.*` verifier span | `kcp.gateway.step` = `fence`, `switchover`, `unfence` or `hot-reload check` |
 | `clusterlink.*` | `promote_mirror_topics` (`kcp.batch.size`), `list_mirror_topics` (`kcp.mirrors`) |

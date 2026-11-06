@@ -78,11 +78,11 @@ func readHotReloadSignals(ctx context.Context, dynamicClient dynamic.Interface, 
 // series when it has one, else from the legacy count and timestamps.
 func operatorEventOf(e corev1.Event) OperatorEvent {
 	if e.Series != nil {
-		return OperatorEvent{Reason: e.Reason, Count: e.Series.Count, LastSeen: e.Series.LastObservedTime.Time}
+		return OperatorEvent{Name: e.Name, Reason: e.Reason, Count: e.Series.Count, LastSeen: e.Series.LastObservedTime.Time}
 	}
 	last := e.LastTimestamp.Time
 	if last.IsZero() {
 		last = e.EventTime.Time
 	}
-	return OperatorEvent{Reason: e.Reason, Count: e.Count, LastSeen: last}
+	return OperatorEvent{Name: e.Name, Reason: e.Reason, Count: e.Count, LastSeen: last}
 }
