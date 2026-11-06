@@ -208,7 +208,11 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 // applied configId.
 func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_config_applied", stepAttr(step))
-	defer func() { tracing.End(span, err) }()
+	timing := newTransitionTiming(span)
+	defer func() {
+		timing.end()
+		tracing.End(span, err)
+	}()
 	v.Reporter.Detail("Waiting for every gateway pod to apply the new config...")
 	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
 		"port", port, "hotReloadTimeout", v.HotReloadTimeoutOrDefault(),
@@ -231,7 +235,10 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 		PollInterval:     2 * time.Second,
 		HotReloadTimeout: v.HotReloadTimeoutOrDefault(),
 		RollTimeout:      v.RolloutTimeout,
-		OnProgress:       v.printConfigWaitProgress,
+		OnProgress: func(p ConfigWaitProgress) {
+			timing.observePods(p)
+			v.printConfigWaitProgress(p)
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)

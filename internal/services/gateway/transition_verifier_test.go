@@ -31,6 +31,10 @@ type mockService struct {
 	patchResults   []PatchResult
 	patchErr       error
 	generationGets int
+
+	// configWaitProgress is replayed through ConfigWaitOptions.OnProgress by
+	// WaitForGatewayConfigID, as the real wait reports each poll.
+	configWaitProgress []ConfigWaitProgress
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -41,7 +45,12 @@ func (m *mockService) DetectCapability(context.Context, string, string, int, []b
 	return Capability{}, nil
 }
 
-func (m *mockService) WaitForGatewayConfigID(context.Context, string, string, ConfigWaitOptions) error {
+func (m *mockService) WaitForGatewayConfigID(_ context.Context, _ string, _ string, opts ConfigWaitOptions) error {
+	for _, p := range m.configWaitProgress {
+		if opts.OnProgress != nil {
+			opts.OnProgress(p)
+		}
+	}
 	return nil
 }
 

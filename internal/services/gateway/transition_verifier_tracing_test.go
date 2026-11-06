@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
@@ -44,4 +45,19 @@ func TestTracing_VerifyHotReloadCapability_NoSpanWhenNotApplicable(t *testing.T)
 	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}} // zero Capability: no configId injection
 	require.NoError(t, v.VerifyHotReloadCapability(context.Background(), "confluent", "gw", 9180))
 	assert.Empty(t, tracingtest.Spans(rec), "a no-op check opens no span")
+}
+
+func TestTracing_WaitForConfigApplied_RecordsPodTimes(t *testing.T) {
+	rec := tracingtest.Install(t)
+	svc := &mockService{configWaitProgress: []ConfigWaitProgress{
+		{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 1, Mechanism: MechanismNoRollObserved, Elapsed: 2 * time.Second},
+		{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 3, Mechanism: MechanismNoRollObserved, Elapsed: 4 * time.Second, Converged: true},
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}}
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, ApplyResult{ConfigID: "c1"}, "fence"))
+
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.wait_config_applied")
+	all, ok := tracingtest.Attr(span, "kcp.gateway.all_pods_ms")
+	require.True(t, ok)
+	assert.Equal(t, int64(4000), all.AsInt64())
 }
