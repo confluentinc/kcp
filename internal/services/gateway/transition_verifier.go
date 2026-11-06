@@ -34,6 +34,31 @@ type ApplyResult struct {
 	// Generation is the Gateway CR's metadata.generation after the write, or 0
 	// when the write never reached the cluster.
 	Generation int64
+	// PatchedAt is kcp's clock just before the patch; the wait's hot reload
+	// timings are measured from it.
+	PatchedAt time.Time
+	// HotReloadBaseline is what the operator reported about hot reload just
+	// before the patch, so the wait can tell this change's signals from the last
+	// one's. nil when hot reload is off, the service can't read the signals, or
+	// the read failed; the wait then records no hot reload timings.
+	HotReloadBaseline *HotReloadSignals
+}
+
+// hotReloadBaseline reads the operator's hot reload signals just before a
+// patch, for timing only: any failure (most often a role without events
+// permissions) is logged at debug and returns nil, never an error.
+func (v *TransitionVerifier) hotReloadBaseline(ctx context.Context, namespace, crName, step string) *HotReloadSignals {
+	reader, ok := v.Service.(HotReloadSignalReader)
+	if !ok || !v.Capability.HotReloadEnabled {
+		return nil
+	}
+	s, err := reader.ReadHotReloadSignals(ctx, namespace, crName)
+	if err != nil {
+		slog.Debug("could not read the gateway's hot reload status before applying; "+
+			"this change's hot reload timings are left out", "step", step, "error", err)
+		return nil
+	}
+	return &s
 }
 
 // TransitionVerifier applies a gateway CR (or a configId-only stamp) and
@@ -135,17 +160,17 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	}
 
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
+	hotReload := v.hotReloadBaseline(ctx, namespace, crName, step)
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
 		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
 
+	patchedAt := time.Now()
 	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, v.expectedGeneration())
 	v.recordGeneration(patched.Generation)
-	if err != nil {
-		// An unverified write still reached the cluster; hand back what it produced.
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
-	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
+	// An unverified write (err != nil) still reached the cluster; hand back what it produced.
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation,
+		PatchedAt: patchedAt, HotReloadBaseline: hotReload}, err
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
@@ -156,14 +181,14 @@ func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, c
 		return ApplyResult{}, err
 	}
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
+	hotReload := v.hotReloadBaseline(ctx, namespace, crName, step)
 	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
+	patchedAt := time.Now()
 	patched, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID, v.expectedGeneration())
 	v.recordGeneration(patched.Generation)
-	if err != nil {
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
-	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation,
+		PatchedAt: patchedAt, HotReloadBaseline: hotReload}, err
 }
 
 // WaitForAccepted blocks until the Confluent operator has accepted the
@@ -213,6 +238,26 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 		timing.end()
 		tracing.End(span, err)
 	}()
+	// The operator's hot reload signals, for timing only: read on each poll
+	// while they can be, and never again in this wait after a failed read.
+	reader, readOperator := v.Service.(HotReloadSignalReader)
+	readOperator = readOperator && applied.HotReloadBaseline != nil
+	if readOperator {
+		timing.watchOperator(*applied.HotReloadBaseline, applied.PatchedAt)
+	}
+	observeOperator := func() {
+		if !readOperator {
+			return
+		}
+		s, err := reader.ReadHotReloadSignals(ctx, namespace, crName)
+		if err != nil {
+			slog.Debug("could not read the gateway's hot reload status; the rest of this change's hot reload timings are left out",
+				"step", step, "error", err)
+			readOperator = false
+			return
+		}
+		timing.observeOperator(s, time.Now())
+	}
 	v.Reporter.Detail("Waiting for every gateway pod to apply the new config...")
 	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
 		"port", port, "hotReloadTimeout", v.HotReloadTimeoutOrDefault(),
@@ -237,6 +282,7 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 		RollTimeout:      v.RolloutTimeout,
 		OnProgress: func(p ConfigWaitProgress) {
 			timing.observePods(p)
+			observeOperator()
 			v.printConfigWaitProgress(p)
 		},
 	})

@@ -109,3 +109,133 @@ func TestTiming_NoConvergenceLeavesAllPodsAbsent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, int64(4000), first.AsInt64())
 }
+
+var patchedAt = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+
+func at(d time.Duration) time.Time { return patchedAt.Add(d) }
+
+// runOperatorTiming arms a timing with the baseline, feeds it the polls, ends it, and returns the span.
+func runOperatorTiming(t *testing.T, baseline HotReloadSignals, polls ...struct {
+	s   HotReloadSignals
+	now time.Time
+}) sdktrace.ReadOnlySpan {
+	t.Helper()
+	rec := tracingtest.Install(t)
+	_, span := tracing.Start(context.Background(), tracerName, "test.span")
+	timing := newTransitionTiming(span)
+	timing.watchOperator(baseline, patchedAt)
+	for _, p := range polls {
+		timing.observeOperator(p.s, p.now)
+	}
+	timing.end()
+	span.End()
+	return tracingtest.Find(t, tracingtest.Spans(rec), "test.span")
+}
+
+type poll = struct {
+	s   HotReloadSignals
+	now time.Time
+}
+
+func cond(status, reason string, ltt time.Time) *HotReloadCondition {
+	return &HotReloadCondition{Status: status, Reason: reason, LastTransitionTime: ltt}
+}
+
+func ev(reason string, count int32, last time.Time) OperatorEvent {
+	return OperatorEvent{Reason: reason, Count: count, LastSeen: last}
+}
+
+func intAttr(t *testing.T, s sdktrace.ReadOnlySpan, key string) (int64, bool) {
+	t.Helper()
+	v, ok := tracingtest.Attr(s, key)
+	return v.AsInt64(), ok
+}
+
+func TestTiming_CanaryStartThenSucceeded(t *testing.T) {
+	earlier := patchedAt.Add(-10 * time.Minute)
+	baseline := HotReloadSignals{
+		Condition: cond("True", "Succeeded", earlier),
+		Events:    []OperatorEvent{ev("HotReloadSucceeded", 4, earlier)},
+	}
+	s := runOperatorTiming(t, baseline,
+		poll{HotReloadSignals{Condition: cond("Unknown", "InProgress", at(2*time.Second)), Events: baseline.Events}, at(3 * time.Second)},
+		poll{HotReloadSignals{Condition: cond("True", "Succeeded", at(8*time.Second)), Events: []OperatorEvent{ev("HotReloadSucceeded", 5, at(8*time.Second))}}, at(9 * time.Second)},
+	)
+	events := eventsNamed(s, "gateway.hot_reload_status")
+	require.Len(t, events, 2)
+	_, reason, _ := eventAttr(events[0], "kcp.gateway.hot_reload.reason")
+	assert.Equal(t, "InProgress", reason)
+	_, reason, _ = eventAttr(events[1], "kcp.gateway.hot_reload.reason")
+	assert.Equal(t, "HotReloadSucceeded", reason)
+	for _, e := range events {
+		_, _, ok := eventAttr(e, "kcp.gateway.hot_reload.server_time")
+		assert.True(t, ok)
+	}
+	started, ok := intAttr(t, s, "kcp.gateway.hot_reload.canary_started_ms")
+	require.True(t, ok)
+	assert.Equal(t, int64(3000), started)
+	promoted, ok := intAttr(t, s, "kcp.gateway.hot_reload.promoted_ms")
+	require.True(t, ok)
+	assert.Equal(t, int64(9000), promoted)
+	outcome, _ := tracingtest.Attr(s, "kcp.gateway.hot_reload.outcome")
+	assert.Equal(t, "HotReloadSucceeded", outcome.AsString())
+}
+
+func TestTiming_BackToBackAppliedDirectly(t *testing.T) {
+	earlier := patchedAt.Add(-time.Minute)
+	direct := cond("True", "AppliedDirectly", patchedAt.Add(-time.Hour))
+	baseline := HotReloadSignals{Condition: direct, Events: []OperatorEvent{ev("HotReloadAppliedDirectly", 2, earlier)}}
+	s := runOperatorTiming(t, baseline,
+		poll{baseline, at(2 * time.Second)},
+		poll{HotReloadSignals{Condition: direct, Events: []OperatorEvent{ev("HotReloadAppliedDirectly", 3, at(3*time.Second))}}, at(4 * time.Second)},
+	)
+	promoted, ok := intAttr(t, s, "kcp.gateway.hot_reload.promoted_ms")
+	require.True(t, ok)
+	assert.Equal(t, int64(4000), promoted)
+	outcome, _ := tracingtest.Attr(s, "kcp.gateway.hot_reload.outcome")
+	assert.Equal(t, "HotReloadAppliedDirectly", outcome.AsString())
+	_, ok = tracingtest.Attr(s, "kcp.gateway.hot_reload.canary_started_ms")
+	assert.False(t, ok)
+}
+
+func TestTiming_LeftoverSucceededIsNotThisChange(t *testing.T) {
+	earlier := patchedAt.Add(-time.Minute)
+	baseline := HotReloadSignals{
+		Condition: cond("True", "Succeeded", earlier),
+		Events:    []OperatorEvent{ev("HotReloadSucceeded", 4, earlier)},
+	}
+	s := runOperatorTiming(t, baseline, poll{baseline, at(2 * time.Second)}, poll{baseline, at(4 * time.Second)})
+	assert.Empty(t, eventsNamed(s, "gateway.hot_reload_status"))
+	for _, k := range []string{"kcp.gateway.hot_reload.canary_started_ms", "kcp.gateway.hot_reload.promoted_ms", "kcp.gateway.hot_reload.outcome"} {
+		_, ok := tracingtest.Attr(s, k)
+		assert.False(t, ok, k)
+	}
+}
+
+func TestTiming_LastSeenMovedCountsAsNew(t *testing.T) {
+	earlier := patchedAt.Add(-time.Minute)
+	baseline := HotReloadSignals{Events: []OperatorEvent{ev("HotReloadAppliedDirectly", 2, earlier)}}
+	s := runOperatorTiming(t, baseline,
+		poll{HotReloadSignals{Events: []OperatorEvent{ev("HotReloadAppliedDirectly", 2, at(time.Second))}}, at(2 * time.Second)},
+	)
+	promoted, ok := intAttr(t, s, "kcp.gateway.hot_reload.promoted_ms")
+	require.True(t, ok)
+	assert.Equal(t, int64(2000), promoted)
+}
+
+func TestTiming_FailedIsRecorded(t *testing.T) {
+	s := runOperatorTiming(t, HotReloadSignals{},
+		poll{HotReloadSignals{Events: []OperatorEvent{ev("HotReloadFailed", 1, at(5*time.Second))}}, at(6 * time.Second)},
+	)
+	outcome, ok := tracingtest.Attr(s, "kcp.gateway.hot_reload.outcome")
+	require.True(t, ok)
+	assert.Equal(t, "HotReloadFailed", outcome.AsString())
+	_, ok = tracingtest.Attr(s, "kcp.gateway.hot_reload.promoted_ms")
+	assert.False(t, ok)
+}
+
+func TestTiming_NotWatchingLeavesHotReloadAbsent(t *testing.T) {
+	s := runTiming(t, standardSequence...)
+	_, ok := tracingtest.Attr(s, "kcp.gateway.hot_reload.outcome")
+	assert.False(t, ok)
+}

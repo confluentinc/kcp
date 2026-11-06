@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -60,4 +61,119 @@ func TestTracing_WaitForConfigApplied_RecordsPodTimes(t *testing.T) {
 	all, ok := tracingtest.Attr(span, "kcp.gateway.all_pods_ms")
 	require.True(t, ok)
 	assert.Equal(t, int64(4000), all.AsInt64())
+}
+
+// readerService is a mockService that also reads the operator's hot reload signals.
+type readerService struct {
+	*mockService
+	read  func(call int) (HotReloadSignals, error)
+	calls int
+}
+
+func (r *readerService) ReadHotReloadSignals(context.Context, string, string) (HotReloadSignals, error) {
+	r.calls++
+	return r.read(r.calls)
+}
+
+var hotReloadCapability = Capability{Mode: VerifyPerPodConfigID, HotReloadEnabled: true}
+
+func TestTracing_WaitForConfigApplied_RecordsThePromotion(t *testing.T) {
+	rec := tracingtest.Install(t)
+	before := time.Now().Add(-time.Minute)
+	svc := &readerService{
+		mockService: &mockService{configWaitProgress: []ConfigWaitProgress{
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 3, Elapsed: 2 * time.Second, Converged: true},
+		}},
+		read: func(call int) (HotReloadSignals, error) {
+			if call == 1 { // the baseline, just before the patch
+				return HotReloadSignals{Events: []OperatorEvent{{Reason: EventHotReloadAppliedDirectly, Count: 1, LastSeen: before}}}, nil
+			}
+			return HotReloadSignals{Events: []OperatorEvent{{Reason: EventHotReloadAppliedDirectly, Count: 2, LastSeen: time.Now()}}}, nil
+		},
+	}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: hotReloadCapability}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	require.NotNil(t, applied.HotReloadBaseline)
+	require.False(t, applied.PatchedAt.IsZero())
+	applied.ConfigID = "c1"
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, applied, "fence"))
+
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.wait_config_applied")
+	outcome, ok := tracingtest.Attr(span, "kcp.gateway.hot_reload.outcome")
+	require.True(t, ok)
+	assert.Equal(t, EventHotReloadAppliedDirectly, outcome.AsString())
+	_, ok = tracingtest.Attr(span, "kcp.gateway.hot_reload.promoted_ms")
+	assert.True(t, ok)
+}
+
+func TestTracing_WaitForConfigApplied_ReadErrorIsIgnored(t *testing.T) {
+	rec := tracingtest.Install(t)
+	forbidden := errors.New(`events is forbidden: User "kcp" cannot list resource "events"`)
+	svc := &readerService{
+		mockService: &mockService{configWaitProgress: []ConfigWaitProgress{
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 1, Elapsed: 2 * time.Second},
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 3, Elapsed: 4 * time.Second, Converged: true},
+		}},
+		read: func(int) (HotReloadSignals, error) { return HotReloadSignals{}, forbidden },
+	}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: hotReloadCapability}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	assert.Nil(t, applied.HotReloadBaseline)
+	applied.ConfigID = "c1"
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, applied, "fence"))
+	assert.Equal(t, 1, svc.calls, "a failed baseline read means the wait doesn't read at all")
+
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.wait_config_applied")
+	for _, k := range []string{"kcp.gateway.hot_reload.outcome", "kcp.gateway.hot_reload.promoted_ms", "kcp.gateway.hot_reload.canary_started_ms"} {
+		_, ok := tracingtest.Attr(span, k)
+		assert.False(t, ok, k)
+	}
+}
+
+func TestTracing_WaitForConfigApplied_StopsReadingAfterAnError(t *testing.T) {
+	tracingtest.Install(t)
+	svc := &readerService{
+		mockService: &mockService{configWaitProgress: []ConfigWaitProgress{
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, Elapsed: 2 * time.Second},
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, Elapsed: 4 * time.Second},
+			{Want: "c1", PodsTotal: 3, PodsReady: 3, PodsAtWant: 3, Elapsed: 6 * time.Second, Converged: true},
+		}},
+		read: func(call int) (HotReloadSignals, error) {
+			if call == 1 {
+				return HotReloadSignals{}, nil
+			}
+			return HotReloadSignals{}, errors.New("boom")
+		},
+	}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: hotReloadCapability}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	applied.ConfigID = "c1"
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, applied, "fence"))
+	assert.Equal(t, 2, svc.calls, "the baseline, then one failed read; none after")
+}
+
+func TestTracing_WaitForConfigApplied_NoReaderNoHotReloadAttributes(t *testing.T) {
+	rec := tracingtest.Install(t)
+	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}, Capability: hotReloadCapability}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	assert.Nil(t, applied.HotReloadBaseline)
+	applied.ConfigID = "c1"
+	require.NoError(t, v.WaitForConfigApplied(context.Background(), "confluent", "gw", 9180, applied, "fence"))
+	span := tracingtest.Find(t, tracingtest.Spans(rec), "gateway.wait_config_applied")
+	_, ok := tracingtest.Attr(span, "kcp.gateway.hot_reload.outcome")
+	assert.False(t, ok)
+}
+
+func TestTracing_NoBaselineWithoutHotReload(t *testing.T) {
+	tracingtest.Install(t)
+	svc := &readerService{mockService: &mockService{}, read: func(int) (HotReloadSignals, error) { return HotReloadSignals{}, nil }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
+	require.NoError(t, err)
+	assert.Nil(t, applied.HotReloadBaseline)
+	assert.Equal(t, 0, svc.calls)
 }
