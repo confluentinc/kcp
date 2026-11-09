@@ -198,6 +198,31 @@ func TestPatchCR_CaptureFailureAbortsBeforePatch(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrApplyUnverified))
 }
 
+func TestPatchCR_BaselineReadFailureAbortsBeforePatchWhenRolling(t *testing.T) {
+	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
+		return 0, errors.New("get deployment: boom")
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.Error(t, err)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
+	assert.False(t, errors.Is(err, ErrApplyUnverified))
+	assert.Contains(t, err.Error(), "before fence")
+}
+
+func TestPatchCR_BaselineReadFailureStillPatchesWhenConfigIDInjected(t *testing.T) {
+	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
+		return 0, errors.New("get deployment: boom")
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), res.BaselineDeploymentGeneration)
+	assert.Contains(t, svc.calls, "PatchGatewayRoute")
+}
+
 func TestPatchConfigIDOnly(t *testing.T) {
 	var gotNamespace, gotGatewayName, gotConfigID string
 	svc := &mockService{

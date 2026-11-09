@@ -152,7 +152,18 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 		}
 	}
 
-	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
+	// A rolling gateway's later waits compare against this generation, so an
+	// unreadable baseline (silently 0) could make them hang forever. Refuse
+	// before anything is written; like the capture, not an ErrApplyUnverified.
+	var baseline int64
+	if v.Capability.InjectsConfigID() {
+		baseline = v.DeploymentBaseline(ctx, namespace, crName, step)
+	} else {
+		baseline, err = v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
+		if err != nil {
+			return ApplyResult{}, fmt.Errorf("failed to read the gateway deployment generation before %s: %w", step, err)
+		}
+	}
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
 		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
