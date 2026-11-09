@@ -17,36 +17,36 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost reproduces a suspected
-// data-loss bug on a hot-reload-off gateway and asserts TODAY's behaviour, so a
-// pass confirms the bug. With unrouted-producer detection off (the default),
-// the AAO fence step waits only for the Deployment rollout to complete
-// (VerifyTransition → WaitForGatewayReady). The replaced pod, still serving
-// the unfenced route, keeps its existing client connections for up to its
-// termination grace period, and verify_fence is skipped, so promote can run
-// inside that window. A producer connected to the replaced pod keeps writing
-// to the source after its mirror has stopped: acked records that never reach
-// the destination. When the fence wait also waits for the replaced pods to be
-// gone, no record can be acked by the source after promote, and this test
-// flips to assert that. Static only. Slice tbm-topic-021..025.
-func TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost(t *testing.T) {
+// TestFenceRollout_ReplacedPodIsGoneBeforePromote guards the fence step on a
+// hot-reload-off gateway. With unrouted-producer detection off (the default),
+// verify_fence is skipped, but the fence step still waits for the replaced
+// gateway pods to be gone before promote can run. A producer connected to the
+// replaced pod is therefore cut off and fenced before the mirror stops, so no
+// record is acked by the source after promote. (Before the fix the wait ran
+// only when detection was on, and a producer on the replaced pod kept writing
+// to the source after its mirror stopped: acked records that never reached the
+// destination.) Static only. Slice tbm-topic-021..025.
+func TestFenceRollout_ReplacedPodIsGoneBeforePromote(t *testing.T) {
 	e := newEnv()
 	if e.mode != "static" {
 		t.Skip("static routes only: a dynamic route hot-reloads, so no pod is replaced")
 	}
 	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-replaced-pod", e.topicRange(21, 25), "")
 	require.Contains(t, r.out, "Detection disabled", "the default policy must skip verify_fence")
-	require.NotEmptyf(t, r.lost, "today a producer on the replaced pod writes to the source after promote (%s)", r.timeline)
-	t.Logf("\nRESULT: BUG REPRODUCED — %d records were acked by the source after the mirror of %s stopped, through the replaced gateway pod "+
-		"that the fence step treated as gone; none of them can reach the destination, and the migration reported success.", len(r.lost), r.probe)
+	require.Truef(t, r.oldGoneAt.Before(r.stoppedAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
+	require.Positive(t, r.errors, "the fence must reject the producer once its connection to the replaced pod is cut")
+	require.Emptyf(t, r.lost, "no record may reach the source after the mirror stops (%s)", r.timeline)
+	t.Logf("\nRESULT: with detection off, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
+		"and no record reached the source after promote.", r.stoppedAt.Sub(r.oldGoneAt).Round(time.Second), r.probe, r.errors)
 }
 
-// TestFenceRollout_DetectionOnWaitsForReplacedPod is the control for
-// TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost: the same migration
-// and producer, with unrouted-producer detection on. Then the fence step waits
-// for the replaced pods to be gone (WaitForGatewayPods), so the producer's
-// connection to the unfenced pod is cut before promote, and no record reaches
-// the source after the mirror stops. Static only. Slice tbm-topic-026..030.
+// TestFenceRollout_DetectionOnWaitsForReplacedPod is the detection-on variant
+// of TestFenceRollout_ReplacedPodIsGoneBeforePromote: the same migration and
+// producer, with unrouted-producer detection on. The fence step waits for the
+// replaced pods to be gone (as it does with detection off), so the producer's
+// connection to the unfenced pod is cut before promote, verify_fence finds no
+// unrouted producer, and no record reaches the source after the mirror stops.
+// Static only. Slice tbm-topic-026..030.
 func TestFenceRollout_DetectionOnWaitsForReplacedPod(t *testing.T) {
 	e := newEnv()
 	if e.mode != "static" {

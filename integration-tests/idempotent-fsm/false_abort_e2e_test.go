@@ -22,26 +22,20 @@ const (
 	sniBootstrap = "bootstrap.gw.local:9595"
 )
 
-// TestFenceRollout_TBMDetectionAbortsOnReplacedPod reproduces a false abort and
-// asserts TODAY's behaviour, so a pass confirms the bug. dynamic-rollout only:
-// a dynamic route on a gateway with hot reload off, three replicas, so every
-// route change rolls the pods.
+// TestFenceRollout_TBMDetectionPassesWithReplacedPods guards against a false
+// abort. dynamic-rollout only: a dynamic route on a gateway with hot reload
+// off, three replicas, so every route change rolls the pods.
 //
-// TBM fences through VerifyTransition, which waits only for the Deployment's
-// rollout to complete (WaitForGatewayReady) and never for the replaced pods to
-// be gone (unlike AAO, whose detection-on branch calls WaitForGatewayPods).
 // With detectUnroutedProducersDuration set, verify_fence takes its first source
-// offset snapshot the moment that wait returns. The replaced pods are still
-// serving, and still accept connections for part of their grace period, so
-// producers routed through the gateway keep landing on the source. The second
-// snapshot sees offsets rising, so kcp reports an unrouted producer, rolls the
-// fence back and exits non-zero. Every producer here goes through the gateway:
-// there is no unrouted producer, so the abort is false. A re-run starts from a
-// rolled-back (itself rolling) gateway and can hit the same race.
-//
-// When the fence wait also waits for the replaced pods to be gone, this test
-// flips to assert the migration completes. Slice tbm-topic-001..004.
-func TestFenceRollout_TBMDetectionAbortsOnReplacedPod(t *testing.T) {
+// offset snapshot right after the fence step. The fence step waits for the
+// replaced pods to be gone, so no pod still serving the unfenced route can let
+// a producer land on the source. Every producer here goes through the gateway,
+// so there is no unrouted producer: the migration must complete, with no
+// "Unrouted producers detected" and every mirror STOPPED. (Before the fix the
+// fence waited only for the Deployment rollout, the replaced pods were still
+// serving at the first snapshot, and kcp falsely aborted and rolled the fence
+// back.) Slice tbm-topic-001..004.
+func TestFenceRollout_TBMDetectionPassesWithReplacedPods(t *testing.T) {
 	e := newEnv()
 	if e.mode != "dynamic-rollout" {
 		t.Skip("dynamic-rollout only: needs a dynamic route on a hot-reload-off gateway whose pods roll (GATEWAY_MODE=dynamic-rollout)")
@@ -96,7 +90,7 @@ func TestFenceRollout_TBMDetectionAbortsOnReplacedPod(t *testing.T) {
 		acked += len(p.stop())
 	}
 	_, oldGoneAt := w.stop()
-	e.snapshot(t, ctx, "after", "AFTER the aborted run (expect mirrors ACTIVE, fence removed)", topics)
+	e.snapshot(t, ctx, "after", "AFTER the migration (expect mirrors STOPPED, route → destination)", topics)
 
 	timeline := fmt.Sprintf("kcp ran %s, exit error: %v; pre-fence pods gone at %s (kcp started %s, finished %s); %d records acked through the gateway by %d producers",
 		kcpDone.Sub(start).Round(time.Second), err, formatAt(oldGoneAt), start.Format(time.RFC3339), kcpDone.Format(time.RFC3339), acked, falseAbortProducers)
@@ -104,14 +98,15 @@ func TestFenceRollout_TBMDetectionAbortsOnReplacedPod(t *testing.T) {
 	t.Logf("\nDATA PLANE ▸ %s", timeline)
 
 	require.Positive(t, acked, "the producers must have written through the gateway")
-	require.Errorf(t, err, "today the migration aborts (%s)", timeline)
-	require.Contains(t, out, "Unrouted producers detected", "the abort must be the unrouted-producer detector's")
-	for _, ms := range e.mirrorStatus(t, ctx) {
-		require.NotEqual(t, "STOPPED", ms, "the abort is before promote: no mirror may be stopped")
+	require.NoErrorf(t, err, "the migration must complete (%s)", timeline)
+	require.NotContains(t, out, "Unrouted producers detected", "no producer is unrouted: every one goes through the gateway")
+	require.Contains(t, strings.ToLower(out), "migration complete")
+	status := e.mirrorStatus(t, ctx)
+	for _, topic := range topics {
+		require.Equalf(t, "STOPPED", status[topic], "the migration completed: the mirror of %s must be stopped", topic)
 	}
-	require.False(t, strings.Contains(strings.ToLower(out), "migration complete"), "the run must not report completion")
-	t.Logf("\nRESULT: FALSE ABORT REPRODUCED — kcp reported an unrouted producer and rolled the fence back, but all %d producers write through the gateway. "+
-		"The replaced pods were still serving when the first source-offset snapshot was taken.", falseAbortProducers)
+	t.Logf("\nRESULT: the migration completed with detection on and %d producers writing through the gateway: no unrouted producer was reported "+
+		"and every mirror is STOPPED.", falseAbortProducers)
 }
 
 func formatAt(at time.Time) string {

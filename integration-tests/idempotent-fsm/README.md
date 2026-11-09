@@ -239,39 +239,36 @@ complete and no `app=<gateway>` pod terminating. It doesn't wait for the
 operator to observe the CR, so it returns while the operator is stopped. Only
 the terminating-pod test skips it (`runKCPUnsettled`). It's a no-op on dynamic.
 
-A fence-rollout reproduction (`fence_rollout_e2e_test.go`, static only)
-asserts **today's** buggy behaviour on purpose, so a pass confirms the bug. A
-producer writes through the gateway once a second on one long-lived connection
-while a full migration runs with the default policies (unrouted-producer
-detection off). The fence step waits only for the gateway Deployment's rollout
-to complete, but the replaced pod keeps serving the unfenced route to existing
-connections until its grace period ends, and promote runs inside that window.
-The test reads back from the source every record whose send started after the
-probe topic's mirror was seen STOPPED: none of them can reach the destination,
-yet the migration reports success. Once the fence wait also waits for the
-replaced pods to be gone, this test flips to assert that no such record exists.
-Its control (`TestFenceRollout_DetectionOnWaitsForReplacedPod`) runs the same
-migration and producer with `detectUnroutedProducersDuration: 10s`, which makes
-the fence step wait for the replaced pod to be gone: the producer is fenced and
-no record reaches the source after the mirror stops.
+A fence-rollout test (`fence_rollout_e2e_test.go`, static only) guards the
+fence step's wait for the replaced gateway pods. A producer writes through the
+gateway once a second on one long-lived connection while a full migration runs
+with the default policies (unrouted-producer detection off).
+`TestFenceRollout_ReplacedPodIsGoneBeforePromote` asserts that the fence step
+waits for the replaced pod to be gone, even though verify_fence is skipped:
+the pod is gone before the probe topic's mirror is seen STOPPED, the producer
+is fenced (failed sends), and no record whose send started after the mirror
+stopped reaches the source. Before the fix the wait only ran with detection on,
+so the replaced pod kept serving the unfenced route to existing connections
+and promote could run inside that window: acked records were lost. Its
+detection-on variant (`TestFenceRollout_DetectionOnWaitsForReplacedPod`) runs
+the same migration and producer with `detectUnroutedProducersDuration: 10s`
+and makes the same assertions.
 
 A third environment, `GATEWAY_MODE=dynamic-rollout`, is a dynamic route on a
 gateway with `hotReload.enabled: false` and 3 replicas, so every route change
 rolls the pods (profile `kcp-e2e-idempotent-dynamic-rollout`). It exists for
-`TestFenceRollout_TBMDetectionAbortsOnReplacedPod` (`fence_rollout_e2e_test.go`
+`TestFenceRollout_TBMDetectionPassesWithReplacedPods` (`fence_rollout_e2e_test.go`
 helpers, `false_abort_e2e_test.go`), the only test written for it; run it with
 `RUN=TestFenceRollout_TBM`, not the whole suite (other tests assume the hot
-reload or static behaviour of their own mode). It asserts **today's** buggy
-behaviour on purpose: 20 producers write through the gateway (TLS with SNI,
-dialled to the gateway service) while a TBM migration runs with
-`detectUnroutedProducersDuration: 30s`. TBM's fence waits only for the rollout
-to complete, not for the replaced pods to be gone, so verify_fence's first
-source-offset snapshot is taken while they still serve. The second snapshot sees
-offsets rising, and kcp reports an unrouted producer and rolls the fence back,
-though every producer goes through the gateway. Once the fence wait also waits
-for the replaced pods to be gone, this test flips to assert the migration
-completes. Slice `001..004`; the environment has no other test, so the slice
-can't collide.
+reload or static behaviour of their own mode). 20 producers write through the
+gateway (TLS with SNI, dialled to the gateway service) while a TBM migration
+runs with `detectUnroutedProducersDuration: 30s`. TBM's fence waits for the
+replaced pods to be gone, so verify_fence's first source-offset snapshot is
+taken once no pod serves the unfenced route, kcp reports no unrouted producer,
+and the migration completes with every mirror STOPPED. Before the fix the
+fence waited only for the rollout to complete, the replaced pods were still
+serving at the first snapshot, and kcp falsely aborted. Slice `001..004`; the
+environment has no other test, so the slice can't collide.
 
 The env vars are named
 `KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.
