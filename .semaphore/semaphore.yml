@@ -8,8 +8,11 @@ auto_cancel:
   running:
     when: "branch != 'main'"
 
+# The whole pipeline's ceiling. The static idempotent-fsm e2e job alone takes about
+# an hour (its tests sum to about 49 minutes, plus environment setup): each fence
+# and switch on a rolling gateway waits for the replaced pod to be gone, about 30s.
 execution_time_limit:
-  hours: 1
+  hours: 2
 
 queue:
   - when: "branch != 'main'"
@@ -478,6 +481,8 @@ blocks:
         # rest of the suite assumes the hot-reload or static behaviour of its own
         # mode, so that job runs only that test.
         - name: 'idempotent-fsm e2e'
+          execution_time_limit:
+            hours: 2
           matrix:
             - env_var: GATEWAY_MODE
               values: ['dynamic', 'static', 'dynamic-rollout']
