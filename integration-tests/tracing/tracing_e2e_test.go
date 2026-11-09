@@ -135,6 +135,17 @@ func (e *env) runAndCheckTrace(t *testing.T, r tracedRun) {
 	}
 	assert.True(t, len(byName["gateway.verify_transition"])+len(byName["gateway.wait_config_applied"]) > 0, "the fence and switch are verified")
 
+	// A static route rolls its gateway pods: each fence and switch captures the
+	// pods first and waits for them to be gone. A dynamic route hot-reloads and
+	// replaces none, so it records neither.
+	if e.mode == "static" {
+		assert.NotEmpty(t, byName["gateway.capture_pods"], "a rolling gateway captures its pods before each patch")
+		assert.NotEmpty(t, byName["gateway.wait_pods"], "a rolling gateway waits for the replaced pods to be gone")
+	} else {
+		assert.Empty(t, byName["gateway.capture_pods"], "a hot-reload gateway captures no pods")
+		assert.Empty(t, byName["gateway.wait_pods"], "a hot-reload gateway waits for no replaced pods")
+	}
+
 	checkDetection(t, r, byName)
 	checkPromoteBatches(t, r, byName)
 

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 )
 
 // mockService implements the full gateway.Service interface with configurable
@@ -31,6 +32,17 @@ type mockService struct {
 	patchResults   []PatchResult
 	patchErr       error
 	generationGets int
+
+	// getGatewayPodUIDsFn scripts GetGatewayPodUIDs; calls records the order of
+	// the capture and patch calls.
+	getGatewayPodUIDsFn func() (map[types.UID]struct{}, error)
+	calls               []string
+
+	// waitForGatewayPodsFn scripts WaitForGatewayPods (nil = succeed);
+	// waitPodsCalls and waitReadyCalls count invocations of the two rollout waits.
+	waitForGatewayPodsFn func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error
+	waitPodsCalls        int
+	waitReadyCalls       int
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -50,6 +62,7 @@ func (m *mockService) CheckPermissions(context.Context, string, string, string, 
 }
 
 func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
+	m.calls = append(m.calls, "PatchGatewayRoute")
 	m.patchExpected = append(m.patchExpected, expectedGeneration)
 	if m.patchGatewayRouteFn != nil {
 		str, err := m.patchGatewayRouteFn(ctx, namespace, gatewayName, rp, configID)
@@ -88,6 +101,10 @@ func (m *mockService) WaitForGatewayAccepted(context.Context, string, string, ti
 }
 
 func (m *mockService) GetGatewayPodUIDs(context.Context, string, string) (map[types.UID]struct{}, error) {
+	m.calls = append(m.calls, "GetGatewayPodUIDs")
+	if m.getGatewayPodUIDsFn != nil {
+		return m.getGatewayPodUIDsFn()
+	}
 	return nil, nil
 }
 
@@ -98,11 +115,16 @@ func (m *mockService) GetGatewayDeploymentGeneration(ctx context.Context, namesp
 	return 0, nil
 }
 
-func (m *mockService) WaitForGatewayPods(context.Context, string, string, map[types.UID]struct{}, int64, time.Duration, time.Duration, func(PodRolloutProgress)) error {
+func (m *mockService) WaitForGatewayPods(_ context.Context, _, _ string, initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration, _ func(PodRolloutProgress)) error {
+	m.waitPodsCalls++
+	if m.waitForGatewayPodsFn != nil {
+		return m.waitForGatewayPodsFn(initial, baseline, poll, timeout)
+	}
 	return nil
 }
 
 func (m *mockService) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(GatewayReadinessProgress)) error {
+	m.waitReadyCalls++
 	return nil
 }
 
@@ -141,6 +163,64 @@ func TestPatchCR_GatesConfigID(t *testing.T) {
 	assert.Equal(t, "r", gotRP.RouteName)
 	assert.Equal(t, "fence", gotRP.Field)
 	assert.Equal(t, 1, gotRP.Value)
+}
+
+func TestPatchCR_CapturesPodUIDsWhenRolling(t *testing.T) {
+	want := map[types.UID]struct{}{"uid-a": {}, "uid-b": {}}
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return want, nil }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.Equal(t, want, res.PreApplyPodUIDs)
+	assert.Equal(t, []string{"GetGatewayPodUIDs", "PatchGatewayRoute"}, svc.calls, "pods must be captured before the patch")
+}
+
+func TestPatchCR_DoesNotCaptureWhenConfigIDInjected(t *testing.T) {
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
+		return map[types.UID]struct{}{"uid-a": {}}, nil
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.NotContains(t, svc.calls, "GetGatewayPodUIDs")
+	assert.Nil(t, res.PreApplyPodUIDs)
+}
+
+func TestPatchCR_CaptureFailureAbortsBeforePatch(t *testing.T) {
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return nil, errors.New("list pods: boom") }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.Error(t, err)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
+	assert.False(t, errors.Is(err, ErrApplyUnverified))
+}
+
+func TestPatchCR_BaselineReadFailureAbortsBeforePatchWhenRolling(t *testing.T) {
+	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
+		return 0, errors.New("get deployment: boom")
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.Error(t, err)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
+	assert.False(t, errors.Is(err, ErrApplyUnverified))
+	assert.Contains(t, err.Error(), "before fence")
+}
+
+func TestPatchCR_BaselineReadFailureStillPatchesWhenConfigIDInjected(t *testing.T) {
+	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
+		return 0, errors.New("get deployment: boom")
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), res.BaselineDeploymentGeneration)
+	assert.Contains(t, svc.calls, "PatchGatewayRoute")
 }
 
 func TestPatchConfigIDOnly(t *testing.T) {
@@ -228,4 +308,135 @@ func TestTransitionVerifier_CheckGeneration(t *testing.T) {
 			assert.Equal(t, int64(5), gce.Expected)
 		})
 	}
+}
+
+func TestVerifyTransition_RolloutWaitsForReplacedPods(t *testing.T) {
+	var gotInitial map[types.UID]struct{}
+	var gotBaseline int64
+	var gotPoll, gotTimeout time.Duration
+	svc := &mockService{waitForGatewayPodsFn: func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error {
+		gotInitial, gotBaseline, gotPoll, gotTimeout = initial, baseline, poll, timeout
+		return nil
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 7 * time.Minute}
+	applied := ApplyResult{BaselineDeploymentGeneration: 12, PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}}
+
+	require.NoError(t, v.VerifyTransition(context.Background(), "ns", "gw", 9180, applied, "fence"))
+
+	assert.Equal(t, 1, svc.waitPodsCalls)
+	assert.Equal(t, 0, svc.waitReadyCalls, "the rollout branch must not fall back to the readiness-only wait")
+	assert.Equal(t, applied.PreApplyPodUIDs, gotInitial)
+	assert.Equal(t, int64(12), gotBaseline)
+	assert.Equal(t, 5*time.Second, gotPoll)
+	assert.Equal(t, 7*time.Minute, gotTimeout)
+}
+
+func TestVerifyTransition_RolloutWaitErrorIsWrapped(t *testing.T) {
+	boom := errors.New("boom")
+	svc := &mockService{waitForGatewayPodsFn: func(map[types.UID]struct{}, int64, time.Duration, time.Duration) error { return boom }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	err := v.VerifyTransition(context.Background(), "ns", "gw", 9180, ApplyResult{}, "switchover")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+	assert.Contains(t, err.Error(), "failed waiting for the gateway pods to be replaced during switchover")
+}
+
+// realWaitService delegates WaitForGatewayPods to the real waitForGatewayPods
+// over a fake clientset, so a verifier test exercises the genuine wait. It
+// substitutes a short poll interval for the verifier's 5s so the test is fast.
+type realWaitService struct {
+	mockService
+	cs kubernetes.Interface
+}
+
+func (r *realWaitService) WaitForGatewayPods(ctx context.Context, ns, name string, initial map[types.UID]struct{}, baseline int64, _, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+	return waitForGatewayPods(ctx, r.cs, ns, name, initial, baseline, 5*time.Millisecond, timeout, onProgress)
+}
+
+func TestVerifyTransition_NoRollReturnsImmediately(t *testing.T) {
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	// The Deployment generation never advances past the baseline: no roll.
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+	svc := &realWaitService{cs: cs}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 5 * time.Second}
+	applied := ApplyResult{BaselineDeploymentGeneration: 1, PreApplyPodUIDs: map[types.UID]struct{}{"old-1": {}}}
+
+	start := time.Now()
+	err := v.VerifyTransition(context.Background(), ns, gw, 9180, applied, "fence")
+
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 3*time.Second, "a no-roll apply must not wait out the timeout")
+}
+
+// recordingReporter captures rendered Detail lines.
+type recordingReporter struct{ details []string }
+
+func (r *recordingReporter) Detail(f string, a ...any) {
+	r.details = append(r.details, fmt.Sprintf(f, a...))
+}
+func (r *recordingReporter) Success(string, ...any)     {}
+func (r *recordingReporter) Remediation(string, ...any) {}
+
+func TestPrintPodRolloutProgress_ShowsElapsedAndOldPodNames(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printPodRolloutProgress(PodRolloutProgress{
+		InitialPodCount: 5, NewPodsReady: 1, OldPodsRemaining: 5, RolloutDetected: true,
+		Elapsed: 90 * time.Second, OldPodNames: []string{"a", "b", "c", "d", "e"},
+	})
+	require.Len(t, rep.details, 1)
+	line := rep.details[0]
+	assert.Contains(t, line, "1/5 new pods ready, 5 old pods remaining")
+	assert.Contains(t, line, FormatElapsed(90*time.Second))
+	assert.Contains(t, line, "a, b, c and 2 more")
+	assert.NotContains(t, line, "d,")
+}
+
+func TestPrintPodRolloutProgress_FewNamesListedInFull(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printPodRolloutProgress(PodRolloutProgress{
+		InitialPodCount: 2, OldPodsRemaining: 2, RolloutDetected: true, OldPodNames: []string{"a", "b"},
+	})
+	require.Len(t, rep.details, 1)
+	assert.Contains(t, rep.details[0], "a, b")
+	assert.NotContains(t, rep.details[0], "more")
+}
+
+func TestPrintConfigWaitProgress_InPlaceShowsTerminating(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printConfigWaitProgress(ConfigWaitProgress{
+		Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2, PodsTerminating: 1,
+	})
+	require.Len(t, rep.details, 1)
+	assert.Contains(t, rep.details[0], "1 terminating")
+
+	rep.details = nil
+	v.printConfigWaitProgress(ConfigWaitProgress{Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2})
+	assert.NotContains(t, rep.details[0], "terminating")
+}
+
+func TestExcludePods(t *testing.T) {
+	set := map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}
+	exclude := map[types.UID]struct{}{"b": {}}
+
+	got := ExcludePods(set, exclude)
+
+	assert.Equal(t, map[types.UID]struct{}{"a": {}, "c": {}}, got)
+	assert.Equal(t, map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}, set, "the set must not be mutated")
+	assert.Equal(t, map[types.UID]struct{}{"b": {}}, exclude, "the exclusion must not be mutated")
+
+	assert.Empty(t, ExcludePods(nil, exclude), "nil set gives an empty result")
+	assert.Nil(t, ExcludePods(nil, nil), "nil set stays nil, so a hot-reload capture keeps meaning no pods")
+	assert.Equal(t, set, ExcludePods(set, nil), "nil exclusion keeps every pod")
+	got = ExcludePods(set, nil)
+	got["d"] = struct{}{}
+	assert.NotContains(t, set, types.UID("d"), "the result is a new map even with nothing excluded")
 }

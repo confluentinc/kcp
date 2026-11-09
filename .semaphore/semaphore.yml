@@ -472,18 +472,22 @@ blocks:
           - cache restore minikube-cache
       jobs:
         # One job per route mode, run in parallel on separate agents; GATEWAY_MODE
-        # selects the mode for setup, run and teardown alike.
+        # selects the mode for setup, run and teardown alike. dynamic-rollout is a
+        # dynamic route on a hot-reload-off gateway (pods roll on every change); its
+        # one test guards TBM's fence against the replaced pods still serving. The
+        # rest of the suite assumes the hot-reload or static behaviour of its own
+        # mode, so that job runs only that test.
         - name: 'idempotent-fsm e2e'
           matrix:
             - env_var: GATEWAY_MODE
-              values: ['dynamic', 'static']
+              values: ['dynamic', 'static', 'dynamic-rollout']
           commands:
             - cache restore frontend-dependencies
             - cache restore go-mod-cache
             - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-idempotent-fsm-setup
-            - make test-idempotent-fsm-run
+            - if [ "${GATEWAY_MODE}" = "dynamic-rollout" ]; then make test-idempotent-fsm-run RUN=TestFenceRollout_TBM; else make test-idempotent-fsm-run; fi
       epilogue:
         always:
           commands:
