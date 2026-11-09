@@ -69,5 +69,8 @@ func TestOverdueError(t *testing.T) {
 	}
 
 	pod.Spec.NodeName = ""
-	assert.Contains(t, overdueError("ns", pod, time.Minute).Error(), "unknown node")
+	msg := overdueError("ns", pod, time.Minute).Error()
+	assert.Contains(t, msg, "on unknown node is still listed")
+	assert.Contains(t, msg, "if its node is really gone")
+	assert.NotContains(t, msg, "if node unknown node")
 }

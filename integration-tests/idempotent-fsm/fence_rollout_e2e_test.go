@@ -325,8 +325,9 @@ func (e *env) watchPromoteAndPods(topic string, oldPods map[types.UID]struct{}) 
 			now := time.Now()
 			// Poll order matters: read the pods BEFORE the mirror status. Both
 			// marks share this poll's `now`, so a tie between goneAt and
-			// stoppedAt means the pod was seen gone first (the order the
-			// assertions check), never the mirror first.
+			// stoppedAt is accepted: the watcher cannot resolve order finer
+			// than its 1s poll. kcp's wait guarantees the order by
+			// construction, and `r.lost` guards the data plane.
 			if uids, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway); err == nil {
 				left := false
 				for uid := range oldPods {

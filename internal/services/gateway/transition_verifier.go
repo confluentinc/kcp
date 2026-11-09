@@ -128,8 +128,9 @@ func (v *TransitionVerifier) HotReloadTimeoutOrDefault() time.Duration {
 }
 
 // DeploymentBaseline reads the backing Deployment's generation immediately
-// before an apply. A read failure is not fatal — 0 makes the rollout path
-// conservative rather than wrong.
+// before an apply. A read failure is lenient only for the configId path and
+// PatchConfigIDOnly: 0 makes the rollout path conservative rather than wrong.
+// On rolling gateways PatchCR refuses to patch when the read fails.
 func (v *TransitionVerifier) DeploymentBaseline(ctx context.Context, namespace, crName, step string) int64 {
 	baseline, err := v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
 	if err != nil {

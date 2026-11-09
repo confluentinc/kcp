@@ -31,6 +31,9 @@ func overduePod(pods []corev1.Pod, include func(*corev1.Pod) bool, now time.Time
 		if !include(p) || isTerminalPod(p) || p.DeletionTimestamp == nil {
 			continue
 		}
+		// deletionTimestamp is API-server time while now is the local clock.
+		// Host clock skew beyond the margin reports a pod overdue early,
+		// which fails closed.
 		if now.Sub(p.DeletionTimestamp.Time) > replacedPodOverdueMargin {
 			candidates = append(candidates, p)
 		}
@@ -46,10 +49,19 @@ func overduePod(pods []corev1.Pod, include func(*corev1.Pod) bool, now time.Time
 // overdueError builds the error for an overdue pod, wrapping
 // ErrReplacedPodOverdue and naming the recovery command.
 func overdueError(namespace string, pod *corev1.Pod, overdueBy time.Duration) error {
-	node := pod.Spec.NodeName
-	if node == "" {
-		node = "unknown node"
+	node := overdueNode(pod)
+	gone := "if node " + node + " is really gone"
+	if pod.Spec.NodeName == "" {
+		gone = "if its node is really gone"
 	}
-	return fmt.Errorf("%w: pod %s on %s is still listed %s past its deletion deadline; if node %s is really gone, run kubectl -n %s delete pod %s --grace-period=0 --force, then re-run kcp",
-		ErrReplacedPodOverdue, pod.Name, node, overdueBy.Round(time.Second), node, namespace, pod.Name)
+	return fmt.Errorf("%w: pod %s on %s is still listed %s past its deletion deadline; %s, run kubectl -n %s delete pod %s --grace-period=0 --force, then re-run kcp",
+		ErrReplacedPodOverdue, pod.Name, node, overdueBy.Round(time.Second), gone, namespace, pod.Name)
+}
+
+// overdueNode is the node name for messages and logs, or "unknown node".
+func overdueNode(pod *corev1.Pod) string {
+	if pod.Spec.NodeName == "" {
+		return "unknown node"
+	}
+	return pod.Spec.NodeName
 }

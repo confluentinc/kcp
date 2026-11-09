@@ -1181,8 +1181,10 @@ func TestWaitForGatewayPods_OverdueOldPodFailsWithoutDeadline(t *testing.T) {
 		completeGatewayDeployment(gw, ns, 1),
 	)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // safety net; the timeout argument stays 0
+	defer cancel()
 	start := time.Now()
-	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 0, nil)
+	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 0, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrReplacedPodOverdue))
 	assert.Contains(t, err.Error(), "node-a")

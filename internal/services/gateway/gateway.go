@@ -818,7 +818,7 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			_, ok := initialPodUIDs[p.UID]
 			return ok
 		}, time.Now()); pod != nil {
-			slog.Warn("replaced gateway pod is overdue", "pod", pod.Name, "node", pod.Spec.NodeName, "overdueBy", by.Round(time.Second))
+			slog.Warn("replaced gateway pod is overdue", "pod", pod.Name, "node", overdueNode(pod), "overdueBy", by.Round(time.Second))
 			return overdueError(namespace, pod, by)
 		}
 
