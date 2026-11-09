@@ -1155,3 +1155,56 @@ func TestWaitForGatewayPods_ParentCancelIsNotReportedAsTimeout(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.NotContains(t, err.Error(), "timed out")
 }
+
+// shortenOverdueMargin lowers replacedPodOverdueMargin for the test and
+// restores it on cleanup.
+func shortenOverdueMargin(t *testing.T, d time.Duration) {
+	t.Helper()
+	original := replacedPodOverdueMargin
+	replacedPodOverdueMargin = d
+	t.Cleanup(func() { replacedPodOverdueMargin = original })
+}
+
+// TestWaitForGatewayPods_OverdueOldPodFailsWithoutDeadline: a captured pod still
+// listed well past its deletionTimestamp fails the wait even with no timeout.
+func TestWaitForGatewayPods_OverdueOldPodFailsWithoutDeadline(t *testing.T) {
+	shortenOverdueMargin(t, 10*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	old := newGatewayPod("gw-old", ns, gw, "old-1", true)
+	old.Spec.NodeName = "node-a"
+	past := metav1.NewTime(time.Now().Add(-time.Second))
+	old.DeletionTimestamp = &past
+	cs := newFakeClientset(
+		old,
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	start := time.Now()
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 0, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrReplacedPodOverdue))
+	assert.Contains(t, err.Error(), "node-a")
+	assert.Less(t, time.Since(start), time.Second)
+}
+
+// TestWaitForGatewayPods_TerminatingWithinGraceStillBlocks: a pod whose grace
+// period is still running is not overdue; the wait times out as before.
+func TestWaitForGatewayPods_TerminatingWithinGraceStillBlocks(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	old := newGatewayPod("gw-old", ns, gw, "old-1", true)
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	old.DeletionTimestamp = &future
+	cs := newFakeClientset(
+		old,
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 100*time.Millisecond, nil)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrReplacedPodOverdue))
+	assert.Contains(t, err.Error(), "timed out")
+}

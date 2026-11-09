@@ -812,6 +812,16 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			return finish(fmt.Errorf("failed to list gateway pods: %w", err))
 		}
 
+		// A captured pod still listed well past its deletion deadline will not
+		// leave on its own (e.g. its node is gone); fail whatever the timeout.
+		if pod, by := overduePod(pods.Items, func(p *corev1.Pod) bool {
+			_, ok := initialPodUIDs[p.UID]
+			return ok
+		}, time.Now()); pod != nil {
+			slog.Warn("⚠️ replaced gateway pod is overdue", "pod", pod.Name, "node", pod.Spec.NodeName, "overdueBy", by.Round(time.Second))
+			return overdueError(namespace, pod, by)
+		}
+
 		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
 		remainingNames := oldPodNames(pods.Items, initialPodUIDs)
 		oldPodsRemaining := len(remainingNames)
