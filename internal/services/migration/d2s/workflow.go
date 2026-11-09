@@ -107,7 +107,7 @@ type D2SActions struct {
 	// capabilityResolved is true once gatewayCapability was resolved against the live cluster in this
 	// process.
 	capabilityResolved bool
-	// rolloutTimeout bounds the gateway-readiness waits; 0 means no deadline.
+	// rolloutTimeout bounds the replaced-pod waits; 0 means no deadline.
 	rolloutTimeout time.Duration
 	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
 	hotReloadTimeout time.Duration
@@ -133,7 +133,7 @@ func NewD2SActions(gatewayService gateway.Service, deps Dependencies) *D2SAction
 	return &D2SActions{reporter: newReporter(), deps: deps, gatewayService: gatewayService}
 }
 
-// SetRolloutTimeout sets the deadline applied to gateway-readiness waits. 0 means no deadline.
+// SetRolloutTimeout sets the deadline applied to the replaced-pod waits. 0 means no deadline.
 func (a *D2SActions) SetRolloutTimeout(d time.Duration) {
 	a.rolloutTimeout = d
 }

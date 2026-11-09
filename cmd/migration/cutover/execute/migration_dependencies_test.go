@@ -97,7 +97,8 @@ func (stubGatewayServiceImpl) WaitForGatewayAccepted(context.Context, string, st
 }
 
 func (stubGatewayServiceImpl) GetGatewayPodUIDs(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
-	return nil, fmt.Errorf("stubGatewayServiceImpl.GetGatewayPodUIDs not implemented")
+	// One UID: PatchCR captures the pods of a rolling gateway before every patch.
+	return map[k8stypes.UID]struct{}{"stub-pod": {}}, nil
 }
 
 func (stubGatewayServiceImpl) GetGatewayDeploymentGeneration(context.Context, string, string) (int64, error) {
@@ -105,7 +106,7 @@ func (stubGatewayServiceImpl) GetGatewayDeploymentGeneration(context.Context, st
 }
 
 func (stubGatewayServiceImpl) WaitForGatewayPods(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
-	return fmt.Errorf("stubGatewayServiceImpl.WaitForGatewayPods not implemented")
+	return nil
 }
 
 func (stubGatewayServiceImpl) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {

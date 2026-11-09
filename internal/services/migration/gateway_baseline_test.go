@@ -43,7 +43,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		}
 
 		var gotBaseline int64 = -1
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, baseline int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			gotBaseline = baseline
 			return nil
 		}
@@ -68,7 +68,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		}
 
 		var gotBaseline int64 = -1
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, baseline int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			gotBaseline = baseline
 			return nil
 		}
@@ -96,7 +96,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		}
 
 		var baselines []int64
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, baseline int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			baselines = append(baselines, baseline)
 			return nil
 		}
@@ -145,7 +145,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 0, fmt.Errorf("no permission to read deployments")
 		}
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("must not fall back to the rollout wait when a configId was applied")
 			return nil
 		}
@@ -200,7 +200,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		}
 
 		var baselines []int64
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, baseline int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			baselines = append(baselines, baseline)
 			return nil
 		}

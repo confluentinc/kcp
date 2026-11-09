@@ -2,7 +2,8 @@
 # Stands up the live topology for the idempotent-migration-FSM resume suite on its
 # own Minikube profile (kcp-e2e-idempotent-<mode>, see state.sh): a source CP Kafka (PLAINTEXT) and a
 # destination CP Kafka (SASL_SSL) linked by one ClusterLink, plus a Confluent
-# Gateway — dynamic-mode (hot reload) or static-mode (rollout), per GATEWAY_MODE.
+# Gateway — dynamic-mode (hot reload), static-mode (rollout) or dynamic-rollout
+# (dynamic route, hot reload off, 3 replicas), per GATEWAY_MODE.
 # The engine (migplan.Reconcile) reads the live gateway CR; the harness drives
 # kcp migration cutover execute and interrupts it at kill points to prove resume.
 #
@@ -32,7 +33,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 NAMESPACE="confluent"
 
 # --- Gateway / link / topic contract (single source of truth; mirrored into .env) ---
-# GATEWAY_MODE selects the route mode under test: dynamic (TBM) or static (AAO).
+# GATEWAY_MODE selects the route mode under test: dynamic (TBM), static (AAO) or
+# dynamic-rollout (TBM on a gateway whose pods roll on every change).
 # The route/domain/gateway names differ per mode and must match the deployed
 # gateway template (gateway-dynamic.yaml / gateway-static.yaml).
 if [ "${GATEWAY_MODE}" = "static" ]; then
@@ -48,7 +50,18 @@ if [ "${GATEWAY_MODE}" = "static" ]; then
   SOURCE_BOOTSTRAP_ID="UNAUTHED"
 else
   GATEWAY_NAME="${GATEWAY_NAME:-tbm-gateway}"
-  GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-2}"
+  if [ "${GATEWAY_MODE}" = "dynamic-rollout" ]; then
+    # Hot reload off: every route change rolls the pods. Three replicas, so a
+    # roll leaves several old pods draining at once.
+    GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-3}"
+    HOT_RELOAD_ENABLED="false"
+    # Client traffic goes through this gateway, so the destination leg must work.
+    SWAP_AUTH="true"
+  else
+    GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-2}"
+    HOT_RELOAD_ENABLED="true"
+    SWAP_AUTH="false"
+  fi
   ROUTE_NAME="${ROUTE_NAME:-tbm-route}"
   SOURCE_DOMAIN="source-domain"
   DEST_DOMAIN="destination-domain"
@@ -200,16 +213,24 @@ if [ "${GATEWAY_MODE}" = "static" ]; then
   wait_for_pods "app=${GATEWAY_NAME}"
 else
   # --- Gateway (dynamic, hot reload) ---
+  if [ "${SWAP_AUTH}" = "true" ]; then
+    # The template's #SWAP# lines read these secrets (the static mode stages them too).
+    e2e_stage_swap_auth_secrets
+    MARKERS=(-e '/^#NOSWAP# /d' -e 's/^#SWAP# //')
+  else
+    MARKERS=(-e '/^#SWAP# /d' -e 's/^#NOSWAP# //')
+  fi
   echo "Rendering + applying the initial dynamic gateway CR..."
   GATEWAY_CR="${RENDERED_DIR}/gateway-dynamic.yaml"
-  sed -e "s/__GATEWAY_NAME__/${GATEWAY_NAME}/g" \
+  sed "${MARKERS[@]}" "${TEMPLATES_DIR}/gateway-dynamic.yaml" | sed -e "s/__GATEWAY_NAME__/${GATEWAY_NAME}/g" \
       -e "s/__REPLICAS__/${GATEWAY_REPLICAS}/g" \
       -e "s|__GATEWAY_IMAGE__|${GATEWAY_IMAGE}|g" \
       -e "s|__INIT_IMAGE__|${INIT_IMAGE}|g" \
       -e "s/__ROUTE_NAME__/${ROUTE_NAME}/g" \
       -e "s|__SOURCE_BOOTSTRAP__|${SOURCE_BOOTSTRAP}|g" \
       -e "s|__DEST_BOOTSTRAP__|${DEST_BOOTSTRAP}|g" \
-      "${TEMPLATES_DIR}/gateway-dynamic.yaml" > "${GATEWAY_CR}"
+      -e "s/__HOT_RELOAD_ENABLED__/${HOT_RELOAD_ENABLED}/g" \
+      > "${GATEWAY_CR}"
   kubectl --context "${PROFILE}" apply -f "${GATEWAY_CR}"
 
   echo "Waiting for ${GATEWAY_REPLICAS} gateway pod(s) to be Ready..."
@@ -217,13 +238,17 @@ else
 
   # Prove the licence took: without an Enterprise licence the config-file watcher
   # never starts and every hot reload is silently dropped (from hot-reload/setup.sh).
+  # Not needed when hot reload is off (dynamic-rollout): nothing hot-reloads.
   echo "Checking the gateway accepted the licence..."
-  if kubectl --context "${PROFILE}" -n "${NAMESPACE}" logs -l "app=${GATEWAY_NAME}" --tail=-1 2>/dev/null \
+  if [ "${HOT_RELOAD_ENABLED}" != "true" ]; then
+    echo "  - hot reload is off in ${GATEWAY_MODE} mode, skipping the hot-reload licence check"
+  elif kubectl --context "${PROFILE}" -n "${NAMESPACE}" logs -l "app=${GATEWAY_NAME}" --tail=-1 2>/dev/null \
        | grep -qi "Hot-reload feature is not enabled"; then
     echo "FATAL: gateway reports 'Hot-reload feature is not enabled' — licence not accepted as Enterprise." >&2
     exit 1
+  else
+    echo "  ✓ no trial-mode hot-reload warning in gateway logs"
   fi
-  echo "  ✓ no trial-mode hot-reload warning in gateway logs"
 fi
 
 # --- Block reconcile once mirrors are visible over REST (from migration/setup.sh) ---
