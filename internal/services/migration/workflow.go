@@ -441,9 +441,13 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 // Confluent operator accepted the new spec, then waits until the gateway pods
 // it replaced are gone (or, on a hot-reload gateway, every pod reports the new
 // configId). The wait runs without a deadline by
-// default — the operator drives convergence and the user can Ctrl-C if a
-// rollout wedges. An optional per-workflow rolloutTimeout caps the wait when
-// set (via SetRolloutTimeout).
+// default — the operator drives convergence. An optional per-workflow
+// rolloutTimeout caps the wait when set (via SetRolloutTimeout). Ctrl-C does
+// not unwind a wedged wait: kcp installs no signal handler, so it ends the
+// process with the gateway as it is (fenced, if the fence was applied) and a
+// re-run continues from there. Whatever the timeout, a replaced pod still
+// listed more than replacedPodOverdueMargin past its deletion deadline fails
+// the wait (gateway.ErrReplacedPodOverdue), so a lost node cannot wedge it.
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 

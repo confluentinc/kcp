@@ -262,7 +262,7 @@
                 },
                 "rolloutTimeout": {
                   "type": "string",
-                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels, except that a replaced pod still listed more than 60s past its termination deadline fails the wait.",
                   "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
                 },
                 "detectUnroutedProducersDuration": {
@@ -379,7 +379,7 @@
                 },
                 "rolloutTimeout": {
                   "type": "string",
-                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels, except that a replaced pod still listed more than 60s past its termination deadline fails the wait.",
                   "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
                 },
                 "detectUnroutedProducersDuration": {
@@ -438,7 +438,7 @@
               "properties": {
                 "rolloutTimeout": {
                   "type": "string",
-                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+                  "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels, except that a replaced pod still listed more than 60s past its termination deadline fails the wait.",
                   "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
                 },
                 "detectUnroutedCommitsDuration": {

@@ -101,7 +101,10 @@ type ConfigWaitOptions struct {
 
 	// RollTimeout replaces HotReloadTimeout the moment a roll is observed. 0
 	// means no deadline, matching --rollout-timeout's default: the operator
-	// drives a rollout to completion and the user can interrupt.
+	// drives a rollout to completion. Ctrl-C ends kcp with the gateway as it is
+	// (fenced, if the fence was applied) and a re-run continues from there. A
+	// replaced pod overdue past its deletion deadline by replacedPodOverdueMargin
+	// fails the wait whatever this timeout.
 	RollTimeout time.Duration
 
 	OnProgress func(ConfigWaitProgress)
