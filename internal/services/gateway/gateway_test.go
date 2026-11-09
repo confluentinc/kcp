@@ -1123,3 +1123,35 @@ func TestWaitForGatewayPods_CancelledContextReturnsPromptlyDuringPoll(t *testing
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Less(t, time.Since(start), 2*time.Second)
 }
+
+func TestWaitForGatewayPods_TimeoutCoversRolloutObservation(t *testing.T) {
+	shortenRollConfirmationWindow(t, 2*time.Second)
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	start := time.Now()
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 1, 5*time.Millisecond, 100*time.Millisecond, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out waiting for gateway pods to be replaced")
+	assert.Less(t, time.Since(start), time.Second)
+}
+
+func TestWaitForGatewayPods_ParentCancelIsNotReportedAsTimeout(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 10*time.Second, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "timed out")
+}

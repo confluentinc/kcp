@@ -736,6 +736,25 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 // waitForGatewayPods is the inner orchestration used by WaitForGatewayPods.
 // Split from the method so unit tests can inject a fake clientset.
 func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
+	// timeout bounds the whole wait: rollout observation, pod polling and every
+	// API call. parent is kept apart from the derived ctx so a deadline we set
+	// can be told from the caller cancelling.
+	parent := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, timeout)
+		defer cancel()
+	}
+	var lastOldPodNames []string
+	// finish reports a failure from the derived deadline as the timeout error;
+	// any other error (including the parent's cancellation) passes through.
+	finish := func(err error) error {
+		if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return gatewayPodsTimeoutError(timeout, namespace, lastOldPodNames)
+		}
+		return err
+	}
+
 	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
@@ -756,7 +775,7 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 	// snapshot it survives a roll that completes between two polls.
 	mechanism, _, err := observeRolloutMechanism(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval)
 	if err != nil {
-		return err
+		return finish(err)
 	}
 
 	if mechanism == MechanismNoRollObserved {
@@ -777,15 +796,12 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 	// The caller passes rolloutTimeout, which defaults to 0.
 	slog.Debug("rollout detected, waiting for complete pod replacement")
 
-	noDeadline := timeout <= 0
 	start := time.Now()
-	deadline := start.Add(timeout)
-	var lastOldPodNames []string
 
-	for noDeadline || time.Now().Before(deadline) {
+	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return finish(ctx.Err())
 		default:
 		}
 
@@ -793,7 +809,7 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			LabelSelector: labelSelector,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to list gateway pods: %w", err)
+			return finish(fmt.Errorf("failed to list gateway pods: %w", err))
 		}
 
 		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
@@ -815,7 +831,7 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 		// replica counts, which are immune to that race.
 		dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
 		if err != nil {
-			return err
+			return finish(err)
 		}
 		rolloutComplete := deploymentRolloutComplete(dep)
 		if rolloutComplete && oldPodsRemaining > 0 {
@@ -845,11 +861,15 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return finish(ctx.Err())
 		case <-time.After(pollInterval):
 		}
 	}
+}
 
+// gatewayPodsTimeoutError builds the replaced-pod wait's timeout error, naming
+// the old pods still present when there are any.
+func gatewayPodsTimeoutError(timeout time.Duration, namespace string, lastOldPodNames []string) error {
 	if len(lastOldPodNames) > 0 {
 		return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s): still present: %s; check the pod and its node, e.g. kubectl -n %s get pod %s",
 			timeout, strings.Join(lastOldPodNames, ", "), namespace, lastOldPodNames[0])
