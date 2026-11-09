@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Reporter is the minimal user-facing output surface TransitionVerifier
@@ -34,6 +36,11 @@ type ApplyResult struct {
 	// Generation is the Gateway CR's metadata.generation after the write, or 0
 	// when the write never reached the cluster.
 	Generation int64
+	// PreApplyPodUIDs is the set of gateway pod UIDs (terminating ones included)
+	// read immediately BEFORE the patch, on gateways whose pods roll. A later
+	// verification waits for them to be gone. nil when the capability injects a
+	// configId, because a hot-reloading gateway's pods never go away.
+	PreApplyPodUIDs map[types.UID]struct{}
 }
 
 // TransitionVerifier applies a gateway CR (or a configId-only stamp) and
@@ -134,6 +141,17 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 		}
 	}
 
+	// A rolling gateway replaces its pods, so record which exist before the
+	// patch. Failing to capture is fatal and happens before anything is written,
+	// so it is deliberately not an ErrApplyUnverified.
+	var preApplyPodUIDs map[types.UID]struct{}
+	if !v.Capability.InjectsConfigID() {
+		preApplyPodUIDs, err = v.Service.GetGatewayPodUIDs(ctx, namespace, crName)
+		if err != nil {
+			return ApplyResult{}, fmt.Errorf("failed to capture the gateway pods before %s: %w", step, err)
+		}
+	}
+
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
@@ -143,9 +161,9 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	v.recordGeneration(patched.Generation)
 	if err != nil {
 		// An unverified write still reached the cluster; hand back what it produced.
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, nil
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
@@ -243,8 +261,8 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 
 // VerifyTransition confirms a transition landed, by whichever means the
 // cluster supports. An empty applied.ConfigID means the cluster cannot
-// report a config revision, so this falls back to the Deployment rollout
-// wait.
+// report a config revision, so this falls back to waiting for the pods the
+// apply replaces to be gone.
 func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.verify_transition", stepAttr(step))
 	defer func() { tracing.End(span, err) }()
@@ -257,13 +275,13 @@ func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, cr
 		return v.WaitForConfigApplied(ctx, namespace, crName, port, applied, step)
 	}
 
-	v.Reporter.Detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "step", step, "rolloutTimeout", v.RolloutTimeout,
-		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
+	v.Reporter.Detail("Waiting for the replaced gateway pods to be gone...")
+	slog.Debug("waiting for the replaced gateway pods", "step", step, "rolloutTimeout", v.RolloutTimeout,
+		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration, "preApplyPods", len(applied.PreApplyPodUIDs))
 
-	if err := v.Service.WaitForGatewayReady(ctx, namespace, crName,
-		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness during %s: %w", step, err)
+	if err := v.Service.WaitForGatewayPods(ctx, namespace, crName, applied.PreApplyPodUIDs,
+		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printPodRolloutProgress); err != nil {
+		return fmt.Errorf("failed waiting for the gateway pods to be replaced during %s: %w", step, err)
 	}
 	return nil
 }
@@ -280,25 +298,44 @@ func (v *TransitionVerifier) printConfigWaitProgress(p ConfigWaitProgress) {
 	// description of what has been observed — the verdict comes from the pods
 	// reporting the configId, never from the mechanism.
 	if p.Mechanism == MechanismPodRoll {
-		v.Reporter.Detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
-			p.PodsAtWant, p.PodsReady, FormatElapsed(p.Elapsed))
+		terminating := ""
+		if p.PodsTerminating > 0 {
+			terminating = fmt.Sprintf(", %d terminating", p.PodsTerminating)
+		}
+		v.Reporter.Detail("Gateway pods are rolling — %d/%d have applied the new config%s (elapsed %s)",
+			p.PodsAtWant, p.PodsReady, terminating, FormatElapsed(p.Elapsed))
 		return
 	}
-	v.Reporter.Detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
-		p.PodsAtWant, p.PodsReady, FormatElapsed(p.Elapsed))
+	terminating := ""
+	if p.PodsTerminating > 0 {
+		terminating = fmt.Sprintf(", %d terminating", p.PodsTerminating)
+	}
+	v.Reporter.Detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config%s (elapsed %s)",
+		p.PodsAtWant, p.PodsReady, terminating, FormatElapsed(p.Elapsed))
 }
 
-// printGatewayReadinessProgress renders WaitForGatewayReady progress.
-func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessProgress) {
+// maxOldPodNamesShown caps how many remaining old pod names the progress line lists.
+const maxOldPodNamesShown = 3
+
+// printPodRolloutProgress renders WaitForGatewayPods progress: how many new
+// pods are Ready and how many of the pre-apply pods still remain.
+func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 	if !p.RolloutDetected {
 		v.Reporter.Success("No pod restart required")
 		return
 	}
-	if p.InitialPodCount > 0 {
-		v.Reporter.Detail("%d/%d pods ready (elapsed %s)", p.PodsReady, p.InitialPodCount, FormatElapsed(p.Elapsed))
-	} else {
-		v.Reporter.Detail("gateway reconciling (elapsed %s)", FormatElapsed(p.Elapsed))
+	waiting := ""
+	if n := len(p.OldPodNames); n > 0 {
+		shown := p.OldPodNames
+		suffix := ""
+		if n > maxOldPodNamesShown {
+			shown = shown[:maxOldPodNamesShown]
+			suffix = fmt.Sprintf(" and %d more", n-maxOldPodNamesShown)
+		}
+		waiting = fmt.Sprintf(" (waiting on %s%s)", strings.Join(shown, ", "), suffix)
 	}
+	v.Reporter.Detail("%d/%d new pods ready, %d old pods remaining%s (elapsed %s)",
+		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining, waiting, FormatElapsed(p.Elapsed))
 }
 
 // VerifyHotReloadCapability proves the gateway really does apply config
