@@ -126,12 +126,6 @@ func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics
 	return r
 }
 
-// gatewayBootstrap is the static route's client endpoint, as
-// testdata/manifests/templates/gateway-static.yaml declares it.
-func (e *env) gatewayBootstrap() string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local:9595", e.gateway, e.namespace)
-}
-
 // waitForSingleGatewayPod waits until exactly one gateway pod is listed,
 // terminating ones included, and returns its UID.
 func (e *env) waitForSingleGatewayPod(t *testing.T, ctx context.Context) map[types.UID]struct{} {
