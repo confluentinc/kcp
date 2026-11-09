@@ -255,5 +255,23 @@ migration and producer with `detectUnroutedProducersDuration: 10s`, which makes
 the fence step wait for the replaced pod to be gone: the producer is fenced and
 no record reaches the source after the mirror stops.
 
+A third environment, `GATEWAY_MODE=dynamic-rollout`, is a dynamic route on a
+gateway with `hotReload.enabled: false` and 3 replicas, so every route change
+rolls the pods (profile `kcp-e2e-idempotent-dynamic-rollout`). It exists for
+`TestFenceRollout_TBMDetectionAbortsOnReplacedPod` (`fence_rollout_e2e_test.go`
+helpers, `false_abort_e2e_test.go`), the only test written for it; run it with
+`RUN=TestFenceRollout_TBM`, not the whole suite (other tests assume the hot
+reload or static behaviour of their own mode). It asserts **today's** buggy
+behaviour on purpose: 20 producers write through the gateway (TLS with SNI,
+dialled to the gateway service) while a TBM migration runs with
+`detectUnroutedProducersDuration: 30s`. TBM's fence waits only for the rollout
+to complete, not for the replaced pods to be gone, so verify_fence's first
+source-offset snapshot is taken while they still serve. The second snapshot sees
+offsets rising, and kcp reports an unrouted producer and rolls the fence back,
+though every producer goes through the gateway. Once the fence wait also waits
+for the replaced pods to be gone, this test flips to assert the migration
+completes. Slice `001..004`; the environment has no other test, so the slice
+can't collide.
+
 The env vars are named
 `KCP_TBM_*`, as in the `migration-tbm` suite this one was built from.

@@ -4,7 +4,9 @@ package idempotent_fsm_e2e
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -94,7 +96,7 @@ func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source, producer writing through the gateway)", topics)
 
 	w := e.watchPromoteAndPods(probe, oldPods)
-	out, err := e.runKCP(t, "kcp-run.log", "", "migration", "execute", "--migration-yaml", mani)
+	out, err := e.runKCP(t, "kcp-run.log", "", "migration", "cutover", "execute", "--migration-yaml", mani)
 	require.NoError(t, err, "the migration must complete")
 	require.Contains(t, strings.ToLower(out), "migration complete")
 
@@ -130,12 +132,19 @@ func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics
 // terminating ones included, and returns its UID.
 func (e *env) waitForSingleGatewayPod(t *testing.T, ctx context.Context) map[types.UID]struct{} {
 	t.Helper()
+	return e.waitForGatewayPodCount(t, ctx, 1)
+}
+
+// waitForGatewayPodCount waits until exactly n gateway pods are listed,
+// terminating ones included (so none is still draining), and returns their UIDs.
+func (e *env) waitForGatewayPodCount(t *testing.T, ctx context.Context, n int) map[types.UID]struct{} {
+	t.Helper()
 	var uids map[types.UID]struct{}
-	require.Eventually(t, func() bool {
+	require.Eventuallyf(t, func() bool {
 		var err error
 		uids, err = e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway)
-		return err == nil && len(uids) == 1
-	}, 3*time.Minute, 2*time.Second, "exactly one gateway pod must be left once the reset's rollout settles")
+		return err == nil && len(uids) == n
+	}, 3*time.Minute, 2*time.Second, "exactly %d gateway pod(s) must be left once any earlier rollout settles", n)
 	return uids
 }
 
@@ -161,11 +170,38 @@ type gatewayProducer struct {
 	firstErr error
 }
 
-// startGatewayProducer starts the producer. A client that can't be created
-// counts as a failed send, retried on the next tick. No retries, so a send is
-// one attempt against whatever the gateway serves right now.
+// startGatewayProducer starts the producer against a plain (static route)
+// gateway listener. A client that can't be created counts as a failed send,
+// retried on the next tick. No retries, so a send is one attempt against
+// whatever the gateway serves right now.
 func startGatewayProducer(bootstrap, topic string, interval time.Duration) *gatewayProducer {
-	p := &gatewayProducer{done: make(chan struct{})}
+	return runGatewayProducer(probeConfig(), []string{bootstrap}, topic, interval, "fence-rollout")
+}
+
+// startSNIGatewayProducer is startGatewayProducer for a dynamic route, whose
+// client listener needs TLS with host (SNI) routing: the bootstrap and every
+// broker the gateway advertises are *.gw.local names that don't resolve. The
+// client keeps those names for the TLS server name but dials the gateway
+// service, whatever the name (sarama takes the SNI from the broker address, then
+// wraps the connection the dialer returns). The self-signed certificate is not
+// verified. prefix keeps record values unique across producers.
+func startSNIGatewayProducer(bootstrap, dialAddr, topic string, interval time.Duration, prefix string) *gatewayProducer {
+	cfg := probeConfig()
+	cfg.Net.TLS.Enable = true
+	cfg.Net.TLS.Config = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // self-signed test certificate
+	cfg.Net.Proxy.Enable = true
+	cfg.Net.Proxy.Dialer = fixedAddrDialer{addr: dialAddr}
+	return runGatewayProducer(cfg, []string{bootstrap}, topic, interval, prefix)
+}
+
+// fixedAddrDialer dials addr whatever address it is asked for.
+type fixedAddrDialer struct{ addr string }
+
+func (d fixedAddrDialer) Dial(network, _ string) (net.Conn, error) {
+	return net.DialTimeout(network, d.addr, 3*time.Second)
+}
+
+func probeConfig() *sarama.Config {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V3_6_0_0
 	cfg.ClientID = "kcp-fence-rollout-probe"
@@ -178,7 +214,11 @@ func startGatewayProducer(bootstrap, topic string, interval time.Duration) *gate
 	cfg.Net.DialTimeout = 3 * time.Second
 	cfg.Net.ReadTimeout = 3 * time.Second
 	cfg.Net.WriteTimeout = 3 * time.Second
+	return cfg
+}
 
+func runGatewayProducer(cfg *sarama.Config, brokers []string, topic string, interval time.Duration, prefix string) *gatewayProducer {
+	p := &gatewayProducer{done: make(chan struct{})}
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -198,12 +238,12 @@ func startGatewayProducer(bootstrap, topic string, interval time.Duration) *gate
 			}
 			if producer == nil {
 				var err error
-				if producer, err = sarama.NewSyncProducer([]string{bootstrap}, cfg); err != nil {
+				if producer, err = sarama.NewSyncProducer(brokers, cfg); err != nil {
 					p.fail(err)
 					continue
 				}
 			}
-			value := fmt.Sprintf("fence-rollout-%06d", seq)
+			value := fmt.Sprintf("%s-%06d", prefix, seq)
 			sentAt := time.Now()
 			partition, offset, err := producer.SendMessage(&sarama.ProducerMessage{Topic: topic, Value: sarama.StringEncoder(value)})
 			if err != nil {
