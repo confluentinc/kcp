@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -58,27 +59,36 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		assert.Equal(t, int64(11), gotBaseline, "the readiness wait must receive the pre-apply generation")
 	})
 
-	t.Run("an unreadable generation does not fail the transition", func(t *testing.T) {
-		// The baseline only feeds the rollout path, and 0 makes that path
-		// conservative rather than wrong. Failing here would break a migration
-		// over a signal the configId path never even consults.
+	t.Run("an unreadable generation fails a rolling gateway's transition before the patch", func(t *testing.T) {
+		// A baseline of 0 on a rolling gateway can make the replaced-pod wait
+		// hang on a patch that rolls nothing, so the transition is refused
+		// before anything is written. Nothing was written, so there is no
+		// rollback and the error is not ErrFenceUnconfirmed.
 		gw := rolloutVerifiedGateway()
 		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 0, fmt.Errorf("deployments.apps \"gw-1\" is forbidden")
 		}
-
-		var gotBaseline int64 = -1
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			gotBaseline = baseline
+		var patched bool
+		gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			patched = true
+			return configID, nil
+		}
+		var waited bool
+		gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+			waited = true
 			return nil
 		}
 
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-		require.NoError(t, actions.FenceGateway(context.Background(), config))
+		err := actions.FenceGateway(context.Background(), config)
 
-		assert.Equal(t, int64(0), gotBaseline, "an unreadable baseline becomes 0, which treats any generation as a bump")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read the gateway deployment generation before fence")
+		assert.False(t, errors.Is(err, ErrFenceUnconfirmed))
+		assert.False(t, patched, "the patch must never be called")
+		assert.False(t, waited, "the pod wait must never be called")
 	})
 
 	t.Run("switchover carries its own baseline", func(t *testing.T) {
