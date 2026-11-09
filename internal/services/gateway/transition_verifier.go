@@ -146,7 +146,7 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	// so it is deliberately not an ErrApplyUnverified.
 	var preApplyPodUIDs map[types.UID]struct{}
 	if !v.Capability.InjectsConfigID() {
-		preApplyPodUIDs, err = v.Service.GetGatewayPodUIDs(ctx, namespace, crName)
+		preApplyPodUIDs, err = v.capturePods(ctx, namespace, crName, step)
 		if err != nil {
 			return ApplyResult{}, fmt.Errorf("failed to capture the gateway pods before %s: %w", step, err)
 		}
@@ -164,6 +164,19 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, err
 	}
 	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, nil
+}
+
+// capturePods records the gateway pods that exist now, in a gateway.capture_pods
+// span: a pod list on the API server the patch is about to write to, so its cost
+// is part of what a rolling transition now adds.
+func (v *TransitionVerifier) capturePods(ctx context.Context, namespace, crName, step string) (uids map[types.UID]struct{}, err error) {
+	ctx, span := tracing.Start(ctx, tracerName, "gateway.capture_pods", stepAttr(step))
+	defer func() { tracing.End(span, err) }()
+	uids, err = v.Service.GetGatewayPodUIDs(ctx, namespace, crName)
+	if err == nil {
+		span.SetAttributes(attribute.Int("kcp.gateway.pods", len(uids)))
+	}
+	return uids, err
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch

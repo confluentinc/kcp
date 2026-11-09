@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
+	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -734,13 +735,20 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 
 // waitForGatewayPods is the inner orchestration used by WaitForGatewayPods.
 // Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
 	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
 	// Calculate initial pod count from the passed UIDs
 	initialPodCount := len(initialPodUIDs)
 	slog.Debug("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount, "baselineGeneration", baselineGeneration)
+	tracing.SetAttributes(ctx, attribute.Int("kcp.gateway.pods.captured", initialPodCount))
+
+	// oldGone times the part of the wait a Deployment readiness check would not
+	// have made: from the Deployment reporting its rollout complete until the
+	// captured pods are gone. Absent from a trace when they were already gone.
+	var oldGone phaseSpan
+	defer func() { oldGone.leave(err) }()
 
 	// Phase 1: establish whether the operator is replacing the pods at all.
 	// The Deployment's generation is the earliest signal there is — a new pod UID
@@ -810,6 +818,9 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			return err
 		}
 		rolloutComplete := deploymentRolloutComplete(dep)
+		if rolloutComplete && oldPodsRemaining > 0 {
+			oldGone.enter(ctx, "gateway.wait_old_pods_gone", attribute.Int("kcp.gateway.pods.old_at_start", oldPodsRemaining))
+		}
 
 		slog.Debug("pod rollout progress",
 			"newPodsReady", newPodsReady,

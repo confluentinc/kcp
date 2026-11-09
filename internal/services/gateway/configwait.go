@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -168,7 +169,7 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 // not always apparent immediately — CFK can write the Deployment a moment after
 // it writes the CR status — so a wait that committed to the short budget at the
 // start could still time out mid-rollout, with traffic already fenced.
-func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, opts ConfigWaitOptions) error {
+func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, opts ConfigWaitOptions) (err error) {
 	want := opts.ConfigID
 	if want == "" {
 		return fmt.Errorf("cannot wait for an empty gateway configId: a gateway that has never applied a revision reports none, and would match immediately")
@@ -178,6 +179,12 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 	if hotReloadTimeout <= 0 {
 		hotReloadTimeout = DefaultHotReloadTimeout
 	}
+
+	// terminatingWait times the part of the wait spent only on terminating pods:
+	// every other condition holds and the pods still draining are what is left.
+	// Absent from a trace when nothing was draining.
+	var terminatingWait phaseSpan
+	defer func() { terminatingWait.leave(err) }()
 
 	start := time.Now()
 	mechanism := MechanismNoRollObserved
@@ -291,6 +298,9 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 		// it, yet it still serves its open connections with the old config until
 		// it is gone. Trivially true when nothing is rolling.
 		converged := rolloutComplete && readyCount > 0 && atWant == readyCount && terminatingCount == 0
+		if rolloutComplete && readyCount > 0 && atWant == readyCount && terminatingCount > 0 {
+			terminatingWait.enter(ctx, "gateway.wait_terminating_pods", attribute.Int("kcp.gateway.pods.terminating_at_start", terminatingCount))
+		}
 
 		lastProgress = ConfigWaitProgress{
 			Want:            want,
