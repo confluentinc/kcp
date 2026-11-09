@@ -33,7 +33,7 @@ func TestFenceRollout_ReplacedPodIsGoneBeforePromote(t *testing.T) {
 	}
 	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-replaced-pod", e.topicRange(21, 25), "")
 	require.Contains(t, r.out, "Detection disabled", "the default policy must skip verify_fence")
-	require.Truef(t, r.oldGoneAt.Before(r.stoppedAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
+	require.Falsef(t, r.stoppedAt.Before(r.oldGoneAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
 	require.Positive(t, r.errors, "the fence must reject the producer once its connection to the replaced pod is cut")
 	require.Emptyf(t, r.lost, "no record may reach the source after the mirror stops (%s)", r.timeline)
 	t.Logf("\nRESULT: with detection off, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
@@ -55,7 +55,7 @@ func TestFenceRollout_DetectionOnWaitsForReplacedPod(t *testing.T) {
 	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-detection-on", e.topicRange(26, 30),
 		"    policies:\n      detectUnroutedProducersDuration: 10s\n")
 	require.Contains(t, r.out, "no unrouted producers detected")
-	require.Truef(t, r.oldGoneAt.Before(r.stoppedAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
+	require.Falsef(t, r.stoppedAt.Before(r.oldGoneAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
 	require.Positive(t, r.errors, "the fence must reject the producer once its connection to the replaced pod is cut")
 	require.Emptyf(t, r.lost, "no record may reach the source after the mirror stops (%s)", r.timeline)
 	t.Logf("\nRESULT: with detection on, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
@@ -108,7 +108,8 @@ func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics
 	e.snapshot(t, ctx, "after", "AFTER the migration (expect mirrors STOPPED, route → destination)", topics)
 
 	// A record whose send started after the watcher saw the mirror STOPPED was
-	// appended after the mirror stopped. If the source holds it, at the offset
+	// appended after the mirror stopped. stoppedAt can be up to one poll (1s)
+	// late, so a record sent in that second is not counted as lost. If the source holds it, at the offset
 	// it was acked at, no copy of it can reach the destination.
 	onSource := e.recordsOnSource(t, probe, acks)
 	r := replacedPodRun{out: out, probe: probe, stoppedAt: stoppedAt, oldGoneAt: oldGoneAt, errors: p.errorCount()}
@@ -322,13 +323,10 @@ func (e *env) watchPromoteAndPods(topic string, oldPods map[types.UID]struct{}) 
 			case <-tick.C:
 			}
 			now := time.Now()
-			if mirrors, err := e.linkSvc.ListMirrorTopics(ctx, e.linkConfig()); err == nil {
-				for _, m := range mirrors {
-					if m.MirrorTopicName == topic && m.MirrorStatus == "STOPPED" {
-						w.mark(&w.stoppedAt, now)
-					}
-				}
-			}
+			// Poll order matters: read the pods BEFORE the mirror status. Both
+			// marks share this poll's `now`, so a tie between goneAt and
+			// stoppedAt means the pod was seen gone first (the order the
+			// assertions check), never the mirror first.
 			if uids, err := e.svc.GetGatewayPodUIDs(ctx, e.namespace, e.gateway); err == nil {
 				left := false
 				for uid := range oldPods {
@@ -338,6 +336,13 @@ func (e *env) watchPromoteAndPods(topic string, oldPods map[types.UID]struct{}) 
 				}
 				if !left {
 					w.mark(&w.goneAt, now)
+				}
+			}
+			if mirrors, err := e.linkSvc.ListMirrorTopics(ctx, e.linkConfig()); err == nil {
+				for _, m := range mirrors {
+					if m.MirrorTopicName == topic && m.MirrorStatus == "STOPPED" {
+						w.mark(&w.stoppedAt, now)
+					}
 				}
 			}
 		}
