@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 )
 
 // mockService implements the full gateway.Service interface with configurable
@@ -36,6 +37,12 @@ type mockService struct {
 	// the capture and patch calls.
 	getGatewayPodUIDsFn func() (map[types.UID]struct{}, error)
 	calls               []string
+
+	// waitForGatewayPodsFn scripts WaitForGatewayPods (nil = succeed);
+	// waitPodsCalls and waitReadyCalls count invocations of the two rollout waits.
+	waitForGatewayPodsFn func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error
+	waitPodsCalls        int
+	waitReadyCalls       int
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -108,11 +115,16 @@ func (m *mockService) GetGatewayDeploymentGeneration(ctx context.Context, namesp
 	return 0, nil
 }
 
-func (m *mockService) WaitForGatewayPods(context.Context, string, string, map[types.UID]struct{}, int64, time.Duration, time.Duration, func(PodRolloutProgress)) error {
+func (m *mockService) WaitForGatewayPods(_ context.Context, _, _ string, initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration, _ func(PodRolloutProgress)) error {
+	m.waitPodsCalls++
+	if m.waitForGatewayPodsFn != nil {
+		return m.waitForGatewayPodsFn(initial, baseline, poll, timeout)
+	}
 	return nil
 }
 
 func (m *mockService) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(GatewayReadinessProgress)) error {
+	m.waitReadyCalls++
 	return nil
 }
 
@@ -271,4 +283,68 @@ func TestTransitionVerifier_CheckGeneration(t *testing.T) {
 			assert.Equal(t, int64(5), gce.Expected)
 		})
 	}
+}
+
+func TestVerifyTransition_RolloutWaitsForReplacedPods(t *testing.T) {
+	var gotInitial map[types.UID]struct{}
+	var gotBaseline int64
+	var gotPoll, gotTimeout time.Duration
+	svc := &mockService{waitForGatewayPodsFn: func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error {
+		gotInitial, gotBaseline, gotPoll, gotTimeout = initial, baseline, poll, timeout
+		return nil
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 7 * time.Minute}
+	applied := ApplyResult{BaselineDeploymentGeneration: 12, PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}}
+
+	require.NoError(t, v.VerifyTransition(context.Background(), "ns", "gw", 9180, applied, "fence"))
+
+	assert.Equal(t, 1, svc.waitPodsCalls)
+	assert.Equal(t, 0, svc.waitReadyCalls, "the rollout branch must not fall back to the readiness-only wait")
+	assert.Equal(t, applied.PreApplyPodUIDs, gotInitial)
+	assert.Equal(t, int64(12), gotBaseline)
+	assert.Equal(t, 5*time.Second, gotPoll)
+	assert.Equal(t, 7*time.Minute, gotTimeout)
+}
+
+func TestVerifyTransition_RolloutWaitErrorIsWrapped(t *testing.T) {
+	boom := errors.New("boom")
+	svc := &mockService{waitForGatewayPodsFn: func(map[types.UID]struct{}, int64, time.Duration, time.Duration) error { return boom }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	err := v.VerifyTransition(context.Background(), "ns", "gw", 9180, ApplyResult{}, "switchover")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+	assert.Contains(t, err.Error(), "failed waiting for the gateway pods to be replaced during switchover")
+}
+
+// realWaitService delegates WaitForGatewayPods to the real waitForGatewayPods
+// over a fake clientset, so a verifier test exercises the genuine wait. It
+// substitutes a short poll interval for the verifier's 5s so the test is fast.
+type realWaitService struct {
+	mockService
+	cs kubernetes.Interface
+}
+
+func (r *realWaitService) WaitForGatewayPods(ctx context.Context, ns, name string, initial map[types.UID]struct{}, baseline int64, _, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+	return waitForGatewayPods(ctx, r.cs, ns, name, initial, baseline, 5*time.Millisecond, timeout, onProgress)
+}
+
+func TestVerifyTransition_NoRollReturnsImmediately(t *testing.T) {
+	shortenRollConfirmationWindow(t, 20*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	// The Deployment generation never advances past the baseline: no roll.
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+	svc := &realWaitService{cs: cs}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 5 * time.Second}
+	applied := ApplyResult{BaselineDeploymentGeneration: 1, PreApplyPodUIDs: map[types.UID]struct{}{"old-1": {}}}
+
+	start := time.Now()
+	err := v.VerifyTransition(context.Background(), ns, gw, 9180, applied, "fence")
+
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 3*time.Second, "a no-roll apply must not wait out the timeout")
 }

@@ -119,7 +119,7 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
-	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
+	return nil
 }
 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {

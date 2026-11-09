@@ -124,7 +124,7 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
-	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
+	return nil
 }
 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
@@ -718,7 +718,7 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 		}, true},
 		{"a verification failure is an unconfirmed fence", &mockGatewayService{
 			patchGatewayRouteFn: patchOK,
-			waitForGatewayReadyFn: func(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
+			waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 				return fmt.Errorf("gateway pods did not converge")
 			},
 		}, true},

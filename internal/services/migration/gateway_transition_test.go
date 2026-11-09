@@ -64,7 +64,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			verified = configID
 			return nil
 		}
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("must not fall back to the rollout wait when a configId was applied")
 			return nil
 		}
@@ -86,7 +86,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		readyCalled := false
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			readyCalled = true
 			return nil
 		}
@@ -256,7 +256,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		}
 
