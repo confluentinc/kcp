@@ -745,7 +745,7 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 			gotRP = rp
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
 	}
@@ -769,10 +769,10 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "wait")
 			if onProgress != nil {
-				onProgress(gateway.GatewayReadinessProgress{InitialPodCount: 3, PodsReady: 3, Elapsed: 2 * time.Second, RolloutDetected: true, Ready: true})
+				onProgress(gateway.PodRolloutProgress{InitialPodCount: 3, NewPodsReady: 3, OldPodsRemaining: 0, RolloutDetected: true})
 			}
 			return nil
 		},
@@ -786,17 +786,24 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply must precede wait")
 }
 
-func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *testing.T) {
-	var unwantedCall string
+func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier(t *testing.T) {
+	uidCaptures := 0
+	podUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
+	var waitPodsCalls int
+	var passedUIDs map[k8stypes.UID]struct{}
 	waitReadyCalled := false
 	acceptedCalled := false
 	gw := &mockGatewayService{
+		// With detection disabled the workflow makes no pod capture of its own;
+		// the only capture is the shared TransitionVerifier.PatchCR one, which
+		// is what VerifyTransition then waits on.
 		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
-			unwantedCall = "GetGatewayPodUIDs"
-			return nil, nil
+			uidCaptures++
+			return podUIDs, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			unwantedCall = "WaitForGatewayPods"
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+			waitPodsCalls++
+			passedUIDs = initialPodUIDs
 			return nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
@@ -813,16 +820,17 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	// DetectUnroutedProducersDuration unset (0) → detection disabled: the fence
-	// keeps the lightweight readiness-only wait and never touches pod UIDs. The
-	// operator-acceptance wait, by contrast, now runs on every path — the
-	// Deployment-only wait cannot tell a no-op apply from a rejected one.
+	// DetectUnroutedProducersDuration unset (0) → detection disabled. The
+	// operator-acceptance wait runs on every path — the Deployment-only wait
+	// cannot tell a no-op apply from a rejected one.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Empty(t, unwantedCall, "with detection disabled, FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
-	assert.True(t, waitReadyCalled, "with detection disabled, FenceGateway must wait via WaitForGatewayReady")
+	assert.Equal(t, 1, uidCaptures, "with detection disabled, only PatchCR captures the pod UIDs")
+	assert.Equal(t, 1, waitPodsCalls, "the verifier must wait for the replaced pods to be gone")
+	assert.Equal(t, podUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
+	assert.False(t, waitReadyCalled, "the readiness-only wait must not be used on the rollout path")
 	assert.True(t, acceptedCalled, "the acceptance wait must run even with detection disabled")
 }
 
@@ -840,7 +848,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -854,7 +862,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 }
 
-func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T) {
+func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(t *testing.T) {
 	var callOrder []string
 	waitReadyCalled := false
 	oldUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
@@ -887,16 +895,16 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	// Detection enabled: capture the pre-fence pod set, wait for the operator to
-	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
-	// then wait for those old pods to actually terminate so no unfenced pod is
-	// still serving traffic when detection's first offset snapshot is taken.
+	// Detection enabled changes nothing about the fence wait: the verifier waits
+	// for the operator to observe the fenced CR, then for the pods PatchCR
+	// captured to be gone, exactly as with detection off.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}, DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
+	// The single getUIDs is PatchCR's capture: the workflow makes none of its own.
 	assert.Equal(t, []string{"getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
-		"with detection enabled, FenceGateway must capture pod UIDs before apply, wait for operator reconcile, then wait for pod rollout")
+		"detection on behaves exactly like detection off: capture once in PatchCR, apply, wait for operator reconcile, then wait for pod rollout")
 	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
 	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
 }
@@ -922,7 +930,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 		},
 	}
@@ -941,7 +949,7 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
@@ -966,7 +974,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -987,7 +995,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1063,7 +1071,7 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "wait")
 			return nil
 		},
@@ -1137,7 +1145,7 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
@@ -1147,7 +1155,7 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed waiting for gateway readiness")
+	assert.Contains(t, err.Error(), "failed waiting for the gateway pods to be replaced during switchover")
 	assert.Contains(t, err.Error(), "kube unreachable")
 }
 
@@ -1184,7 +1192,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1216,7 +1224,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
@@ -1336,7 +1344,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1363,7 +1371,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
@@ -1659,7 +1667,7 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 			applyCalled = true
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitCalled = true
 			assert.True(t, applyCalled, "readiness wait must happen after the CR is applied")
 			assert.Equal(t, "confluent", namespace)
@@ -1688,7 +1696,7 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -1705,7 +1713,7 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed waiting for gateway readiness during unfence")
+	assert.Contains(t, err.Error(), "failed waiting for the gateway pods to be replaced during unfence")
 	assert.Contains(t, err.Error(), "gateway pods did not converge")
 }
 

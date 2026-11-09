@@ -17,6 +17,14 @@
 # strategy crashloops a dynamic route ("Port identification strategy requires a
 # single streaming domain"). host/SNI in turn requires client->gateway TLS, so a
 # self-signed client-tls secret is referenced (never actually used by a client).
+#
+# dynamic-rollout mode DOES send client traffic through the gateway, and a dynamic
+# route fans API_VERSIONS out to BOTH domains, so there the destination leg must
+# really work: SASL_SSL with the destination truststore, and swap auth (the
+# anonymous client is swapped for the destination SASL/PLAIN credential). setup.sh
+# keeps the lines marked "#SWAP# " in that mode and the lines marked "#NOSWAP# "
+# otherwise, and strips the marker either way (it is exactly 7 characters, so the
+# indentation that follows it is the line's own).
 apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
@@ -35,8 +43,10 @@ spec:
   # deliberately NOT a value kcp would generate (kcp-<hex>) so a test asserting the
   # id changed cannot pass by coincidence.
   configId: tbm-initial
+  # true for the dynamic suite; setup.sh sets false for dynamic-rollout, where
+  # every route change then rolls the pods.
   hotReload:
-    enabled: true
+    enabled: __HOT_RELOAD_ENABLED__
   podTemplate:
     envVars:
       - name: GATEWAY_ROOT_LOG_LEVEL
@@ -49,6 +59,12 @@ spec:
           secretKeyRef:
             name: gateway-license
             key: license.txt
+#SWAP#   secretStores:
+#SWAP#     - name: file-store
+#SWAP#       provider:
+#SWAP#         type: File
+#SWAP#         configSecretRef: file-store-config
+#SWAP#         clientCredentialsRef: file-store-noauth-credentials
   streamingDomains:
     - name: source-domain
       type: kafka
@@ -65,7 +81,10 @@ spec:
       kafkaCluster:
         bootstrapServers:
           - id: DESTINATION
-            endpoint: PLAINTEXT://__DEST_BOOTSTRAP__
+#NOSWAP#             endpoint: PLAINTEXT://__DEST_BOOTSTRAP__
+#SWAP#             endpoint: SASL_SSL://__DEST_BOOTSTRAP__
+#SWAP#             tls:
+#SWAP#               secretRef: destination-kafka-tls
         nodeIdRanges:
           - name: pool-1
             start: 0
@@ -105,4 +124,10 @@ spec:
           source-domain:
             auth: passthrough
           destination-domain:
-            auth: passthrough
+#NOSWAP#             auth: passthrough
+#SWAP#             auth: swap
+#SWAP#             secretStore: file-store
+#SWAP#             authentication:
+#SWAP#               type: plain
+#SWAP#               jaasConfigPassThrough:
+#SWAP#                 secretRef: plain-jaas

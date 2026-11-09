@@ -105,7 +105,9 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	if m.getGatewayPodUIDsFn != nil {
 		return m.getGatewayPodUIDsFn(ctx, namespace, name)
 	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
+	// A one-UID default: PatchCR captures the pods of a rolling gateway before
+	// every patch. Tests that care override getGatewayPodUIDsFn.
+	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
 }
 
 func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
@@ -119,7 +121,7 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
-	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
+	return nil
 }
 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
@@ -282,6 +284,26 @@ func TestFence_AFenceThatLandedButWasNotConfirmedIsMarked(t *testing.T) {
 	err := gatewayActions(gw).Fence(context.Background(), testConfig())
 
 	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+}
+
+// TestD2SFence_WaitTimeoutIsFenceUnconfirmed: the replaced gateway pods never
+// going away fails the fence marked ErrFenceUnconfirmed. d2s's Fence is only a
+// gateway patch plus verification, so the recorder proves no second patch (the
+// switch) followed.
+func TestD2SFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	rec := &patchRecorder{}
+	gw := rec.service()
+	var waitCalls int
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		waitCalls++
+		return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+	}
+
+	err := gatewayActions(gw).Fence(context.Background(), testConfig())
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Equal(t, []string{"rules"}, rec.fields(), "only the fence patch may have run")
 }
 
 func TestFence_APatchThatFailedIsNotUnconfirmed(t *testing.T) {

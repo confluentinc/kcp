@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -39,6 +40,11 @@ type ConfigWaitProgress struct {
 
 	// PodsAtWant is how many ready pods report Want.
 	PodsAtWant int
+
+	// PodsTerminating is how many gateway pods have a DeletionTimestamp. A
+	// terminating pod is no longer Ready but still serves its open
+	// connections, so none may remain before the wait can report convergence.
+	PodsTerminating int
 
 	// RolloutComplete is the backing Deployment's rollout state.
 	RolloutComplete bool
@@ -133,6 +139,7 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 //	the Deployment's rollout is complete
 //	AND at least one pod is Ready
 //	AND every Ready pod reports the wanted configId
+//	AND no pod is terminating
 //
 // It holds for a hot-reload and for a pod roll alike, so kcp never has to
 // predict which one CFK chose. A hot-reload has the running gateway apply the
@@ -162,7 +169,7 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 // not always apparent immediately — CFK can write the Deployment a moment after
 // it writes the CR status — so a wait that committed to the short budget at the
 // start could still time out mid-rollout, with traffic already fenced.
-func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, opts ConfigWaitOptions) error {
+func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, opts ConfigWaitOptions) (err error) {
 	want := opts.ConfigID
 	if want == "" {
 		return fmt.Errorf("cannot wait for an empty gateway configId: a gateway that has never applied a revision reports none, and would match immediately")
@@ -172,6 +179,12 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 	if hotReloadTimeout <= 0 {
 		hotReloadTimeout = DefaultHotReloadTimeout
 	}
+
+	// terminatingWait times the part of the wait spent only on terminating pods:
+	// every other condition holds and the pods still draining are what is left.
+	// Absent from a trace when nothing was draining.
+	var terminatingWait phaseSpan
+	defer func() { terminatingWait.leave(err) }()
 
 	start := time.Now()
 	mechanism := MechanismNoRollObserved
@@ -232,7 +245,11 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 		readyCount := 0
 		atWant := 0
 		absentCount := 0
+		terminatingCount := 0
 		for _, endpoint := range endpoints {
+			if endpoint.Terminating {
+				terminatingCount++
+			}
 			// Not-ready pods are not probed: a pod still starting has nothing
 			// meaningful to report, and requiring it would deadlock a roll.
 			if !endpoint.Ready {
@@ -277,13 +294,20 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 			return fmt.Errorf("no gateway pod serves %s (HTTP 404 from all %d ready pods); the gateway image predates 1.3.0, so a configId cannot be verified per pod", GatewayConfigEndpointPath, readyCount)
 		}
 
-		converged := rolloutComplete && readyCount > 0 && atWant == readyCount
+		// A terminating pod is usually already not Ready, so the clauses above skip
+		// it, yet it still serves its open connections with the old config until
+		// it is gone. Trivially true when nothing is rolling.
+		converged := rolloutComplete && readyCount > 0 && atWant == readyCount && terminatingCount == 0
+		if rolloutComplete && readyCount > 0 && atWant == readyCount && terminatingCount > 0 {
+			terminatingWait.enter(ctx, "gateway.wait_terminating_pods", attribute.Int("kcp.gateway.pods.terminating_at_start", terminatingCount))
+		}
 
 		lastProgress = ConfigWaitProgress{
 			Want:            want,
 			PodsTotal:       len(endpoints),
 			PodsReady:       readyCount,
 			PodsAtWant:      atWant,
+			PodsTerminating: terminatingCount,
 			RolloutComplete: rolloutComplete,
 			Mechanism:       mechanism,
 			Elapsed:         time.Since(start),
@@ -310,6 +334,6 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 	if mechanism == MechanismPodRoll {
 		spent = opts.RollTimeout
 	}
-	return fmt.Errorf("timed out after %s waiting for the gateway to apply the configId on every pod: %d of %d ready pods report it, deployment rollout complete=%t, observed mechanism=%s. Treat this as a failure rather than as still propagating — a change rejected by CFK's canary is indistinguishable from one still in flight until the deadline",
-		spent, lastProgress.PodsAtWant, lastProgress.PodsReady, lastProgress.RolloutComplete, mechanism)
+	return fmt.Errorf("timed out after %s waiting for the gateway to apply the configId on every pod: %d of %d ready pods report it, %d terminating, deployment rollout complete=%t, observed mechanism=%s. Treat this as a failure rather than as still propagating — a change rejected by CFK's canary is indistinguishable from one still in flight until the deadline",
+		spent, lastProgress.PodsAtWant, lastProgress.PodsReady, lastProgress.PodsTerminating, lastProgress.RolloutComplete, mechanism)
 }

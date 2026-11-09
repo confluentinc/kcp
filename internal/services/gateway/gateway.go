@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
+	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +53,10 @@ type Service interface {
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
+	// WaitForGatewayReady only waits for the Deployment rollout to report
+	// complete. It must NOT be used to verify a gateway transition: it returns
+	// while replaced pods still serve. Use WaitForGatewayPods or
+	// WaitForGatewayConfigID.
 	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
 }
 
@@ -68,6 +74,12 @@ type PodRolloutProgress struct {
 	NewPodsReady     int
 	OldPodsRemaining int
 	RolloutDetected  bool
+
+	// Elapsed is the time since the pod-replacement wait began.
+	Elapsed time.Duration
+	// OldPodNames are the still-listed, non-terminal pods captured before the
+	// apply (sorted); they are what the wait is blocked on.
+	OldPodNames []string
 }
 
 // GatewayReadinessProgress reports the current state of a gateway readiness wait.
@@ -723,13 +735,20 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 
 // waitForGatewayPods is the inner orchestration used by WaitForGatewayPods.
 // Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
+func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
 	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
 	// Calculate initial pod count from the passed UIDs
 	initialPodCount := len(initialPodUIDs)
 	slog.Debug("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount, "baselineGeneration", baselineGeneration)
+	tracing.SetAttributes(ctx, attribute.Int("kcp.gateway.pods.captured", initialPodCount))
+
+	// oldGone times the part of the wait a Deployment readiness check would not
+	// have made: from the Deployment reporting its rollout complete until the
+	// captured pods are gone. Absent from a trace when they were already gone.
+	var oldGone phaseSpan
+	defer func() { oldGone.leave(err) }()
 
 	// Phase 1: establish whether the operator is replacing the pods at all.
 	// The Deployment's generation is the earliest signal there is — a new pod UID
@@ -755,12 +774,13 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 
 	// Phase 2: Wait for all pods to be completely replaced. A timeout of 0
 	// means no deadline — poll until the old pods are gone or ctx is cancelled.
-	// This matches WaitForGatewayReady, whose caller (FenceGateway) passes the
-	// same rolloutTimeout, which defaults to 0.
+	// The caller passes rolloutTimeout, which defaults to 0.
 	slog.Debug("rollout detected, waiting for complete pod replacement")
 
 	noDeadline := timeout <= 0
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := start.Add(timeout)
+	var lastOldPodNames []string
 
 	for noDeadline || time.Now().Before(deadline) {
 		select {
@@ -777,11 +797,13 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 		}
 
 		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
-		oldPodsRemaining := countOldPods(pods.Items, initialPodUIDs)
+		remainingNames := oldPodNames(pods.Items, initialPodUIDs)
+		oldPodsRemaining := len(remainingNames)
+		lastOldPodNames = remainingNames
 
 		// Completion gates on two independent signals:
 		//   1. every pod captured before the patch is gone (oldPodsRemaining == 0)
-		//      — the guarantee WaitForGatewayReady cannot give, since the old
+		//      — the guarantee a plain Deployment readiness check cannot give, since the old
 		//      unfenced pod must actually stop serving; and
 		//   2. the Deployment reports a complete rollout — the right number of
 		//      new pods are Ready and steady.
@@ -796,6 +818,9 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			return err
 		}
 		rolloutComplete := deploymentRolloutComplete(dep)
+		if rolloutComplete && oldPodsRemaining > 0 {
+			oldGone.enter(ctx, "gateway.wait_old_pods_gone", attribute.Int("kcp.gateway.pods.old_at_start", oldPodsRemaining))
+		}
 
 		slog.Debug("pod rollout progress",
 			"newPodsReady", newPodsReady,
@@ -808,6 +833,8 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 				NewPodsReady:     newPodsReady,
 				OldPodsRemaining: oldPodsRemaining,
 				RolloutDetected:  true,
+				Elapsed:          time.Since(start),
+				OldPodNames:      remainingNames,
 			})
 		}
 
@@ -816,10 +843,18 @@ func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, nam
 			return nil
 		}
 
-		time.Sleep(pollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
 
-	return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s)", timeout)
+	if len(lastOldPodNames) > 0 {
+		return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s): still present: %s; check the pod and its node, e.g. kubectl -n %s get pod %s",
+			timeout, strings.Join(lastOldPodNames, ", "), namespace, lastOldPodNames[0])
+	}
+	return fmt.Errorf("timed out waiting for gateway pods to be replaced (timeout: %s): the Deployment rollout did not complete", timeout)
 }
 
 // countNewReadyPods counts how many new pods (not in initial set) are ready
@@ -833,15 +868,26 @@ func countNewReadyPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struc
 	return count
 }
 
-// countOldPods counts how many initial pods are still present
-func countOldPods(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) int {
-	count := 0
-	for _, pod := range currentPods {
-		if _, wasInitial := initialUIDs[pod.UID]; wasInitial {
-			count++
+// isTerminalPod reports whether the pod has finished for good (Succeeded or
+// Failed). A kubelet-evicted or node-shutdown pod lingers in the list in that
+// phase, often with no DeletionTimestamp, but runs no containers and serves
+// nothing, so waits that exist to see old pods stop serving must ignore it.
+func isTerminalPod(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+// oldPodNames returns the sorted names of the initial pods still present and
+// not in a terminal phase (see isTerminalPod).
+func oldPodNames(currentPods []corev1.Pod, initialUIDs map[types.UID]struct{}) []string {
+	var names []string
+	for i := range currentPods {
+		pod := &currentPods[i]
+		if _, wasInitial := initialUIDs[pod.UID]; wasInitial && !isTerminalPod(pod) {
+			names = append(names, pod.Name)
 		}
 	}
-	return count
+	sort.Strings(names)
+	return names
 }
 
 // isPodReady checks if a pod has the Ready condition set to True
@@ -880,6 +926,10 @@ func isPodReady(pod *corev1.Pod) bool {
 // Deployment from one the operator has not written yet, but "did the operator
 // rewrite the pod template". Comparing generations answers that even when the
 // roll starts and finishes between two polls.
+//
+// It only waits for the Deployment rollout and must NOT be used to verify a
+// gateway transition: it returns while replaced pods still serve. Use
+// WaitForGatewayPods or the configId wait instead.
 func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
 	config, err := RESTConfig(s.kubeConfigPath)
 	if err != nil {
