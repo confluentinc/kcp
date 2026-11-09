@@ -1954,3 +1954,61 @@ func TestWorkflow_PromoteTopics_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 	assert.Equal(t, int32(maxConsecutiveSweepFailures), calls.Load(),
 		"the sweep must not be attempted again after the abort threshold")
 }
+
+// fenceThenUnfenceWaits drives FenceGateway then unfenceGateway on a rolling
+// gateway whose fence captures {pre-1} and whose unfence captures
+// {pre-1, fenced-1}, and returns the pod set each transition waited on.
+func fenceThenUnfenceWaits(t *testing.T, fencedAtStart bool) []map[k8stypes.UID]struct{} {
+	t.Helper()
+	captures := []map[k8stypes.UID]struct{}{
+		{"pre-1": {}},
+		{"pre-1": {}, "fenced-1": {}},
+	}
+	var captured int
+	var waits []map[k8stypes.UID]struct{}
+	gw := &mockGatewayService{
+		getGatewayPodUIDsFn: func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+			require.Less(t, captured, len(captures), "only the fence and the unfence capture pods")
+			c := captures[captured]
+			captured++
+			return c, nil
+		},
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+			waits = append(waits, initialPodUIDs)
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route",
+		FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, RollbackFenceYAML: testRollbackFenceYAML,
+		Topics: []string{"topic-a"}, FencedAtStart: fencedAtStart}
+
+	require.NoError(t, wf.FenceGateway(context.Background(), config))
+	require.NoError(t, wf.unfenceGateway(context.Background(), config))
+	require.Len(t, waits, 2, "the fence and the unfence each wait once")
+	return waits
+}
+
+// TestAAOUnfence_SkipsThisRunsPreFencePods: the pods that existed before this
+// run's fence carry the pre-fence route, which is what the unfence restores, so
+// the unfence waits only on the pods the fence's roll created.
+func TestAAOUnfence_SkipsThisRunsPreFencePods(t *testing.T) {
+	waits := fenceThenUnfenceWaits(t, false)
+
+	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}}, waits[0], "the fence waits on the pods it replaces")
+	assert.Equal(t, map[k8stypes.UID]struct{}{"fenced-1": {}}, waits[1],
+		"the unfence must not wait on this run's pre-fence pods, only on those carrying the fence")
+}
+
+// TestAAOUnfence_FencedAtStartKeepsAllPods: when an earlier run's fence was
+// already up, the pods before this run's fence carry the fence too, so the
+// unfence waits on all of them.
+func TestAAOUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
+	waits := fenceThenUnfenceWaits(t, true)
+
+	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
+		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
+}

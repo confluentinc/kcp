@@ -43,6 +43,22 @@ type ApplyResult struct {
 	PreApplyPodUIDs map[types.UID]struct{}
 }
 
+// ExcludePods returns a new set holding the pods of set that are not in
+// exclude. Neither map is mutated. A nil set gives nil, so a hot-reload
+// capture (which records no pods) keeps meaning exactly that.
+func ExcludePods(set, exclude map[types.UID]struct{}) map[types.UID]struct{} {
+	if set == nil {
+		return nil
+	}
+	out := make(map[types.UID]struct{}, len(set))
+	for uid := range set {
+		if _, skip := exclude[uid]; !skip {
+			out[uid] = struct{}{}
+		}
+	}
+	return out
+}
+
 // TransitionVerifier applies a gateway CR (or a configId-only stamp) and
 // verifies the transition landed, by whichever means the cluster supports.
 // Both the AAO (migration) and TBM orchestrators drive an identical gateway

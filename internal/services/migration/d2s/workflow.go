@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // convertMode is migplan.Result.Mode for a route conversion.
@@ -116,6 +118,16 @@ type D2SActions struct {
 	// means unknown, and leaves every patch and check unguarded.
 	gatewayGeneration int64
 
+	// preFencePodUIDs is the set of gateway pods this run's fence captured
+	// before its patch, on a gateway whose pods roll. Those pods carry the
+	// pre-fence route, which is exactly what the rollback unfence restores, so
+	// the unfence does not wait for them to be gone (a pod stuck terminating
+	// would otherwise wedge the rollback). The pods the fence's roll created
+	// carry the fence and are still waited for. Left nil when the fence was
+	// already up at the start of the run (config.FencedAtStart): every pod
+	// then carries a fence. See design, Addendum A, Proposal 3.
+	preFencePodUIDs map[k8stypes.UID]struct{}
+
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
 	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
 	// passes in this process; sync_offsets never reads the source itself.
@@ -202,6 +214,11 @@ func (a *D2SActions) Fence(ctx context.Context, config *migration.MigrationConfi
 		return fmt.Errorf("failed to build fence route patch: %w", err)
 	}
 	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
+	// The fence's captured pods carry the pre-fence route the rollback unfence
+	// restores; recorded even when the patch errs, as long as it captured them.
+	if applied.PreApplyPodUIDs != nil && !config.FencedAtStart {
+		a.preFencePodUIDs = applied.PreApplyPodUIDs
+	}
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
 			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", migration.ErrFenceUnconfirmed, err)
@@ -239,6 +256,9 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.Migra
 	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
 		return err
 	}
+	excluded := len(applied.PreApplyPodUIDs)
+	applied.PreApplyPodUIDs = gateway.ExcludePods(applied.PreApplyPodUIDs, a.preFencePodUIDs)
+	slog.Debug("unfence skips this run's pre-fence pods", "excluded", excluded-len(applied.PreApplyPodUIDs))
 	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
 }
 

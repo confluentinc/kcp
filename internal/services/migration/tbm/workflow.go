@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"go.opentelemetry.io/otel/attribute"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -64,6 +65,16 @@ type TBMActions struct {
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
 	promoteSubmitted bool
+
+	// preFencePodUIDs is the set of gateway pods this run's fence captured
+	// before its patch, on a gateway whose pods roll. Those pods carry the
+	// pre-fence route, which is exactly what the rollback unfence restores, so
+	// the unfence does not wait for them to be gone (a pod stuck terminating
+	// would otherwise wedge the rollback). The pods the fence's roll created
+	// carry the fence and are still waited for. Left nil when the fence was
+	// already up at the start of the run (config.FencedAtStart): every pod
+	// then carries a fence. See design, Addendum A, Proposal 3.
+	preFencePodUIDs map[k8stypes.UID]struct{}
 
 	clusterLinkService clusterlink.Service
 	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
@@ -285,6 +296,11 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	}
 
 	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
+	// The fence's captured pods carry the pre-fence route the rollback unfence
+	// restores; recorded even when the patch errs, as long as it captured them.
+	if applied.PreApplyPodUIDs != nil && !config.FencedAtStart {
+		a.preFencePodUIDs = applied.PreApplyPodUIDs
+	}
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
 			// The patch persisted; only kcp's read-back of the stored configId
@@ -337,6 +353,9 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 		return err
 	}
 
+	excluded := len(applied.PreApplyPodUIDs)
+	applied.PreApplyPodUIDs = gateway.ExcludePods(applied.PreApplyPodUIDs, a.preFencePodUIDs)
+	slog.Debug("unfence skips this run's pre-fence pods", "excluded", excluded-len(applied.PreApplyPodUIDs))
 	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
 }
 

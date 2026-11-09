@@ -422,3 +422,21 @@ func TestPrintConfigWaitProgress_InPlaceShowsTerminating(t *testing.T) {
 	v.printConfigWaitProgress(ConfigWaitProgress{Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2})
 	assert.NotContains(t, rep.details[0], "terminating")
 }
+
+func TestExcludePods(t *testing.T) {
+	set := map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}
+	exclude := map[types.UID]struct{}{"b": {}}
+
+	got := ExcludePods(set, exclude)
+
+	assert.Equal(t, map[types.UID]struct{}{"a": {}, "c": {}}, got)
+	assert.Equal(t, map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}, set, "the set must not be mutated")
+	assert.Equal(t, map[types.UID]struct{}{"b": {}}, exclude, "the exclusion must not be mutated")
+
+	assert.Empty(t, ExcludePods(nil, exclude), "nil set gives an empty result")
+	assert.Nil(t, ExcludePods(nil, nil), "nil set stays nil, so a hot-reload capture keeps meaning no pods")
+	assert.Equal(t, set, ExcludePods(set, nil), "nil exclusion keeps every pod")
+	got = ExcludePods(set, nil)
+	got["d"] = struct{}{}
+	assert.NotContains(t, set, types.UID("d"), "the result is a new map even with nothing excluded")
+}
