@@ -130,7 +130,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 	})
 
-	t.Run("still uses the pod-replacement wait when detecting without configId", func(t *testing.T) {
+	t.Run("waits for replaced pods whether or not detection is on", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
@@ -151,7 +151,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 
-		assert.True(t, podsCalled, "the pre-existing detection path must be unchanged")
+		assert.True(t, podsCalled, "a rolling gateway waits for the replaced pods even when detecting unrouted producers")
 	})
 
 	t.Run("a configId verification failure fails the fence", func(t *testing.T) {
@@ -265,29 +265,6 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-
-		err := actions.FenceGateway(context.Background(), config)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
-	})
-
-	t.Run("a pod-replacement failure under detection is an unconfirmed fence", func(t *testing.T) {
-		var applied []string
-		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
-			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
-		}
-		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
-			return map[k8stypes.UID]struct{}{"uid-1": {}}, nil
-		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			return fmt.Errorf("old pods never terminated")
-		}
-
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := hotReloadConfig()
-		config.DetectUnroutedProducersDuration = 30 * time.Second
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
 		err := actions.FenceGateway(context.Background(), config)

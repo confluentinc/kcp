@@ -41,9 +41,9 @@ type MigrationActions struct {
 	// When set (>0), PromoteTopics promotes at most this many topics, waits for
 	// them all to reach STOPPED, then moves on to the next batch.
 	promoteBatchSize int
-	// rolloutTimeout is the deadline applied to gateway-readiness waits in
-	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
-	// wait runs until the operator reports ready or the user cancels.
+	// rolloutTimeout is the deadline applied to the replaced-pod waits in
+	// FenceGateway, UnfenceGateway and SwitchGateway. A value of 0 means no
+	// deadline — the wait runs until the replaced pods are gone or the user cancels.
 	rolloutTimeout time.Duration
 	// hotReloadTimeout is the deadline applied to per-pod configId verification.
 	// Unlike rolloutTimeout this has a real default: a hot-reload does not move
@@ -100,7 +100,7 @@ func NewMigrationActionsWithOffsets(
 	}
 }
 
-// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
 // A value of 0 means no deadline.
 func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
@@ -428,8 +428,9 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 }
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the
-// Confluent operator accepted the new spec, then waits for it to report the
-// gateway as Ready at that generation. The wait runs without a deadline by
+// Confluent operator accepted the new spec, then waits until the gateway pods
+// it replaced are gone (or, on a hot-reload gateway, every pod reports the new
+// configId). The wait runs without a deadline by
 // default — the operator drives convergence and the user can Ctrl-C if a
 // rollout wedges. An optional per-workflow rolloutTimeout caps the wait when
 // set (via SetRolloutTimeout).
@@ -611,10 +612,10 @@ func wholeRoutePatch(config *MigrationConfig, artifact string) (gateway.RoutePat
 
 // unfenceGateway replaces config.Route with reconcile's rollback route
 // (config.RollbackFenceYAML, the start-of-run route with the fence taken out)
-// to restore normal traffic, then waits for the operator to report the gateway Ready at the
-// restored spec — the same convergence check FenceGateway uses. Without the
-// wait we would report traffic restored while pods are still cycling, and
-// miss rollout failures entirely.
+// to restore normal traffic, then waits for the replaced gateway pods to be gone
+// (or the configId applied on every pod) — the same convergence check
+// FenceGateway uses. Without the wait we would report traffic restored while
+// pods are still cycling, and miss rollout failures entirely.
 func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
 	// The rollback patch gets a fresh configId too. Without one it would carry
 	// whatever revision the initial CR was captured with, and the verification
@@ -1057,7 +1058,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // SwitchGateway derives the switch RoutePatch for config.Route (a whole-route
 // replace of the captured route with the target streamingDomain — see
 // deriveSwitchRoutePatch) — patches it in, confirms the operator accepted the
-// new spec, then waits for it to report the gateway as Ready. The wait uses the
+// new spec, then waits for the replaced gateway pods to be gone (or the configId
+// to be applied on every pod). The wait uses the
 // same no-deadline-by-default behavior as FenceGateway.
 //
 // Because the captured route is unfenced and already carries pre-staged

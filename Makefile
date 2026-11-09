@@ -185,7 +185,7 @@ test-idempotent-fsm-setup: ## Set up the idempotent-fsm resume cluster (GATEWAY_
 test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). GATEWAY_MODE=dynamic|static|dynamic-rollout picks it. Arg: a -test.run selector
 	@bash integration-tests/idempotent-fsm/run.sh "$(RUN)"
 
-test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, or static)
+test-idempotent-fsm-teardown: ## Tear down one mode's idempotent-fsm E2E cluster (GATEWAY_MODE=dynamic default, static, or dynamic-rollout)
 	@bash integration-tests/idempotent-fsm/teardown.sh
 
 test-route-conversion: test-route-conversion-setup ## Run the d2s route-conversion live E2E (own cluster; needs a CP Enterprise licence + AWS creds)
