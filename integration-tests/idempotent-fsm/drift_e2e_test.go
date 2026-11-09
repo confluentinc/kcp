@@ -593,13 +593,18 @@ func (e *env) switchByHand(t *testing.T, ctx context.Context, topics []string) s
 }
 
 // TestDrift_TerminatingPodRefusesUntilSettled pins the pod check's refusal
-// while a replaced gateway pod is still terminating (design §5.2). On a
-// hot-reload-off gateway the fence's rollout reports complete while the old
-// pod terminates for up to its grace period, and that pod may still serve
-// the unfenced config. A dry-run straight after the fenced run must refuse
-// with the rollout-in-progress hint; once the gateway settles, the same
-// dry-run must pass. The test never promotes, but it still reserves its slice
-// so its plan is deterministic. Static only. Slice tbm-topic-091..095.
+// while a replaced gateway pod is still terminating (design §5.2). A gateway
+// pod that is terminating may still serve the previous config for up to its
+// grace period, so a dry-run must refuse with the rollout-in-progress hint;
+// once the gateway settles, the same dry-run must pass. kcp's own fence no
+// longer returns until the pods it replaced are gone, so the test creates the
+// terminating pod directly: it settles the gateway, deletes one gateway pod
+// (default grace period) and dry-runs until the refusal names the terminating
+// pod. Right after the delete the Deployment may briefly be incomplete, and
+// the refusal then says "has not finished rolling out" instead, so the dry-run
+// is polled (bounded by the grace period) and the terminating-pod refusal must
+// be seen at least once. The test never promotes, but it still reserves its
+// slice so its plan is deterministic. Static only. Slice tbm-topic-091..095.
 func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	e := newEnv()
 	if e.mode != "static" {
@@ -612,22 +617,37 @@ func TestDrift_TerminatingPodRefusesUntilSettled(t *testing.T) {
 	e.saveManifest(t, mani)
 	e.snapshot(t, ctx, "before", "BEFORE (expect mirrors ACTIVE, route → source)", topics)
 
-	out1, err1 := e.runKCP(t, "kcp-run-1-interrupted.log", cpFenced, "migration", "cutover", "execute", "--migration-yaml", mani)
-	require.Error(t, err1, "the run interrupted after the fence must exit non-zero")
-	require.Contains(t, out1, "kill-point", "the non-zero exit must be the kill point firing, not a real failure")
+	e.waitForGatewaySettled(t, ctx)
+	cs := kubeClient(t)
+	pods, err := cs.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app=" + e.gateway})
+	require.NoError(t, err, "list the gateway pods")
+	require.NotEmpty(t, pods.Items, "the gateway must have a pod to delete")
+	victim := pods.Items[0].Name
+	require.NoErrorf(t, cs.CoreV1().Pods(e.namespace).Delete(ctx, victim, metav1.DeleteOptions{}), "delete gateway pod %s", victim)
+	t.Logf("\nGATEWAY POD DELETED ▸ %s is terminating (default grace period)", victim)
 
-	out2, err2 := e.runKCPUnsettled(t, "kcp-run-2-dry-run-unsettled.log", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
-	require.Error(t, err2, "the dry-run must refuse while a replaced gateway pod is terminating")
-	require.Contains(t, out2, "is still terminating", "the dry-run must name the terminating pod")
-	require.Contains(t, out2, "If it completes, re-run.", "the dry-run must carry the rollout-in-progress hint")
-	e.snapshot(t, ctx, "after-fence", "AFTER interrupt at fenced (expect fenced, mirrors ACTIVE)", topics)
+	// The pod terminates for up to its grace period (30s by default), so poll
+	// the dry-run for slightly longer than that to see the refusal naming it.
+	var refused string
+	deadline := time.Now().Add(45 * time.Second)
+	for attempt := 1; ; attempt++ {
+		out, err := e.runKCPUnsettled(t, fmt.Sprintf("kcp-run-%d-dry-run-unsettled.log", attempt), "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
+		if err != nil && strings.Contains(out, "is still terminating") {
+			refused = out
+			break
+		}
+		require.Falsef(t, time.Now().After(deadline), "no dry-run named the terminating pod within 45s (last dry-run err=%v)", err)
+		time.Sleep(time.Second)
+	}
+	require.Contains(t, refused, "If it completes, re-run.", "the dry-run must carry the rollout-in-progress hint")
+	e.snapshot(t, ctx, "after-delete", "AFTER deleting a gateway pod (expect mirrors ACTIVE, route → source)", topics)
 
 	e.waitForGatewaySettled(t, ctx)
-	out3, err3 := e.runKCP(t, "kcp-run-3-dry-run-settled.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
+	out3, err3 := e.runKCP(t, "kcp-run-dry-run-settled.log", "", "migration", "cutover", "execute", "--migration-yaml", mani, "--dry-run")
 	require.NoError(t, err3, "once the gateway settles the dry-run must pass")
 	require.NotContains(t, out3, "is still terminating", "no gateway pod may be terminating once settled")
 
-	t.Logf("\nRESULT: a dry-run refused while a replaced gateway pod terminated, and passed once the gateway settled.")
+	t.Logf("\nRESULT: a dry-run refused while a deleted gateway pod terminated, and passed once the gateway settled.")
 }
 
 // TestDrift_GatewayPodRestartRerunProceeds pins that a restarted hot-reload

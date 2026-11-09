@@ -105,7 +105,9 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	if m.getGatewayPodUIDsFn != nil {
 		return m.getGatewayPodUIDsFn(ctx, namespace, name)
 	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
+	// A one-UID default: PatchCR captures the pods of a rolling gateway before
+	// every patch. Tests that care override getGatewayPodUIDsFn.
+	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
 }
 
 func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
@@ -119,7 +121,7 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
-	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
+	return nil
 }
 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
@@ -284,6 +286,81 @@ func TestFence_AFenceThatLandedButWasNotConfirmedIsMarked(t *testing.T) {
 	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
 }
 
+// TestD2SFence_WaitTimeoutIsFenceUnconfirmed: the replaced gateway pods never
+// going away fails the fence marked ErrFenceUnconfirmed. d2s's Fence is only a
+// gateway patch plus verification, so the recorder proves no second patch (the
+// switch) followed.
+func TestD2SFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	rec := &patchRecorder{}
+	gw := rec.service()
+	var waitCalls int
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		waitCalls++
+		return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+	}
+
+	err := gatewayActions(gw).Fence(context.Background(), testConfig())
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Equal(t, []string{"rules"}, rec.fields(), "only the fence patch may have run")
+}
+
+// overduePodGateway is a rolling gateway whose pod waits numbered in overdueOn
+// fail as a replaced pod stuck terminating past its deadline; the counter
+// reports how many waits ran.
+func overduePodGateway(rec *patchRecorder, waits *int, overdueOn ...int) *mockGatewayService {
+	gw := rec.service()
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		*waits++
+		for _, o := range overdueOn {
+			if *waits == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+	return gw
+}
+
+// TestD2SFence_OverduePodRollsBackAndNeverSwitches: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the fence is removed, and the switch (d2s's
+// only step after the fence that moves clients) never runs.
+func TestD2SFence_OverduePodRollsBackAndNeverSwitches(t *testing.T) {
+	rec := &patchRecorder{}
+	var waits int
+	run := newTestRun(overduePodGateway(rec, &waits, 1), cleanWorld().deps()) // the fence's wait; the unfence's succeeds
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, 2, waits, "the fence's wait, then the unfence's")
+	require.Len(t, rec.patches, 2, "the fence, then the unfence: no switch")
+	assert.Equal(t, "rules", rec.patches[1].Field)
+	assert.Equal(t, rollbackRules(t), rec.patches[1].Value)
+	assert.Equal(t, StateInitialized, run.state())
+}
+
+// TestD2SSwitch_OverduePodFailsAtOffsetsSynced: the switch's wait meets an
+// overdue pod. d2s has no promoted state; the switch runs from offsets_synced,
+// and the step fails there with the overdue error and no unfence.
+func TestD2SSwitch_OverduePodFailsAtOffsetsSynced(t *testing.T) {
+	rec := &patchRecorder{}
+	var waits int
+	run := newTestRun(overduePodGateway(rec, &waits, 2), cleanWorld().deps()) // the fence's wait succeeds; the switch's is overdue
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, 2, waits)
+	require.Len(t, rec.patches, 2, "the fence and the switch: no unfence")
+	assert.Equal(t, StateOffsetsSynced, run.state())
+}
+
 func TestFence_APatchThatFailedIsNotUnconfirmed(t *testing.T) {
 	rec := &patchRecorder{failAt: map[int]error{1: fmt.Errorf("k8s API unavailable")}}
 
@@ -355,4 +432,54 @@ func TestEnsureGatewayCapability_ProbesWithTheFencedRulesAndTheSwitchedRouteOnce
 	assert.False(t, hasRules, "the probe's switched CR is the static route")
 	_, hasDomain := sr["streamingDomain"]
 	assert.True(t, hasDomain)
+}
+
+// fenceThenUnfenceWaits drives Fence then unfenceGateway on a rolling gateway whose fence captures {pre-1} and
+// whose unfence captures {pre-1, fenced-1}, and returns the pod set each transition waited on.
+func fenceThenUnfenceWaits(t *testing.T, fencedAtStart bool) []map[k8stypes.UID]struct{} {
+	t.Helper()
+	captures := []map[k8stypes.UID]struct{}{
+		{"pre-1": {}},
+		{"pre-1": {}, "fenced-1": {}},
+	}
+	var captured int
+	var waits []map[k8stypes.UID]struct{}
+	gw := (&patchRecorder{}).service()
+	gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		require.Less(t, captured, len(captures), "only the fence and the unfence capture pods")
+		c := captures[captured]
+		captured++
+		return c, nil
+	}
+	gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		waits = append(waits, initialPodUIDs)
+		return nil
+	}
+	actions := gatewayActions(gw)
+	config := testConfig()
+	config.FencedAtStart = fencedAtStart
+
+	require.NoError(t, actions.Fence(context.Background(), config))
+	require.NoError(t, actions.unfenceGateway(context.Background(), config))
+	require.Len(t, waits, 2, "the fence and the unfence each wait once")
+	return waits
+}
+
+// TestD2SUnfence_SkipsThisRunsPreFencePods: the pods that existed before this run's fence carry the pre-fence
+// rules, which is what the unfence restores, so the unfence waits only on the pods the fence's roll created.
+func TestD2SUnfence_SkipsThisRunsPreFencePods(t *testing.T) {
+	waits := fenceThenUnfenceWaits(t, false)
+
+	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}}, waits[0], "the fence waits on the pods it replaces")
+	assert.Equal(t, map[k8stypes.UID]struct{}{"fenced-1": {}}, waits[1],
+		"the unfence must not wait on this run's pre-fence pods, only on those carrying the fence")
+}
+
+// TestD2SUnfence_FencedAtStartKeepsAllPods: when an earlier run's fence was already up, the pods before this
+// run's fence carry the fence too, so the unfence waits on all of them.
+func TestD2SUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
+	waits := fenceThenUnfenceWaits(t, true)
+
+	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
+		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
 }

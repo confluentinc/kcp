@@ -17,6 +17,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationConfig) {
@@ -457,7 +458,7 @@ func killPointDoneResult() *migplan.Result {
 // including that a second Execute adds none.
 //
 // readyProgress, when non-empty, replaces the default (immediately
-// succeeding, no-progress-reported) WaitForGatewayReady fake with one that
+// succeeding, no-progress-reported) WaitForGatewayPods fake with one that
 // reports each entry via onProgress, in order, before returning nil — the
 // harness's fake pod-waiter for the convergence-wait tests, exactly mirroring
 // newAAOKillPointOrchestrator's identical mechanism (see its doc comment for
@@ -465,14 +466,14 @@ func killPointDoneResult() *migplan.Result {
 // proves the step observed an unconverged state before succeeding). Both
 // Fence's and Switch's confirm step share this one mock (the default
 // capability here is VerifyRollout with no configId, so VerifyTransition
-// always falls back to WaitForGatewayReady), so a non-empty readyProgress is
+// always falls back to WaitForGatewayPods), so a non-empty readyProgress is
 // replayed on every call reaching it, fence's and switch's alike.
 func newTBMKillPointOrchestrator(
 	t *testing.T,
 	allMirrorTopics []string,
 	initiallyStopped []string,
-	readyProgress []gateway.GatewayReadinessProgress,
-) (orch *TBMOrchestrator, config *migration.MigrationConfig, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
+	readyProgress []gateway.PodRolloutProgress,
+) (orch *TBMOrchestrator, config *migration.MigrationConfig, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
 	t.Helper()
 
 	config = &migration.MigrationConfig{
@@ -488,14 +489,14 @@ func newTBMKillPointOrchestrator(
 
 	var patches []gateway.RoutePatch
 	var promotes [][]string
-	var readyEvents []gateway.GatewayReadinessProgress
+	var readyEvents []gateway.PodRolloutProgress
 
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 			patches = append(patches, rp)
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			for _, p := range readyProgress {
 				readyEvents = append(readyEvents, p)
 				onProgress(p)
@@ -626,18 +627,18 @@ func TestTBM_AlreadyFencedNoReapply(t *testing.T) {
 // separate "poll until ready" loop in this test harness to hook — that loop
 // lives entirely inside the production K8sService the gateway mock replaces
 // — so "waits for convergence, then proceeds" is modelled as the mocked
-// WaitForGatewayReady call itself reporting one not-yet-converged progress
+// WaitForGatewayPods call itself reporting one not-yet-converged progress
 // tick before its own converged return (see newTBMKillPointOrchestrator's
 // doc comment on readyProgress). This is the simplest fake that both lets
 // the wait return and still proves the step observed an unconverged state —
 // not reported done while unconverged — before succeeding.
 func TestTBM_FenceWaitsForConvergence(t *testing.T) {
-	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
-	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	notReady := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 0, OldPodsRemaining: 2}
+	converged := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 2}
 	topics := []string{"t1.order", "t2.payment"}
 
 	orch, config, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
-		t, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, topics, nil, []gateway.PodRolloutProgress{notReady, converged})
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
@@ -645,10 +646,10 @@ func TestTBM_FenceWaitsForConvergence(t *testing.T) {
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
-	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+	assert.NotEqual(t, first.InitialPodCount, first.NewPodsReady,
 		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
 	last := (*readyEvents)[len(*readyEvents)-1]
-	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+	assert.Equal(t, last.InitialPodCount, last.NewPodsReady, "the wait must end at convergence")
 
 	assert.Len(t, *patchCalls, 2)
 	require.Len(t, *promoteCalls, 1)
@@ -831,15 +832,15 @@ func TestTBM_PromotedNotSwitched(t *testing.T) {
 // needs Topics=[] (nothing left to promote) with a non-empty SwitchoverYAML
 // for the switch to actually run. The convergence wait is faked the same way
 // as TestTBM_FenceWaitsForConvergence:
-// the mocked WaitForGatewayReady call itself reports a not-yet-converged
+// the mocked WaitForGatewayPods call itself reports a not-yet-converged
 // progress tick before its own converged return.
 func TestTBM_SwitchWaitsForConvergence(t *testing.T) {
-	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
-	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	notReady := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 0, OldPodsRemaining: 2}
+	converged := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 2}
 	allTopics := []string{"t1.order", "t2.payment"}
 
 	orch, config, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
-		t, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, allTopics, allTopics, []gateway.PodRolloutProgress{notReady, converged})
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
@@ -856,10 +857,10 @@ func TestTBM_SwitchWaitsForConvergence(t *testing.T) {
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
-	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+	assert.NotEqual(t, first.InitialPodCount, first.NewPodsReady,
 		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
 	last := (*readyEvents)[len(*readyEvents)-1]
-	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+	assert.Equal(t, last.InitialPodCount, last.NewPodsReady, "the wait must end at convergence")
 
 	assert.Empty(t, *promoteCalls)
 	assert.Len(t, *patchCalls, 2)
@@ -1193,6 +1194,91 @@ func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mock
 	res.GatewayGeneration = 4
 	res.FencedAtStart = fencedAtStart
 	return orch, gw, res, out, errOut
+}
+
+// overduePodRunTBM runs a TBM batch on a rolling gateway whose pod waits
+// numbered in overdueOn fail as a replaced pod stuck terminating past its
+// deadline. It returns the route patches, the promote calls and the wait count.
+func overduePodRunTBM(t *testing.T, overdueOn ...int64) (*TBMOrchestrator, *[]gateway.RoutePatch, *int64, *int64, error) {
+	t.Helper()
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var promotes, waits int64
+	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		mu.Lock()
+		patches = append(patches, rp)
+		mu.Unlock()
+		return "", nil
+	}
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		n := atomic.AddInt64(&waits, 1)
+		for _, o := range overdueOn {
+			if n == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promotes, 1)
+			return nil, fmt.Errorf("promote must not run")
+		},
+	}
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+	return orch, &patches, &promotes, &waits, err
+}
+
+// TestTBMFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the fence is removed, and nothing promotes.
+func TestTBMFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
+	orch, patches, promotes, waits, err := overduePodRunTBM(t, 1) // the fence's wait; the unfence's succeeds
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	require.Len(t, *patches, 2, "the fence, then the patch removing it")
+	rollback, rerr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
+	require.NoError(t, rerr)
+	assert.Equal(t, "rules", (*patches)[1].Field)
+	assert.Equal(t, rollback, (*patches)[1].Value, "patch #2 is the unfence: reconcile's rollback target")
+	assert.Equal(t, int64(2), atomic.LoadInt64(waits), "the fence's wait, then the unfence's")
+	assert.Zero(t, atomic.LoadInt64(promotes), "promote must never run")
+	assert.NotEqual(t, StatePromoted, orch.fsm.Current())
+	assert.NotEqual(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestTBMSwitch_OverduePodFailsAtPromoted: the switchover's wait meets an
+// overdue pod. The step fails with the overdue error, the fence is not
+// removed (the topics are already promoted), and the FSM stays at promoted.
+func TestTBMSwitch_OverduePodFailsAtPromoted(t *testing.T) {
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil } // the CR stays where reconcile read it
+	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		mu.Lock()
+		patches = append(patches, rp)
+		mu.Unlock()
+		return "", nil
+	}
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		if atomic.AddInt64(&waits, 1) == 2 { // the fence's wait succeeds; the switchover's is overdue
+			return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+		}
+		return nil
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits))
+	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orch.fsm.Current())
 }
 
 func TestTBMOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {

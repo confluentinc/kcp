@@ -76,6 +76,8 @@ For each run:
 - the shared spans present: offset sweeps and their offset reads (`offset.get_many`), gateway patch and accept
   (`gateway.patch_cr`, `gateway.wait_accepted`) and verification (`gateway.verify_transition` or
   `gateway.wait_config_applied`), and cluster-link list and promote;
+- the gateway pod spans for the mode: a static route rolls its pods, so its trace has `gateway.capture_pods` and
+  `gateway.wait_pods`; a dynamic route hot-reloads, so its trace has neither;
 - detection as configured: off, `step.verify_fence` is a skipped step (`detection_disabled`); on,
   `wait.unrouted_producers_window` records the manifest's window (`kcp.wait.configured_ms`) and actually lasted that
   long (no more than 1s over);

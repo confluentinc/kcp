@@ -183,10 +183,13 @@ kcp migration cutover execute                       root span, one per command
 | `offset.detect_unrouted_producers` | `kcp.topics`, `kcp.violations`; contains `wait.unrouted_producers_window` |
 | `gateway.resolve_capability` | `kcp.gateway.mode`, `kcp.gateway.hot_reload`, `kcp.gateway.crd_supports_config_id` |
 | `gateway.verify_hot_reload` | Only when the gateway hot-reloads; contains `gateway.wait_accepted`, `gateway.wait_config_applied` |
-| `gateway.patch_cr` | `kcp.gateway.config_id_injected` |
+| `gateway.patch_cr` | `kcp.gateway.config_id_injected`; on a gateway whose pods roll, contains `gateway.capture_pods` |
+| `gateway.capture_pods` | A rolling gateway only (no configId): the pod list taken just before the patch; `kcp.gateway.pods` (how many) |
 | `gateway.wait_accepted`, `gateway.wait_config_applied` | — |
-| `gateway.verify_transition` | `kcp.gateway.mechanism` = `config_id` \| `rollout`; contains `gateway.wait_config_applied` or `gateway.wait_ready` (→ `gateway.observe_rollout`, `kcp.gateway.rolled`) |
-| `gateway.wait_pods` | Static fence with producer detection |
+| `gateway.verify_transition` | `kcp.gateway.mechanism` = `config_id` \| `rollout`; contains `gateway.wait_config_applied`, or `gateway.wait_pods` (→ `gateway.observe_rollout`, `kcp.gateway.rolled`) |
+| `gateway.wait_pods` | Every fence, unfence and switchover on a gateway whose pods roll: waits for the Deployment's rollout and for the pods captured before the patch to be gone; `kcp.gateway.pods.captured` |
+| `gateway.wait_old_pods_gone` | Child of `gateway.wait_pods`, and the cost of waiting for the replaced pods rather than only for the rollout: opens when the Deployment reports its rollout complete while captured pods remain, closes when they are gone; `kcp.gateway.pods.old_at_start`. Absent when they were already gone |
+| `gateway.wait_terminating_pods` | Child of `gateway.wait_config_applied` on a hot-reload gateway: opens when every other condition holds and a pod is still terminating, closes when none is; `kcp.gateway.pods.terminating_at_start`. Absent when nothing was draining |
 | every `gateway.*` verifier span | `kcp.gateway.step` = `fence`, `switchover`, `unfence` or `hot-reload check` |
 | `clusterlink.*` | `promote_mirror_topics` (`kcp.batch.size`), `list_mirror_topics` (`kcp.mirrors`) |
 | `step.wait_for_lags` | `kcp.polls`, `kcp.topics_behind` |
