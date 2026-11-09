@@ -306,6 +306,61 @@ func TestD2SFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	assert.Equal(t, []string{"rules"}, rec.fields(), "only the fence patch may have run")
 }
 
+// overduePodGateway is a rolling gateway whose pod waits numbered in overdueOn
+// fail as a replaced pod stuck terminating past its deadline; the counter
+// reports how many waits ran.
+func overduePodGateway(rec *patchRecorder, waits *int, overdueOn ...int) *mockGatewayService {
+	gw := rec.service()
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		*waits++
+		for _, o := range overdueOn {
+			if *waits == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+	return gw
+}
+
+// TestD2SFence_OverduePodRollsBackAndNeverSwitches: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the fence is removed, and the switch (d2s's
+// only step after the fence that moves clients) never runs.
+func TestD2SFence_OverduePodRollsBackAndNeverSwitches(t *testing.T) {
+	rec := &patchRecorder{}
+	var waits int
+	run := newTestRun(overduePodGateway(rec, &waits, 1), cleanWorld().deps()) // the fence's wait; the unfence's succeeds
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, 2, waits, "the fence's wait, then the unfence's")
+	require.Len(t, rec.patches, 2, "the fence, then the unfence: no switch")
+	assert.Equal(t, "rules", rec.patches[1].Field)
+	assert.Equal(t, rollbackRules(t), rec.patches[1].Value)
+	assert.Equal(t, StateInitialized, run.state())
+}
+
+// TestD2SSwitch_OverduePodFailsAtOffsetsSynced: the switch's wait meets an
+// overdue pod. d2s has no promoted state; the switch runs from offsets_synced,
+// and the step fails there with the overdue error and no unfence.
+func TestD2SSwitch_OverduePodFailsAtOffsetsSynced(t *testing.T) {
+	rec := &patchRecorder{}
+	var waits int
+	run := newTestRun(overduePodGateway(rec, &waits, 2), cleanWorld().deps()) // the fence's wait succeeds; the switch's is overdue
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, 2, waits)
+	require.Len(t, rec.patches, 2, "the fence and the switch: no unfence")
+	assert.Equal(t, StateOffsetsSynced, run.state())
+}
+
 func TestFence_APatchThatFailedIsNotUnconfirmed(t *testing.T) {
 	rec := &patchRecorder{failAt: map[int]error{1: fmt.Errorf("k8s API unavailable")}}
 

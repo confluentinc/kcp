@@ -1196,6 +1196,87 @@ func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mock
 	return orch, gw, res, out, errOut
 }
 
+// overduePodRunTBM runs a TBM batch on a rolling gateway whose pod waits
+// numbered in overdueOn fail as a replaced pod stuck terminating past its
+// deadline. It returns the route patches, the promote calls and the wait count.
+func overduePodRunTBM(t *testing.T, overdueOn ...int64) (*TBMOrchestrator, *[]gateway.RoutePatch, *int64, *int64, error) {
+	t.Helper()
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var promotes, waits int64
+	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		mu.Lock()
+		patches = append(patches, rp)
+		mu.Unlock()
+		return "", nil
+	}
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		n := atomic.AddInt64(&waits, 1)
+		for _, o := range overdueOn {
+			if n == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promotes, 1)
+			return nil, fmt.Errorf("promote must not run")
+		},
+	}
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+	return orch, &patches, &promotes, &waits, err
+}
+
+// TestTBMFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the fence is removed, and nothing promotes.
+func TestTBMFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
+	orch, patches, promotes, waits, err := overduePodRunTBM(t, 1) // the fence's wait; the unfence's succeeds
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Len(t, *patches, 2, "the fence, then the patch removing it")
+	assert.Equal(t, int64(2), atomic.LoadInt64(waits), "the fence's wait, then the unfence's")
+	assert.Zero(t, atomic.LoadInt64(promotes), "promote must never run")
+	assert.NotEqual(t, StatePromoted, orch.fsm.Current())
+	assert.NotEqual(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestTBMSwitch_OverduePodFailsAtPromoted: the switchover's wait meets an
+// overdue pod. The step fails with the overdue error, the fence is not
+// removed (the topics are already promoted), and the FSM stays at promoted.
+func TestTBMSwitch_OverduePodFailsAtPromoted(t *testing.T) {
+	orch, gw, res, _, _ := generationRunTBM(t, false)
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil } // the CR stays where reconcile read it
+	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		mu.Lock()
+		patches = append(patches, rp)
+		mu.Unlock()
+		return "", nil
+	}
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		if atomic.AddInt64(&waits, 1) == 2 { // the fence's wait succeeds; the switchover's is overdue
+			return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+		}
+		return nil
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits))
+	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orch.fsm.Current())
+}
+
 func TestTBMOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
 	orch, gw, res, _, _ := generationRunTBM(t, false)
 	var patches []gateway.RoutePatch

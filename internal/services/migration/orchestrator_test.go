@@ -2395,6 +2395,71 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
 }
 
+// overduePodWaits scripts a rolling gateway's pod waits: the wait numbers in
+// overdueOn fail as a replaced pod stuck terminating past its deadline, every
+// other wait succeeds.
+func overduePodWaits(calls *int64, overdueOn ...int64) func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+	return func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		n := atomic.AddInt64(calls, 1)
+		for _, o := range overdueOn {
+			if n == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+}
+
+// TestAAOFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the route is unfenced, and nothing promotes.
+func TestAAOFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	overrides := recordingGateway(&mu, &patches)
+	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 1) // the fence's wait; the unfence's succeeds
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	var promotes int64
+	orch.actions.clusterLinkService.(*mockClusterLinkService).promoteMirrorTopicsFn = func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		atomic.AddInt64(&promotes, 1)
+		return nil, fmt.Errorf("promote must not run")
+	}
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Len(t, patches, 2, "the fence, then the unfence")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits), "the fence's wait, then the unfence's")
+	assert.Zero(t, atomic.LoadInt64(&promotes), "promote must never run")
+	assert.NotEqual(t, StatePromoted, orch.fsm.Current())
+	assert.NotEqual(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestAAOSwitch_OverduePodFailsAtPromoted: the switchover's wait meets an
+// overdue pod. The step fails with the overdue error, the route is not
+// unfenced (the topics are already promoted), and the FSM stays at promoted.
+func TestAAOSwitch_OverduePodFailsAtPromoted(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	overrides := recordingGateway(&mu, &patches)
+	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 2) // the fence's wait succeeds; the switchover's is overdue
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits))
+	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orch.fsm.Current())
+}
+
 // --- Gateway CR generation checks ---
 
 // gatewayMock returns the orchestrator's mock gateway service, for scripting
