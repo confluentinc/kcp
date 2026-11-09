@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -414,4 +415,33 @@ func TestWaitForGatewayConfigID_TerminatingRunningNotReadyPodBlocks(t *testing.T
 		ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 terminating")
+}
+
+// TestWaitForGatewayConfigID_OverdueTerminatingPodFailsFast: a terminating pod
+// still listed well past its deletionTimestamp fails the wait at once instead of
+// running out the generic hot-reload timeout.
+func TestWaitForGatewayConfigID_OverdueTerminatingPodFailsFast(t *testing.T) {
+	shortenOverdueMargin(t, 10*time.Millisecond)
+	const ns, gw, want = "confluent", "test-gateway", "kcp-new"
+	old := terminatingGatewayPod("gw-old", ns, gw, "uid-old", "10.0.1.2")
+	old.Spec.NodeName = "node-b"
+	past := metav1.NewTime(time.Now().Add(-time.Second))
+	old.DeletionTimestamp = &past
+	cs := newFakeClientset(
+		completeGatewayDeployment(gw, ns, 1),
+		gatewayPodWithIP("gw-new", ns, gw, "uid-new", "10.0.1.1", true),
+		old,
+	)
+
+	// Safety net so a regression fails instead of hanging.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := waitForGatewayConfigID(ctx, cs, staticProber(want), ns, gw,
+		ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 5 * time.Second})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrReplacedPodOverdue))
+	assert.Contains(t, err.Error(), "node-b")
+	assert.Less(t, time.Since(start), time.Second)
 }

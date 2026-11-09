@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -212,10 +213,20 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 		default:
 		}
 
-		endpoints, err := listGatewayPodEndpoints(ctx, clientset, namespace, gatewayName)
+		gatewayPods, err := listGatewayPods(ctx, clientset, namespace, gatewayName)
 		if err != nil {
 			return err
 		}
+
+		// A terminating pod still listed well past its deletion deadline will
+		// not leave on its own (e.g. its node is gone), so the terminating
+		// clause below could never clear. Fail whatever the timeout. Every
+		// gateway pod counts, including ones with no IP.
+		if pod, by := overduePod(gatewayPods, func(*corev1.Pod) bool { return true }, time.Now()); pod != nil {
+			slog.Warn("⚠️ replaced gateway pod is overdue", "pod", pod.Name, "node", pod.Spec.NodeName, "overdueBy", by.Round(time.Second))
+			return overdueError(namespace, pod, by)
+		}
+		endpoints := podsToEndpoints(gatewayPods)
 
 		dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
 		if err != nil {

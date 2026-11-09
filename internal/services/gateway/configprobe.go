@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
@@ -182,30 +182,30 @@ type GatewayPodEndpoint struct {
 // success. Pods with no IP assigned yet are skipped: that means not yet
 // scheduled, regardless of how the endpoint is addressed once it is.
 func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string) ([]GatewayPodEndpoint, error) {
-	// CFK labels gateway pods app=<gateway-cr-name>, matching the other waits.
-	labelSelector := fmt.Sprintf("app=%s", gatewayName)
-
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
+	pods, err := listGatewayPods(ctx, clientset, namespace, gatewayName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list gateway pods: %w", err)
+		return nil, err
 	}
+	return podsToEndpoints(pods), nil
+}
 
-	endpoints := make([]GatewayPodEndpoint, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+// podsToEndpoints converts gateway pods to probe endpoints, skipping pods with
+// no IP assigned yet.
+func podsToEndpoints(pods []corev1.Pod) []GatewayPodEndpoint {
+	endpoints := make([]GatewayPodEndpoint, 0, len(pods))
+	for i := range pods {
+		pod := &pods[i]
 		if pod.Status.PodIP == "" {
 			slog.Debug("skipping gateway pod with no IP assigned yet", "pod", pod.Name)
 			continue
 		}
 		endpoints = append(endpoints, GatewayPodEndpoint{
 			Name:  pod.Name,
-			Ready: isPodReady(&pod),
+			Ready: isPodReady(pod),
 			// A terminal-phase pod (evicted, finished) runs nothing, so it is
 			// not "terminating and still serving" whatever its DeletionTimestamp.
-			Terminating: pod.DeletionTimestamp != nil && !isTerminalPod(&pod),
+			Terminating: pod.DeletionTimestamp != nil && !isTerminalPod(pod),
 		})
 	}
-
-	return endpoints, nil
+	return endpoints
 }
