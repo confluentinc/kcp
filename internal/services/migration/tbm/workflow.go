@@ -49,8 +49,8 @@ type TBMActions struct {
 	// process, so the first of Fence or Switch to need the capability
 	// resolves it and neither step ever acts on the unresolved zero value.
 	capabilityResolved bool
-	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
-	// deadline.
+	// rolloutTimeout bounds the replaced-pod waits in Fence, Switch and the
+	// rollback unfence. 0 means no deadline.
 	rolloutTimeout time.Duration
 	// hotReloadTimeout bounds per-pod configId verification. Unlike
 	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
@@ -92,7 +92,7 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 	}
 }
 
-// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
 // A value of 0 means no deadline.
 func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
 	a.rolloutTimeout = d
@@ -258,8 +258,9 @@ func formatLag64(n int64) string {
 // verified on the live cluster, proves hot-reload actually works if the
 // gateway claims to support it, derives the fence RoutePatch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
-// deriveFenceRoutePatch), patches it in, and confirms it landed. Unlike
-// migration.FenceGateway there is no pod-UID capture. A failure leaves the FSM
+// deriveFenceRoutePatch), patches it in, and confirms it landed. Like
+// migration.FenceGateway, PatchCR captures the pre-patch pod UIDs on a rolling
+// gateway so the wait covers the replaced pods. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
 // migration.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
 // client traffic, so the orchestrator removes them (see handleStepFailure).
@@ -598,8 +599,9 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 // migration.SwitchGateway, there is no field-flip to derive here: migplan
 // already renders a full switchover rules block ahead of time, because TBM's
 // dynamic routes need a whole-subtree rules replacement, not a single
-// streamingDomain flip on a static route. There is no pod-UID capture or
-// compensating rollback on failure — a failure here just returns an error
+// streamingDomain flip on a static route. There is no compensating rollback on
+// failure (PatchCR still captures pod UIDs for the replaced-pod wait) — a
+// failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
 	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is

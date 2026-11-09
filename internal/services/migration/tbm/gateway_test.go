@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -108,7 +109,9 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	if m.getGatewayPodUIDsFn != nil {
 		return m.getGatewayPodUIDsFn(ctx, namespace, name)
 	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
+	// A one-UID default: PatchCR captures the pods of a rolling gateway before
+	// every patch. Tests that care override getGatewayPodUIDsFn.
+	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
 }
 
 func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
@@ -122,7 +125,7 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
-	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
+	return nil
 }
 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
@@ -716,7 +719,7 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 		}, true},
 		{"a verification failure is an unconfirmed fence", &mockGatewayService{
 			patchGatewayRouteFn: patchOK,
-			waitForGatewayReadyFn: func(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
+			waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 				return fmt.Errorf("gateway pods did not converge")
 			},
 		}, true},
@@ -735,4 +738,32 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTBMFence_WaitTimeoutIsFenceUnconfirmed: when the replaced gateway pods
+// never go away the fence fails marked ErrFenceUnconfirmed, and no promote-side
+// call (cluster link) is made.
+func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	var waitCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+			waitCalls++
+			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+		}}
+	var promoteSideCalls int
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoteSideCalls++
+			return nil, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+
+	err := actions.Fence(context.Background(), testTBMConfig())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Zero(t, promoteSideCalls, "nothing promote-side may run after a failed fence")
 }

@@ -1019,3 +1019,107 @@ func completeGatewayDeployment(name, namespace string, replicas int32) *appsv1.D
 		withReadyReplicas(replicas),
 	)
 }
+
+// ===========================================================================
+// waitForGatewayPods — terminal-phase pods, diagnostics, cancellation
+// ===========================================================================
+
+// withPhase returns pod with its phase set (and Ready dropped).
+func withPhase(pod *corev1.Pod, phase corev1.PodPhase) *corev1.Pod {
+	pod.Status.Phase = phase
+	pod.Status.Conditions = nil
+	return pod
+}
+
+// TestWaitForGatewayPods_FailedOldPodDoesNotBlock guards the evicted-pod wedge:
+// a kubelet-evicted pod stays listed as Failed with no DeletionTimestamp and
+// serves nothing, so it must not count as an old pod still remaining.
+func TestWaitForGatewayPods_FailedOldPodDoesNotBlock(t *testing.T) {
+	for _, phase := range []corev1.PodPhase{corev1.PodFailed, corev1.PodSucceeded} {
+		t.Run(string(phase), func(t *testing.T) {
+			ns, gw := "test-ns", "test-gw"
+			initialUIDs := map[types.UID]struct{}{"old-1": {}}
+			cs := newFakeClientset(
+				withPhase(newGatewayPod("gw-old", ns, gw, "old-1", true), phase),
+				newGatewayPod("gw-new", ns, gw, "new-1", true),
+				completeGatewayDeployment(gw, ns, 1),
+			)
+
+			var last PodRolloutProgress
+			err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 500*time.Millisecond,
+				func(p PodRolloutProgress) { last = p })
+			require.NoError(t, err)
+			assert.Zero(t, last.OldPodsRemaining)
+			assert.Empty(t, last.OldPodNames)
+		})
+	}
+}
+
+// TestWaitForGatewayPods_RunningTerminatingOldPodBlocks: a captured pod that is
+// Running and terminating still serves, so it must still block.
+func TestWaitForGatewayPods_RunningTerminatingOldPodBlocks(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	old := newGatewayPod("gw-old", ns, gw, "old-1", true)
+	now := metav1.Now()
+	old.DeletionTimestamp = &now
+	cs := newFakeClientset(
+		old,
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 100*time.Millisecond, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+}
+
+func TestWaitForGatewayPods_ProgressCarriesElapsedAndSortedOldPodNames(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}, "old-2": {}, "old-3": {}}
+	cs := newFakeClientset(
+		newGatewayPod("gw-b", ns, gw, "old-2", true),
+		newGatewayPod("gw-a", ns, gw, "old-1", true),
+		withPhase(newGatewayPod("gw-evicted", ns, gw, "old-3", true), corev1.PodFailed),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	var last PodRolloutProgress
+	_ = waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 60*time.Millisecond,
+		func(p PodRolloutProgress) { last = p })
+	assert.Equal(t, []string{"gw-a", "gw-b"}, last.OldPodNames, "sorted, terminal-phase pods excluded")
+	assert.Equal(t, 2, last.OldPodsRemaining)
+	assert.Positive(t, last.Elapsed)
+}
+
+func TestWaitForGatewayPods_TimeoutNamesOldPodAndHintsKubectl(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	cs := newFakeClientset(
+		newGatewayPod("gw-stuck-0", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 0, 5*time.Millisecond, 50*time.Millisecond, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out waiting for gateway pods to be replaced")
+	assert.Contains(t, err.Error(), "gw-stuck-0")
+	assert.Contains(t, err.Error(), "kubectl -n test-ns get pod gw-stuck-0")
+}
+
+func TestWaitForGatewayPods_CancelledContextReturnsPromptlyDuringPoll(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+	start := time.Now()
+	// A long poll interval: the wait must not sit out the sleep once cancelled.
+	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 0, 10*time.Second, 0, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(start), 2*time.Second)
+}

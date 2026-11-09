@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -128,14 +129,14 @@ func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *tes
 }
 
 // readinessRecordingGateway records the timeout passed to each
-// WaitForGatewayReady call — where the rollout timeout surfaces.
+// WaitForGatewayPods call — where the rollout timeout surfaces.
 type readinessRecordingGateway struct {
 	recordingGatewayService
 	mu       sync.Mutex
 	timeouts []time.Duration
 }
 
-func (r *readinessRecordingGateway) WaitForGatewayReady(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+func (r *readinessRecordingGateway) WaitForGatewayPods(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
 	r.mu.Lock()
 	r.timeouts = append(r.timeouts, timeout)
 	r.mu.Unlock()

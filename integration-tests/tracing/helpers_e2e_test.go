@@ -31,6 +31,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // kcpBinary is the in-pod path run.sh copies the linux kcp binary to.
@@ -255,6 +258,9 @@ func (e *env) mirrorStatus(t *testing.T, ctx context.Context) map[string]string 
 // error.
 func (e *env) runKCP(t *testing.T, reportName, traceFile, label string, args ...string) (string, error) {
 	t.Helper()
+	// The previous step (the route reset, or an earlier run) may have rolled the
+	// gateway pods; kcp's pod check refuses a run while that is still going on.
+	e.waitForGatewaySettled(t, context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), executeTimeout)
 	defer cancel()
 
@@ -272,6 +278,69 @@ func (e *env) runKCP(t *testing.T, reportName, traceFile, label string, args ...
 		"───── process exit: err=%v ─────\n", desc, out, err)
 	e.saveReport(t, reportName, fmt.Sprintf("$ %s\n\n%s\n───── process exit: err=%v ─────\n", desc, out, err))
 	return string(out), err
+}
+
+// settleTimeout bounds waitForGatewaySettled's wait.
+const settleTimeout = 2 * time.Minute
+
+// waitForGatewaySettled waits until the gateway Deployment reports a complete
+// rollout and no gateway pod is terminating. On a hot-reload-off gateway every
+// route change, including resetStaticRoute's, rolls the pods, and kcp's pod check
+// refuses a run until the rollout is complete and the replaced pod is gone, so
+// each run waits here first. Static only; a no-op on dynamic, whose gateway
+// hot-reloads without replacing pods. Same wait as the idempotent-fsm suite's.
+func (e *env) waitForGatewaySettled(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if e.mode != "static" {
+		return
+	}
+	cs := kubeClient(t)
+	var last string
+	settled := func() bool {
+		dep, err := cs.AppsV1().Deployments(e.namespace).Get(ctx, e.gateway, metav1.GetOptions{})
+		if err != nil {
+			last = "read the gateway Deployment: " + err.Error()
+			return false
+		}
+		s := dep.Status
+		if s.ObservedGeneration < dep.Generation || s.UpdatedReplicas != s.Replicas || s.AvailableReplicas != s.Replicas || s.Replicas == 0 {
+			last = fmt.Sprintf("Deployment %s rolling out: generation %d observed %d, %d replicas, %d updated, %d available",
+				dep.Name, dep.Generation, s.ObservedGeneration, s.Replicas, s.UpdatedReplicas, s.AvailableReplicas)
+			return false
+		}
+		pods, err := cs.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app=" + e.gateway})
+		if err != nil {
+			last = "list the gateway pods: " + err.Error()
+			return false
+		}
+		for _, p := range pods.Items {
+			if p.DeletionTimestamp != nil {
+				last = "gateway pod " + p.Name + " is terminating"
+				return false
+			}
+		}
+		return true
+	}
+	start := time.Now()
+	deadline := start.Add(settleTimeout)
+	for !settled() {
+		require.Falsef(t, time.Now().After(deadline), "the gateway must settle within %s before the next kcp run (last seen: %s)", settleTimeout, last)
+		time.Sleep(2 * time.Second)
+	}
+	if waited := time.Since(start); waited >= time.Second {
+		t.Logf("\nGATEWAY SETTLED ▸ waited %s for the rollout to complete and no gateway pod to be terminating", waited.Round(time.Second))
+	}
+}
+
+// kubeClient builds a clientset from the in-cluster service account; the suite
+// runs in the runner pod.
+func kubeClient(t *testing.T) kubernetes.Interface {
+	t.Helper()
+	cfg, err := rest.InClusterConfig()
+	require.NoError(t, err, "in-cluster config (the suite runs in the runner pod)")
+	cs, err := kubernetes.NewForConfig(cfg)
+	require.NoError(t, err, "build the clientset")
+	return cs
 }
 
 // freshTopics returns n of the suite's topics whose mirrors are still ACTIVE, so

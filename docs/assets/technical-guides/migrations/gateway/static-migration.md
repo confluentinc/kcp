@@ -172,7 +172,7 @@ Notes on the choices above:
 
 - `topicGroup` takes literal [`topics`](../../../migration-assets/cutover/migrations.md#topicgroup-topics), anchored [`topicPatterns`](../../../migration-assets/cutover/migrations.md#topicgroup-topicpatterns), or both (the union), and has no default. To migrate everything, write `topicPatterns: ['.*']`.
 - [`detectUnroutedProducersDuration`](../../../migration-assets/cutover/policies.md#policies-detectunroutedproducersduration) is off by default. If you can't rule out producers bypassing the Gateway, turn it on.
-- [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout) defaults to no deadline, so a rollout that never converges waits indefinitely with traffic already fenced. Set one.
+- [`rolloutTimeout`](../../../migration-assets/cutover/policies.md#policies-rollouttimeout) defaults to no deadline, so a rollout that never converges waits indefinitely with traffic already fenced. Set one. On a Gateway whose pods roll, a fence or switchover also waits, up to the pods' termination grace period, for the replaced pods to be gone.
 - [`consumerOffsetSync.baseline`](../../../migration-assets/cutover/migrations.md#consumeroffsetsync-baseline) is the offset sync state to restore after the switch. Set it to what the link has now, normally `enabled`.
 
 The complete annotated manifest is [`gateway-static-migration.yaml`](../../../gateway-examples/gateway-static-migration.yaml). Every field, validation rule, and policy default is in the [migration manifest reference](../../../migration-assets/cutover/overview.md).
