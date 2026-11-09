@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing"
@@ -305,9 +306,16 @@ func (v *TransitionVerifier) printConfigWaitProgress(p ConfigWaitProgress) {
 			p.PodsAtWant, p.PodsReady, terminating, FormatElapsed(p.Elapsed))
 		return
 	}
-	v.Reporter.Detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
-		p.PodsAtWant, p.PodsReady, FormatElapsed(p.Elapsed))
+	terminating := ""
+	if p.PodsTerminating > 0 {
+		terminating = fmt.Sprintf(", %d terminating", p.PodsTerminating)
+	}
+	v.Reporter.Detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config%s (elapsed %s)",
+		p.PodsAtWant, p.PodsReady, terminating, FormatElapsed(p.Elapsed))
 }
+
+// maxOldPodNamesShown caps how many remaining old pod names the progress line lists.
+const maxOldPodNamesShown = 3
 
 // printPodRolloutProgress renders WaitForGatewayPods progress: how many new
 // pods are Ready and how many of the pre-apply pods still remain.
@@ -316,8 +324,18 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 		v.Reporter.Success("No pod restart required")
 		return
 	}
-	v.Reporter.Detail("%d/%d new pods ready, %d old pods remaining",
-		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining)
+	waiting := ""
+	if n := len(p.OldPodNames); n > 0 {
+		shown := p.OldPodNames
+		suffix := ""
+		if n > maxOldPodNamesShown {
+			shown = shown[:maxOldPodNamesShown]
+			suffix = fmt.Sprintf(" and %d more", n-maxOldPodNamesShown)
+		}
+		waiting = fmt.Sprintf(" (waiting on %s%s)", strings.Join(shown, ", "), suffix)
+	}
+	v.Reporter.Detail("%d/%d new pods ready, %d old pods remaining%s (elapsed %s)",
+		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining, waiting, FormatElapsed(p.Elapsed))
 }
 
 // VerifyHotReloadCapability proves the gateway really does apply config

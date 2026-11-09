@@ -381,3 +381,37 @@ func TestWaitForGatewayConfigID_NoRollConvergesImmediately(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, polls, "a gateway that is not rolling must converge on the first poll")
 }
+
+func TestWaitForGatewayConfigID_FailedPodDoesNotBlockConvergence(t *testing.T) {
+	const ns, gw, want = "confluent", "test-gateway", "kcp-new"
+	evicted := terminatingGatewayPod("gw-evicted", ns, gw, "uid-ev", "10.0.1.3")
+	evicted.Status.Phase = corev1.PodFailed
+	failedNoDeletion := gatewayPodWithIP("gw-failed", ns, gw, "uid-f", "10.0.1.4", false)
+	failedNoDeletion.Status.Phase = corev1.PodFailed
+	cs := newFakeClientset(
+		completeGatewayDeployment(gw, ns, 1),
+		gatewayPodWithIP("gw-new", ns, gw, "uid-new", "10.0.1.1", true),
+		evicted,
+		failedNoDeletion,
+	)
+
+	err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw,
+		ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
+	require.NoError(t, err, "a Failed pod serves nothing and must not block")
+}
+
+func TestWaitForGatewayConfigID_TerminatingRunningNotReadyPodBlocks(t *testing.T) {
+	const ns, gw, want = "confluent", "test-gateway", "kcp-new"
+	old := terminatingGatewayPod("gw-old", ns, gw, "uid-old", "10.0.1.2")
+	old.Status.Phase = corev1.PodRunning // Running but no longer Ready
+	cs := newFakeClientset(
+		completeGatewayDeployment(gw, ns, 1),
+		gatewayPodWithIP("gw-new", ns, gw, "uid-new", "10.0.1.1", true),
+		old,
+	)
+
+	err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw,
+		ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 terminating")
+}

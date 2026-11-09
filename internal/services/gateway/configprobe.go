@@ -199,9 +199,11 @@ func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface
 			continue
 		}
 		endpoints = append(endpoints, GatewayPodEndpoint{
-			Name:        pod.Name,
-			Ready:       isPodReady(&pod),
-			Terminating: pod.DeletionTimestamp != nil,
+			Name:  pod.Name,
+			Ready: isPodReady(&pod),
+			// A terminal-phase pod (evicted, finished) runs nothing, so it is
+			// not "terminating and still serving" whatever its DeletionTimestamp.
+			Terminating: pod.DeletionTimestamp != nil && !isTerminalPod(&pod),
 		})
 	}
 

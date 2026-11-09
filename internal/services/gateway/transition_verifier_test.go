@@ -348,3 +348,52 @@ func TestVerifyTransition_NoRollReturnsImmediately(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, time.Since(start), 3*time.Second, "a no-roll apply must not wait out the timeout")
 }
+
+// recordingReporter captures rendered Detail lines.
+type recordingReporter struct{ details []string }
+
+func (r *recordingReporter) Detail(f string, a ...any) {
+	r.details = append(r.details, fmt.Sprintf(f, a...))
+}
+func (r *recordingReporter) Success(string, ...any)     {}
+func (r *recordingReporter) Remediation(string, ...any) {}
+
+func TestPrintPodRolloutProgress_ShowsElapsedAndOldPodNames(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printPodRolloutProgress(PodRolloutProgress{
+		InitialPodCount: 5, NewPodsReady: 1, OldPodsRemaining: 5, RolloutDetected: true,
+		Elapsed: 90 * time.Second, OldPodNames: []string{"a", "b", "c", "d", "e"},
+	})
+	require.Len(t, rep.details, 1)
+	line := rep.details[0]
+	assert.Contains(t, line, "1/5 new pods ready, 5 old pods remaining")
+	assert.Contains(t, line, FormatElapsed(90*time.Second))
+	assert.Contains(t, line, "a, b, c and 2 more")
+	assert.NotContains(t, line, "d,")
+}
+
+func TestPrintPodRolloutProgress_FewNamesListedInFull(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printPodRolloutProgress(PodRolloutProgress{
+		InitialPodCount: 2, OldPodsRemaining: 2, RolloutDetected: true, OldPodNames: []string{"a", "b"},
+	})
+	require.Len(t, rep.details, 1)
+	assert.Contains(t, rep.details[0], "a, b")
+	assert.NotContains(t, rep.details[0], "more")
+}
+
+func TestPrintConfigWaitProgress_InPlaceShowsTerminating(t *testing.T) {
+	rep := &recordingReporter{}
+	v := &TransitionVerifier{Reporter: rep}
+	v.printConfigWaitProgress(ConfigWaitProgress{
+		Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2, PodsTerminating: 1,
+	})
+	require.Len(t, rep.details, 1)
+	assert.Contains(t, rep.details[0], "1 terminating")
+
+	rep.details = nil
+	v.printConfigWaitProgress(ConfigWaitProgress{Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2})
+	assert.NotContains(t, rep.details[0], "terminating")
+}
