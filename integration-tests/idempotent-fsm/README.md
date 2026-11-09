@@ -146,10 +146,10 @@ behind `metadata.generation`), so `--dry-run` and a re-run both refuse, and the
 re-run makes no gateway write. Before the pod check, both reported nothing to
 do and exited 0. The operator is scaled back up when the test ends. The
 runner's Role grants `deployments/scale` for this test alone. A second drift
-test, `TestDrift_TerminatingPodRefusesUntilSettled`, kills a run after the
-fence and runs `--dry-run` straight away: the fence's rollout reports complete
-while the replaced pod still terminates, so the pod check refuses with the
-rollout-in-progress hint, and the same dry-run passes once the gateway settles.
+test, `TestDrift_TerminatingPodRefusesUntilSettled`, deletes one gateway pod
+directly (kcp's own fence no longer returns until the pods it replaced are
+gone) and dry-runs until the pod check refuses with the "is still terminating"
+rollout-in-progress hint, then passes the same dry-run once the gateway settles.
 A third, `TestDrift_GatewayPodRestartRerunProceeds` (dynamic only), kills a run
 after promote, deletes every gateway pod and waits for the replacements. They
 must report the CR's configId at boot, so `--dry-run` passes the pod check and
