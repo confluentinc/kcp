@@ -2,10 +2,13 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -440,4 +443,43 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		assert.Contains(t, out, "logs -l app=gw-1", "the hint must select the gateway pods by app label")
 		assert.NotContains(t, out, " -c ", "the hint must not pass a container name — the gateway CR name is not the container name")
 	})
+}
+
+// TestAAOFence_WaitTimeoutIsFenceUnconfirmed: on a rolling gateway the replaced
+// pods never going away (WaitForGatewayPods fails) leaves the fenced spec live,
+// so the fence fails as ErrFenceUnconfirmed (the orchestrator then restores the
+// initial CR) and nothing on the promote side runs.
+func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	var applied []string
+	gw := hotReloadCapableGateway(&applied)
+	gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+	}
+	var waitCalls int
+	gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		waitCalls++
+		return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+	}
+	var promoteSideCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoteSideCalls, 1)
+			return nil, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			atomic.AddInt64(&promoteSideCalls, 1)
+			return nil, nil
+		},
+	}
+
+	actions := NewMigrationActions(gw, cl)
+	config := hotReloadConfig()
+	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+	err := actions.FenceGateway(context.Background(), config)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrFenceUnconfirmed), "a wait failure after the apply must be marked unconfirmed: %v", err)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteSideCalls), "nothing promote-side may run after a failed fence")
 }

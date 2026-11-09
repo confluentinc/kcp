@@ -627,7 +627,7 @@ func TestTBM_AlreadyFencedNoReapply(t *testing.T) {
 // separate "poll until ready" loop in this test harness to hook — that loop
 // lives entirely inside the production K8sService the gateway mock replaces
 // — so "waits for convergence, then proceeds" is modelled as the mocked
-// WaitForGatewayReady call itself reporting one not-yet-converged progress
+// WaitForGatewayPods call itself reporting one not-yet-converged progress
 // tick before its own converged return (see newTBMKillPointOrchestrator's
 // doc comment on readyProgress). This is the simplest fake that both lets
 // the wait return and still proves the step observed an unconverged state —
@@ -832,7 +832,7 @@ func TestTBM_PromotedNotSwitched(t *testing.T) {
 // needs Topics=[] (nothing left to promote) with a non-empty SwitchoverYAML
 // for the switch to actually run. The convergence wait is faked the same way
 // as TestTBM_FenceWaitsForConvergence:
-// the mocked WaitForGatewayReady call itself reports a not-yet-converged
+// the mocked WaitForGatewayPods call itself reports a not-yet-converged
 // progress tick before its own converged return.
 func TestTBM_SwitchWaitsForConvergence(t *testing.T) {
 	notReady := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 0, OldPodsRemaining: 2}

@@ -18,7 +18,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -452,42 +451,12 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		return nil
 	}
 
-	// Capability must be resolved before capturePods below reads it (and
-	// before deriveFenceRoutePatch, which needs config.FenceYAML — already set
-	// by Initialize earlier in this same run). A no-op on any run past the
-	// first gateway-touching step in this process.
+	// Capability must be resolved before deriveFenceRoutePatch, which needs
+	// config.FenceYAML (already set by Initialize earlier in this same run), and
+	// before the patch, whose verifier captures the pods a rollout will replace.
+	// A no-op on any run past the first gateway-touching step in this process.
 	if err := s.ensureGatewayCapability(ctx, config); err != nil {
 		return err
-	}
-
-	// When unrouted-producer detection is enabled the fence must be genuinely
-	// in effect before the detector's first source-offset snapshot. A plain
-	// readiness wait returns as soon as the new fenced pod reports Ready, but
-	// Kubernetes keeps the old, still-unfenced pod serving behind the same
-	// Service until its readiness probe scales it down (~30-40s). A legitimate
-	// producer routed through the gateway keeps landing writes on the source
-	// through that old pod for the whole window, so the detector sees source
-	// offsets rising and false-positives. Capturing the current pod set here —
-	// before the CR apply — lets us then wait for those old pods to actually
-	// terminate. Off by default: the stronger (and slower) wait only runs when
-	// detection is requested.
-	detecting := config.DetectUnroutedProducersDuration > 0
-
-	// The pod-replacement wait is only usable when the fence is expected to
-	// replace pods at all. Under a hot-reload the running pods apply the fence in
-	// place and are never replaced, so waiting for the pre-fence pods to
-	// disappear could never be satisfied. Per-pod configId verification gives the
-	// detector a strictly stronger guarantee anyway: it proves every serving pod
-	// has the fenced config, rather than inferring it from pod turnover.
-	capturePods := detecting && !s.gatewayCapability.InjectsConfigID()
-
-	var oldPodUIDs map[k8stypes.UID]struct{}
-	if capturePods {
-		var err error
-		oldPodUIDs, err = s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
-		if err != nil {
-			return fmt.Errorf("failed to capture gateway pods before fencing: %w", err)
-		}
 	}
 
 	// Derive the fence RoutePatch from config.FenceYAML's fence fragment onto
@@ -516,10 +485,10 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// The fenced spec is now live in the cluster, so from here on every failure
 	// leaves it there — possibly holding client traffic on some or all pods.
 	// Marking them all lets the orchestrator restore the initial CR rather than
-	// exiting with the gateway in a state kcp created and did not resolve. The
-	// pod-UID capture failure above is deliberately outside the mark: it runs
-	// strictly before the apply, so nothing has reached the cluster yet to undo.
-	if err := s.confirmFence(ctx, config, applied, oldPodUIDs, capturePods); err != nil {
+	// exiting with the gateway in a state kcp created and did not resolve. A
+	// failure of the patch itself is deliberately outside the mark: nothing has
+	// reached the cluster yet to undo.
+	if err := s.confirmFence(ctx, config, applied); err != nil {
 		return fmt.Errorf("%w: %w", ErrFenceUnconfirmed, err)
 	}
 
@@ -536,8 +505,6 @@ func (s *MigrationActions) confirmFence(
 	ctx context.Context,
 	config *MigrationConfig,
 	applied gateway.ApplyResult,
-	oldPodUIDs map[k8stypes.UID]struct{},
-	capturePods bool,
 ) error {
 	// Gate the waits below on the operator having accepted the fenced spec.
 	// The Deployment-based waits cannot tell "no restart needed" apart from
@@ -548,20 +515,9 @@ func (s *MigrationActions) confirmFence(
 
 	switch {
 	case applied.ConfigID != "":
-		// Covers both mechanisms, and subsumes the pod-replacement wait below.
+		// Covers both mechanisms, and subsumes the pod-replacement wait the
+		// default branch makes.
 		return s.waitForGatewayConfigApplied(ctx, config, applied, "fence")
-	case capturePods:
-		// With detection on and no configId to verify, wait until the old
-		// unfenced pods are gone rather than just until the new pod is Ready —
-		// see the comment in FenceGateway.
-		s.reporter.Detail("Waiting for gateway readiness...")
-		slog.Debug("waiting for gateway pod replacement", "rolloutTimeout", s.rolloutTimeout,
-			"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
-		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs,
-			applied.BaselineDeploymentGeneration, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
-			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
-		}
-		return nil
 	default:
 		return s.verifyGatewayTransition(ctx, config, applied, "fence")
 	}
@@ -1162,19 +1118,4 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	slog.Debug("gateway switchover complete")
 	s.reporter.Success("Gateway switchover complete")
 	return nil
-}
-
-// printPodRolloutProgress renders WaitForGatewayPods progress. Mirrors
-// gateway.TransitionVerifier's own printGatewayReadinessProgress but reports
-// the pod-replacement view — how many new pods are Ready and how many old
-// (pre-fence) pods still remain — since the fence wait now gates on the old
-// pods being gone, not just new-pod readiness. Unique to migration: TBM's
-// Fence has no equivalent pod-UID capture (see FenceGateway's doc comment).
-func (s *MigrationActions) printPodRolloutProgress(p gateway.PodRolloutProgress) {
-	if !p.RolloutDetected {
-		s.reporter.Success("No pod restart required")
-		return
-	}
-	s.reporter.Detail("%d/%d new pods ready, %d old pods remaining",
-		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining)
 }

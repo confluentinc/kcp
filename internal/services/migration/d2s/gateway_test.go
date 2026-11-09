@@ -286,6 +286,26 @@ func TestFence_AFenceThatLandedButWasNotConfirmedIsMarked(t *testing.T) {
 	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
 }
 
+// TestD2SFence_WaitTimeoutIsFenceUnconfirmed: the replaced gateway pods never
+// going away fails the fence marked ErrFenceUnconfirmed. d2s's Fence is only a
+// gateway patch plus verification, so the recorder proves no second patch (the
+// switch) followed.
+func TestD2SFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	rec := &patchRecorder{}
+	gw := rec.service()
+	var waitCalls int
+	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		waitCalls++
+		return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+	}
+
+	err := gatewayActions(gw).Fence(context.Background(), testConfig())
+
+	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Equal(t, []string{"rules"}, rec.fields(), "only the fence patch may have run")
+}
+
 func TestFence_APatchThatFailedIsNotUnconfirmed(t *testing.T) {
 	rec := &patchRecorder{failAt: map[int]error{1: fmt.Errorf("k8s API unavailable")}}
 

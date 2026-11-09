@@ -862,7 +862,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 }
 
-func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T) {
+func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(t *testing.T) {
 	var callOrder []string
 	waitReadyCalled := false
 	oldUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
@@ -895,17 +895,16 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	// Detection enabled: capture the pre-fence pod set, wait for the operator to
-	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
-	// then wait for those old pods to actually terminate so no unfenced pod is
-	// still serving traffic when detection's first offset snapshot is taken.
+	// Detection enabled changes nothing about the fence wait: the verifier waits
+	// for the operator to observe the fenced CR, then for the pods PatchCR
+	// captured to be gone, exactly as with detection off.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}, DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	// The first getUIDs is the workflow's own capture, the second PatchCR's.
-	assert.Equal(t, []string{"getUIDs", "getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
-		"with detection enabled, FenceGateway must capture pod UIDs before apply, wait for operator reconcile, then wait for pod rollout")
+	// The single getUIDs is PatchCR's capture: the workflow makes none of its own.
+	assert.Equal(t, []string{"getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
+		"detection on behaves exactly like detection off: capture once in PatchCR, apply, wait for operator reconcile, then wait for pod rollout")
 	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
 	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
 }

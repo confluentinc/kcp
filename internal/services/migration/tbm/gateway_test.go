@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -737,4 +738,32 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTBMFence_WaitTimeoutIsFenceUnconfirmed: when the replaced gateway pods
+// never go away the fence fails marked ErrFenceUnconfirmed, and no promote-side
+// call (cluster link) is made.
+func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
+	var waitCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+			waitCalls++
+			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
+		}}
+	var promoteSideCalls int
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoteSideCalls++
+			return nil, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+
+	err := actions.Fence(context.Background(), testTBMConfig())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
+	assert.Zero(t, promoteSideCalls, "nothing promote-side may run after a failed fence")
 }
