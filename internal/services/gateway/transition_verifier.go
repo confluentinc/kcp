@@ -9,6 +9,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Reporter is the minimal user-facing output surface TransitionVerifier
@@ -34,6 +35,11 @@ type ApplyResult struct {
 	// Generation is the Gateway CR's metadata.generation after the write, or 0
 	// when the write never reached the cluster.
 	Generation int64
+	// PreApplyPodUIDs is the set of gateway pod UIDs (terminating ones included)
+	// read immediately BEFORE the patch, on gateways whose pods roll. A later
+	// verification waits for them to be gone. nil when the capability injects a
+	// configId, because a hot-reloading gateway's pods never go away.
+	PreApplyPodUIDs map[types.UID]struct{}
 }
 
 // TransitionVerifier applies a gateway CR (or a configId-only stamp) and
@@ -134,6 +140,17 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 		}
 	}
 
+	// A rolling gateway replaces its pods, so record which exist before the
+	// patch. Failing to capture is fatal and happens before anything is written,
+	// so it is deliberately not an ErrApplyUnverified.
+	var preApplyPodUIDs map[types.UID]struct{}
+	if !v.Capability.InjectsConfigID() {
+		preApplyPodUIDs, err = v.Service.GetGatewayPodUIDs(ctx, namespace, crName)
+		if err != nil {
+			return ApplyResult{}, fmt.Errorf("failed to capture the gateway pods before %s: %w", step, err)
+		}
+	}
+
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
@@ -143,9 +160,9 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	v.recordGeneration(patched.Generation)
 	if err != nil {
 		// An unverified write still reached the cluster; hand back what it produced.
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, nil
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch

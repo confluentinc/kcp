@@ -105,7 +105,9 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	if m.getGatewayPodUIDsFn != nil {
 		return m.getGatewayPodUIDsFn(ctx, namespace, name)
 	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
+	// A one-UID default: PatchCR captures the pods of a rolling gateway before
+	// every patch. Tests that care override getGatewayPodUIDsFn.
+	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
 }
 
 func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {

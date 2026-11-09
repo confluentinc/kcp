@@ -31,6 +31,11 @@ type mockService struct {
 	patchResults   []PatchResult
 	patchErr       error
 	generationGets int
+
+	// getGatewayPodUIDsFn scripts GetGatewayPodUIDs; calls records the order of
+	// the capture and patch calls.
+	getGatewayPodUIDsFn func() (map[types.UID]struct{}, error)
+	calls               []string
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -50,6 +55,7 @@ func (m *mockService) CheckPermissions(context.Context, string, string, string, 
 }
 
 func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
+	m.calls = append(m.calls, "PatchGatewayRoute")
 	m.patchExpected = append(m.patchExpected, expectedGeneration)
 	if m.patchGatewayRouteFn != nil {
 		str, err := m.patchGatewayRouteFn(ctx, namespace, gatewayName, rp, configID)
@@ -88,6 +94,10 @@ func (m *mockService) WaitForGatewayAccepted(context.Context, string, string, ti
 }
 
 func (m *mockService) GetGatewayPodUIDs(context.Context, string, string) (map[types.UID]struct{}, error) {
+	m.calls = append(m.calls, "GetGatewayPodUIDs")
+	if m.getGatewayPodUIDsFn != nil {
+		return m.getGatewayPodUIDsFn()
+	}
 	return nil, nil
 }
 
@@ -141,6 +151,39 @@ func TestPatchCR_GatesConfigID(t *testing.T) {
 	assert.Equal(t, "r", gotRP.RouteName)
 	assert.Equal(t, "fence", gotRP.Field)
 	assert.Equal(t, 1, gotRP.Value)
+}
+
+func TestPatchCR_CapturesPodUIDsWhenRolling(t *testing.T) {
+	want := map[types.UID]struct{}{"uid-a": {}, "uid-b": {}}
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return want, nil }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.Equal(t, want, res.PreApplyPodUIDs)
+	assert.Equal(t, []string{"GetGatewayPodUIDs", "PatchGatewayRoute"}, svc.calls, "pods must be captured before the patch")
+}
+
+func TestPatchCR_DoesNotCaptureWhenConfigIDInjected(t *testing.T) {
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
+		return map[types.UID]struct{}{"uid-a": {}}, nil
+	}}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+
+	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.NoError(t, err)
+	assert.NotContains(t, svc.calls, "GetGatewayPodUIDs")
+	assert.Nil(t, res.PreApplyPodUIDs)
+}
+
+func TestPatchCR_CaptureFailureAbortsBeforePatch(t *testing.T) {
+	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return nil, errors.New("list pods: boom") }}
+	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+
+	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
+	require.Error(t, err)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
+	assert.False(t, errors.Is(err, ErrApplyUnverified))
 }
 
 func TestPatchConfigIDOnly(t *testing.T) {

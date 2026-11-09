@@ -791,10 +791,8 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	waitReadyCalled := false
 	acceptedCalled := false
 	gw := &mockGatewayService{
-		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
-			unwantedCall = "GetGatewayPodUIDs"
-			return nil, nil
-		},
+		// GetGatewayPodUIDs is not asserted against: the shared TransitionVerifier.PatchCR
+		// now captures the pods of any rolling gateway before every patch.
 		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			unwantedCall = "WaitForGatewayPods"
 			return nil
@@ -895,7 +893,8 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
+	// The first getUIDs is the workflow's own capture, the second PatchCR's.
+	assert.Equal(t, []string{"getUIDs", "getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
 		"with detection enabled, FenceGateway must capture pod UIDs before apply, wait for operator reconcile, then wait for pod rollout")
 	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
 	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
