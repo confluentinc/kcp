@@ -226,7 +226,7 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 		// clause below could never clear. Fail whatever the timeout. Every
 		// gateway pod counts, including ones with no IP.
 		if pod, by := overduePod(gatewayPods, func(*corev1.Pod) bool { return true }, time.Now()); pod != nil {
-			slog.Warn("⚠️ replaced gateway pod is overdue", "pod", pod.Name, "node", pod.Spec.NodeName, "overdueBy", by.Round(time.Second))
+			slog.Warn("replaced gateway pod is overdue", "pod", pod.Name, "node", pod.Spec.NodeName, "overdueBy", by.Round(time.Second))
 			return overdueError(namespace, pod, by)
 		}
 		endpoints := podsToEndpoints(gatewayPods)
