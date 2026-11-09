@@ -168,6 +168,10 @@ func probeGatewayConfig(ctx context.Context, pods typedcorev1.PodInterface, podN
 type GatewayPodEndpoint struct {
 	Name  string
 	Ready bool
+
+	// Terminating is true once the pod has a DeletionTimestamp. It stays false
+	// until then, so a gateway that is not rolling never sees it set.
+	Terminating bool
 }
 
 // listGatewayPodEndpoints returns the current gateway pods that have a pod IP.
@@ -195,8 +199,9 @@ func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface
 			continue
 		}
 		endpoints = append(endpoints, GatewayPodEndpoint{
-			Name:  pod.Name,
-			Ready: isPodReady(&pod),
+			Name:        pod.Name,
+			Ready:       isPodReady(&pod),
+			Terminating: pod.DeletionTimestamp != nil,
 		})
 	}
 

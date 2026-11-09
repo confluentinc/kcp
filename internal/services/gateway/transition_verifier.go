@@ -280,8 +280,12 @@ func (v *TransitionVerifier) printConfigWaitProgress(p ConfigWaitProgress) {
 	// description of what has been observed — the verdict comes from the pods
 	// reporting the configId, never from the mechanism.
 	if p.Mechanism == MechanismPodRoll {
-		v.Reporter.Detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
-			p.PodsAtWant, p.PodsReady, FormatElapsed(p.Elapsed))
+		terminating := ""
+		if p.PodsTerminating > 0 {
+			terminating = fmt.Sprintf(", %d terminating", p.PodsTerminating)
+		}
+		v.Reporter.Detail("Gateway pods are rolling — %d/%d have applied the new config%s (elapsed %s)",
+			p.PodsAtWant, p.PodsReady, terminating, FormatElapsed(p.Elapsed))
 		return
 	}
 	v.Reporter.Detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
