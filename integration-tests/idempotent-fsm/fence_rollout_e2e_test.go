@@ -37,7 +37,7 @@ func TestFenceRollout_ReplacedPodWritesAfterPromoteAreLost(t *testing.T) {
 	r := e.migrateWithProducerOnReplacedPod(t, "fence-rollout-replaced-pod", e.topicRange(21, 25), "")
 	require.Contains(t, r.out, "Detection disabled", "the default policy must skip verify_fence")
 	require.NotEmptyf(t, r.lost, "today a producer on the replaced pod writes to the source after promote (%s)", r.timeline)
-	t.Logf("\n✅ RESULT: BUG REPRODUCED — %d records were acked by the source after the mirror of %s stopped, through the replaced gateway pod "+
+	t.Logf("\nRESULT: BUG REPRODUCED — %d records were acked by the source after the mirror of %s stopped, through the replaced gateway pod "+
 		"that the fence step treated as gone; none of them can reach the destination, and the migration reported success.", len(r.lost), r.probe)
 }
 
@@ -58,7 +58,7 @@ func TestFenceRollout_DetectionOnWaitsForReplacedPod(t *testing.T) {
 	require.Truef(t, r.oldGoneAt.Before(r.stoppedAt), "the replaced pod must be gone before the mirror stops (%s)", r.timeline)
 	require.Positive(t, r.errors, "the fence must reject the producer once its connection to the replaced pod is cut")
 	require.Emptyf(t, r.lost, "no record may reach the source after the mirror stops (%s)", r.timeline)
-	t.Logf("\n✅ RESULT: with detection on, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
+	t.Logf("\nRESULT: with detection on, the replaced pod was gone %s before the mirror of %s stopped, the producer was fenced (%d failed sends), "+
 		"and no record reached the source after promote.", r.stoppedAt.Sub(r.oldGoneAt).Round(time.Second), r.probe, r.errors)
 }
 
@@ -124,7 +124,7 @@ func (e *env) migrateWithProducerOnReplacedPod(t *testing.T, name string, topics
 		fmt.Fprintf(&b, "  %s  sent %s  acked at %s[%d]@%d\n", a.value, a.sentAt.Format(time.RFC3339Nano), probe, a.partition, a.offset)
 	}
 	e.saveReport(t, "lost-records.txt", r.timeline+"\n"+b.String())
-	t.Logf("\n🔍 DATA PLANE ▸ %s\n%s", r.timeline, b.String())
+	t.Logf("\nDATA PLANE ▸ %s\n%s", r.timeline, b.String())
 	return r
 }
 

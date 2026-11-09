@@ -101,7 +101,7 @@ func TestFenceRollout_TBMDetectionAbortsOnReplacedPod(t *testing.T) {
 	timeline := fmt.Sprintf("kcp ran %s, exit error: %v; pre-fence pods gone at %s (kcp started %s, finished %s); %d records acked through the gateway by %d producers",
 		kcpDone.Sub(start).Round(time.Second), err, formatAt(oldGoneAt), start.Format(time.RFC3339), kcpDone.Format(time.RFC3339), acked, falseAbortProducers)
 	e.saveReport(t, "false-abort.txt", timeline+"\n")
-	t.Logf("\n🔍 DATA PLANE ▸ %s", timeline)
+	t.Logf("\nDATA PLANE ▸ %s", timeline)
 
 	require.Positive(t, acked, "the producers must have written through the gateway")
 	require.Errorf(t, err, "today the migration aborts (%s)", timeline)
@@ -110,7 +110,7 @@ func TestFenceRollout_TBMDetectionAbortsOnReplacedPod(t *testing.T) {
 		require.NotEqual(t, "STOPPED", ms, "the abort is before promote: no mirror may be stopped")
 	}
 	require.False(t, strings.Contains(strings.ToLower(out), "migration complete"), "the run must not report completion")
-	t.Logf("\n✅ RESULT: FALSE ABORT REPRODUCED — kcp reported an unrouted producer and rolled the fence back, but all %d producers write through the gateway. "+
+	t.Logf("\nRESULT: FALSE ABORT REPRODUCED — kcp reported an unrouted producer and rolled the fence back, but all %d producers write through the gateway. "+
 		"The replaced pods were still serving when the first source-offset snapshot was taken.", falseAbortProducers)
 }
 
