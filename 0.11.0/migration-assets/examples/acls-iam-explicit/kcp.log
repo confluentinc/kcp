@@ -1,0 +1,1 @@
+2026/10/22 19:38:12 DEBUG build provenance cmd=kcp migration resources validate version=0.0.0-localdev commit=unknown date=unknown dev_build=true vcs_modified=false go=go1.26.0 os=darwin arch=arm64
