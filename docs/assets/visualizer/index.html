@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Topic-Based Migration</title>
+    <script type="module" crossorigin src="./assets/index-BF8HcSDR.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-D_z1Thso.css">
+  </head>
+  <body>
+    <header class="controls">
+      <h1>Topic-based migration</h1>
+    </header>
+    <div class="playback">
+      <button id="reset">Reset</button>
+      <button id="pause" aria-pressed="false">Pause</button>
+      <label>Speed <input id="speed" type="range" min="0" max="9" step="1" value="4" /> <output id="speed-out">1x</output></label>
+    </div>
+    <div class="timeline">
+      <div class="track">
+        <div id="markers"></div>
+        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Model time" />
+      </div>
+    </div>
+    <main>
+      <svg id="scene" viewBox="0 140 1285 916" role="group" aria-label="Animated model of a kcp migration"></svg>
+      <aside>
+        <div class="log-panel">
+          <h2>Migration steps</h2>
+          <ol id="log"></ol>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>
