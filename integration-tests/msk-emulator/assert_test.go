@@ -46,6 +46,14 @@ func assertNetworking(t *testing.T, got types.ClusterNetworking, want seededNetw
 	}
 }
 
+func entrySubnetIDs(subnets []types.SubnetInfo) []string {
+	ids := make([]string, 0, len(subnets))
+	for _, s := range subnets {
+		ids = append(ids, s.SubnetId)
+	}
+	return ids
+}
+
 func brokerIDs(subnets []types.SubnetInfo) []int {
 	ids := make([]int, 0, len(subnets))
 	for _, s := range subnets {
@@ -84,6 +92,12 @@ func assertProvisioned(t *testing.T, got types.DiscoveredCluster, want seededClu
 		wantIDs[i] = i + 1
 	}
 	assert.ElementsMatch(t, wantIDs, brokerIDs(info.ClusterNetworking.Subnets))
+	// MSK spreads brokers evenly across the client subnets.
+	spread := make([]string, want.Brokers)
+	for i := range spread {
+		spread[i] = want.Network.Subnets[i%len(want.Network.Subnets)].ID
+	}
+	assert.ElementsMatch(t, spread, entrySubnetIDs(info.ClusterNetworking.Subnets), "brokers mapped to subnets")
 	assert.Len(t, info.Nodes, int(want.Brokers))
 
 	bs := info.BootstrapBrokers
@@ -100,6 +114,8 @@ func assertProvisioned(t *testing.T, got types.DiscoveredCluster, want seededClu
 	}
 
 	assert.NotEmpty(t, info.CompatibleVersions.CompatibleKafkaVersions)
+	// Emulator 1.0.322 returns 501 for ListClusterOperationsV2, so kcp warns and
+	// stores []. Real AWS would list the seeded storage update here.
 	assert.NotNil(t, info.ClusterOperations, "cluster_operations must be [] not null")
 	assert.Empty(t, info.ClusterOperations)
 	assert.NotEmpty(t, got.ClusterMetrics.Results, "metrics results")
@@ -120,7 +136,7 @@ func assertServerless(t *testing.T, got types.DiscoveredCluster, want seededClus
 	assert.Empty(t, info.CompatibleVersions.CompatibleKafkaVersions)
 
 	assertNetworking(t, info.ClusterNetworking, want.Network)
-	assert.Len(t, info.ClusterNetworking.Subnets, len(want.Network.Subnets), "one subnet entry per seeded subnet")
+	assert.ElementsMatch(t, want.Network.subnetIDs(), entrySubnetIDs(info.ClusterNetworking.Subnets), "one subnet entry per seeded subnet")
 	for _, s := range info.ClusterNetworking.Subnets {
 		assert.Equal(t, 0, s.SubnetMskBrokerId, "serverless subnet %s broker ID", s.SubnetId)
 	}

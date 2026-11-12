@@ -5,6 +5,7 @@ package mskemulator
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,9 +15,15 @@ import (
 )
 
 func TestEmulatorIsTheOnlyAWS(t *testing.T) {
-	for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
-		_, set := os.LookupEnv(k)
-		assert.False(t, set, "%s must be removed from the environment", k)
+	want := emulatorEnv()
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(k, "AWS_") {
+			continue
+		}
+		if w, ok := want[k]; assert.True(t, ok, "%s must be removed from the environment", k) {
+			assert.Equal(t, w, v, "%s", k)
+		}
 	}
 	cfg, err := sdkConfig(context.Background(), "us-east-1")
 	require.NoError(t, err)
