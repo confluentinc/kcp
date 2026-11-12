@@ -3516,8 +3516,6 @@
       
         
       
-        
-      
     
     
       
@@ -3560,27 +3558,6 @@
   
   <span class="md-ellipsis">
     Overview
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../technical-guides/migrations/gateway/visualizer/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Topic-Based Migration Model
   </span>
   
 
@@ -4180,14 +4157,8 @@ on every Gateway pod, as in a migration.</p>
   <code>rules.fencing</code> by hand.</li>
 <li><strong>A failed switch keeps the fence.</strong> If the static route never reached the
   Gateway CR, fix the cause and re-run to finish. If it reached the CR but
-  couldn't be confirmed, the Gateway CR already holds the static route, and
-  the Gateway pods may still serve the fenced dynamic route. A re-run checks
-  the pods before doing anything: it is refused while they don't serve the
-  CR, and finishes once they do.</li>
-<li><strong>A changed Gateway CR stops the run.</strong> If the Gateway CR changes while the
-  conversion runs (its <code>metadata.generation</code> is not the one kcp's own last
-  write left), kcp stops without writing to the Gateway and keeps its fence.
-  The next run checks the Gateway pods before doing anything.</li>
+  couldn't be confirmed, check the Gateway (operator acceptance, pods) instead
+  of re-running: a re-run would report nothing to do.</li>
 <li><strong>A finished conversion re-runs as nothing to do.</strong></li>
 </ul>
 <h2 id="related-content">Related content<a class="headerlink" href="#related-content" title="Permanent link">&para;</a></h2>
