@@ -1,0 +1,5 @@
+node_modules/
+# The repo root ignores *.json; these belong to this package.
+!package.json
+!package-lock.json
+!tsconfig.json
