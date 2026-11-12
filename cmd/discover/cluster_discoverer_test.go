@@ -299,6 +299,14 @@ func TestClusterDiscoverer_ListClusterOperationsErrorIsNonFatal(t *testing.T) {
 	assert.Empty(t, result.AWSClientInformation.ClusterOperations)
 	assert.Contains(t, logBuf.String(), "level=WARN")
 	assert.Contains(t, logBuf.String(), "StatusCode: 501")
+
+	var debugged bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		debugged = debugged || (strings.Contains(line, "level=DEBUG") &&
+			strings.Contains(line, "failed to list cluster operations") &&
+			strings.Contains(line, "clusterArn="+testClusterArn))
+	}
+	assert.True(t, debugged, "expected a DEBUG line naming the clusterArn; got:\n%s", logBuf.String())
 }
 
 // TestDiscoverTopics_LogsClusterArnOnFailure proves the non-fatal topic-listing
