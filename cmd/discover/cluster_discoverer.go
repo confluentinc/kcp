@@ -92,11 +92,12 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
-	// MSK Serverless does not support several AWS-API metadata scans (VPC
-	// connections, nodes, SCRAM secrets, compatible versions) or the AWS topic
-	// APIs. Announce it once per cluster; the individual per-scan skips stay in
-	// kcp.log at Debug. Networking is scanned for Serverless too (see
-	// scanNetworkingInfo), just via a different AWS API shape.
+	// MSK Serverless rejects the node, SCRAM secret and compatible-version APIs
+	// and the AWS topic APIs, so those scans are not attempted at all: the
+	// rejection wording is not stable (AWS and the AWS Emulator differ), so it
+	// cannot be matched on. VPC connections are still attempted because their
+	// Serverless support varies by region. Networking is scanned for Serverless
+	// too (see scanNetworkingInfo), just via a different AWS API shape.
 	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
 	if isServerless {
 		slog.Warn("MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, topics)")
@@ -116,17 +117,28 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	awsClientInfo.ClusterOperations = cd.scanClusterOperations(ctx, clusterArn)
 
-	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
-	if err != nil {
-		return nil, nil, err
-	}
-	awsClientInfo.Nodes = nodes
+	awsClientInfo.Nodes = []kafkatypes.NodeInfo{}
+	awsClientInfo.ScramSecrets = []string{}
+	awsClientInfo.CompatibleVersions = kafka.GetCompatibleKafkaVersionsOutput{CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{}}
+	if !isServerless {
+		nodes, err := cd.scanClusterNodes(ctx, clusterArn)
+		if err != nil {
+			return nil, nil, err
+		}
+		awsClientInfo.Nodes = nodes
 
-	scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
-	if err != nil {
-		return nil, nil, err
+		scramSecrets, err := cd.scanClusterScramSecrets(ctx, clusterArn)
+		if err != nil {
+			return nil, nil, err
+		}
+		awsClientInfo.ScramSecrets = scramSecrets
+
+		versions, err := cd.getCompatibleKafkaVersions(ctx, clusterArn)
+		if err != nil {
+			return nil, nil, err
+		}
+		awsClientInfo.CompatibleVersions = *versions
 	}
-	awsClientInfo.ScramSecrets = scramSecrets
 
 	policy, err := cd.getClusterPolicy(ctx, clusterArn)
 	if err != nil {
@@ -134,13 +146,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.Policy = *policy
 
-	versions, err := cd.getCompatibleKafkaVersions(ctx, clusterArn)
-	if err != nil {
-		return nil, nil, err
-	}
-	awsClientInfo.CompatibleVersions = *versions
-
-	networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
+	networking, err := cd.scanNetworkingInfo(ctx, cluster, awsClientInfo.Nodes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -222,11 +228,6 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 
 	nodes, err := cd.mskService.ListNodes(ctx, clusterArn, int32(100))
 	if err != nil {
-		// Check if it's an MSK Serverless error - this should be handled gracefully
-		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
-			return []kafkatypes.NodeInfo{}, nil
-		}
 		return nil, fmt.Errorf("failed listing nodes: %v", err)
 	}
 
@@ -238,11 +239,6 @@ func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, cluste
 
 	secrets, err := cd.mskService.ListScramSecrets(ctx, clusterArn, int32(100))
 	if err != nil {
-		// Check if it's an MSK Serverless error - this should be handled gracefully
-		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
-			return []string{}, nil
-		}
 		return nil, fmt.Errorf("failed listing secrets: %v", err)
 	}
 
@@ -270,13 +266,6 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 
 	versions, err := cs.mskService.GetCompatibleKafkaVersions(ctx, clusterArn)
 	if err != nil {
-		// Check if it's an MSK Serverless error - this should be handled gracefully
-		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
-			return &kafka.GetCompatibleKafkaVersionsOutput{
-				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
-			}, nil
-		}
 		return nil, fmt.Errorf("failed to get compatible versions: %v", err)
 	}
 	return versions, nil

@@ -107,6 +107,46 @@ func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
 	assert.Equal(t, testClusterName, result.Name)
 }
 
+func TestClusterDiscoverer_ServerlessSkipsProvisionedOnlyScans(t *testing.T) {
+	// The rejection wording differs between AWS and the AWS Emulator, so a
+	// serverless cluster must not depend on any of these calls failing in a
+	// recognisable way: they must not be made at all.
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullServerlessCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = serverlessSubnetsStub
+
+	rejected := errors.New("BadRequestException: The cluster is a serverless cluster; this operation applies to provisioned clusters only.")
+	var called []string
+	msk.listNodesFn = func(_ context.Context, _ string, _ int32) ([]kafkatypes.NodeInfo, error) {
+		called = append(called, "ListNodes")
+		return nil, rejected
+	}
+	msk.listScramSecretsFn = func(_ context.Context, _ string, _ int32) ([]string, error) {
+		called = append(called, "ListScramSecrets")
+		return nil, rejected
+	}
+	msk.getCompatibleKafkaVersionsFn = func(_ context.Context, _ string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+		called = append(called, "GetCompatibleKafkaVersions")
+		return nil, rejected
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+
+	require.NoError(t, err)
+	assert.Empty(t, called)
+
+	info := result.AWSClientInformation
+	assert.NotNil(t, info.Nodes, "nodes must serialize as [], not null")
+	assert.Empty(t, info.Nodes)
+	assert.NotNil(t, info.ScramSecrets, "scram secrets must serialize as [], not null")
+	assert.Empty(t, info.ScramSecrets)
+	assert.NotNil(t, info.CompatibleVersions.CompatibleKafkaVersions, "compatible versions must serialize as [], not null")
+	assert.Empty(t, info.CompatibleVersions.CompatibleKafkaVersions)
+}
+
 func TestClusterDiscoverer_ServerlessNetworking(t *testing.T) {
 	// Serverless clusters have no broker node group; their VPC attachment
 	// lives on Serverless.VpcConfigs instead. ListNodes is rejected by AWS
