@@ -5,9 +5,11 @@ package mskemulator
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +120,29 @@ func TestDiscoverTargetedClusterArnAppends(t *testing.T) {
 	creds := loadCreds(t, dir)
 	assertCredAuth(t, findCredCluster(t, creds, "ap-northeast-1", "kcp-it-targeted"), targeted)
 	assertCredAuth(t, findCredCluster(t, creds, "us-east-1", "kcp-it-iam-scram"), fx.IAMScram)
+}
+
+func TestDiscoverDropsDeletedCluster(t *testing.T) {
+	ctx := context.Background()
+	net, err := seedNetwork(ctx, "ap-south-1", "10.40", 3)
+	require.NoError(t, err)
+	doomed, err := seedProvisioned(ctx, seededCluster{
+		Name: "kcp-it-delete-me", Region: "ap-south-1", KafkaVersion: "3.6.0",
+		InstanceType: "kafka.m5.large", Brokers: 3, VolumeGB: 100, IAM: true, Network: net,
+	}, "")
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	runKCP(t, dir, "discover", "--region", "ap-south-1", "--skip-costs")
+	findCluster(t, loadState(t, dir), "ap-south-1", "kcp-it-delete-me")
+	findCredCluster(t, loadCreds(t, dir), "ap-south-1", "kcp-it-delete-me")
+
+	require.NoError(t, deleteClusterAndWait(ctx, "ap-south-1", doomed.Arn))
+	runKCP(t, dir, "discover", "--region", "ap-south-1", "--skip-costs")
+
+	assert.Empty(t, findRegion(t, loadState(t, dir), "ap-south-1").Clusters, "a deleted cluster is dropped from the state file")
+	creds := loadCreds(t, dir)
+	idx := slices.IndexFunc(creds.Regions, func(r types.RegionAuth) bool { return r.Name == "ap-south-1" })
+	require.NotEqual(t, -1, idx, "the region entry stays in msk-credentials.yaml")
+	assert.Empty(t, creds.Regions[idx].Clusters, "a deleted cluster is dropped from msk-credentials.yaml")
 }

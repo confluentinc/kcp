@@ -407,6 +407,28 @@ func clusterArns(ctx context.Context, region string) ([]string, error) {
 	return arns, nil
 }
 
+func deleteClusterAndWait(ctx context.Context, region, arn string) error {
+	k, err := kafkaClient(ctx, region)
+	if err != nil {
+		return err
+	}
+	if _, err := k.DeleteCluster(ctx, &kafka.DeleteClusterInput{ClusterArn: aws.String(arn)}); err != nil {
+		return fmt.Errorf("delete cluster %s: %w", arn, err)
+	}
+	return poll(ctx, fmt.Sprintf("cluster %s to disappear", arn), func() (bool, string, error) {
+		arns, err := clusterArns(ctx, region)
+		if err != nil {
+			return false, "", err
+		}
+		for _, a := range arns {
+			if a == arn {
+				return false, "still listed", nil
+			}
+		}
+		return true, "", nil
+	})
+}
+
 func seedFixture(ctx context.Context) (fixture, error) {
 	for _, region := range []string{"us-east-1", "eu-west-3", "ap-northeast-1", "ap-south-1"} {
 		arns, err := clusterArns(ctx, region)
