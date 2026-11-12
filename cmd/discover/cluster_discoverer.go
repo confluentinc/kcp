@@ -114,11 +114,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.ClientVpcConnections = connections
 
-	operations, err := cd.scanClusterOperations(ctx, clusterArn)
-	if err != nil {
-		return nil, nil, err
-	}
-	awsClientInfo.ClusterOperations = operations
+	awsClientInfo.ClusterOperations = cd.scanClusterOperations(ctx, clusterArn)
 
 	nodes, err := cd.scanClusterNodes(ctx, clusterArn)
 	if err != nil {
@@ -206,14 +202,19 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 	return connections, nil
 }
 
-func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterArn string) ([]kafkatypes.ClusterOperationV2Summary, error) {
+// scanClusterOperations is best-effort: the operation history is recorded in
+// state for reference only and nothing downstream depends on it, so a failure
+// (missing IAM permission, an API that returns 501) must not abort discovery.
+func (cd *ClusterDiscoverer) scanClusterOperations(ctx context.Context, clusterArn string) []kafkatypes.ClusterOperationV2Summary {
 	slog.Debug("scanning for cluster operations", "clusterArn", clusterArn)
 
 	operations, err := cd.mskService.ListClusterOperationsV2(ctx, clusterArn, int32(100))
 	if err != nil {
-		return nil, fmt.Errorf("failed listing operations: %v", err)
+		slog.Warn("failed to list cluster operations; continuing without them", "error", err)
+		slog.Debug("failed to list cluster operations", "clusterArn", clusterArn, "error", err)
+		return []kafkatypes.ClusterOperationV2Summary{}
 	}
-	return operations, nil
+	return operations
 }
 
 func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn string) ([]kafkatypes.NodeInfo, error) {

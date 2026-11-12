@@ -227,6 +227,40 @@ func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
 }
 
+func TestClusterDiscoverer_ListClusterOperationsErrorIsNonFatal(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullProvisionedCluster(), nil
+	}
+	msk.listClusterOperationsV2Fn = func(_ context.Context, _ string, _ int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
+		return nil, errors.New("operation error Kafka: ListClusterOperationsV2, https response error StatusCode: 501")
+	}
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+
+	require.NoError(t, err)
+	assert.NotNil(t, result.AWSClientInformation.ClusterOperations, "cluster_operations must serialize as [], not null")
+	assert.Empty(t, result.AWSClientInformation.ClusterOperations)
+	assert.Contains(t, logBuf.String(), "level=WARN")
+	assert.Contains(t, logBuf.String(), "StatusCode: 501")
+}
+
 // TestDiscoverTopics_LogsClusterArnOnFailure proves the non-fatal topic-listing
 // failure keeps cluster attribution in kcp.log: the surviving WARN stays clean,
 // but a paired DEBUG line records which clusterArn failed, so a support engineer
