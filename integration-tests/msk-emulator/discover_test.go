@@ -3,6 +3,7 @@
 package mskemulator
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -70,4 +71,51 @@ func TestConnectorsAndUserCredentialsSurviveRediscover(t *testing.T) {
 	assert.True(t, scram.Use)
 	assert.Equal(t, "alice", scram.Username)
 	assert.Equal(t, "alice-pw", scram.Password)
+}
+
+func TestDiscoverSeparateRegionRunsAppend(t *testing.T) {
+	dir := t.TempDir()
+	runKCP(t, dir, "discover", "--region", "us-east-1", "--skip-costs")
+	runKCP(t, dir, "discover", "--region", "eu-west-3", "--skip-costs")
+
+	st := loadState(t, dir)
+	assert.ElementsMatch(t, []string{"kcp-it-iam-scram", "kcp-it-serverless"}, clusterNames(findRegion(t, st, "us-east-1")))
+	assert.ElementsMatch(t, []string{"kcp-it-scram-only"}, clusterNames(findRegion(t, st, "eu-west-3")))
+	assertProvisioned(t, findCluster(t, st, "us-east-1", "kcp-it-iam-scram"), fx.IAMScram)
+	assertProvisioned(t, findCluster(t, st, "eu-west-3", "kcp-it-scram-only"), fx.ScramOnly)
+
+	creds := loadCreds(t, dir)
+	assertCredAuth(t, findCredCluster(t, creds, "us-east-1", "kcp-it-iam-scram"), fx.IAMScram)
+	assertCredAuth(t, findCredCluster(t, creds, "eu-west-3", "kcp-it-scram-only"), fx.ScramOnly)
+}
+
+func TestDiscoverTargetedClusterArnAppends(t *testing.T) {
+	dir := t.TempDir()
+	runKCP(t, dir, "discover", "--region", "us-east-1", "--skip-costs")
+	before := findRegion(t, loadState(t, dir), "us-east-1")
+
+	ctx := context.Background()
+	net, err := seedNetwork(ctx, "ap-northeast-1", "10.30", 3)
+	require.NoError(t, err)
+	targeted, err := seedProvisioned(ctx, seededCluster{
+		Name: "kcp-it-targeted", Region: "ap-northeast-1", KafkaVersion: "3.6.0",
+		InstanceType: "kafka.m5.large", Brokers: 3, VolumeGB: 100, IAM: true, Network: net,
+	}, "")
+	require.NoError(t, err)
+
+	runKCP(t, dir, "discover", "--cluster-arn", targeted.Arn, "--skip-costs")
+
+	st := loadState(t, dir)
+	assertProvisioned(t, findCluster(t, st, "ap-northeast-1", "kcp-it-targeted"), targeted)
+	assert.ElementsMatch(t, clusterNames(before), clusterNames(findRegion(t, st, "us-east-1")))
+	for _, b := range before.Clusters {
+		a := findCluster(t, st, "us-east-1", b.Name)
+		assert.Equal(t, b.Arn, a.Arn)
+		assert.Equal(t, b.AWSClientInformation.ClusterNetworking, a.AWSClientInformation.ClusterNetworking)
+		assert.Equal(t, len(b.AWSClientInformation.Nodes), len(a.AWSClientInformation.Nodes))
+	}
+
+	creds := loadCreds(t, dir)
+	assertCredAuth(t, findCredCluster(t, creds, "ap-northeast-1", "kcp-it-targeted"), targeted)
+	assertCredAuth(t, findCredCluster(t, creds, "us-east-1", "kcp-it-iam-scram"), fx.IAMScram)
 }
