@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/glue v1.137.2
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.8
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.46.5
+	github.com/aws/aws-sdk-go-v2/service/kms v1.50.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.4
 	github.com/aws/smithy-go v1.28.5

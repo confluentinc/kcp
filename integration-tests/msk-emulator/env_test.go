@@ -22,6 +22,14 @@ func emulatorHome() string {
 	return p
 }
 
+func repoRoot() string {
+	p, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 // applyEmulatorEnv points this process, and every kcp it execs, at the emulator
 // only. The credential and profile variables are removed because the SDK prefers
 // them over the shared credentials file, which would send a developer's or CI
