@@ -3,10 +3,12 @@
 package mskemulator
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDiscoverMultiRegionSingleRun(t *testing.T) {
@@ -31,4 +33,41 @@ func TestDiscoverMultiRegionSingleRun(t *testing.T) {
 	for _, c := range []seededCluster{fx.IAMScram, fx.Serverless, fx.ScramOnly} {
 		assertCredAuth(t, findCredCluster(t, creds, c.Region, c.Name), c)
 	}
+}
+
+func TestConnectorsAndUserCredentialsSurviveRediscover(t *testing.T) {
+	dir := t.TempDir()
+	runKCP(t, dir, "discover", "--region", "us-east-1,eu-west-3", "--skip-costs")
+	runKCP(t, dir, "scan", "msk-connectors", "--state-file", "kcp-state.json", "--region", "us-east-1")
+
+	st := loadState(t, dir)
+	conns := findCluster(t, st, "us-east-1", "kcp-it-iam-scram").AWSClientInformation.Connectors
+	require.Len(t, conns, 1)
+	assertConnector(t, conns[0], fx.Connector)
+	assert.Empty(t, findCluster(t, st, "us-east-1", "kcp-it-serverless").AWSClientInformation.Connectors)
+
+	creds := loadCreds(t, dir)
+	for i, r := range creds.Regions {
+		for j, c := range r.Clusters {
+			if c.Name == "kcp-it-scram-only" {
+				creds.Regions[i].Clusters[j].AuthMethod.SASLScram.Username = "alice"
+				creds.Regions[i].Clusters[j].AuthMethod.SASLScram.Password = "alice-pw"
+			}
+		}
+	}
+	require.NoError(t, creds.WriteToFile(filepath.Join(dir, "msk-credentials.yaml")))
+
+	runKCP(t, dir, "discover", "--region", "us-east-1", "--skip-costs")
+	runKCP(t, dir, "discover", "--region", "eu-west-3", "--skip-costs")
+
+	st = loadState(t, dir)
+	conns = findCluster(t, st, "us-east-1", "kcp-it-iam-scram").AWSClientInformation.Connectors
+	require.Len(t, conns, 1, "connectors must survive a re-run of discover")
+	assertConnector(t, conns[0], fx.Connector)
+
+	scram := findCredCluster(t, loadCreds(t, dir), "eu-west-3", "kcp-it-scram-only").AuthMethod.SASLScram
+	require.NotNil(t, scram)
+	assert.True(t, scram.Use)
+	assert.Equal(t, "alice", scram.Username)
+	assert.Equal(t, "alice-pw", scram.Password)
 }

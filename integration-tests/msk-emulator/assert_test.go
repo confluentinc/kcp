@@ -7,6 +7,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	kctypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,4 +150,28 @@ func assertCredAuth(t *testing.T, got types.ClusterAuth, want seededCluster) {
 	assert.Nil(t, am.SASLPlain)
 	assert.Nil(t, am.UnauthenticatedTLS)
 	assert.Nil(t, am.UnauthenticatedPlaintext)
+}
+
+func assertConnector(t *testing.T, got types.ConnectorSummary, want seededConnector) {
+	t.Helper()
+	assert.Equal(t, want.Name, got.ConnectorName)
+	assert.Equal(t, want.Arn, got.ConnectorArn)
+	assert.Equal(t, "RUNNING", got.ConnectorState)
+	assert.Equal(t, kctypes.KafkaClusterClientAuthenticationTypeIam, got.KafkaClusterClientAuthentication.AuthenticationType)
+	if assert.NotNil(t, got.Capacity.ProvisionedCapacity, "provisioned capacity") {
+		assert.Equal(t, want.MCU, got.Capacity.ProvisionedCapacity.McuCount)
+		assert.Equal(t, want.Workers, got.Capacity.ProvisionedCapacity.WorkerCount)
+	}
+	if assert.NotEmpty(t, got.Plugins) && assert.NotNil(t, got.Plugins[0].CustomPlugin) {
+		assert.Equal(t, want.PluginArn, aws.ToString(got.Plugins[0].CustomPlugin.CustomPluginArn))
+	}
+	assert.Equal(t, want.Bootstrap, aws.ToString(got.KafkaCluster.BootstrapServers))
+
+	for k, v := range want.Config {
+		if k == "aws.secret.access.key" {
+			assert.Equal(t, redact.Placeholder, got.ConnectorConfiguration[k], "%s must be redacted", k)
+			continue
+		}
+		assert.Equal(t, v, got.ConnectorConfiguration[k], "connector config %s", k)
+	}
 }
