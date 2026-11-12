@@ -1,15 +1,17 @@
 # Sourced by setup.sh, run.sh and teardown.sh: where the environment for one
-# route mode lives. Each mode (GATEWAY_MODE=dynamic|static, default dynamic) has
-# its own Minikube profile and its own generated files, so a dynamic and a
-# static environment can be up, and run tests, at the same time.
+# route mode lives. Each mode (GATEWAY_MODE=dynamic|static|dynamic-rollout,
+# default dynamic) has its own Minikube profile and its own generated files, so
+# the environments can be up, and run tests, at the same time. dynamic-rollout
+# is a dynamic route on a gateway with hot reload OFF, so every route change
+# rolls the gateway pods (TBM's data-plane exposure to pod turnover).
 #
 # The caller sets SCRIPT_DIR.
 
 GATEWAY_MODE="${GATEWAY_MODE:-dynamic}"
 case "${GATEWAY_MODE}" in
-  dynamic | static) ;;
+  dynamic | static | dynamic-rollout) ;;
   *)
-    echo "FATAL: GATEWAY_MODE must be 'dynamic' or 'static', got '${GATEWAY_MODE}'" >&2
+    echo "FATAL: GATEWAY_MODE must be 'dynamic', 'static' or 'dynamic-rollout', got '${GATEWAY_MODE}'" >&2
     exit 1
     ;;
 esac

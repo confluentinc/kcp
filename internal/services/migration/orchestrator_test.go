@@ -27,7 +27,7 @@ import (
 type orchestratorOverrides struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
@@ -93,7 +93,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	// Default nil → mock returns success
-	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	var waitForGatewayPodsFn func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	// Default nil → mock treats the spec as accepted by the operator
 	var waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 
@@ -106,8 +106,8 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		if o.patchGatewayRouteFn != nil {
 			patchGatewayRouteFn = o.patchGatewayRouteFn
 		}
-		if o.waitForGatewayReadyFn != nil {
-			waitForGatewayReadyFn = o.waitForGatewayReadyFn
+		if o.waitForGatewayPodsFn != nil {
+			waitForGatewayPodsFn = o.waitForGatewayPodsFn
 		}
 		if o.waitForGatewayAcceptedFn != nil {
 			waitForGatewayAcceptedFn = o.waitForGatewayAcceptedFn
@@ -127,10 +127,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
-			return nil
-		},
-		waitForGatewayReadyFn:    waitForGatewayReadyFn,
+		waitForGatewayPodsFn:     waitForGatewayPodsFn,
 		waitForGatewayAcceptedFn: waitForGatewayAcceptedFn,
 	}
 
@@ -399,12 +396,13 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 	var sourceCallCount int64
 
 	overrides := orchestratorOverrides{
-		// With detection enabled the fence rollout waits via WaitForGatewayPods
-		// (the builder's default, which succeeds), so WaitForGatewayReady is
-		// reached only by the unfence rollout — fail it to exercise the
-		// "unfence never converges" path.
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
-			atomic.AddInt64(&waitCallCount, 1)
+		// Every rollout transition waits via WaitForGatewayPods: the first call
+		// is the fence (succeeds), the second the unfence — fail that one to
+		// exercise the "unfence never converges" path.
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+			if atomic.AddInt64(&waitCallCount, 1) == 1 {
+				return nil
+			}
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -428,8 +426,8 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
-	assert.Equal(t, int64(1), atomic.LoadInt64(&waitCallCount),
-		"the unfence rollout readiness should be awaited exactly once (the fence rollout waits via WaitForGatewayPods when detection is enabled)")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waitCallCount),
+		"the pod-replacement wait should run exactly twice: once for the fence, once for the failing unfence")
 
 	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
 		"state should remain at offset_sync_paused when the unfence rollout never becomes ready")
@@ -680,7 +678,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 			atomic.AddInt64(&applyCalls, 1)
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
 			return nil
 		},
@@ -733,7 +731,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 			mu.Unlock()
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			// First call is the fence's own verification — fail it. The second is
 			// the restore's, which must succeed for the compensation to complete.
 			if atomic.AddInt64(&readyCalls, 1) == 1 {
@@ -779,7 +777,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 			}
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -998,7 +996,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 			record("apply")
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			record("wait-ready")
 			return nil
 		},
@@ -1154,7 +1152,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(
 			atomic.AddInt64(&patches, 1)
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -1698,7 +1696,7 @@ func aaoFullResult() *migplan.Result {
 // including that a second Execute adds none.
 //
 // readyProgress, when non-empty, replaces the default (immediately
-// succeeding, no-progress-reported) WaitForGatewayReady fake with one that
+// succeeding, no-progress-reported) WaitForGatewayPods fake with one that
 // reports each entry via onProgress, in order, before returning nil. This is
 // the harness's fake pod-waiter for the convergence-wait tests: the real
 // "poll until converged" loop lives entirely inside the production
@@ -1716,8 +1714,8 @@ func aaoFullResult() *migplan.Result {
 func newAAOKillPointOrchestrator(
 	t *testing.T,
 	initiallyStopped []string,
-	readyProgress []gateway.GatewayReadinessProgress,
-) (orch *MigrationOrchestrator, config *MigrationConfig, patchCalls *int64, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
+	readyProgress []gateway.PodRolloutProgress,
+) (orch *MigrationOrchestrator, config *MigrationConfig, patchCalls *int64, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
 	t.Helper()
 
 	topics := []string{"topic-a", "topic-b"}
@@ -1746,7 +1744,7 @@ func newAAOKillPointOrchestrator(
 	var mu sync.Mutex
 	var patches int64
 	var promotes [][]string
-	var readyEvents []gateway.GatewayReadinessProgress
+	var readyEvents []gateway.PodRolloutProgress
 	promotedTopics := make(map[string]bool, len(stoppedSet))
 	for topic := range stoppedSet {
 		promotedTopics[topic] = true
@@ -1766,10 +1764,7 @@ func newAAOKillPointOrchestrator(
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
-			return nil
-		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			for _, p := range readyProgress {
 				mu.Lock()
 				readyEvents = append(readyEvents, p)
@@ -1930,18 +1925,18 @@ func TestAAO_AlreadyFencedNoReapply(t *testing.T) {
 // separate "poll until ready" loop in this test harness to hook — that loop
 // lives entirely inside the production K8sService the gateway mock replaces
 // — so "waits for convergence, then proceeds" is modelled as the single
-// mocked WaitForGatewayReady call itself reporting one not-yet-converged
+// mocked WaitForGatewayPods call itself reporting one not-yet-converged
 // progress tick before its own converged return (see
 // newAAOKillPointOrchestrator's doc comment on readyProgress). This is the
 // simplest fake that both lets the wait return and still proves the step
 // observed an unconverged state — not reported done while unconverged —
 // before succeeding.
 func TestAAO_FenceWaitsForConvergence(t *testing.T) {
-	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
-	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	notReady := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 0, OldPodsRemaining: 2}
+	converged := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 2}
 
 	orch, config, patchCalls, promoteCalls, readyEvents := newAAOKillPointOrchestrator(
-		t, nil, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, nil, []gateway.PodRolloutProgress{notReady, converged})
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
 	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
@@ -1949,10 +1944,10 @@ func TestAAO_FenceWaitsForConvergence(t *testing.T) {
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
-	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+	assert.NotEqual(t, first.InitialPodCount, first.NewPodsReady,
 		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
 	last := (*readyEvents)[len(*readyEvents)-1]
-	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+	assert.Equal(t, last.InitialPodCount, last.NewPodsReady, "the wait must end at convergence")
 
 	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls))
 	require.Len(t, *promoteCalls, 1)
@@ -2056,16 +2051,16 @@ func TestAAO_PromotedNotSwitched(t *testing.T) {
 // pods have not yet converged on it. Like TestAAO_PromotedNotSwitched, this
 // needs Topics=[] (nothing left to promote) with a non-empty SwitchoverYAML
 // for the switch to actually run. The convergence wait is faked the same way
-// as TestAAO_FenceWaitsForConvergence: the mocked WaitForGatewayReady call
+// as TestAAO_FenceWaitsForConvergence: the mocked WaitForGatewayPods call
 // itself reports a not-yet-converged progress tick before its own converged
 // return, since there is no separate "poll until ready" loop in this harness
 // to hook (see newAAOKillPointOrchestrator's doc comment on readyProgress).
 func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
-	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
-	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	notReady := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 0, OldPodsRemaining: 2}
+	converged := gateway.PodRolloutProgress{RolloutDetected: true, InitialPodCount: 2, NewPodsReady: 2}
 
 	orch, config, patchCalls, promoteCalls, readyEvents := newAAOKillPointOrchestrator(
-		t, []string{"topic-a", "topic-b"}, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, []string{"topic-a", "topic-b"}, []gateway.PodRolloutProgress{notReady, converged})
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
@@ -2086,10 +2081,10 @@ func TestAAO_SwitchWaitsForConvergence(t *testing.T) {
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
-	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+	assert.NotEqual(t, first.InitialPodCount, first.NewPodsReady,
 		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
 	last := (*readyEvents)[len(*readyEvents)-1]
-	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+	assert.Equal(t, last.InitialPodCount, last.NewPodsReady, "the wait must end at convergence")
 
 	assert.Empty(t, *promoteCalls)
 	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls))
@@ -2381,7 +2376,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 	var alters []clusterlink.ConfigAlteration
 	overrides := recordingGateway(&mu, &patches)
 	var readinessWaits int64
-	overrides.waitForGatewayReadyFn = func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+	overrides.waitForGatewayPodsFn = func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 		if atomic.AddInt64(&readinessWaits, 1) == 1 {
 			return fmt.Errorf("gateway pods did not converge") // the fence's wait; the restore's succeeds
 		}
@@ -2398,6 +2393,75 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 	require.ErrorIs(t, err, ErrFenceUnconfirmed)
 	require.Len(t, patches, 2, "the fence, then the restoring apply")
 	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
+}
+
+// overduePodWaits scripts a rolling gateway's pod waits: the wait numbers in
+// overdueOn fail as a replaced pod stuck terminating past its deadline, every
+// other wait succeeds.
+func overduePodWaits(calls *int64, overdueOn ...int64) func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+	return func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		n := atomic.AddInt64(calls, 1)
+		for _, o := range overdueOn {
+			if n == o {
+				return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
+			}
+		}
+		return nil
+	}
+}
+
+// TestAAOFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// terminating past its deadline fails the fence's wait. The fence had already
+// landed, so it is unconfirmed, the route is unfenced, and nothing promotes.
+func TestAAOFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	overrides := recordingGateway(&mu, &patches)
+	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 1) // the fence's wait; the unfence's succeeds
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	var promotes int64
+	orch.actions.clusterLinkService.(*mockClusterLinkService).promoteMirrorTopicsFn = func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+		atomic.AddInt64(&promotes, 1)
+		return nil, fmt.Errorf("promote must not run")
+	}
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	require.Len(t, patches, 2, "the fence, then the unfence")
+	rollback, rerr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
+	require.NoError(t, rerr)
+	assert.Empty(t, patches[1].Field, "the unfence replaces the whole route")
+	assert.Equal(t, rollback, patches[1].Value, "patch #2 is the unfence: reconcile's rollback target")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits), "the fence's wait, then the unfence's")
+	assert.Zero(t, atomic.LoadInt64(&promotes), "promote must never run")
+	assert.NotEqual(t, StatePromoted, orch.fsm.Current())
+	assert.NotEqual(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// TestAAOSwitch_OverduePodFailsAtPromoted: the switchover's wait meets an
+// overdue pod. The step fails with the overdue error, the route is not
+// unfenced (the topics are already promoted), and the FSM stays at promoted.
+func TestAAOSwitch_OverduePodFailsAtPromoted(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	var waits int64
+	overrides := recordingGateway(&mu, &patches)
+	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 2) // the fence's wait succeeds; the switchover's is overdue
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waits))
+	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orch.fsm.Current())
 }
 
 // --- Gateway CR generation checks ---

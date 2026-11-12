@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"go.opentelemetry.io/otel/attribute"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -49,8 +50,8 @@ type TBMActions struct {
 	// process, so the first of Fence or Switch to need the capability
 	// resolves it and neither step ever acts on the unresolved zero value.
 	capabilityResolved bool
-	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
-	// deadline.
+	// rolloutTimeout bounds the replaced-pod waits in Fence, Switch and the
+	// rollback unfence. 0 means no deadline.
 	rolloutTimeout time.Duration
 	// hotReloadTimeout bounds per-pod configId verification. Unlike
 	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
@@ -64,6 +65,16 @@ type TBMActions struct {
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
 	promoteSubmitted bool
+
+	// preFencePodUIDs is the set of gateway pods this run's fence captured
+	// before its patch, on a gateway whose pods roll. Those pods carry the
+	// pre-fence route, which is exactly what the rollback unfence restores, so
+	// the unfence does not wait for them to be gone (a pod stuck terminating
+	// would otherwise wedge the rollback). The pods the fence's roll created
+	// carry the fence and are still waited for. Left nil when the fence was
+	// already up at the start of the run (config.FencedAtStart): every pod
+	// then carries a fence. See design, Addendum A, Proposal 3.
+	preFencePodUIDs map[k8stypes.UID]struct{}
 
 	clusterLinkService clusterlink.Service
 	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
@@ -92,7 +103,7 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 	}
 }
 
-// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
 // A value of 0 means no deadline.
 func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
 	a.rolloutTimeout = d
@@ -258,8 +269,9 @@ func formatLag64(n int64) string {
 // verified on the live cluster, proves hot-reload actually works if the
 // gateway claims to support it, derives the fence RoutePatch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
-// deriveFenceRoutePatch), patches it in, and confirms it landed. Unlike
-// migration.FenceGateway there is no pod-UID capture. A failure leaves the FSM
+// deriveFenceRoutePatch), patches it in, and confirms it landed. Like
+// migration.FenceGateway, PatchCR captures the pre-patch pod UIDs on a rolling
+// gateway so the wait covers the replaced pods. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
 // migration.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
 // client traffic, so the orchestrator removes them (see handleStepFailure).
@@ -284,6 +296,11 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	}
 
 	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
+	// The fence's captured pods carry the pre-fence route the rollback unfence
+	// restores; recorded even when the patch errs, as long as it captured them.
+	if applied.PreApplyPodUIDs != nil && !config.FencedAtStart {
+		a.preFencePodUIDs = applied.PreApplyPodUIDs
+	}
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
 			// The patch persisted; only kcp's read-back of the stored configId
@@ -336,6 +353,9 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 		return err
 	}
 
+	excluded := len(applied.PreApplyPodUIDs)
+	applied.PreApplyPodUIDs = gateway.ExcludePods(applied.PreApplyPodUIDs, a.preFencePodUIDs)
+	slog.Debug("unfence skips this run's pre-fence pods", "excluded", excluded-len(applied.PreApplyPodUIDs))
 	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
 }
 
@@ -598,8 +618,9 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 // migration.SwitchGateway, there is no field-flip to derive here: migplan
 // already renders a full switchover rules block ahead of time, because TBM's
 // dynamic routes need a whole-subtree rules replacement, not a single
-// streamingDomain flip on a static route. There is no pod-UID capture or
-// compensating rollback on failure — a failure here just returns an error
+// streamingDomain flip on a static route. There is no compensating rollback on
+// failure (PatchCR still captures pod UIDs for the replaced-pod wait) — a
+// failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
 	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
