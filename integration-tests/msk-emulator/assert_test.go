@@ -114,10 +114,9 @@ func assertProvisioned(t *testing.T, got types.DiscoveredCluster, want seededClu
 	}
 
 	assert.NotEmpty(t, info.CompatibleVersions.CompatibleKafkaVersions)
-	// Emulator 1.0.322 returns 501 for ListClusterOperationsV2, so kcp warns and
-	// stores []. Real AWS would list the seeded storage update here.
+	// The Emulator may not implement ListClusterOperationsV2 (1.0.322 returns 501),
+	// in which case kcp warns and stores []; the contents depend on the Emulator.
 	assert.NotNil(t, info.ClusterOperations, "cluster_operations must be [] not null")
-	assert.Empty(t, info.ClusterOperations)
 	assert.NotEmpty(t, got.ClusterMetrics.Results, "metrics results")
 }
 

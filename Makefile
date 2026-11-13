@@ -253,9 +253,13 @@ test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
 
 test-msk-emulator: build ## Run MSK discovery tests against the AWS Emulator (Docker)
-	@bash integration-tests/msk-emulator/setup.sh
-	cd integration-tests/msk-emulator && go test -tags integration -timeout 15m -v ./... ; \
-	  status=$$? ; cd ../.. ; bash integration-tests/msk-emulator/teardown.sh ; exit $$status
+	@if bash integration-tests/msk-emulator/setup.sh; then \
+	    (cd integration-tests/msk-emulator && go test -tags integration -timeout 15m -v ./...) ; status=$$? ; \
+	  else \
+	    echo "ERROR: msk-emulator setup.sh failed" ; status=1 ; \
+	  fi ; \
+	  bash integration-tests/msk-emulator/teardown.sh || true ; \
+	  exit $$status
 
 test-consumer-group-scan: ## Run consumer-group discovery integration suite (Docker; AK 3.7/3.8/4.0/4.1/4.2, all group types)
 	@bash integration-tests/consumer-group-scan/setup.sh
