@@ -100,7 +100,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	// too (see scanNetworkingInfo), just via a different AWS API shape.
 	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
 	if isServerless {
-		slog.Warn("MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, topics)")
+		slog.Warn("MSK Serverless cluster; skipping unsupported scans (nodes, SCRAM secrets, compatible versions, topics)")
 	}
 
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
