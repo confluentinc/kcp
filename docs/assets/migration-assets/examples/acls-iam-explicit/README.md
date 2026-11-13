@@ -1,38 +1,26 @@
-# Example: ACLs — IAM (explicit)
+# Example: Migrate ACLs From Named IAM Roles
 
-Migrates ACLs for an MSK cluster authorized via the **AWS MSK IAM plane**,
-translating a fixed list of named IAM roles. `kcp migration resources` reads each role's
-identity-based policies and translates its `kafka-cluster:*` grants into
-Confluent Cloud ACLs, scoped to `clusterArn`.
+This example migrates access control lists (ACLs) for an MSK cluster that uses the MSK IAM authorization plane, by translating the grants of a fixed list of named IAM roles into Confluent Cloud ACLs.
 
-`verifyEffectiveAccess: true` simulates each role's identity policies and
-attached permissions boundary via `iam:SimulatePrincipalPolicy`, and keeps only
-the grants that are effectively allowed.
+`kcp migration resources` reads each role's identity-based policies and translates its `kafka-cluster:*` grants into Confluent Cloud ACLs, scoped to `clusterArn`.
 
-`principalArns` and `discoverAllRoles` are mutually exclusive; exactly one is
-required whenever `spec.acls.iam` is present. This example uses `principalArns`
-— see [`acls-iam-discover`](../acls-iam-discover/README.md) for auto-discovery of every
-workload role in the account.
+`verifyEffectiveAccess: true` simulates each role's identity policies and attached permissions boundary through `iam:SimulatePrincipalPolicy`, and keeps only the grants that are effectively allowed.
 
-The shell running `kcp migration resources` needs AWS credentials with `iam:GetRole`,
-`iam:GetPolicy`, `iam:GetPolicyVersion`, `iam:ListRolePolicies`, and
-`iam:ListAttachedRolePolicies`, plus `iam:SimulatePrincipalPolicy` for
-`verifyEffectiveAccess`.
+`principalArns` and `discoverAllRoles` are mutually exclusive, and exactly one is required whenever `spec.acls.iam` is present. This example uses `principalArns`. To discover every workload role in the account automatically, see [Example: migrate ACLs from discovered IAM roles](../acls-iam-discover/README.md).
+
+The shell that runs `kcp migration resources` needs AWS credentials with `iam:GetRole`, `iam:GetPolicy`, `iam:GetPolicyVersion`, `iam:ListRolePolicies`, and `iam:ListAttachedRolePolicies`, plus `iam:SimulatePrincipalPolicy` for `verifyEffectiveAccess`.
 
 ## Credential slots
 
-| Slot | Family | This example | Catalog-link |
+| Slot | Family | This example | Catalog file |
 |---|---|---|---|
 | `spec.source.credentials` | Kafka | IAM | [`kafka-iam.yaml`](../../credentials/kafka-iam.yaml) |
 | `spec.target.clusterCredentials` | REST | API key | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
-| `spec.target.cloudCredentials` | REST | API key (distinct Cloud/Global key, same file format) | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
+| `spec.target.cloudCredentials` | REST | API key (a separate Cloud or Global key, same file format) | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
 
-`spec.source.credentials` here only reads the MSK cluster id over IAM auth — the
-IAM authorization-plane reads themselves go through the AWS SDK using the
-shell's AWS credentials, not this file. See the
-[credential catalog](../../credentials/README.md).
+In this example, `spec.source.credentials` only reads the MSK cluster ID over IAM authentication. The IAM authorization plane reads go through the AWS SDK with the shell's AWS credentials, not this file. For every format, see the [credential file catalog](../../credentials/README.md).
 
-## Run
+## Run the example
 
 ```bash
 kcp migration resources validate -f migration.yaml   # structural check
@@ -40,6 +28,11 @@ kcp migration resources create -f migration.yaml --dry-run   # preview, change n
 kcp migration resources create -f migration.yaml             # migrate the ACLs
 ```
 
-> Credential paths here point at the shared catalog (`../../credentials/…`) to
-> avoid duplication. For a real migration, copy the credential files next to your
-> manifest and update the paths.
+The credential paths in this example point at the shared catalog (`../../credentials/…`) to avoid duplication. For a real migration, copy the credential files next to your manifest and update the paths.
+
+## Related content
+
+- [Example: migrate ACLs from discovered IAM roles](../acls-iam-discover/README.md)
+- [`spec.acls.iam` in the manifest reference](../../manifest-reference.md#specaclsiam)
+- [Credential file catalog for the resources manifest](../../credentials/README.md)
+- [Resources manifest examples](../../README.md#examples)

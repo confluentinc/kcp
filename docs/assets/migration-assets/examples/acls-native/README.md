@@ -1,32 +1,24 @@
-# Example: ACLs — native
+# Example: Migrate Native ACLs
 
-Migrates the source's **native Kafka ACLs** to Confluent Cloud, with no AWS IAM
-plane involved. `kcp migration resources` reads the source's ACLs live via `DescribeAcls`,
-resolves each distinct principal to a Confluent Cloud service account
-(`serviceAccounts.autoCreate`), and writes the matching ACLs on the target.
+This example migrates a source cluster's native Apache Kafka® access control lists (ACLs) to Confluent Cloud, with no AWS IAM authorization plane involved.
 
-`spec.acls` alone is enough for `create` — no `spec.clusterLink` or `spec.topics` is
-required.
+`kcp migration resources` reads the source's ACLs live through `DescribeAcls`, resolves each distinct principal to a Confluent Cloud service account (`serviceAccounts.autoCreate`), and writes the matching ACLs on the target.
 
-`User:ANONYMOUS` and `User:*` are always skipped (with a warning) unless you map
-them explicitly under `spec.serviceAccounts.mapping`; this example additionally
-excludes `User:ANONYMOUS` from `spec.acls.include` for clarity.
+`spec.acls` alone is enough for `create`: neither `spec.clusterLink` nor `spec.topics` is required.
+
+kcp always skips `User:ANONYMOUS` and `User:*`, with a warning, unless you map them explicitly under `spec.serviceAccounts.mapping`. For clarity, this example also excludes `User:ANONYMOUS` from `spec.acls.include`.
 
 ## Credential slots
 
-| Slot | Family | This example | Catalog-link |
+| Slot | Family | This example | Catalog file |
 |---|---|---|---|
 | `spec.source.credentials` | Kafka | SASL/SCRAM | [`kafka-sasl-scram.yaml`](../../credentials/kafka-sasl-scram.yaml) |
 | `spec.target.clusterCredentials` | REST | API key | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
-| `spec.target.cloudCredentials` | REST | API key (distinct Cloud/Global key, same file format) | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
+| `spec.target.cloudCredentials` | REST | API key (a separate Cloud or Global key, same file format) | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
 
-Any Kafka credential works for the source (swap in IAM, mTLS, SASL/PLAIN, …).
-`clusterCredentials` and `cloudCredentials` are two separate Confluent Cloud API
-keys — a Kafka-cluster key and a Cloud/Global key respectively — even though this
-example points both at the same credential file format. See the
-[credential catalog](../../credentials/README.md).
+Any Kafka-family credential works for the source, such as IAM, mTLS, or SASL/PLAIN. `clusterCredentials` and `cloudCredentials` are two separate Confluent Cloud API keys, a Kafka cluster key and a Cloud or Global key, even though this example uses the same credential file format for both. For every format, see the [credential file catalog](../../credentials/README.md).
 
-## Run
+## Run the example
 
 ```bash
 kcp migration resources validate -f migration.yaml   # structural check
@@ -34,6 +26,12 @@ kcp migration resources create -f migration.yaml --dry-run   # preview, change n
 kcp migration resources create -f migration.yaml             # migrate the ACLs
 ```
 
-> Credential paths here point at the shared catalog (`../../credentials/…`) to
-> avoid duplication. For a real migration, copy the credential files next to your
-> manifest and update the paths.
+The credential paths in this example point at the shared catalog (`../../credentials/…`) to avoid duplication. For a real migration, copy the credential files next to your manifest and update the paths.
+
+## Related content
+
+- [Example: migrate native and IAM ACLs together](../acls-native-and-iam/README.md)
+- [`spec.acls` in the manifest reference](../../manifest-reference.md#specacls)
+- [`spec.serviceAccounts` in the manifest reference](../../manifest-reference.md#specserviceaccounts)
+- [Credential file catalog for the resources manifest](../../credentials/README.md)
+- [Resources manifest examples](../../README.md#examples)
