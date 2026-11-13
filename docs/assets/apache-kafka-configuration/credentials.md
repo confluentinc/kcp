@@ -8,7 +8,7 @@ The `apache-kafka-credentials.yaml` file tells kcp how to connect to each Apache
 
 Apache Kafka sources have no automated discovery step, so you write this file yourself. [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md) reads it, as do the `kcp iac` commands that target an Apache Kafka source.
 
-For MSK, you don't write this file. [`kcp discover`](../command-reference/discover.md) generates the MSK equivalent, `msk-credentials.yaml`, for you, because MSK metadata comes from the AWS APIs.
+For Amazon MSK, you don't write this file. [`kcp discover`](../command-reference/discover.md) generates the MSK equivalent, `msk-credentials.yaml`, for you, because MSK metadata comes from the AWS APIs.
 
 ## Minimal example
 
@@ -125,7 +125,7 @@ clusters:
 | `bootstrap_servers`        | list of strings      | yes      | Broker `host:port` addresses. |
 | `auth_method`              | object               | yes      | Authentication method. Choose exactly one sub-block, as described in [`auth_method`](#auth_method). |
 | `insecure_skip_tls_verify` | bool                 | no       | Disables server certificate verification for this cluster's Kafka connection. It doesn't affect `jolokia` or `prometheus`, which have their own `tls.insecure_skip_verify`. With `sasl_plain`, it applies only when TLS is on (`ca_cert` or `tls: true`). |
-| `jolokia`                  | object               | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` to `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point the endpoints at Connect workers instead of brokers. |
+| `jolokia`                  | object               | no       | Jolokia HTTP endpoints for live Java Management Extensions (JMX) metrics. Required if you pass `--metrics jolokia` to `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point the endpoints at Connect workers instead of brokers. |
 | `prometheus`               | object               | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` to `kcp scan clusters` or `kcp scan self-managed-connectors`. |
 | `metadata`                 | `map<string,string>` | no       | Free-form labels shown in reports and the UI, such as `environment` and `location`. |
 
@@ -137,7 +137,7 @@ Choose one of these sub-blocks:
 | --------------------------- | -------------------------------------- | --------------- |
 | `sasl_scram`                | SASL/SCRAM-SHA-256 or SHA-512 over TLS | `use: true`, `username`, `password`, and `mechanism` (`SHA256` or `SHA512`). Optionally `ca_cert`. |
 | `sasl_plain`                | SASL/PLAIN, in plaintext or over TLS   | `use: true`, `username`, and `password`. Optionally `ca_cert` or `tls: true`. |
-| `tls`                       | TLS or mTLS with client certificates   | `use: true`, `ca_cert`, `client_cert`, and `client_key` |
+| `tls`                       | TLS or mutual TLS (mTLS) with client certificates   | `use: true`, `ca_cert`, `client_cert`, and `client_key` |
 | `unauthenticated_tls`       | TLS with no client authentication      | `use: true`. Optionally `ca_cert`. |
 | `unauthenticated_plaintext` | No authentication (test environments only) | `use: true` |
 
@@ -253,7 +253,7 @@ Kafka Connect worker metrics have their own pair of overrides, `prometheus.conne
 
 ## Next steps
 
-- [`kcp scan clusters`](../command-reference/scan/clusters.md): pass this file with `--credentials-file`.
+To scan your clusters, pass this file to [`kcp scan clusters`](../command-reference/scan/clusters.md) with `--credentials-file`.
 
 ## Related content
 

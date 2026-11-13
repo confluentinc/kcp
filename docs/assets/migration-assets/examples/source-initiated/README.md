@@ -4,7 +4,7 @@ This example creates mirror topics on a cluster link that the source initiates o
 
 The outcome is the same `mode: mirror` result as the [destination-initiated example](../mirror-topics/README.md), but the link is source-initiated (`mode: source`). Use this topology when the destination can't reach the source inbound, such as for a private or firewalled Confluent Platform cluster. The source initiates the link outbound to the destination.
 
-Source-initiated mode requires `spec.source.type: confluent-platform` or `confluent-cloud`. MSK and Apache Kafka® sources can't initiate a link.
+Source-initiated mode requires `spec.source.type: confluent-platform` or `confluent-cloud`. Amazon MSK and Apache Kafka® sources can't initiate a link.
 
 ## How the slots differ from destination mode
 

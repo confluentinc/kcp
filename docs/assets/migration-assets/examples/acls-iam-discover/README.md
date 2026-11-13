@@ -1,6 +1,6 @@
 # Example: Migrate ACLs From Discovered IAM Roles
 
-This example migrates access control lists (ACLs) for an MSK cluster that uses the MSK IAM authorization plane, by discovering every workload IAM role in the AWS account instead of naming roles individually.
+This example migrates access control lists (ACLs) for an Amazon MSK cluster that uses the MSK IAM authorization plane, by discovering every workload IAM role in the AWS account instead of naming roles individually.
 
 The outcome is the same as in [Example: migrate ACLs from named IAM roles](../acls-iam-explicit/README.md), but `discoverAllRoles: true` enumerates every workload IAM role in the account. kcp excludes AWS service-linked roles and SSO-provisioned roles automatically. Discovered grants are scoped to `clusterArn`, so roles whose policies grant access only to other MSK clusters contribute nothing.
 

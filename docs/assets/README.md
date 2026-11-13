@@ -134,7 +134,7 @@ The [command reference](command-reference/index.md) covers every kcp command and
 
 ## Next steps
 
-- [Get started with kcp](getting-started.md): install kcp, scan your clusters, and review the result.
+To install kcp, scan your clusters, and review the result, see [Get started with kcp](getting-started.md).
 
 ## Related content
 

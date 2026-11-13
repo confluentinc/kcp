@@ -6,7 +6,7 @@ title: Collect Broker Metrics From Apache Kafka Sources
 
 kcp collects broker metrics from Apache Kafka® clusters, including Confluent Platform and other distributions compatible with the Kafka API, through Jolokia or Prometheus. This page covers how to choose and configure a backend, which metrics kcp records, and how it calculates rates.
 
-For MSK, `kcp discover` pulls cluster metrics from CloudWatch. Apache Kafka clusters have no equivalent metrics source, so [`kcp scan clusters`](../command-reference/scan/clusters.md) supports two collection backends, which you select with `--metrics <source>`:
+For Amazon MSK, `kcp discover` pulls cluster metrics from CloudWatch. Apache Kafka clusters have no equivalent metrics source, so [`kcp scan clusters`](../command-reference/scan/clusters.md) supports two collection backends, which you select with `--metrics <source>`:
 
 | Backend      | Mode             | Required flags | Required `apache-kafka-credentials.yaml` block |
 | ------------ | ---------------- | -------------- | ---------------------------------------------- |

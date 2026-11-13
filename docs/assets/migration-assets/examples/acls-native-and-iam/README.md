@@ -1,6 +1,6 @@
 # Example: Migrate Native and IAM ACLs Together
 
-This example migrates access control lists (ACLs) for an MSK cluster that serves both SASL/SCRAM principals and IAM roles, by combining its native Apache Kafka® ACLs with the grants derived from IAM.
+This example migrates access control lists (ACLs) for an Amazon MSK cluster that serves both SASL/SCRAM principals and IAM roles, by combining the native ACLs that Apache Kafka® stores on the cluster with the grants derived from IAM.
 
 `kcp migration resources` reads the native Kafka ACLs for the SASL/SCRAM principals from the source, combines them as a union with the IAM-derived grants (`discoverAllRoles`, scoped to `clusterArn`), deduplicates on the exact ACL tuple, and writes the result to the target.
 

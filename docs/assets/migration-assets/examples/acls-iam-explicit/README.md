@@ -1,6 +1,6 @@
 # Example: Migrate ACLs From Named IAM Roles
 
-This example migrates access control lists (ACLs) for an MSK cluster that uses the MSK IAM authorization plane, by translating the grants of a fixed list of named IAM roles into Confluent Cloud ACLs.
+This example migrates access control lists (ACLs) for an Amazon MSK cluster that uses the MSK IAM authorization plane, by translating the grants of a fixed list of named IAM roles into Confluent Cloud ACLs.
 
 `kcp migration resources` reads each role's identity-based policies and translates its `kafka-cluster:*` grants into Confluent Cloud ACLs, scoped to `clusterArn`.
 

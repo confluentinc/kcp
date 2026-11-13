@@ -11,7 +11,7 @@ The two manifests share `apiVersion` and the parser, but nothing else. If you pa
 
 ## Resources manifest
 
-A `kcp migration resources` migration moves resources from an Amazon MSK, Apache Kafka®, or Confluent Platform source. It uses a single manifest, `migration.yaml`, that describes the desired end state, plus external credential files that hold only authentication. These resources cover the manifest:
+A `kcp migration resources` migration moves resources from an Amazon MSK, Apache Kafka®, or Confluent Platform source. It uses a single manifest, `migration.yaml`, that describes the desired end state, such as the cluster link, topics, service accounts, and access control lists (ACLs) to create, plus external credential files that hold only authentication. These resources cover the manifest:
 
 - [Manifest reference](manifest-reference.md): the field-by-field reference for every manifest section, and the single source of truth for field details.
 - [`migration.example.yaml`](migration.example.yaml): the fully annotated reference manifest, with every field and comments.
@@ -45,7 +45,7 @@ kcp migration resources create -f migration.yaml
 The manifest carries all addresses, and its `credentials:` fields reference external files that carry only secrets. Each connection is a uniform `{address, credentials}` pair:
 
 - **Kafka slots.** `spec.source`, `spec.clusterLink.source`, and `spec.clusterLink.destination` each take `bootstrapServers` and `credentials`.
-- **REST slots.** `spec.target` (with `spec.target.kafka.restEndpoint`) and `spec.clusterLink.sourceRest` each take `endpoint` or `restEndpoint`, and `credentials`. On `spec.target`, this Kafka cluster and REST v3 credential is `clusterCredentials`, which covers the cluster link, topics, and access control lists (ACLs). A Confluent Cloud target also takes `cloudCredentials`, a separate Cloud or Global API key, whenever `spec.acls` is present. kcp uses it to provision service accounts and to reconcile ACL principals through IAM v2.
+- **REST slots.** `spec.target` (with `spec.target.kafka.restEndpoint`) and `spec.clusterLink.sourceRest` each take `endpoint` or `restEndpoint`, and `credentials`. On `spec.target`, this Kafka cluster and REST v3 credential is `clusterCredentials`, which covers the cluster link, topics, and ACLs. A Confluent Cloud target also takes `cloudCredentials`, a separate Cloud or Global API key, whenever `spec.acls` is present. kcp uses it to provision service accounts and to reconcile ACL principals through IAM v2.
 
 For the credential family each slot uses, and every supported authentication method, see the [credential file catalog](credentials/README.md).
 

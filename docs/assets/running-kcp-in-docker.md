@@ -16,7 +16,7 @@ docker pull confluentinc/kcp:latest        # or a pinned tag, e.g. :0.9.3
 
 ## Prepare AWS credentials
 
-MSK commands, such as `discover` and `scan clusters --source-type msk`, call AWS, so the container needs AWS credentials. A container can't reach your shell environment, your SSO session, or a helper such as `granted`. It can read only a credentials file that you mount into it, so give the container a credentials file.
+Commands for Amazon MSK, such as `discover` and `scan clusters --source-type msk`, call AWS, so the container needs AWS credentials. A container can't reach your shell environment, your SSO session, or a helper such as `granted`. It can read only a credentials file that you mount into it, so give the container a credentials file.
 
 **Static keys.** If you already have static keys, from `aws configure` or from a helper that writes `~/.aws/credentials`, you're ready. Skip to [Run a command](#run-a-command) and mount the file as shown there.
 
@@ -96,7 +96,7 @@ docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
 Two things are specific to running in a container:
 
 - **The container must reach your brokers.** The `bootstrap_servers` in the credentials file must be routable from inside the container. If the brokers run on the Docker host, use the host's real hostname or IP address, or `host.docker.internal` on Docker Desktop. On Linux, you can add `--network host` instead.
-- **TLS and mTLS files must be mounted, with in-container paths.** If the credentials file points at a truststore or client keystore, copy those files into the mounted directory and reference them by their path inside the container, such as `/work/truststore.jks`. A host path such as `/Users/you/...` doesn't exist in the container.
+- **TLS and mutual TLS (mTLS) files must be mounted, with in-container paths.** If the credentials file points at a truststore or client keystore, copy those files into the mounted directory and reference them by their path inside the container, such as `/work/truststore.jks`. A host path such as `/Users/you/...` doesn't exist in the container.
 
 ## Run the web UI
 

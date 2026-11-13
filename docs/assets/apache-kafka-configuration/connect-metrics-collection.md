@@ -72,7 +72,7 @@ The client-level metrics (`incoming-byte-rate`, `outgoing-byte-rate`, `connectio
 | `connection-count`         | `sum(kafka_connect_metrics_connection_count)`                             |
 | `request-rate`             | `sum(kafka_connect_metrics_request_rate)`                                 |
 
-The Prometheus JMX Exporter produces these metric names with standard Kafka Connect JMX rules. The worker-level and task-level metrics (`kafka_connect_worker_*` and `kafka_connect_source_task_*`) are typically exported by default. The client-level metrics (`kafka_connect_metrics_*`) need two things in the JMX Exporter configuration:
+Kafka Connect exposes these metrics through Java Management Extensions (JMX), and the Prometheus JMX Exporter produces these metric names with standard Kafka Connect JMX rules. The worker-level and task-level metrics (`kafka_connect_worker_*` and `kafka_connect_source_task_*`) are typically exported by default. The client-level metrics (`kafka_connect_metrics_*`) need two things in the JMX Exporter configuration:
 
 - An allowlist entry for the `kafka.connect:type=connect-metrics,client-id=*` MBean pattern.
 - A rule that captures the `client-id` key. A rule that matches only `type=connect-metrics`, without `client-id`, doesn't match the real ObjectName.

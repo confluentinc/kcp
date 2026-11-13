@@ -16,7 +16,7 @@ kcp always skips `User:ANONYMOUS` and `User:*`, with a warning, unless you map t
 | `spec.target.clusterCredentials` | REST | API key | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
 | `spec.target.cloudCredentials` | REST | API key (a separate Cloud or Global key, same file format) | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
 
-Any Kafka-family credential works for the source, such as IAM, mTLS, or SASL/PLAIN. `clusterCredentials` and `cloudCredentials` are two separate Confluent Cloud API keys, a Kafka cluster key and a Cloud or Global key, even though this example uses the same credential file format for both. For every format, see the [credential file catalog](../../credentials/README.md).
+Any Kafka-family credential works for the source, such as IAM, mutual TLS (mTLS), or SASL/PLAIN. `clusterCredentials` and `cloudCredentials` are two separate Confluent Cloud API keys, a Kafka cluster key and a Cloud or Global key, even though this example uses the same credential file format for both. For every format, see the [credential file catalog](../../credentials/README.md).
 
 ## Run the example
 

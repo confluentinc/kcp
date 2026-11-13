@@ -1,10 +1,10 @@
 # Source Compatibility for kcp Commands
 
-This page shows which kcp commands work with each source type: Amazon MSK provisioned and Express clusters, MSK Serverless, and Apache Kafka®. Use it to check whether a command supports your source before you plan a migration.
+kcp supports two source types, Amazon MSK and Apache Kafka®, and this page shows which kcp commands work with each source flavor: MSK Provisioned and Express, MSK Serverless, and Apache Kafka. Use it to check whether a command supports your source before you plan a migration.
 
 The page covers whether a command works with your source. To learn how a command works, see the [command reference](command-reference/index.md).
 
-## Source types
+## Source flavors
 
 - **MSK Provisioned and Express.** MSK provisioned clusters, including clusters with MSK Express brokers.
 - **MSK Serverless.** MSK Serverless clusters.

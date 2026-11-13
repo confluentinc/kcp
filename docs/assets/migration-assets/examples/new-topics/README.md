@@ -13,7 +13,7 @@ This example reproduces selected source topics as plain topics on the target, wi
 | `spec.source.credentials` | Kafka | SASL/SCRAM | [`kafka-sasl-scram.yaml`](../../credentials/kafka-sasl-scram.yaml) |
 | `spec.target.clusterCredentials` | REST | API key | [`rest-api-key.yaml`](../../credentials/rest-api-key.yaml) |
 
-Any Kafka-family credential works for the source, such as IAM, mTLS, or SASL/PLAIN, and any REST credential works for the target. For every format, see the [credential file catalog](../../credentials/README.md).
+Any Kafka-family credential works for the source, such as IAM, mutual TLS (mTLS), or SASL/PLAIN, and any REST credential works for the target. For every format, see the [credential file catalog](../../credentials/README.md).
 
 ## Run the example
 
