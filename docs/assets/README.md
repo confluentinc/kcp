@@ -1,34 +1,36 @@
-# KCP CLI
+# Migrate to Confluent Cloud With kcp
 
-KCP is a CLI tool for planning and executing migrations to Confluent Cloud.
+kcp is a command-line tool that plans and runs migrations from Amazon MSK and Apache Kafka® to Confluent Cloud. This page covers how to install kcp, how it authenticates to AWS, the migration workflow, and the infrastructure decisions to make before you start.
 
-> [!NOTE]
-> KCP supports migrations from two source types:
->
-> - **AWS MSK (Managed Streaming for Apache Kafka)** — full discovery via AWS APIs + Kafka Admin API.
-> - **Apache Kafka (including Confluent Platform and other Kafka-API-compatible distributions)** — direct scanning via Kafka Admin API.
->
-> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics, or the [Source Compatibility](source-compatibility.md) matrix for which commands support which source flavor (MSK Provisioned/Express, MSK Serverless, Apache Kafka).
+## Source types
 
-## Installation
+kcp supports two source types:
 
-> [!TIP]
-> **Recommended:** on macOS or Linux, install the latest stable release with the install script. It detects your OS/architecture, downloads the matching binary, verifies its checksum, and places it on your `PATH`:
->
-> ```shell
-> curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | sh
-> ```
->
-> Pin a version with `KCP_VERSION=v0.8.5` or change the target directory with `KCP_INSTALL_DIR="$HOME/.local/bin"`.
+- **Amazon MSK (Amazon Managed Streaming for Apache Kafka).** kcp discovers clusters through AWS APIs and the Kafka Admin API.
+- **Apache Kafka.** This includes Confluent Platform and other distributions compatible with the Kafka API. kcp scans these clusters directly through the Kafka Admin API.
 
-Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64) with every [release on GitHub](https://github.com/confluentinc/kcp/releases/latest). Each release includes these assets: `kcp_darwin_amd64`, `kcp_darwin_arm64`, `kcp_linux_amd64`, `kcp_linux_arm64`, and `kcp_windows_amd64.exe`.
+The workflow differs slightly by source type. To check which commands support your source (MSK Provisioned and Express, MSK Serverless, or Apache Kafka), see [Source compatibility for kcp commands](source-compatibility.md). For per-command details, see the [command reference](command-reference/index.md).
 
-> [!IMPORTANT]
-> Always install a released binary. Building from the `main` branch produces an unreleased, in-development build — see [CONTRIBUTING](https://github.com/confluentinc/kcp/blob/main/CONTRIBUTING.md) if you intend to build from source.
+## Install kcp
 
-Run `uname -m` if you're unsure of your architecture: `arm64` / `aarch64` → `arm64` build, `x86_64` → `amd64` build. Apple Silicon Macs are `arm64`; older Intel Macs are `amd64`.
+On macOS or Linux, install the latest stable release with the install script. The script detects your operating system and architecture, downloads the matching binary, verifies its checksum, and places it on your `PATH`:
 
-To download manually instead of using the install script, the tabs below show the equivalent terminal flow for headless or scripted installs.
+```shell
+curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | sh
+```
+
+To pin a version, set `KCP_VERSION=v0.8.5`. To change the target directory, set `KCP_INSTALL_DIR="$HOME/.local/bin"`.
+
+Every [release on GitHub](https://github.com/confluentinc/kcp/releases/latest) publishes binaries for macOS, Linux (amd64 and arm64), and Windows (amd64). Each release includes these assets: `kcp_darwin_amd64`, `kcp_darwin_arm64`, `kcp_linux_amd64`, `kcp_linux_arm64`, and `kcp_windows_amd64.exe`.
+
+!!! warning
+    Always install a released binary. A build from the `main` branch is an unreleased development build. If you intend to build from source, see [Contributing to kcp](https://github.com/confluentinc/kcp/blob/main/CONTRIBUTING.md) on GitHub.
+
+If you're unsure of your architecture, run `uname -m`. An output of `arm64` or `aarch64` needs the `arm64` build, and `x86_64` needs the `amd64` build. Apple silicon Macs use `arm64`, and older Intel Macs use `amd64`.
+
+### Download kcp manually
+
+To download kcp without the install script, for example for a headless or scripted install, run the commands for your operating system:
 
 === "macOS"
 
@@ -66,76 +68,77 @@ To download manually instead of using the install script, the tabs below show th
 
 === "Windows"
 
-    Download [`kcp_windows_amd64.exe`](https://github.com/confluentinc/kcp/releases/latest) from the releases page, move it onto a folder on your `PATH`, and verify with `kcp version`.
+    Download [`kcp_windows_amd64.exe`](https://github.com/confluentinc/kcp/releases/latest) from the releases page, move it to a folder on your `PATH`, and run `kcp version` to verify it.
 
-## Authentication
+## Authenticate to AWS
 
-KCP uses the standard AWS credential chain for any command that calls AWS APIs. Supported auth methods:
+kcp uses the standard AWS credential chain for any command that calls AWS APIs. It supports these authentication methods:
 
-- **Environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and (optionally) `AWS_SESSION_TOKEN`.
-- **AWS credentials file**: configure with `aws configure`.
-- **AWS SSO / Identity Center**: `aws sso login`.
-- **IAM roles**: assumed roles or EC2 instance profiles.
-- **Credential helpers**: any tool that writes to the standard AWS credential locations (e.g. `granted`).
+- **Environment variables.** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`.
+- **AWS credentials file.** Configure it with `aws configure`.
+- **AWS SSO or IAM Identity Center.** Sign in with `aws sso login`.
+- **IAM roles.** Assumed roles or EC2 instance profiles.
+- **Credential helpers.** Any tool that writes to the standard AWS credential locations, such as `granted`.
 
-Verify with:
+To verify your credentials, run:
 
 ```shell
 aws sts get-caller-identity
 ```
 
-Each command's per-command AWS IAM permission requirements are documented on its page in the [Command Reference](command-reference/index.md).
+Each command's page in the [command reference](command-reference/index.md) lists the AWS IAM permissions that command needs.
 
-> [!NOTE]
-> **Apache Kafka** migrations do not require AWS authentication. Apache Kafka clusters are accessed directly via Kafka Admin API using the credentials you provide in `apache-kafka-credentials.yaml`. See [`kcp scan clusters`](command-reference/scan/clusters.md) for details.
+Apache Kafka migrations don't need AWS authentication. kcp connects to Apache Kafka clusters directly through the Kafka Admin API, using the credentials you provide in `apache-kafka-credentials.yaml`. For details, see [`kcp scan clusters`](command-reference/scan/clusters.md).
 
-## High-Level Workflow
+## Migration workflow
 
-The typical migration flow:
+A typical migration has four stages:
 
-1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`. See [Getting started](getting-started.md) for the step-by-step runbook.
-2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
-3. **Generate migration assets for data migration**:
+1. **Discover and scan.** Run `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`. For a step-by-step runbook, see [Get started with kcp](getting-started.md).
+2. **Report.** Run `kcp report costs` and `kcp report metrics` for cost and utilization analysis, or use `kcp ui` for fine-grained analysis.
+3. **Generate migration assets.** Prepare the data migration in one of two ways:
+    - To generate Terraform, use `kcp iac <asset> generate` with `target-infra`, `migration-infra`, `topics`, or `schemas`, plus `kcp iac acls kafka|iam generate` and `kcp iac connectors msk|self-managed|connector-utility generate`.
+    - To create cluster links, topics, and access control lists (ACLs) directly on the destination cluster through its REST API, use `kcp migration resources`.
+4. **Cut over clients.** Run `kcp migration cutover execute`. It validates and runs the cutover in one command, and if an earlier run was interrupted, it continues from the live state. To validate without running the cutover, pass `--dry-run`.
 
-- `kcp iac <asset> generate` for Terraform using `target-infra`, `migration-infra`, `topics`, `schemas`; `kcp iac acls kafka|iam generate`; `kcp iac connectors msk|self-managed|connector-utility generate`.
-- `kcp migration resources` for direct creation on the destination cluster through the REST API for cluster links, topics and ACLs.
+## Plan your migration infrastructure
 
-4. **Execute client switchover** — `kcp migration cutover execute` (validates and runs the cutover in one command, continuing from the live state if an earlier run was interrupted; `--dry-run` validates only).
+Before you start, answer these questions:
 
-## Key infrastructure decisions
+1. Is your source Kafka cluster reachable over the public internet, or only from inside a virtual private cloud (VPC)?
+2. If it's private, do you already have a bastion or jump host, or do you need one?
+3. Which authentication methods are enabled on the source, and which one do you plan to use for the migration cluster link?
 
-Before starting, decide on:
-
-1. Is your source Kafka cluster reachable over the public internet, or only from within a private VPC?
-2. If private, do you already have a bastion / jump host, or do you need one?
-3. What authentication methods are enabled on the source, and which will you use for the migration cluster link?
-
-Only certain migration topologies are possible for a given combination — see [`kcp iac migration-infra generate`](command-reference/iac/migration-infra/generate.md) for the type matrix.
+Your answers limit which migration topologies are possible. For the matrix of migration types, see [`kcp iac migration-infra generate`](command-reference/iac/migration-infra/generate.md).
 
 ### Bastion host requirements
 
-- **Public endpoints** — you can run `kcp` commands directly from your local machine.
-- **Private endpoints** — `kcp` must run from inside the source VPC. Either:
-  1. Provision a new bastion with [`kcp iac bastion-host generate`](command-reference/iac/bastion-host/generate.md), or
-  2. Use an existing jump server and copy the `kcp` binary onto it.
+- **Public endpoints.** You can run `kcp` commands directly from your local machine.
+- **Private endpoints.** `kcp` must run from inside the source VPC, on one of these hosts:
+    - A new bastion host, which you can provision with [`kcp iac bastion-host generate`](command-reference/iac/bastion-host/generate.md).
+    - An existing jump server, after you copy the `kcp` binary onto it.
 
-> [!NOTE]
-> For private MSK, transfer the `kcp` binary to a host inside the same VPC before continuing.
+For a private MSK cluster, copy the `kcp` binary to a host inside the same VPC before you continue.
 
 ## Command reference
 
-The full CLI reference is generated directly from the Cobra command definitions and lives under **[Command Reference](command-reference/index.md)**. Entry points:
+The [command reference](command-reference/index.md) covers every kcp command and is generated from the command definitions. Start with these commands:
 
-- [`kcp discover`](command-reference/discover.md) — scan AWS for MSK clusters
-- [`kcp scan`](command-reference/scan/index.md) — scan a Kafka cluster, S3 broker logs, or a schema registry
-- [`kcp report`](command-reference/report/index.md) — generate cost and metrics reports
-- [`kcp iac`](command-reference/iac/index.md) — generate Terraform for target, migration, topic, schema, ACL and connector assets
-- [`kcp migration`](command-reference/migration/index.md) — cut clients over to Confluent Cloud through the Gateway (`cutover`) and create Kafka resources directly (`resources`)
-- [`kcp ui`](command-reference/ui.md) — launch the local web UI
-- [`kcp update`](command-reference/update.md) / [`kcp version`](command-reference/version.md) / [`kcp docs`](command-reference/docs.md) — housekeeping
+- [`kcp discover`](command-reference/discover.md): scans AWS for MSK clusters.
+- [`kcp scan`](command-reference/scan/index.md): scans a Kafka cluster, S3 broker logs, or a schema registry.
+- [`kcp report`](command-reference/report/index.md): generates cost and metrics reports.
+- [`kcp iac`](command-reference/iac/index.md): generates Terraform for target, migration, topic, schema, ACL, and connector assets.
+- [`kcp migration`](command-reference/migration/index.md): cuts clients over to Confluent Cloud through Confluent Gateway (`cutover`) and creates Kafka resources directly (`resources`).
+- [`kcp ui`](command-reference/ui.md): launches the local web UI.
+- [`kcp update`](command-reference/update.md), [`kcp version`](command-reference/version.md), and [`kcp docs`](command-reference/docs.md): housekeeping commands.
 
-## Related guides
+## Next steps
 
-- [Running kcp in Docker](running-kcp-in-docker.md) — container usage, credentials, and internal-registry mirroring.
-- [Apache Kafka configuration → Credentials](apache-kafka-configuration/credentials.md) — schema and worked examples for `apache-kafka-credentials.yaml`
-- [Apache Kafka configuration → Metrics collection](apache-kafka-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for Apache Kafka metrics
+- [Get started with kcp](getting-started.md): install kcp, scan your clusters, and review the result.
+
+## Related content
+
+- [Run kcp in Docker](running-kcp-in-docker.md)
+- [Source compatibility for kcp commands](source-compatibility.md)
+- [Apache Kafka credentials](apache-kafka-configuration/credentials.md)
+- [Apache Kafka metrics collection](apache-kafka-configuration/metrics-collection.md)
