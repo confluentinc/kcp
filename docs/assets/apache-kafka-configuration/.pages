@@ -1,5 +1,5 @@
-title: Apache Kafka®
+title: Apache Kafka
 nav:
   - Credentials: credentials.md
-  - Metrics collection: metrics-collection.md
-  - Connect metrics collection: connect-metrics-collection.md
+  - Metrics Collection: metrics-collection.md
+  - Connect Metrics Collection: connect-metrics-collection.md
