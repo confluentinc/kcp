@@ -1,21 +1,18 @@
 ---
-title: Apache Kafka credentials
+title: Apache Kafka Credentials File Reference
 ---
 
-# `apache-kafka-credentials.yaml`
+# Apache Kafka Credentials File Reference
 
-The Apache Kafka® source has no automated discovery step — instead, you
-hand-author an `apache-kafka-credentials.yaml` describing how `kcp` should connect to
-your cluster(s). It is consumed by [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md)
-and any downstream `kcp iac` commands that target an Apache Kafka source.
+The `apache-kafka-credentials.yaml` file tells kcp how to connect to each Apache Kafka® cluster you migrate from, whether self-managed Apache Kafka, Confluent Platform, or another distribution compatible with the Kafka API. This page covers examples for common setups and every field the file accepts.
 
-This covers self-managed Apache Kafka, Confluent Platform, and other Kafka-API-compatible distributions.
+Apache Kafka sources have no automated discovery step, so you write this file yourself. [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md) reads it, as do the `kcp iac` commands that target an Apache Kafka source.
 
-For comparison, the MSK equivalent (`msk-credentials.yaml`) is generated for
-you by [`kcp discover`](../command-reference/discover.md) — there is no MSK
-counterpart to this file because MSK metadata comes from the AWS APIs.
+For MSK, you don't write this file. [`kcp discover`](../command-reference/discover.md) generates the MSK equivalent, `msk-credentials.yaml`, for you, because MSK metadata comes from the AWS APIs.
 
 ## Minimal example
+
+This example connects to one cluster with SASL/SCRAM-SHA-256:
 
 ```yaml
 clusters:
@@ -33,6 +30,8 @@ clusters:
 
 ## SASL over TLS with a private CA
 
+This example connects with SASL/SCRAM-SHA-512 and trusts a private certificate authority (CA):
+
 ```yaml
 clusters:
   - id: private-ca-kafka
@@ -47,7 +46,9 @@ clusters:
         ca_cert: /path/to/ca.pem
 ```
 
-## Full example — multiple clusters, mixed auth, metrics
+## Full example with several clusters
+
+This example configures three clusters with different authentication methods, and collects Jolokia metrics from the production cluster:
 
 ```yaml
 # Apache Kafka Credentials Configuration
@@ -110,47 +111,43 @@ clusters:
 
 ## Field reference
 
-### Top-level
+### Top-level fields
 
-| Field      | Type     | Required | Description                                          |
-| ---------- | -------- | -------- | ---------------------------------------------------- |
-| `clusters` | list     | yes      | One or more cluster entries — `kcp` scans each one.  |
+| Field      | Type | Required | Description                                       |
+| ---------- | ---- | -------- | ------------------------------------------------- |
+| `clusters` | list | yes      | One or more cluster entries. kcp scans each one.  |
 
-### Per-cluster
+### Cluster fields
 
-| Field               | Type             | Required | Description                                                                                                                                  |
-| ------------------- | ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                | string           | yes      | Unique identifier for the cluster. Used as the cluster key in `kcp-state.json` and as the `--cluster-id` value for downstream `kcp iac` commands. |
-| `bootstrap_servers` | list of strings  | yes      | Broker `host:port` addresses.                                                                                                                |
-| `auth_method`       | object           | yes      | Authentication method. Choose **exactly one** sub-block (see below).                                                                         |
-| `insecure_skip_tls_verify` | bool      | no       | Disables server certificate verification for this cluster's Kafka connection. Does not affect `jolokia` or `prometheus`, which have their own `tls.insecure_skip_verify`. With `sasl_plain` it only applies when TLS is on (`ca_cert` or `tls: true`). |
-| `jolokia`           | object           | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` on `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point endpoints to Connect workers rather than brokers. |
-| `prometheus`        | object           | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` on `kcp scan clusters` or `kcp scan self-managed-connectors`. |
-| `metadata`          | map<string,string> | no     | Free-form labels surfaced in reports and the UI (e.g. `environment`, `location`).                                                            |
+| Field                      | Type                 | Required | Description |
+| -------------------------- | -------------------- | -------- | ----------- |
+| `id`                       | string               | yes      | Unique identifier for the cluster. kcp uses it as the cluster key in `kcp-state.json` and as the `--cluster-id` value for later `kcp iac` commands. |
+| `bootstrap_servers`        | list of strings      | yes      | Broker `host:port` addresses. |
+| `auth_method`              | object               | yes      | Authentication method. Choose exactly one sub-block, as described in [`auth_method`](#auth_method). |
+| `insecure_skip_tls_verify` | bool                 | no       | Disables server certificate verification for this cluster's Kafka connection. It doesn't affect `jolokia` or `prometheus`, which have their own `tls.insecure_skip_verify`. With `sasl_plain`, it applies only when TLS is on (`ca_cert` or `tls: true`). |
+| `jolokia`                  | object               | no       | Jolokia HTTP endpoints for live JMX metrics. Required if you pass `--metrics jolokia` to `kcp scan clusters` or `kcp scan self-managed-connectors`. For Connect metrics, point the endpoints at Connect workers instead of brokers. |
+| `prometheus`               | object               | no       | Prometheus HTTP API for historical metrics. Required if you pass `--metrics prometheus` to `kcp scan clusters` or `kcp scan self-managed-connectors`. |
+| `metadata`                 | `map<string,string>` | no       | Free-form labels shown in reports and the UI, such as `environment` and `location`. |
 
-### `auth_method` — pick one
+### `auth_method`
 
-| Sub-block                   | Use case                              | Required fields                                                  |
-| --------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
-| `sasl_scram`                | SASL/SCRAM-SHA-256 or SHA-512 over TLS | `use: true`, `username`, `password`, `mechanism` (`SHA256`/`SHA512`); optional `ca_cert` |
-| `sasl_plain`                | SASL/PLAIN, plaintext or over TLS     | `use: true`, `username`, `password`; optional `ca_cert` or `tls: true` |
-| `tls`                       | TLS / mTLS with client certs          | `use: true`, `ca_cert`, `client_cert`, `client_key`              |
-| `unauthenticated_tls`       | TLS with no client authentication     | `use: true`; optional `ca_cert`                                  |
-| `unauthenticated_plaintext` | No auth (test environments only)      | `use: true`                                                      |
+Choose one of these sub-blocks:
 
-!!! note "TLS for SASL blocks"
+| Sub-block                   | Use case                               | Required fields |
+| --------------------------- | -------------------------------------- | --------------- |
+| `sasl_scram`                | SASL/SCRAM-SHA-256 or SHA-512 over TLS | `use: true`, `username`, `password`, and `mechanism` (`SHA256` or `SHA512`). Optionally `ca_cert`. |
+| `sasl_plain`                | SASL/PLAIN, in plaintext or over TLS   | `use: true`, `username`, and `password`. Optionally `ca_cert` or `tls: true`. |
+| `tls`                       | TLS or mTLS with client certificates   | `use: true`, `ca_cert`, `client_cert`, and `client_key` |
+| `unauthenticated_tls`       | TLS with no client authentication      | `use: true`. Optionally `ca_cert`. |
+| `unauthenticated_plaintext` | No authentication (test environments only) | `use: true` |
 
-    `sasl_scram` always connects over TLS. `ca_cert` names the CA to trust; without it, `kcp` uses the system trust store. Set it when the brokers present a certificate from a private CA.
+**TLS for SASL blocks.** `sasl_scram` always connects over TLS. `ca_cert` names the CA to trust, and without it, kcp uses the system trust store. Set `ca_cert` when the brokers present a certificate from a private CA. `sasl_plain` connects in plaintext unless you select TLS: set `ca_cert` for a private CA, or `tls: true` for a certificate signed by a public CA, which kcp checks against the system trust store.
 
-    `sasl_plain` connects in plaintext unless TLS is selected: set `ca_cert` for a private CA, or `tls: true` for a certificate signed by a public CA (system trust store).
+**SCRAM mechanism.** Apache Kafka supports both `SHA256` and `SHA512`. `SHA256` is the more common default, but kcp doesn't infer the mechanism, so set `mechanism` explicitly. MSK supports only `SHA512`, and `kcp discover` sets it automatically when it generates `msk-credentials.yaml`.
 
-!!! note "SCRAM mechanism for Apache Kafka vs MSK"
+### `jolokia`
 
-    Apache Kafka supports both `SHA256` and `SHA512`. `SHA256` is the more common default, so `kcp` does not infer one for you — set `mechanism` explicitly.
-
-    AWS MSK only supports `SHA512`; `kcp discover` sets that automatically when generating `msk-credentials.yaml`.
-
-### `jolokia` — optional, for live metrics
+The optional `jolokia` block configures live metrics collection from Jolokia endpoints:
 
 ```yaml
 jolokia:
@@ -169,16 +166,18 @@ jolokia:
     task-count: "acme.connect:type=connect-worker-metrics"
 ```
 
-| Field                       | Required | Description                                                          |
-| --------------------------- | -------- | -------------------------------------------------------------------- |
-| `endpoints`                 | yes      | List of Jolokia HTTP endpoints — one per broker.                     |
-| `auth.username` / `password`| no       | HTTP basic auth credentials.                                         |
-| `tls.ca_cert`               | no       | CA certificate for HTTPS Jolokia endpoints.                          |
-| `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
-| `mbean_overrides`           | no       | Map of logical metric label → MBean object name for agents that expose non-standard MBean names. See [Metric-name overrides](#metric-name-overrides). |
-| `connect_mbean_overrides`   | no       | Map of logical Connect-metric label → MBean object name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
+| Field                        | Required | Description |
+| ---------------------------- | -------- | ----------- |
+| `endpoints`                  | yes      | List of Jolokia HTTP endpoints, one for each broker. |
+| `auth.username` / `password` | no       | HTTP basic authentication credentials. |
+| `tls.ca_cert`                | no       | CA certificate for HTTPS Jolokia endpoints. |
+| `tls.insecure_skip_verify`   | no       | Skips TLS verification (test environments only). |
+| `mbean_overrides`            | no       | Maps a logical metric label to an MBean object name, for agents that expose non-standard MBean names. See [Metric-name overrides](#metric-name-overrides). |
+| `connect_mbean_overrides`    | no       | Maps a logical Connect metric label to an MBean object name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
 
-### `prometheus` — optional, for historical metrics
+### `prometheus`
+
+The optional `prometheus` block configures historical metrics collection from a Prometheus server:
 
 ```yaml
 prometheus:
@@ -200,38 +199,31 @@ prometheus:
     task-count: acme_connect_task_count
 ```
 
-| Field                       | Required | Description                                                          |
-| --------------------------- | -------- | -------------------------------------------------------------------- |
-| `url`                       | yes      | Prometheus server URL.                                               |
-| `auth.username` / `password`| no       | HTTP basic auth credentials.                                         |
-| `tls.ca_cert`               | no       | CA certificate for HTTPS Prometheus endpoints.                       |
-| `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
-| `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
-| `timeout`                   | no       | HTTP client timeout per Prometheus query, as a Go duration (e.g. `60s`, `2m`). Omit to use the `30s` default; an explicit value must be at least `30s` (shorter values are rejected). Raise this for large `--metrics-range` queries against high-cardinality clusters that respond slowly. |
-| `metric_names`              | no       | Map of logical metric label → base Prometheus series name for exporters that relabel the standard series. See [Metric-name overrides](#metric-name-overrides). |
-| `connect_metric_names`       | no       | Map of logical Connect-metric label → base Prometheus series name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
+| Field                        | Required | Description |
+| ---------------------------- | -------- | ----------- |
+| `url`                        | yes      | Prometheus server URL. |
+| `auth.username` / `password` | no       | HTTP basic authentication credentials. |
+| `tls.ca_cert`                | no       | CA certificate for HTTPS Prometheus endpoints. |
+| `tls.insecure_skip_verify`   | no       | Skips TLS verification (test environments only). |
+| `filter.labels`              | no       | Maps Prometheus label selectors that scope queries. When set, every PromQL query includes them as `{key="value"}` filters. Use it when one Prometheus server scrapes several clusters. |
+| `timeout`                    | no       | HTTP client timeout for each Prometheus query, as a Go duration such as `60s` or `2m`. If you omit it, the default is `30s`. An explicit value must be at least `30s`, and kcp rejects shorter values. Raise it for large `--metrics-range` queries against high-cardinality clusters that respond slowly. |
+| `metric_names`               | no       | Maps a logical metric label to a base Prometheus series name, for exporters that relabel the standard series. See [Metric-name overrides](#metric-name-overrides). |
+| `connect_metric_names`       | no       | Maps a logical Connect metric label to a base Prometheus series name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
 
-`jolokia` and `prometheus` are mutually exclusive per scan invocation — `--metrics`
-selects which one `kcp` reads. You can keep both blocks in the file and switch
-between them by changing the flag.
+Each scan reads either `jolokia` or `prometheus`, not both, and `--metrics` selects which one. You can keep both blocks in the file and switch between them by changing the flag.
 
 ### Metric-name overrides
 
-If your Prometheus exporter relabels the standard broker series, or your Jolokia
-agent exposes broker MBeans under non-standard object names, the built-in queries
-return empty results. Rather than patching those names in source, repoint them per
-cluster: `prometheus.metric_names` maps a logical label to the base **series name**
-your exporter exposes, and `jolokia.mbean_overrides` maps a logical label to the
-**MBean object name** your agent exposes.
+If your Prometheus exporter relabels the standard broker series, or your Jolokia agent exposes broker MBeans under non-standard object names, the built-in queries return empty results. Instead of patching those names in source, repoint them for each cluster:
 
-Both key on the same seven logical labels:
+- `prometheus.metric_names` maps a logical label to the base series name your exporter exposes.
+- `jolokia.mbean_overrides` maps a logical label to the MBean object name your agent exposes.
 
-`BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`,
-`GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`.
+Both use the same seven logical labels as keys:
 
-For example, if your Prometheus JMX Exporter publishes the byte-rate series under
-an `acme_` prefix and drops the `_total` suffix, map just the labels that changed
-— everything you omit keeps its default:
+`BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`, `GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`.
+
+For example, if your Prometheus JMX Exporter publishes the byte-rate series under an `acme_` prefix and drops the `_total` suffix, map only the labels that changed. Every label you omit keeps its default:
 
 ```yaml
 prometheus:
@@ -241,10 +233,7 @@ prometheus:
     BytesOutPerSec: acme_kafka_bytesout   # default: kafka_server_brokertopicmetrics_bytesoutpersec_total
 ```
 
-`kcp` slots the name into its own wrapping, so it now runs
-`sum(rate(acme_kafka_bytesin[<window>]))` in place of the default. The Jolokia
-equivalent maps the same logical label to a full MBean object name (domain
-included) rather than a series name:
+kcp puts the name into its own query wrapping, so it now runs `sum(rate(acme_kafka_bytesin[<window>]))` instead of the default. The Jolokia equivalent maps the same logical label to a full MBean object name, including the domain, instead of a series name:
 
 ```yaml
 jolokia:
@@ -254,44 +243,21 @@ jolokia:
     BytesInPerSec: "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"   # default domain: kafka.server
 ```
 
-- **Only labels you need to change** must appear; unlisted labels keep their
-  defaults. A key with an empty value (`BytesInPerSec: ""`) is treated as *no
-  override* and silently ignored — set a real name or omit the key entirely.
-- **Keys are validated at load time** — an unknown or misspelled label (wrong case
-  included) is a hard error listing the valid labels, not a silent no-op. Both
-  blocks are validated whenever the file loads, regardless of which one `--metrics`
-  selects, so a typo in the block you are *not* currently scanning with still fails
-  the scan.
-- **Prometheus overrides replace the base series name only.** `kcp` keeps its own
-  wrapping (`sum(rate(<name>[<window>]))`, `sum(<name>)`, the GiB conversion) and
-  `filter.labels` injection, so the override is a rename, not a full-query rewrite.
-  `GlobalPartitionCount` is the one exception worth calling out explicitly: on the
-  **default** series (`kafka_controller_kafkacontroller_value`) `kcp` appends a
-  `{name="GlobalPartitionCount"}` discriminator, because several controller values
-  share that one series name. Once you **override** `GlobalPartitionCount`, the
-  discriminator is dropped — your override already identifies the series on its
-  own, and most relabelled/flattened exporters expose it with no `name` label at
-  all. If your override value already carries its own selector (e.g. a job-scoped
-  series), it is used exactly as given.
-- If an overridden metric **still** returns no data, `kcp` logs it at **WARN**
-  (a plain missing default is logged at DEBUG) — the override was configured
-  precisely to fix an empty result, so a still-empty result is worth surfacing.
-- **An override is a rename, not a re-interpretation.** The series or bean you
-  point at must have the same *shape* as the default — a byte counter for the
-  `*PerSec` rates, a gauge for the counts, raw bytes for storage. Repointing at a
-  rate gauge or a differently-united series yields a *wrong value with no error*,
-  not an empty result. See
-  [What an override does not change](metrics-collection.md#what-an-override-does-not-change).
+- **List only the labels you need to change.** Unlisted labels keep their defaults. kcp treats a key with an empty value, such as `BytesInPerSec: ""`, as no override and ignores it without a warning, so set a real name or omit the key.
+- **Keys are validated when the file loads.** An unknown or misspelled label, including one with the wrong case, is an error that lists the valid labels. kcp validates both blocks whenever the file loads, whichever one `--metrics` selects, so a typo in the block you aren't scanning with still fails the scan.
+- **Prometheus overrides replace only the base series name.** kcp keeps its own wrapping (`sum(rate(<name>[<window>]))`, `sum(<name>)`, and the GiB conversion) and its `filter.labels` injection, so an override renames the series instead of rewriting the query. `GlobalPartitionCount` is the exception. On the default series, `kafka_controller_kafkacontroller_value`, kcp appends a `{name="GlobalPartitionCount"}` discriminator, because several controller values share that series name. After you override `GlobalPartitionCount`, kcp drops the discriminator: your override already identifies the series, and most relabeled or flattened exporters expose it without a `name` label. If your override value carries its own selector, such as a job-scoped series, kcp uses it exactly as given.
+- **An overridden metric that's still empty logs a warning.** If an overridden metric still returns no data, kcp logs it at WARN, while a missing default metric logs at DEBUG. You configured the override to fix an empty result, so a result that's still empty is worth surfacing.
+- **An override renames a metric but doesn't reinterpret it.** The series or MBean you point at must have the same shape as the default: a byte counter for the `*PerSec` rates, a gauge for the counts, and raw bytes for storage. If you point at a rate gauge or a series in different units, you get a wrong value with no error, not an empty result. For details, see [What an override does not change](metrics-collection.md#what-an-override-does-not-change).
 
-Kafka Connect worker metrics have their own analogous pair —
-`prometheus.connect_metric_names` and `jolokia.connect_mbean_overrides` — keyed on
-the ten Connect metric labels rather than the seven broker ones. See
-[Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides)
-for the label list, worked examples, and the per-connector caveats specific to
-Connect.
+Kafka Connect worker metrics have their own pair of overrides, `prometheus.connect_metric_names` and `jolokia.connect_mbean_overrides`, keyed on the 10 Connect metric labels instead of the seven broker labels. For the label list, examples, and the per-connector caveats specific to Connect, see [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides).
 
-## Where to go next
+## Next steps
 
-- [`kcp scan clusters`](../command-reference/scan/clusters.md) — pass this file with `--credentials-file`.
-- [Metrics collection](metrics-collection.md) — design notes on Jolokia vs Prometheus, the broker metrics that `kcp` records, and how rates are computed.
-- [Connect metrics collection](connect-metrics-collection.md) — collecting metrics from Kafka Connect workers.
+- [`kcp scan clusters`](../command-reference/scan/clusters.md): pass this file with `--credentials-file`.
+
+## Related content
+
+- [Collect broker metrics from Apache Kafka sources](metrics-collection.md)
+- [Collect Kafka Connect worker metrics](connect-metrics-collection.md)
+- [Get started with kcp](../getting-started.md)
+- [Run kcp in Docker](../running-kcp-in-docker.md)
