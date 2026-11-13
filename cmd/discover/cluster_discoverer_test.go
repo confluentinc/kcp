@@ -107,6 +107,46 @@ func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
 	assert.Equal(t, testClusterName, result.Name)
 }
 
+func TestClusterDiscoverer_ServerlessSkipsProvisionedOnlyScans(t *testing.T) {
+	// The rejection wording differs between AWS and the AWS Emulator, so a
+	// serverless cluster must not depend on any of these calls failing in a
+	// recognisable way: they must not be made at all.
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullServerlessCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = serverlessSubnetsStub
+
+	rejected := errors.New("BadRequestException: The cluster is a serverless cluster; this operation applies to provisioned clusters only.")
+	var called []string
+	msk.listNodesFn = func(_ context.Context, _ string, _ int32) ([]kafkatypes.NodeInfo, error) {
+		called = append(called, "ListNodes")
+		return nil, rejected
+	}
+	msk.listScramSecretsFn = func(_ context.Context, _ string, _ int32) ([]string, error) {
+		called = append(called, "ListScramSecrets")
+		return nil, rejected
+	}
+	msk.getCompatibleKafkaVersionsFn = func(_ context.Context, _ string) (*kafka.GetCompatibleKafkaVersionsOutput, error) {
+		called = append(called, "GetCompatibleKafkaVersions")
+		return nil, rejected
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+
+	require.NoError(t, err)
+	assert.Empty(t, called)
+
+	info := result.AWSClientInformation
+	assert.NotNil(t, info.Nodes, "nodes must serialize as [], not null")
+	assert.Empty(t, info.Nodes)
+	assert.NotNil(t, info.ScramSecrets, "scram secrets must serialize as [], not null")
+	assert.Empty(t, info.ScramSecrets)
+	assert.NotNil(t, info.CompatibleVersions.CompatibleKafkaVersions, "compatible versions must serialize as [], not null")
+	assert.Empty(t, info.CompatibleVersions.CompatibleKafkaVersions)
+}
+
 func TestClusterDiscoverer_ServerlessNetworking(t *testing.T) {
 	// Serverless clusters have no broker node group; their VPC attachment
 	// lives on Serverless.VpcConfigs instead. ListNodes is rejected by AWS
@@ -225,6 +265,48 @@ func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
+}
+
+func TestClusterDiscoverer_ListClusterOperationsErrorIsNonFatal(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullProvisionedCluster(), nil
+	}
+	msk.listClusterOperationsV2Fn = func(_ context.Context, _ string, _ int32) ([]kafkatypes.ClusterOperationV2Summary, error) {
+		return nil, errors.New("operation error Kafka: ListClusterOperationsV2, https response error StatusCode: 501")
+	}
+	ec2svc.describeSubnetsFn = func(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+		return &ec2.DescribeSubnetsOutput{
+			Subnets: []ec2types.Subnet{{
+				SubnetId:         aws.String(subnetIds[0]),
+				VpcId:            aws.String("vpc-12345"),
+				AvailabilityZone: aws.String("us-east-1a"),
+				CidrBlock:        aws.String("10.0.0.0/24"),
+			}},
+		}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+
+	require.NoError(t, err)
+	assert.NotNil(t, result.AWSClientInformation.ClusterOperations, "cluster_operations must serialize as [], not null")
+	assert.Empty(t, result.AWSClientInformation.ClusterOperations)
+	assert.Contains(t, logBuf.String(), "level=WARN")
+	assert.Contains(t, logBuf.String(), "StatusCode: 501")
+
+	var debugged bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		debugged = debugged || (strings.Contains(line, "level=DEBUG") &&
+			strings.Contains(line, "failed to list cluster operations") &&
+			strings.Contains(line, "clusterArn="+testClusterArn))
+	}
+	assert.True(t, debugged, "expected a DEBUG line naming the clusterArn; got:\n%s", logBuf.String())
 }
 
 // TestDiscoverTopics_LogsClusterArnOnFailure proves the non-fatal topic-listing

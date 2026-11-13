@@ -86,6 +86,8 @@ run_suite schema-registry integration-tests/schema-registry integration \
   "bash integration-tests/schema-registry/setup.sh" "bash integration-tests/schema-registry/teardown.sh"
 run_suite connect-scan    integration-tests/connect-scan    integration \
   "bash integration-tests/connect-scan/setup.sh" "bash integration-tests/connect-scan/teardown.sh"
+run_suite msk-emulator    integration-tests/msk-emulator    integration \
+  "bash integration-tests/msk-emulator/setup.sh" "bash integration-tests/msk-emulator/teardown.sh"
 run_suite migplan         integration-tests/migplan         e2e \
   "make test-env-up-migplan" "make test-env-down-migplan"
 if [[ "$WITH_MIGRATION" == "1" ]]; then

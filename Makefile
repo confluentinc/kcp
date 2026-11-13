@@ -106,7 +106,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-retries test-retries-setup test-retries-run test-retries-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-retries test-retries-setup test-retries-run test-retries-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-msk-emulator test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -251,6 +251,11 @@ test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
 	cd integration-tests/osk-scan && go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
+
+test-msk-emulator: build ## Run MSK discovery tests against the AWS Emulator (Docker)
+	@bash integration-tests/msk-emulator/setup.sh
+	cd integration-tests/msk-emulator && go test -tags integration -timeout 15m -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/msk-emulator/teardown.sh ; exit $$status
 
 test-consumer-group-scan: ## Run consumer-group discovery integration suite (Docker; AK 3.7/3.8/4.0/4.1/4.2, all group types)
 	@bash integration-tests/consumer-group-scan/setup.sh
