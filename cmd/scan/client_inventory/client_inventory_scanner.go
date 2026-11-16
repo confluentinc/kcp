@@ -30,6 +30,7 @@ type ClientInventoryScannerOpts struct {
 	LogGroupName string
 	StartTime    time.Time
 	EndTime      time.Time
+	UseInsights  bool
 }
 
 type ClientInventoryScanner struct {
