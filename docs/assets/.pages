@@ -5,7 +5,9 @@ nav:
   - Getting Started: getting-started.md
   - Running in Docker: running-kcp-in-docker.md
 - Source Compatibility: source-compatibility.md
-- Client Inventory Log Sources: client-inventory-log-sources.md
+- Client Inventory:
+  - Discover Clients on an MSK Cluster: client-inventory.md
+  - Scan Broker Logs: client-inventory-log-sources.md
 - command-reference
 - apache-kafka-configuration
 - migration-assets

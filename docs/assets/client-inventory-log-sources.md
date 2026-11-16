@@ -1,15 +1,10 @@
-# Discover Clients From MSK Broker Logs
+# Scan MSK Broker Logs for Clients
 
-`kcp scan client-inventory` finds the producers and consumers that use an Amazon Managed Streaming for Apache Kafka® (Amazon MSK) cluster by reading the broker request logs. For each client it records the client ID, topic, role, authentication type, and principal in `kcp-state.json`, from broker logs stored in either Amazon S3 or Amazon CloudWatch Logs.
+`kcp scan client-inventory` reads Amazon Managed Streaming for Apache Kafka® (Amazon MSK) broker request logs from either Amazon S3 or Amazon CloudWatch Logs, and records the clients it finds in `kcp-state.json`. This page describes how to scan each source, the time-window rules, the permissions, and how to fix a scan that finds nothing.
 
 Both sources feed the same parser, so the same log lines produce the same clients. Only the place the logs are read from differs. Choose exactly one source for each run.
 
-The scan can only see what the brokers logged, so you prepare the cluster first:
-
-1. [Deliver broker logs](#1-deliver-broker-logs-to-s3-or-cloudwatch) to S3, CloudWatch Logs, or both.
-2. [Turn on TRACE logging](#2-turn-on-trace-logging) for the request logger on every broker.
-3. [Let clients show up, then scan](#3-let-clients-show-up-then-scan).
-4. [Turn TRACE off](#4-turn-trace-off).
+The scan sees only what the brokers logged. To deliver broker logs and turn on TRACE logging first, follow [Discover Clients on an MSK Cluster](client-inventory.md).
 
 ## Choose a source
 
@@ -24,114 +19,6 @@ The scan can only see what the brokers logged, so you prepare the cluster first:
 
 !!! warning "CloudWatch completeness at TRACE"
     AWS recommends S3 or Firehose for DEBUG and TRACE broker logging, and cautions that CloudWatch Logs "may continuously deliver a sample of logs." Because client discovery relies on TRACE request logs, discovery through CloudWatch is best effort and can miss clients that were active in the window. Use S3 for complete or historical discovery. Use CloudWatch for quick, recent checks.
-
-## Set up the cluster
-
-### 1. Deliver broker logs to S3 or CloudWatch
-
-MSK can deliver broker logs to S3, CloudWatch Logs, or Firehose. kcp reads S3 and CloudWatch Logs. Enable the destination you plan to scan from.
-
-In the AWS Management Console, open the cluster in Amazon MSK, choose the **Properties** tab, find **Broker log delivery**, and choose **Edit**. Enable **Amazon S3** (a bucket and an optional prefix), **Amazon CloudWatch Logs** (a log group), or both. Console labels can change, so for the current steps and the bucket permissions that MSK needs, see the AWS documentation linked under [Related content](#related-content).
-
-To do the same with the AWS CLI, first read the cluster's current version:
-
-```bash
-aws kafka describe-cluster-v2 --cluster-arn <cluster_arn> --query 'ClusterInfo.CurrentVersion' --output text
-```
-
-Then enable delivery. The logging block replaces the existing one, so include every destination you want to keep, not only the one you add:
-
-```bash
-aws kafka update-monitoring \
-    --cluster-arn <cluster_arn> \
-    --current-version <current_version> \
-    --logging-info '{
-      "BrokerLogs": {
-        "S3":             { "Enabled": true, "Bucket": "<broker_logs_bucket>", "Prefix": "broker-logs/" },
-        "CloudWatchLogs": { "Enabled": true, "LogGroup": "<log_group_name>" }
-      }
-    }'
-```
-
-Changing the monitoring settings is a cluster update that takes about 5 minutes and can restart brokers. A restart resets the TRACE setting from the next step, so wait for the update to finish before you turn TRACE on.
-
-MSK writes compressed `.log.gz` files to S3 under this path:
-
-```
-s3://<bucket>/<prefix>AWSLogs/<account_id>/KafkaBrokerLogs/<region>/<cluster_name>-<cluster_uuid>-<n>/<yyyy-mm-dd-hh>/
-```
-
-A bucket prefix that you configured appears before `AWSLogs`, and kcp handles it. To find the exact path to scan, list the bucket:
-
-```bash
-aws s3 ls s3://<bucket>/<prefix>AWSLogs/<account_id>/KafkaBrokerLogs/<region>/ --recursive | head
-```
-
-In CloudWatch Logs, the broker log lines appear as events in the log group you named.
-
-### 2. Turn on TRACE logging
-
-Client discovery reads the broker's request-level log, which brokers write only at TRACE:
-
-```
-kafka.server.KafkaApis=TRACE
-```
-
-Set it dynamically on every broker with the Apache Kafka `kafka-configs` tool and the `broker-loggers` entity type. It takes effect immediately and needs no restart. The identity you use needs permission to alter broker configuration on the cluster.
-
-This example uses IAM authentication. If your cluster uses a different authentication method, use your usual client configuration instead. First put the MSK IAM authentication library on the classpath and create the client configuration file:
-
-```bash
-export CLASSPATH=<path_to>/aws-msk-iam-auth-<version>-all.jar
-
-cat > client-iam.properties <<'EOF'
-security.protocol=SASL_SSL
-sasl.mechanism=AWS_MSK_IAM
-sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
-sasl.client.callback.handler.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler
-EOF
-```
-
-Then run the following command for each broker ID (1, 2, 3, and so on). Use port 9098 from inside the virtual private cloud (VPC), or port 9198 for the public IAM endpoint:
-
-```bash
-kafka-configs.sh --bootstrap-server <broker_endpoint>:9098 \
-    --command-config client-iam.properties \
-    --entity-type broker-loggers --entity-name <broker_id> \
-    --alter --add-config kafka.server.KafkaApis=TRACE
-```
-
-To confirm the setting on a broker, describe it:
-
-```bash
-kafka-configs.sh --bootstrap-server <broker_endpoint>:9098 --command-config client-iam.properties \
-    --entity-type broker-loggers --entity-name <broker_id> --describe | grep KafkaApis
-```
-
-Before you turn TRACE on, consider these points:
-
-- The setting applies at runtime only. A broker restart, patch, or cluster update resets it to INFO. If a scan finds nothing, check that TRACE is still on.
-- TRACE is verbose. On a lightly loaded cluster of three brokers it produced about 14 MB of log data each minute. The volume grows with the request rate, and so do S3 storage and CloudWatch ingestion costs.
-- AWS cautions that delivering DEBUG or TRACE logs to CloudWatch can significantly affect broker performance. In a light test, broker CPU didn't change measurably, but a busy production cluster can behave differently. Keep the TRACE window short, and prefer S3 where you can.
-
-### 3. Let clients show up, then scan
-
-kcp records only clients that make a request while TRACE is on. About an hour usually shows the regularly active clients. Clients that connect rarely, such as nightly jobs, need a longer window or a second run later. Results accumulate in the same state file.
-
-- For S3, objects arrive about every 5 minutes, so the newest minutes of your window might not be there yet.
-- For CloudWatch, events arrive within a few minutes, so end the window a few minutes before the current time.
-
-### 4. Turn TRACE off
-
-Run this command on every broker where you turned TRACE on:
-
-```bash
-kafka-configs.sh --bootstrap-server <broker_endpoint>:9098 --command-config client-iam.properties \
-    --entity-type broker-loggers --entity-name <broker_id> \
-    --alter --delete-config kafka.server.KafkaApis
-```
-
-Logs that were already delivered stay available to scan. In S3 they stay until you delete them, and in CloudWatch until they pass the log group's retention period.
 
 ## Scan from S3
 
@@ -253,6 +140,7 @@ kcp keys each client by `clientID|topic|role|auth|principal`, so a later run aga
 
 ## Related content
 
+- [Discover Clients on an MSK Cluster](client-inventory.md)
 - [Getting Started](getting-started.md)
 - [`kcp scan client-inventory` command reference](command-reference/scan/client-inventory.md)
 - [Source Compatibility](source-compatibility.md)
