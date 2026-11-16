@@ -1,6 +1,6 @@
 # Migration Resources Manifest Reference
 
-`kcp migration resources create -f migration.yaml` migrates a Kafka source, whether Amazon MSK, Apache Kafka®, or Confluent Platform, to Confluent Cloud or Confluent Platform from a single YAML manifest that declares the desired end state. This page is the field-by-field reference for that manifest.
+`kcp migration resources create -f migration.yaml` migrates an Apache Kafka®-compatible cluster, such as Amazon MSK or Confluent Platform, to Confluent Cloud or Confluent Platform from a single YAML manifest that declares the desired end state. This page is the field-by-field reference for that manifest.
 
 For an annotated, ready-to-copy manifest, see [`migration.example.yaml`](migration.example.yaml). For example manifests for each scenario, see [Examples](README.md#examples). For the credential file formats each `credentials:` slot points at, see the [credential file catalog](credentials/README.md).
 
@@ -42,7 +42,7 @@ The cluster you migrate from. kcp reads it live at run time.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `type` | enum | yes | `msk`, `apache-kafka`, or `confluent-platform`. |
+| `type` | enum | yes | `msk` for Amazon MSK, `confluent-platform` for Confluent Platform, or `apache-kafka` for Apache Kafka and other Kafka-compatible clusters. |
 | `bootstrapServers` | `[]string` | yes | Non-empty. Each entry is `host:port`, with a numeric port from 1 to 65535. |
 | `credentials` | string (path) | yes | Kafka credentials file, from the [Kafka family](credentials/README.md#kafka-credentials). |
 
