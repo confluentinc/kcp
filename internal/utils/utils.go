@@ -111,11 +111,24 @@ func ExtractRegionFromS3Uri(s3Uri string) (string, error) {
 	path := strings.Trim(u.Path, "/")
 	parts := strings.Split(path, "/")
 
-	if len(parts) < 4 {
+	off := awsLogsOffset(parts)
+	if len(parts) < off+4 {
 		return "", fmt.Errorf("invalid S3 URI format: expected at least 5 path segments")
 	}
 
-	return parts[3], nil
+	return parts[off+3], nil
+}
+
+// awsLogsOffset returns the index of the "AWSLogs" segment, so a bucket prefix configured
+// for MSK broker-log delivery (e.g. "broker-logs/AWSLogs/...") does not shift the
+// region/cluster positions. It is 0 when there is no such segment.
+func awsLogsOffset(parts []string) int {
+	for i, p := range parts {
+		if p == "AWSLogs" {
+			return i
+		}
+	}
+	return 0
 }
 
 // ExtractRegionFromArn extracts the AWS region from a resource ARN.
@@ -160,11 +173,12 @@ func ExtractClusterNameFromS3Uri(s3Uri string) (string, error) {
 	pathSegments := strings.Split(path, "/")
 
 	// Expected format: AWSLogs/account/KafkaBrokerLogs/region/cluster-name-uuid/date/
-	if len(pathSegments) < 5 {
+	off := awsLogsOffset(pathSegments)
+	if len(pathSegments) < off+5 {
 		return "", fmt.Errorf("invalid S3 URI format: expected at least 5 path segments (AWSLogs/account/KafkaBrokerLogs/region/cluster-name/...)")
 	}
 
-	clusterSegment := pathSegments[4]
+	clusterSegment := pathSegments[off+4]
 
 	// Match UUID pattern: -[8 hex]-[4 hex]-[4 hex]-[4 hex]-[12 hex] followed by optional suffix
 	uuidPattern := regexp.MustCompile(`-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[0-9a-f]+)?$`)
