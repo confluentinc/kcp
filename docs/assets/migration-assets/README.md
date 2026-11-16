@@ -11,7 +11,7 @@ The two manifests share `apiVersion` and the parser, but nothing else. If you pa
 
 ## Resources manifest
 
-A `kcp migration resources` migration moves resources from an Amazon MSK, Apache Kafka®, or Confluent Platform source. It uses a single manifest, `migration.yaml`, that describes the desired end state, such as the cluster link, topics, service accounts, and access control lists (ACLs) to create, plus external credential files that hold only authentication. These resources cover the manifest:
+A `kcp migration resources` migration moves resources from an Apache Kafka®-compatible source, such as Amazon MSK or Confluent Platform. It uses a single manifest, `migration.yaml`, that describes the desired end state, such as the cluster link, topics, service accounts, and access control lists (ACLs) to create, plus external credential files that hold only authentication. These resources cover the manifest:
 
 - [Manifest reference](manifest-reference.md): the field-by-field reference for every manifest section, and the single source of truth for field details.
 - [`migration.example.yaml`](migration.example.yaml): the fully annotated reference manifest, with every field and comments.

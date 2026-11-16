@@ -4,11 +4,11 @@ title: Get Started With kcp
 
 # Get Started With kcp
 
-This runbook covers the first thing you do with kcp: scan your Kafka clusters, whether Amazon MSK or Apache Kafka®, and review the result. It takes you from an installed kcp to your clusters, topics, access control lists (ACLs), consumer groups, connectors, and schemas in `kcp ui`.
+This runbook covers the first thing you do with kcp: scan your Apache Kafka®-compatible clusters, such as Amazon MSK or Confluent Platform, and review the result. It takes you from an installed kcp to your clusters, topics, access control lists (ACLs), consumer groups, connectors, and schemas in `kcp ui`.
 
 Discovery (MSK only) and `kcp scan clusters` are required. The other scans in step 3 are optional, so run the ones that apply to your environment and skip the rest.
 
-Where a step differs by source, it has an MSK tab and an Apache Kafka tab. Follow the tab that matches your source. kcp scans Confluent Platform clusters as Apache Kafka.
+Where a step differs by source, it has an MSK tab and an Apache Kafka tab. Follow the tab that matches your source. The Apache Kafka tab covers any Kafka-compatible cluster, including Confluent Platform. For what each source supports, see [Source compatibility for kcp commands](source-compatibility.md).
 
 kcp writes everything to a single state file, `kcp-state.json`, which later commands read and extend. You can safely re-run every command: kcp merges new results into the state file instead of duplicating them.
 
