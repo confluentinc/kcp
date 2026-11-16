@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,5 +230,38 @@ func TestRun_CloudWatchEmptyWindow_CleanSkipNoUpsert(t *testing.T) {
 
 	if _, statErr := os.Stat(stateFilePath); !os.IsNotExist(statErr) {
 		t.Errorf("expected no state file written on empty-window skip, but one exists")
+	}
+}
+
+// Regression from a live run: MSK/CloudWatch truncate very large TRACE response
+// lines ("Sending topic metadata ...") at exactly 64 KiB. Once the source appends
+// "\n" that is 65537 bytes, which exceeded bufio.Scanner's default token limit and
+// aborted the WHOLE chunk (for CloudWatch: the whole window), losing every client.
+// An over-long line must be skipped, not poison the lines around it.
+func TestRun_OverlongLineDoesNotAbortChunk(t *testing.T) {
+	prefix := "[2026-11-04 08:42:49,956] TRACE [KafkaApi-3] Sending topic metadata MetadataResponseTopic(errorCode=0, name='x'"
+	for _, size := range []int{65536, 1 << 20} { // the observed AWS cap, and well beyond it
+		overlong := prefix + strings.Repeat("a", size-len(prefix))
+		fake := &fakeCW{pages: [][]string{{overlong, realIAMProduceLine, overlong, realSCRAMFetchLine}}}
+		src := NewCloudWatchLogSource(fake, "kcp", time.Now().Add(-time.Hour), time.Now())
+
+		state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
+			Name:     "us-east-1",
+			Clusters: []types.DiscoveredCluster{{Name: "my-cluster"}},
+		}}}}
+		scanner, err := NewClientInventoryScanner(src, state, ClientInventoryScannerOpts{
+			Region: "us-east-1", ClusterName: "my-cluster", LogGroupName: "kcp",
+			StateFile: filepath.Join(t.TempDir(), "kcp-state.json"),
+		})
+		if err != nil {
+			t.Fatalf("NewClientInventoryScanner: %v", err)
+		}
+		if err := scanner.Run(); err != nil {
+			t.Fatalf("size %d: Run returned error: %v", size, err)
+		}
+		got := state.MSKSources.Regions[0].Clusters[0].DiscoveredClients
+		if len(got) != 2 {
+			t.Fatalf("size %d: want the 2 real clients around the over-long lines, got %d", size, len(got))
+		}
 	}
 }
