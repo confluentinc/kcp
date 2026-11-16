@@ -21,6 +21,7 @@ This is a dynamic broker-logger setting (it takes effect at runtime and resets w
 | Region / cluster name | Derived from the S3 URI | Must be given explicitly (`--region`, `--cluster-name`) |
 | Time window | All log files under the prefix | `--start-time` / `--end-time` (default: last 24h) |
 | Completeness at TRACE | Complete (whole objects) | **Best-effort** — see the caution below |
+| Permissions | `s3:GetObject`, `s3:ListBucket` | `logs:StartQuery`, `logs:GetQueryResults` (Logs Insights; billed per GB scanned) |
 | Best for | Complete or historical discovery, bulk runs | Quick, recent windows; when S3 access is hard to grant but logs already flow to CloudWatch |
 
 !!! warning "CloudWatch completeness at TRACE"
@@ -71,34 +72,19 @@ The time window defaults to the **last 24 hours**. Narrow or shift it with RFC33
     --end-time   2025-08-13T18:00:00Z
 ```
 
+### How the CloudWatch source reads logs
+
+KCP runs a **CloudWatch Logs Insights** query over the window. CloudWatch filters to the TRACE `PRODUCE`/`FETCH` lines and de-duplicates server-side, returning one representative line per distinct client; KCP's own parser then runs on those lines unchanged. The grouping is never coarser than KCP's `clientID|topic|role|auth|principal` key, so distinct clients are never merged.
+
+What to know:
+
+- **Fast and light.** On a 10-minute window of the playground cluster KCP downloaded 22 lines in about 3 s, where reading every event would have meant 62,771 lines in about 74 s.
+- **Billed per GB scanned.** Logs Insights charges for the log data the query scans, so prefer a narrow window on large log groups.
+- **10,000-row limit.** A query returns at most 10,000 distinct rows. If a window has more distinct clients than that, the scan fails and asks you to narrow `--start-time`/`--end-time`, rather than reporting a partial inventory.
+- **Retention.** Only data still inside the log group's retention can be queried; older windows are rejected by AWS.
+- **Permissions.** If you cannot grant the query permissions below, use the S3 source instead.
+
 Required IAM (CloudWatch source):
-
-```json
-{
-  "Effect": "Allow",
-  "Action": ["logs:FilterLogEvents"],
-  "Resource": "arn:aws:logs:<AWS REGION>:<AWS ACCOUNT ID>:log-group:<LOG GROUP NAME>:*"
-}
-```
-
-### Faster scans with Logs Insights (`--use-insights`)
-
-By default KCP downloads every event in the window (`FilterLogEvents`) and de-duplicates locally. With `--use-insights`, CloudWatch Logs Insights filters and de-duplicates server-side and returns one representative TRACE line per distinct client; KCP's own parser then runs on those lines unchanged.
-
-```bash
-kcp scan client-inventory \
-    --log-group-name /aws/msk/my-cluster/broker-logs \
-    --region us-east-1 \
-    --cluster-name msk-cluster \
-    --use-insights \
-    --state-file kcp-state.json
-```
-
-- **Same result, far less data.** On a 10-minute window of the playground cluster both paths found the identical 22 clients; Insights returned 22 lines in about 3 s, against 62,771 lines in about 74 s.
-- **Cost model differs.** Insights is billed per GB of log data scanned by the query; `FilterLogEvents` is not billed that way. Prefer a narrow window for large log groups.
-- **Limit.** Insights returns at most 10,000 rows per query. If a window has more distinct clients than that, the scan fails and asks you to narrow `--start-time`/`--end-time`, rather than reporting a partial inventory.
-
-Additional IAM for `--use-insights`:
 
 ```json
 [

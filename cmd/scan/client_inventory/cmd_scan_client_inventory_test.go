@@ -112,10 +112,8 @@ func TestClientInventoryIAMAnnotation_CoversBothSources(t *testing.T) {
 	for _, want := range []string{
 		"s3:GetObject",
 		"s3:ListBucket",
-		"logs:FilterLogEvents",
 		"BrokerLogsFromS3",
 		"BrokerLogsFromCloudWatch",
-		"BrokerLogsFromCloudWatchInsights",
 		"logs:StartQuery",
 		"logs:GetQueryResults",
 	} {
@@ -125,23 +123,15 @@ func TestClientInventoryIAMAnnotation_CoversBothSources(t *testing.T) {
 	}
 }
 
-func TestParse_CloudWatchMode_PassesUseInsightsThrough(t *testing.T) {
-	opts, _, err := parseClientInventoryFlags(rawFlags{logGroupName: "kcp", region: "us-east-1", clusterName: "c", stateFile: "s", useInsights: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !opts.UseInsights {
-		t.Error("UseInsights should be true when --use-insights is set")
-	}
-	opts, _, _ = parseClientInventoryFlags(rawFlags{logGroupName: "kcp", region: "us-east-1", clusterName: "c", stateFile: "s"})
-	if opts.UseInsights {
-		t.Error("UseInsights should default to false")
+func TestClientInventoryIAMAnnotation_DoesNotRequireFilterLogEvents(t *testing.T) {
+	if got := clientInventoryIAMAnnotation(); strings.Contains(got, "FilterLogEvents") {
+		t.Errorf("annotation still mentions the removed FilterLogEvents permission:\n%s", got)
 	}
 }
 
-func TestParse_UseInsightsWithoutLogGroupIsRejected(t *testing.T) {
-	_, _, err := parseClientInventoryFlags(rawFlags{s3Uri: testS3Uri, stateFile: "s", useInsights: true})
-	if err == nil || !strings.Contains(err.Error(), "--use-insights") {
-		t.Fatalf("want an error naming --use-insights, got %v", err)
+// --use-insights was folded into the CloudWatch source; the flag must not linger.
+func TestCmd_UseInsightsFlagIsGone(t *testing.T) {
+	if NewScanClientInventoryCmd().Flags().Lookup("use-insights") != nil {
+		t.Error("--use-insights should no longer exist; CloudWatch always uses Insights")
 	}
 }

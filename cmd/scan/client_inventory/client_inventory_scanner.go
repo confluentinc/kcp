@@ -30,7 +30,6 @@ type ClientInventoryScannerOpts struct {
 	LogGroupName string
 	StartTime    time.Time
 	EndTime      time.Time
-	UseInsights  bool
 }
 
 type ClientInventoryScanner struct {
@@ -87,8 +86,8 @@ func (cis *ClientInventoryScanner) Run() error {
 	discoveredClients := cis.handleLogFiles(ctx, chunks)
 
 	if len(discoveredClients) == 0 {
-		fmt.Printf("  ⏭️  No clients discovered; leaving state unchanged\n")
-		slog.Info("⏭️ no clients discovered; skipping state update")
+		fmt.Printf("  No clients discovered; leaving state unchanged\n")
+		slog.Info("no clients discovered; skipping state update")
 		return nil
 	}
 

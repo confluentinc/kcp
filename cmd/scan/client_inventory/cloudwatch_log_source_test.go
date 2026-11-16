@@ -1,9 +1,11 @@
 package client_inventory
 
-// Tests for the CloudWatch Logs source. They prove the bytes it produces feed
-// the SAME gate + parser the S3 path uses (parseViaScanner, defined in
-// logsource_test.go) and yield identical client identities from REAL broker
-// TRACE fixture lines — plus pagination and empty-window behaviour.
+// Tests for the CloudWatch Logs source, which reads broker logs through a Logs
+// Insights query: CloudWatch filters and de-duplicates server-side so KCP downloads
+// one representative TRACE line per distinct client. They prove the rows feed the
+// SAME gate + parser the S3 path uses (parseViaScanner, defined in logsource_test.go),
+// that the query lifecycle (start, poll, terminal states) is handled, and that a
+// result the service truncated is reported instead of yielding a partial inventory.
 
 import (
 	"context"
@@ -20,41 +22,50 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// fakeCW is a fake cwLogsAPI. Each entry in pages is one FilterLogEvents page;
-// it threads a NextToken ("page-N") so multi-page reads are exercised. calls
-// counts invocations so pagination can be asserted.
-type fakeCW struct {
-	pages [][]string
-	calls int
+// fakeInsights is a fake cwLogsAPI. statuses is returned one per GetQueryResults
+// call (the last one repeats), so polling through Scheduled/Running is exercised.
+type fakeInsights struct {
+	statuses []cwltypes.QueryStatus
+	lines    []string
+	started  *cloudwatchlogs.StartQueryInput
+	getCalls int
 }
 
-func (f *fakeCW) FilterLogEvents(_ context.Context, in *cloudwatchlogs.FilterLogEventsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.FilterLogEventsOutput, error) {
-	f.calls++
-	idx := 0
-	if in.NextToken != nil {
-		_, _ = fmt.Sscanf(*in.NextToken, "page-%d", &idx)
+func (f *fakeInsights) StartQuery(_ context.Context, in *cloudwatchlogs.StartQueryInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StartQueryOutput, error) {
+	f.started = in
+	return &cloudwatchlogs.StartQueryOutput{QueryId: aws.String("q-1")}, nil
+}
+
+func (f *fakeInsights) GetQueryResults(_ context.Context, _ *cloudwatchlogs.GetQueryResultsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetQueryResultsOutput, error) {
+	idx := f.getCalls
+	if idx >= len(f.statuses) {
+		idx = len(f.statuses) - 1
 	}
-	if idx >= len(f.pages) {
-		return &cloudwatchlogs.FilterLogEventsOutput{}, nil
+	f.getCalls++
+	status := f.statuses[idx]
+	out := &cloudwatchlogs.GetQueryResultsOutput{Status: status}
+	if status == cwltypes.QueryStatusComplete {
+		for _, l := range f.lines {
+			out.Results = append(out.Results, []cwltypes.ResultField{
+				{Field: aws.String("k_cid"), Value: aws.String("whatever")},
+				{Field: aws.String("line"), Value: aws.String(l)},
+			})
+		}
 	}
-	events := make([]cwltypes.FilteredLogEvent, 0, len(f.pages[idx]))
-	for _, m := range f.pages[idx] {
-		m := m
-		events = append(events, cwltypes.FilteredLogEvent{Message: aws.String(m)})
-	}
-	var next *string
-	if idx+1 < len(f.pages) {
-		tok := fmt.Sprintf("page-%d", idx+1)
-		next = &tok
-	}
-	return &cloudwatchlogs.FilterLogEventsOutput{Events: events, NextToken: next}, nil
+	return out, nil
+}
+
+// completeWith returns a fake whose query completes immediately with the given lines.
+func completeWith(lines ...string) *fakeInsights {
+	return &fakeInsights{statuses: []cwltypes.QueryStatus{cwltypes.QueryStatusComplete}, lines: lines}
 }
 
 // REAL SCRAM fetch fixture (verbatim from kafka_trace_line_parser_test.go).
 const realSCRAMFetchLine = `[2025-08-08 07:30:42,834] TRACE [KafkaApi-1] Handling request:RequestHeader(apiKey=FETCH, apiVersion=11, clientId=glenns_consumer_with_sasl_scram, correlationId=2010, headerVersion=1) -- FetchRequestData(clusterId=null, replicaId=-1, replicaState=ReplicaState(replicaId=-1, replicaEpoch=-1), maxWaitMs=500, minBytes=1, maxBytes=104857600, isolationLevel=0, sessionId=0, sessionEpoch=-1, topics=[FetchTopic(topic='test-topic-1', topicId=AAAAAAAAAAAAAAAAAAAAAA, partitions=[FetchPartition(partition=2, currentLeaderEpoch=0, fetchOffset=20419, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576), FetchPartition(partition=5, currentLeaderEpoch=0, fetchOffset=20258, lastFetchedEpoch=-1, logStartOffset=0, partitionMaxBytes=1048576)])], forgottenTopicsData=[], rackId='') from connection INTERNAL_IP-INTERNAL_IP-11-5;securityProtocol:SASL_SSL,principal:User:kafka-user-2 (kafka.server.KafkaApis)`
 
-// A config-dump line like the ones observed flowing through CloudWatch BEFORE
-// TRACE was (re)enabled — must be skipped by the gate, exactly as on S3.
+// A config-dump line of the kind seen in CloudWatch before TRACE was enabled. The
+// query filters these out server-side, but the gate must still skip them if one
+// ever reaches KCP.
 const cloudWatchConfigDumpLine = `fetch.max.bytes = 52428800`
 
 func cwWindow() (time.Time, time.Time) {
@@ -62,11 +73,18 @@ func cwWindow() (time.Time, time.Time) {
 	return end.Add(-time.Hour), end
 }
 
-func TestCloudWatchLogSource_FeedsExistingParser_IAMProduce(t *testing.T) {
+func newTestSource(api cwLogsAPI) *cloudWatchLogSource {
 	start, end := cwWindow()
-	fake := &fakeCW{pages: [][]string{{realIAMProduceLine}}}
-	src := NewCloudWatchLogSource(fake, "kcp", start, end)
+	src := NewCloudWatchLogSource(api, "kcp", start, end)
+	src.pollInterval = 0
+	return src
+}
 
+func TestCloudWatchLogSource_NameAndSingleChunk(t *testing.T) {
+	src := newTestSource(completeWith())
+	if src.Name() != "kcp" {
+		t.Errorf("Name = %q, want kcp", src.Name())
+	}
 	chunks, err := src.ListChunks(context.Background())
 	if err != nil {
 		t.Fatalf("ListChunks: %v", err)
@@ -74,31 +92,22 @@ func TestCloudWatchLogSource_FeedsExistingParser_IAMProduce(t *testing.T) {
 	if len(chunks) != 1 {
 		t.Fatalf("want 1 chunk, got %d", len(chunks))
 	}
+}
 
-	content, err := src.ReadChunk(context.Background(), chunks[0])
+func TestCloudWatchLogSource_FeedsExistingParser_IAMProduce(t *testing.T) {
+	src := newTestSource(completeWith(realIAMProduceLine))
+
+	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
 	if err != nil {
 		t.Fatalf("ReadChunk: %v", err)
 	}
-
 	got := parseViaScanner(content)
 	if len(got) != 1 {
 		t.Fatalf("want 1 parsed request, got %d", len(got))
 	}
 	md := got[0]
-	if md.ClientId != "TESTING_PRODUCER-1" {
-		t.Errorf("ClientId = %q, want TESTING_PRODUCER-1", md.ClientId)
-	}
-	if md.ApiKey != "PRODUCE" {
-		t.Errorf("ApiKey = %q, want PRODUCE", md.ApiKey)
-	}
-	if md.Role != "Producer" {
-		t.Errorf("Role = %q, want Producer", md.Role)
-	}
-	if md.Topic != "customers1" {
-		t.Errorf("Topic = %q, want customers1", md.Topic)
-	}
-	if md.Auth != AuthTypeIAM {
-		t.Errorf("Auth = %q, want %q", md.Auth, AuthTypeIAM)
+	if md.ClientId != "TESTING_PRODUCER-1" || md.ApiKey != "PRODUCE" || md.Role != "Producer" || md.Topic != "customers1" || md.Auth != AuthTypeIAM {
+		t.Errorf("unexpected IAM produce metadata: %+v", md)
 	}
 	wantPrincipal := "arn:aws:sts::635910096382:assumed-role/AWSReservedSSO_nonprod-administrator_b3955bd58a347b7b/me@confluent.io"
 	if md.Principal != wantPrincipal {
@@ -107,9 +116,7 @@ func TestCloudWatchLogSource_FeedsExistingParser_IAMProduce(t *testing.T) {
 }
 
 func TestCloudWatchLogSource_FeedsExistingParser_SCRAMFetch(t *testing.T) {
-	start, end := cwWindow()
-	fake := &fakeCW{pages: [][]string{{realSCRAMFetchLine}}}
-	src := NewCloudWatchLogSource(fake, "kcp", start, end)
+	src := newTestSource(completeWith(realSCRAMFetchLine))
 
 	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
 	if err != nil {
@@ -120,98 +127,167 @@ func TestCloudWatchLogSource_FeedsExistingParser_SCRAMFetch(t *testing.T) {
 		t.Fatalf("want 1 parsed request, got %d", len(got))
 	}
 	md := got[0]
-	if md.ClientId != "glenns_consumer_with_sasl_scram" {
-		t.Errorf("ClientId = %q", md.ClientId)
-	}
-	if md.Role != "Consumer" {
-		t.Errorf("Role = %q, want Consumer", md.Role)
-	}
-	if md.Topic != "test-topic-1" {
-		t.Errorf("Topic = %q, want test-topic-1", md.Topic)
-	}
-	if md.Auth != AuthTypeSASL_SCRAM {
-		t.Errorf("Auth = %q, want %q", md.Auth, AuthTypeSASL_SCRAM)
-	}
-	if md.Principal != "User:kafka-user-2" {
-		t.Errorf("Principal = %q, want User:kafka-user-2", md.Principal)
+	if md.ClientId != "glenns_consumer_with_sasl_scram" || md.Role != "Consumer" || md.Topic != "test-topic-1" || md.Auth != AuthTypeSASL_SCRAM || md.Principal != "User:kafka-user-2" {
+		t.Errorf("unexpected SCRAM fetch metadata: %+v", md)
 	}
 }
 
-// Proves the non-trace lines actually seen in CloudWatch are skipped, identically
-// to S3 — only real TRACE request lines become clients.
-func TestCloudWatchLogSource_SkipsNonTraceLines(t *testing.T) {
-	start, end := cwWindow()
-	fake := &fakeCW{pages: [][]string{{
-		cloudWatchConfigDumpLine,
-		realIAMProduceLine,
-		"fetch.max.wait.ms = 500",
-	}}}
-	src := NewCloudWatchLogSource(fake, "kcp", start, end)
+func TestCloudWatchLogSource_MultipleRows(t *testing.T) {
+	src := newTestSource(completeWith(realIAMProduceLine, realSCRAMFetchLine))
 
 	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
 	if err != nil {
 		t.Fatalf("ReadChunk: %v", err)
 	}
 	got := parseViaScanner(content)
-	if len(got) != 1 {
-		t.Fatalf("want exactly 1 real client (junk skipped), got %d", len(got))
-	}
-	if got[0].ClientId != "TESTING_PRODUCER-1" {
-		t.Errorf("ClientId = %q", got[0].ClientId)
-	}
-}
-
-// Review Focus #1: a window whose events span multiple FilterLogEvents pages
-// must read ALL events (follow NextToken), not just page one.
-func TestCloudWatchLogSource_PagesAllEvents(t *testing.T) {
-	start, end := cwWindow()
-	fake := &fakeCW{pages: [][]string{{realIAMProduceLine}, {realSCRAMFetchLine}}}
-	src := NewCloudWatchLogSource(fake, "kcp", start, end)
-
-	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
-	if err != nil {
-		t.Fatalf("ReadChunk: %v", err)
-	}
-	if fake.calls != 2 {
-		t.Errorf("expected 2 FilterLogEvents calls (pagination), got %d", fake.calls)
-	}
-	got := parseViaScanner(content)
-	if len(got) != 2 {
-		t.Fatalf("want 2 clients across 2 pages, got %d", len(got))
-	}
 	ids := map[string]bool{}
 	for _, md := range got {
 		ids[md.ClientId] = true
 	}
-	if !ids["TESTING_PRODUCER-1"] || !ids["glenns_consumer_with_sasl_scram"] {
-		t.Errorf("missing a client across pages: %+v", got)
+	if len(got) != 2 || !ids["TESTING_PRODUCER-1"] || !ids["glenns_consumer_with_sasl_scram"] {
+		t.Errorf("want both clients, got %+v", got)
 	}
 }
 
-// Review Focus #4: an empty window (no matching events) yields no clients and no
-// error — the scanner then treats it like S3's "no log files found" skip.
-func TestCloudWatchLogSource_EmptyWindow(t *testing.T) {
-	start, end := cwWindow()
-	fake := &fakeCW{pages: [][]string{{}}}
-	src := NewCloudWatchLogSource(fake, "kcp", start, end)
+// Non-TRACE lines are skipped by the gate, identically to S3, even if one slips
+// past the server-side filter.
+func TestCloudWatchLogSource_SkipsNonTraceLines(t *testing.T) {
+	src := newTestSource(completeWith(cloudWatchConfigDumpLine, realIAMProduceLine, "fetch.max.wait.ms = 500"))
 
 	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
 	if err != nil {
 		t.Fatalf("ReadChunk: %v", err)
 	}
 	got := parseViaScanner(content)
-	if len(got) != 0 {
-		t.Fatalf("want 0 clients for empty window, got %d", len(got))
+	if len(got) != 1 || got[0].ClientId != "TESTING_PRODUCER-1" {
+		t.Fatalf("want exactly the 1 real client, got %+v", got)
 	}
 }
 
-// Review Focus #4 (Run path): an empty CloudWatch window must be a clean skip —
-// Run returns nil, no "cluster not found" error, and no state file is written —
-// even when the cluster is not yet present in state. (CloudWatch always lists one
-// chunk, so this can only hold if Run short-circuits on zero discovered clients.)
+func TestCloudWatchLogSource_StartQueryRequest(t *testing.T) {
+	fake := completeWith()
+	src := newTestSource(fake)
+
+	if _, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"}); err != nil {
+		t.Fatalf("ReadChunk: %v", err)
+	}
+	in := fake.started
+	if in == nil {
+		t.Fatal("StartQuery was not called")
+	}
+	if aws.ToString(in.LogGroupName) != "kcp" {
+		t.Errorf("LogGroupName = %q, want kcp", aws.ToString(in.LogGroupName))
+	}
+	// Insights takes epoch SECONDS (FilterLogEvents took milliseconds).
+	if aws.ToInt64(in.StartTime) != src.start.Unix() || aws.ToInt64(in.EndTime) != src.end.Unix() {
+		t.Errorf("window = [%d,%d], want [%d,%d]", aws.ToInt64(in.StartTime), aws.ToInt64(in.EndTime), src.start.Unix(), src.end.Unix())
+	}
+	// The default Limit is 1000 rows; the service maximum must be requested.
+	if aws.ToInt32(in.Limit) != insightsMaxRows {
+		t.Errorf("Limit = %d, want %d", aws.ToInt32(in.Limit), insightsMaxRows)
+	}
+	if aws.ToString(in.QueryString) != kafkaApiInsightsQuery {
+		t.Errorf("QueryString is not the package query")
+	}
+}
+
+// The de-duplication key must never be coarser than KCP's composite key
+// (clientId|topic|role|auth|principal), or distinct clients would collapse into one
+// representative line and be lost. Pin every component the parser reads.
+func TestInsightsQuery_GroupsByEveryCompositeKeyComponent(t *testing.T) {
+	for _, want := range []string{
+		"apiKey=",              // role
+		"clientId=",            // clientId
+		"FetchTopic",           // consumer topic
+		"partitionSizes",       // producer topic
+		`principal:\[IAM\]`,    // IAM principal
+		"securityProtocol:SSL", // TLS principal
+		"principal:(?<",        // SCRAM / anonymous principal
+		"stats latest(@message)",
+	} {
+		if !strings.Contains(kafkaApiInsightsQuery, want) {
+			t.Errorf("query is missing %q:\n%s", want, kafkaApiInsightsQuery)
+		}
+	}
+}
+
+func TestCloudWatchLogSource_PollsUntilComplete(t *testing.T) {
+	fake := &fakeInsights{
+		statuses: []cwltypes.QueryStatus{cwltypes.QueryStatusScheduled, cwltypes.QueryStatusRunning, cwltypes.QueryStatusComplete},
+		lines:    []string{realIAMProduceLine},
+	}
+	src := newTestSource(fake)
+
+	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
+	if err != nil {
+		t.Fatalf("ReadChunk: %v", err)
+	}
+	if fake.getCalls != 3 {
+		t.Errorf("want 3 GetQueryResults polls, got %d", fake.getCalls)
+	}
+	if got := parseViaScanner(content); len(got) != 1 {
+		t.Fatalf("want 1 client once complete, got %d", len(got))
+	}
+}
+
+func TestCloudWatchLogSource_TerminalFailureStatusesAreErrors(t *testing.T) {
+	for _, status := range []cwltypes.QueryStatus{cwltypes.QueryStatusFailed, cwltypes.QueryStatusCancelled, cwltypes.QueryStatusTimeout} {
+		src := newTestSource(&fakeInsights{statuses: []cwltypes.QueryStatus{status}})
+
+		if _, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"}); err == nil {
+			t.Errorf("status %s: want an error, got nil", status)
+		}
+	}
+}
+
+func TestCloudWatchLogSource_EmptyResultIsNotAnError(t *testing.T) {
+	src := newTestSource(completeWith())
+
+	content, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
+	if err != nil {
+		t.Fatalf("ReadChunk: %v", err)
+	}
+	if got := parseViaScanner(content); len(got) != 0 {
+		t.Fatalf("want 0 clients, got %d", len(got))
+	}
+}
+
+// Insights silently caps a result at the requested Limit. A capped result may be
+// missing clients, so it must fail loudly and tell the user to narrow the window.
+func TestCloudWatchLogSource_ResultAtLimitIsAnError(t *testing.T) {
+	lines := make([]string, insightsMaxRows)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%d", i)
+	}
+	src := newTestSource(completeWith(lines...))
+
+	_, err := src.ReadChunk(context.Background(), LogChunk{ID: "kcp"})
+	if err == nil {
+		t.Fatal("want an error when the result hit the row limit")
+	}
+	if !strings.Contains(err.Error(), "narrow") {
+		t.Errorf("error should tell the user to narrow the window, got: %v", err)
+	}
+}
+
+func TestCloudWatchLogSource_HonoursContextCancellationWhilePolling(t *testing.T) {
+	src := newTestSource(&fakeInsights{statuses: []cwltypes.QueryStatus{cwltypes.QueryStatusRunning}})
+	src.pollInterval = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	if _, err := src.ReadChunk(ctx, LogChunk{ID: "kcp"}); err == nil {
+		t.Fatal("want an error when the context ends while the query is still running")
+	}
+}
+
+// An empty window must be a clean skip: Run returns nil, no "cluster not found"
+// error, and no state file is written — even when the cluster is not yet in state.
+// (CloudWatch always lists one chunk, so this only holds if Run short-circuits on
+// zero discovered clients.)
 func TestRun_CloudWatchEmptyWindow_CleanSkipNoUpsert(t *testing.T) {
-	fake := &fakeCW{pages: [][]string{{}}} // zero events in the window
-	src := NewCloudWatchLogSource(fake, "kcp", time.Now().Add(-time.Hour), time.Now())
+	src := newTestSource(completeWith())
 
 	stateFilePath := filepath.Join(t.TempDir(), "kcp-state.json")
 	scanner, err := NewClientInventoryScanner(src, types.State{}, ClientInventoryScannerOpts{
@@ -227,23 +303,21 @@ func TestRun_CloudWatchEmptyWindow_CleanSkipNoUpsert(t *testing.T) {
 	if err := scanner.Run(); err != nil {
 		t.Fatalf("empty CloudWatch window should be a clean skip, got error: %v", err)
 	}
-
 	if _, statErr := os.Stat(stateFilePath); !os.IsNotExist(statErr) {
 		t.Errorf("expected no state file written on empty-window skip, but one exists")
 	}
 }
 
 // Regression from a live run: MSK/CloudWatch truncate very large TRACE response
-// lines ("Sending topic metadata ...") at exactly 64 KiB. Once the source appends
-// "\n" that is 65537 bytes, which exceeded bufio.Scanner's default token limit and
-// aborted the WHOLE chunk (for CloudWatch: the whole window), losing every client.
-// An over-long line must be skipped, not poison the lines around it.
+// lines ("Sending topic metadata ...") at exactly 64 KiB. Once a "\n" is appended
+// that is 65537 bytes, which exceeded bufio.Scanner's default token limit and
+// aborted the WHOLE chunk, losing every client. An over-long line must be skipped,
+// not poison the lines around it.
 func TestRun_OverlongLineDoesNotAbortChunk(t *testing.T) {
 	prefix := "[2026-11-04 08:42:49,956] TRACE [KafkaApi-3] Sending topic metadata MetadataResponseTopic(errorCode=0, name='x'"
 	for _, size := range []int{65536, 1 << 20} { // the observed AWS cap, and well beyond it
 		overlong := prefix + strings.Repeat("a", size-len(prefix))
-		fake := &fakeCW{pages: [][]string{{overlong, realIAMProduceLine, overlong, realSCRAMFetchLine}}}
-		src := NewCloudWatchLogSource(fake, "kcp", time.Now().Add(-time.Hour), time.Now())
+		src := newTestSource(completeWith(overlong, realIAMProduceLine, overlong, realSCRAMFetchLine))
 
 		state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
 			Name:     "us-east-1",
