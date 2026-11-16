@@ -83,12 +83,6 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 		ClusterArn: &clusterArn,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Debug("compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
-			return &kafka.GetCompatibleKafkaVersionsOutput{
-				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
-			}, nil
-		}
 		return nil, fmt.Errorf("failed to get compatible versions: %v", err)
 	}
 	return versions, nil
@@ -180,10 +174,6 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResul
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Debug("Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
-				return []kafkatypes.NodeInfo{}, nil
-			}
 			return nil, fmt.Errorf("failed listing nodes: %v", err)
 		}
 		nodes = append(nodes, output.NodeInfoList...)
@@ -207,10 +197,6 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Debug("Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
-				return []string{}, nil
-			}
 			return nil, fmt.Errorf("failed listing secrets: %v", err)
 		}
 		secrets = append(secrets, output.SecretArnList...)

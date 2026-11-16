@@ -56,6 +56,8 @@ github.com/aws/aws-sdk-go-v2/service/kafka v1.46.5 h1:RQSN0dfxEPDUkDjH+zl/Tt02uq
 github.com/aws/aws-sdk-go-v2/service/kafka v1.46.5/go.mod h1:cjAeQGjIRvsHQ/GSr2TEJ717iupfC8PXXqP3nDiIIR4=
 github.com/aws/aws-sdk-go-v2/service/kafkaconnect v1.27.16 h1:p7s4S4SsL6Bbw466mNLCS6dmQ9Q+LjPeeGwtnx53q2E=
 github.com/aws/aws-sdk-go-v2/service/kafkaconnect v1.27.16/go.mod h1:kcnzHaqqDu2+e1gd5+0aG7rbPHKD7GEQWrwe03BKL24=
+github.com/aws/aws-sdk-go-v2/service/kms v1.50.5 h1:nEzwx/ZlpUZ2Y6WztsgYmfBh5Ixd3QiECawXMzvTMeo=
+github.com/aws/aws-sdk-go-v2/service/kms v1.50.5/go.mod h1:GBO/aaEi47QldDVoqw2CsM2UZQDoqDiFIMJD/ztHPs0=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1 h1:kU/eBN5+MWNo/LcbNa4hWDdN76hdcd7hocU5kvu7IsU=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1/go.mod h1:Fw9aqhJicIVee1VytBBjH+l+5ov6/PhbtIK/u3rt/ls=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.4 h1:+qOKY5eW7mwAEUWoIEtNR2qj351eOWMo+nglB+AhCQU=

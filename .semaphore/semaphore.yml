@@ -122,6 +122,18 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-osk-scan
 
+  - name: 'integration: msk emulator'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      jobs:
+        - name: 'msk emulator'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-msk-emulator
+
   - name: 'integration: kafka connect scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
