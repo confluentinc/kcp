@@ -22,6 +22,7 @@ var (
 	clusterName  string
 	startTime    string
 	endTime      string
+	useInsights  bool
 )
 
 func clientInventoryIAMAnnotation() string {
@@ -40,6 +41,17 @@ func clientInventoryIAMAnnotation() string {
 				Sid:       "BrokerLogsFromCloudWatch",
 				Actions:   []string{"logs:FilterLogEvents"},
 				Resources: []string{"arn:aws:logs:<AWS REGION>:<AWS ACCOUNT ID>:log-group:<LOG GROUP NAME>:*"},
+			},
+			{
+				Sid:       "BrokerLogsFromCloudWatchInsights",
+				Actions:   []string{"logs:StartQuery"},
+				Resources: []string{"arn:aws:logs:<AWS REGION>:<AWS ACCOUNT ID>:log-group:<LOG GROUP NAME>:*"},
+			},
+			{
+				// GetQueryResults is authorised against the query, not a log group ARN.
+				Sid:       "BrokerLogsFromCloudWatchInsightsResults",
+				Actions:   []string{"logs:GetQueryResults"},
+				Resources: []string{"*"},
 			},
 		},
 	)
@@ -98,6 +110,7 @@ Each unique client is keyed by ` + "`clientID|topic|role|auth|principal`" + ` â€
 	cloudWatchSourceFlags.StringVar(&clusterName, "cluster-name", "", "MSK cluster name to attribute discovered clients to (CloudWatch source only).")
 	cloudWatchSourceFlags.StringVar(&startTime, "start-time", "", "Window start as RFC3339 (CloudWatch source only; default: 24h before --end-time).")
 	cloudWatchSourceFlags.StringVar(&endTime, "end-time", "", "Window end as RFC3339 (CloudWatch source only; default: now).")
+	cloudWatchSourceFlags.BoolVar(&useInsights, "use-insights", false, "Let CloudWatch Logs Insights filter and de-duplicate server-side so only one line per distinct client is downloaded (CloudWatch source only; billed per GB scanned).")
 
 	clientInventoryCmd.Flags().AddFlagSet(requiredFlags)
 	clientInventoryCmd.Flags().AddFlagSet(s3SourceFlags)
@@ -145,6 +158,7 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 		clusterName:  clusterName,
 		startTime:    startTime,
 		endTime:      endTime,
+		useInsights:  useInsights,
 		stateFile:    stateFile,
 	})
 	if err != nil {
@@ -164,7 +178,11 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 		if cwErr != nil {
 			return fmt.Errorf("failed to create CloudWatch Logs client: %w", cwErr)
 		}
-		source = NewCloudWatchLogSource(cwClient, opts.LogGroupName, opts.StartTime, opts.EndTime)
+		if opts.UseInsights {
+			source = NewCloudWatchInsightsLogSource(cwClient, opts.LogGroupName, opts.StartTime, opts.EndTime)
+		} else {
+			source = NewCloudWatchLogSource(cwClient, opts.LogGroupName, opts.StartTime, opts.EndTime)
+		}
 	} else {
 		s3Client, s3Err := client.NewS3Client(opts.Region)
 		if s3Err != nil {
@@ -198,6 +216,7 @@ type rawFlags struct {
 	clusterName  string
 	startTime    string
 	endTime      string
+	useInsights  bool
 	stateFile    string
 }
 
@@ -206,6 +225,10 @@ type rawFlags struct {
 // exactly one of --s3-uri / --log-group-name is set; this function derives the
 // per-mode values and validates CloudWatch's region/cluster/time inputs.
 func parseClientInventoryFlags(in rawFlags) (*ClientInventoryScannerOpts, bool, error) {
+	if in.useInsights && in.logGroupName == "" {
+		return nil, false, fmt.Errorf("--use-insights only applies to the CloudWatch source (--log-group-name)")
+	}
+
 	if in.logGroupName != "" {
 		if in.region == "" {
 			return nil, false, fmt.Errorf("--region is required when using --log-group-name")
@@ -243,6 +266,7 @@ func parseClientInventoryFlags(in rawFlags) (*ClientInventoryScannerOpts, bool, 
 			LogGroupName: in.logGroupName,
 			StartTime:    start,
 			EndTime:      end,
+			UseInsights:  in.useInsights,
 		}
 		return opts, true, nil
 	}

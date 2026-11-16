@@ -115,9 +115,33 @@ func TestClientInventoryIAMAnnotation_CoversBothSources(t *testing.T) {
 		"logs:FilterLogEvents",
 		"BrokerLogsFromS3",
 		"BrokerLogsFromCloudWatch",
+		"BrokerLogsFromCloudWatchInsights",
+		"logs:StartQuery",
+		"logs:GetQueryResults",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("annotation missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestParse_CloudWatchMode_PassesUseInsightsThrough(t *testing.T) {
+	opts, _, err := parseClientInventoryFlags(rawFlags{logGroupName: "kcp", region: "us-east-1", clusterName: "c", stateFile: "s", useInsights: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !opts.UseInsights {
+		t.Error("UseInsights should be true when --use-insights is set")
+	}
+	opts, _, _ = parseClientInventoryFlags(rawFlags{logGroupName: "kcp", region: "us-east-1", clusterName: "c", stateFile: "s"})
+	if opts.UseInsights {
+		t.Error("UseInsights should default to false")
+	}
+}
+
+func TestParse_UseInsightsWithoutLogGroupIsRejected(t *testing.T) {
+	_, _, err := parseClientInventoryFlags(rawFlags{s3Uri: testS3Uri, stateFile: "s", useInsights: true})
+	if err == nil || !strings.Contains(err.Error(), "--use-insights") {
+		t.Fatalf("want an error naming --use-insights, got %v", err)
 	}
 }

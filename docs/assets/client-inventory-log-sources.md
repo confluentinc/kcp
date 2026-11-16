@@ -81,6 +81,40 @@ Required IAM (CloudWatch source):
 }
 ```
 
+### Faster scans with Logs Insights (`--use-insights`)
+
+By default KCP downloads every event in the window (`FilterLogEvents`) and de-duplicates locally. With `--use-insights`, CloudWatch Logs Insights filters and de-duplicates server-side and returns one representative TRACE line per distinct client; KCP's own parser then runs on those lines unchanged.
+
+```bash
+kcp scan client-inventory \
+    --log-group-name /aws/msk/my-cluster/broker-logs \
+    --region us-east-1 \
+    --cluster-name msk-cluster \
+    --use-insights \
+    --state-file kcp-state.json
+```
+
+- **Same result, far less data.** On a 10-minute window of the playground cluster both paths found the identical 22 clients; Insights returned 22 lines in about 3 s, against 62,771 lines in about 74 s.
+- **Cost model differs.** Insights is billed per GB of log data scanned by the query; `FilterLogEvents` is not billed that way. Prefer a narrow window for large log groups.
+- **Limit.** Insights returns at most 10,000 rows per query. If a window has more distinct clients than that, the scan fails and asks you to narrow `--start-time`/`--end-time`, rather than reporting a partial inventory.
+
+Additional IAM for `--use-insights`:
+
+```json
+[
+  {
+    "Effect": "Allow",
+    "Action": ["logs:StartQuery"],
+    "Resource": "arn:aws:logs:<AWS REGION>:<AWS ACCOUNT ID>:log-group:<LOG GROUP NAME>:*"
+  },
+  {
+    "Effect": "Allow",
+    "Action": ["logs:GetQueryResults"],
+    "Resource": "*"
+  }
+]
+```
+
 ## Re-runs
 
 Each unique client is keyed by `clientID|topic|role|auth|principal`, so re-running against more logs (from either source) only appends clients that don't already match an existing key. You can safely run the S3 source for a historical sweep and the CloudWatch source for a recent top-up against the same state file.
