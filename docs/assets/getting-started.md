@@ -174,14 +174,16 @@ Use `--skip-topics`, `--skip-acls` or `--skip-consumer-groups` to leave any of t
 
 === "MSK"
 
-    [`kcp scan client-inventory`](command-reference/scan/client-inventory.md) reads the broker logs in S3 to work out which clients (producers and consumers) are using each cluster. This tells you what has to move at switchover.
+    [`kcp scan client-inventory`](command-reference/scan/client-inventory.md) reads the broker logs in Amazon S3 or Amazon CloudWatch Logs to work out which clients (producers and consumers) are using each cluster. This tells you what has to move at switchover.
 
     It needs, on the source cluster:
 
     - Trace logging on every broker: `kafka.server.KafkaApis=TRACE`.
-    - Broker logs delivered to S3.
+    - Broker logs delivered to S3 or to CloudWatch Logs.
 
-    Point `--s3-uri` at the folder of logs for the period you want to analyse (logs are delivered into one folder per hour):
+    Both are set up on the cluster before the scan. For the steps to deliver the logs, turn TRACE on and off, and choose a source, see [Discover Clients From MSK Broker Logs](client-inventory-log-sources.md#set-up-the-cluster).
+
+    To scan from S3, point `--s3-uri` at the folder of logs for the period you want to analyze. MSK delivers logs into one folder per hour, and a URI that ends at the cluster folder scans every hour under it:
 
     ```shell
     kcp scan client-inventory \
@@ -189,11 +191,25 @@ Use `--skip-topics`, `--skip-acls` or `--skip-consumer-groups` to leave any of t
         --s3-uri s3://<bucket>/AWSLogs/<account-id>/KafkaBrokerLogs/<region>/<cluster-name>-<cluster-id>/<yyyy-mm-dd-hh>/
     ```
 
+    To scan from CloudWatch Logs, give the log group, the Region, and the cluster name. The cluster must already be in the state file from the earlier steps. Without `--start-time` and `--end-time`, kcp scans the last 24 hours, so use a narrower window on a busy cluster:
+
+    ```shell
+    kcp scan client-inventory \
+        --state-file kcp-state.json \
+        --log-group-name <log-group-name> \
+        --region <region> \
+        --cluster-name <cluster-name> \
+        --start-time <yyyy-mm-ddThh:mm:ssZ> \
+        --end-time <yyyy-mm-ddThh:mm:ssZ>
+    ```
+
+    CloudWatch Logs can deliver only a sample of TRACE logs, so use S3 when you need a complete inventory. For the trade-offs and the required permissions, see [Scan from CloudWatch Logs](client-inventory-log-sources.md#scan-from-cloudwatch-logs).
+
     Each client is recorded once, keyed by client ID, topic, role, authentication and principal, so you can run this again on another time window and only new clients are added.
 
 === "Apache Kafka"
 
-    Not available for Apache Kafka: the scan reads MSK broker logs from S3.
+    Not available for Apache Kafka: the scan reads MSK broker logs from S3 or CloudWatch Logs.
 
 ### 3.3 Optional: schema registry
 

@@ -66,11 +66,11 @@ Prerequisites:
 - The source MSK cluster must be configured with trace logging (kafka.server.KafkaApis=TRACE) on each broker.
 - Broker logs must be delivered to the chosen destination (S3 or CloudWatch Logs).
 
-Note on CloudWatch: AWS recommends S3 (or Firehose) for DEBUG/TRACE logging and cautions that CloudWatch "may continuously deliver a sample of logs." Client discovery relies on TRACE, so over CloudWatch completeness is best-effort — prefer S3 for complete or historical discovery, and use CloudWatch for quick, recent windows (default: the last 24h; override with --start-time/--end-time in RFC3339).
+Note on CloudWatch: AWS recommends S3 (or Firehose) for DEBUG and TRACE logging and cautions that CloudWatch "may continuously deliver a sample of logs." Client discovery relies on TRACE, so discovery through CloudWatch is best effort. Use S3 for complete or historical discovery, and use CloudWatch for quick, recent windows. The default window is the last 24 hours. Override it with --start-time and --end-time in RFC3339.
 
-The CloudWatch source runs a CloudWatch Logs Insights query, which filters and de-duplicates server-side so only one line per distinct client is downloaded. It needs logs:StartQuery and logs:GetQueryResults, is billed per GB of log data scanned (so prefer a narrow window), and returns at most 10,000 distinct rows per query — if a window exceeds that, the scan fails and asks you to narrow it. If you cannot grant query permissions, use the S3 source.
+The CloudWatch source runs a CloudWatch Logs Insights query that filters and removes duplicates on the server, so kcp downloads only one line for each distinct client. The query needs the logs:StartQuery and logs:GetQueryResults permissions and is billed per GB of log data scanned, so use a narrow window. A query returns at most 10,000 distinct rows. If a window exceeds that, the scan fails and asks you to narrow it. If you can't grant the query permissions, use the S3 source.
 
-Each unique client is keyed by ` + "`clientID|topic|role|auth|principal`" + ` — e.g. ` + "`stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::...`" + ` — so re-runs only append clients that don't already match an existing key.`,
+kcp keys each client by ` + "`clientID|topic|role|auth|principal`" + `, for example ` + "`stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::...`" + `. A later run appends only the clients that don't already match an existing key.`,
 		Example: `  # From S3
   kcp scan client-inventory \
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
@@ -97,7 +97,7 @@ Each unique client is keyed by ` + "`clientID|topic|role|auth|principal`" + ` �
 
 	s3SourceFlags := pflag.NewFlagSet("s3-source", pflag.ExitOnError)
 	s3SourceFlags.SortFlags = false
-	s3SourceFlags.StringVar(&s3Uri, "s3-uri", "", "Read broker logs from this S3 URI (e.g., s3://my-bucket/AWSLogs/<acct>/KafkaBrokerLogs/<region>/<cluster>/<date>/). Region and cluster name are derived from the URI.")
+	s3SourceFlags.StringVar(&s3Uri, "s3-uri", "", "Read broker logs from this S3 URI (for example, s3://my-bucket/AWSLogs/<acct>/KafkaBrokerLogs/<region>/<cluster>/<date>/). Region and cluster name are derived from the URI.")
 
 	cloudWatchSourceFlags := pflag.NewFlagSet("cloudwatch-source", pflag.ExitOnError)
 	cloudWatchSourceFlags.SortFlags = false
