@@ -107,7 +107,7 @@ The same mechanism exists for non-standard JMX MBean names through `jolokia.mbea
 
 ## What an override does not change
 
-`prometheus.metric_names` and `jolokia.mbean_overrides` change which identifier kcp queries, either a Prometheus series name or a JMX object name. They don't change how kcp reads the result. The series or MBean you point at must match the shape of the default it replaces. If it doesn't, kcp records a wrong value with no error and, unlike a missing metric, no empty-result warning:
+`prometheus.metric_names` and `jolokia.mbean_overrides` change which identifier kcp queries, not how it reads the result. The series or MBean you point at must match the shape of the default it replaces. If it doesn't, kcp records a wrong value with no error and no empty-result warning:
 
 | Metrics                                                           | Target must be |
 | ----------------------------------------------------------------- | -------------- |
@@ -116,11 +116,11 @@ The same mechanism exists for non-standard JMX MBean names through `jolokia.mbea
 | `TotalLocalStorageUsage`                                          | Raw bytes. kcp divides by 1,024³ to report GiB. |
 
 !!! warning
-    The sharpest trap is a counter versus a gauge. kcp treats the three `*PerSec` metrics as counters and derives the rate itself, with `rate()` on Prometheus and `Δcount / elapsed` on Jolokia. If you point one at a pre-averaged rate gauge, such as an exporter mapping of `OneMinuteRate` or a native exporter that already publishes a per-second value, kcp takes a rate of a rate and the result is meaningless. Because the query still returns data, no warning fires. A unit mismatch, such as bits instead of bytes, or GiB instead of bytes for storage, fails the same silent way: the number is wrong.
+    The sharpest trap is a counter versus a gauge. kcp treats the three `*PerSec` metrics as counters and derives the rate itself. If you point one at a pre-averaged rate gauge, such as `OneMinuteRate`, kcp takes a rate of a rate and the result is meaningless. A unit mismatch, such as bits instead of bytes, fails the same silent way.
 
-An override also doesn't change the Jolokia attribute, which is fixed: `Count` for counters and `Value` for gauges. The override changes the object name, not the attribute, so the MBean you name must expose its value under the same attribute.
+On Jolokia, the attribute is fixed: `Count` for counters and `Value` for gauges. The MBean you name must expose its value under that attribute.
 
-If your setup differs in unit, shape, read attribute, or per-broker aggregation, a name override alone isn't enough. This is common when the relabeling that renamed a metric also changed its `type:` or dropped a label. Fix it at the exporter, or add a Prometheus recording rule that republishes the series in the shape this section describes.
+If your setup differs in unit, shape, attribute, or per-broker aggregation, fix it at the exporter, or add a Prometheus recording rule that republishes the series in the shape this section describes.
 
 ## Filter Prometheus queries by cluster
 
