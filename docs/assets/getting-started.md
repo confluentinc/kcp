@@ -181,7 +181,7 @@ Use `--skip-topics`, `--skip-acls` or `--skip-consumer-groups` to leave any of t
     - Trace logging on every broker: `kafka.server.KafkaApis=TRACE`.
     - Broker logs delivered to S3 or to CloudWatch Logs.
 
-    Both are set up on the cluster before the scan. For the steps to deliver the logs, turn TRACE on and off, and choose a source, see [Discover Clients on an MSK Cluster](client-inventory.md).
+    Both are set up on the cluster before the scan. For the steps to deliver the logs, turn TRACE on and off, and choose a source, see [Discover Clients on an MSK Cluster](technical-guides/client-inventory/discover-clients.md).
 
     To scan from S3, point `--s3-uri` at the folder of logs for the period you want to analyze. MSK delivers logs into one folder per hour, and a URI that ends at the cluster folder scans every hour under it:
 
@@ -203,7 +203,7 @@ Use `--skip-topics`, `--skip-acls` or `--skip-consumer-groups` to leave any of t
         --end-time <yyyy-mm-ddThh:mm:ssZ>
     ```
 
-    CloudWatch Logs can deliver only a sample of TRACE logs, so use S3 when you need a complete inventory. For the trade-offs and the required permissions, see [Scan MSK Broker Logs for Clients](client-inventory-log-sources.md#scan-from-cloudwatch-logs).
+    CloudWatch Logs can deliver only a sample of TRACE logs, so use S3 when you need a complete inventory. For the trade-offs and the required permissions, see [Scan MSK Broker Logs for Clients](technical-guides/client-inventory/scan-broker-logs.md#scan-from-cloudwatch-logs).
 
     Each client is recorded once, keyed by client ID, topic, role, authentication and principal, so you can run this again on another time window and only new clients are added.
 

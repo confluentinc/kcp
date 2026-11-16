@@ -4,7 +4,7 @@
 
 Both sources feed the same parser, so the same log lines produce the same clients. Only the place the logs are read from differs. Choose exactly one source for each run.
 
-The scan sees only what the brokers logged. To deliver broker logs and turn on TRACE logging first, follow [Discover Clients on an MSK Cluster](client-inventory.md).
+The scan sees only what the brokers logged. To deliver broker logs and turn on TRACE logging first, follow [Discover Clients on an MSK Cluster](discover-clients.md).
 
 ## Choose a source
 
@@ -140,8 +140,8 @@ kcp keys each client by `clientID|topic|role|auth|principal`, so a later run aga
 
 ## Related content
 
-- [Discover Clients on an MSK Cluster](client-inventory.md)
-- [Getting Started](getting-started.md)
-- [`kcp scan client-inventory` command reference](command-reference/scan/client-inventory.md)
-- [Source Compatibility](source-compatibility.md)
+- [Discover Clients on an MSK Cluster](discover-clients.md)
+- [Getting Started](../../getting-started.md)
+- [`kcp scan client-inventory` command reference](../../command-reference/scan/client-inventory.md)
+- [Source Compatibility](../../source-compatibility.md)
 - AWS Documentation: [Monitor Amazon MSK broker logs](https://docs.aws.amazon.com/msk/latest/developerguide/msk-logging.html)

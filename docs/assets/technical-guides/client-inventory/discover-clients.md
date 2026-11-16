@@ -44,11 +44,11 @@ kcp sees only the clients that made a request while TRACE was on and logs were b
 | Create the destination | `s3:CreateBucket` for S3, or `logs:CreateLogGroup` and `logs:PutRetentionPolicy` for CloudWatch Logs. |
 | Turn on log delivery | The permissions in the AWS managed policy `AmazonMSKFullAccess`. For an S3 destination, also `s3:PutBucketPolicy`. |
 | Turn TRACE on and off | Permission to alter broker configuration on the cluster. |
-| Run the scan | The S3 or CloudWatch policy in [Scan MSK Broker Logs for Clients](client-inventory-log-sources.md). |
+| Run the scan | The S3 or CloudWatch policy in [Scan MSK Broker Logs for Clients](scan-broker-logs.md). |
 
 ## 1. Create the log destination
 
-MSK doesn't create the destination for you, so it must exist before you enable delivery. Choose S3, CloudWatch Logs, or both. To decide, see [Choose a source](client-inventory-log-sources.md#choose-a-source). In short, S3 gives a complete inventory and suits historical runs, and CloudWatch Logs suits quick checks of recent activity.
+MSK doesn't create the destination for you, so it must exist before you enable delivery. Choose S3, CloudWatch Logs, or both. To decide, see [Choose a source](scan-broker-logs.md#choose-a-source). In short, S3 gives a complete inventory and suits historical runs, and CloudWatch Logs suits quick checks of recent activity.
 
 To create an S3 bucket, run the following command. For a Region other than `us-east-1`, add `--create-bucket-configuration LocationConstraint=<region>`.
 
@@ -221,7 +221,7 @@ kcp scan client-inventory \
     --state-file kcp-state.json
 ```
 
-For the time-window rules, the IAM policies, and the limits of each source, see [Scan MSK Broker Logs for Clients](client-inventory-log-sources.md).
+For the time-window rules, the IAM policies, and the limits of each source, see [Scan MSK Broker Logs for Clients](scan-broker-logs.md).
 
 ## 6. Review the results
 
@@ -246,7 +246,7 @@ To browse the same data in a web interface, start the kcp UI and open the **Clie
 kcp ui --state-file kcp-state.json
 ```
 
-If the list is empty or shorter than you expect, see [Troubleshoot a scan](client-inventory-log-sources.md#troubleshoot-a-scan).
+If the list is empty or shorter than you expect, see [Troubleshoot a scan](scan-broker-logs.md#troubleshoot-a-scan).
 
 ## 7. Turn TRACE off
 
@@ -262,12 +262,12 @@ Logs that MSK already delivered stay available to scan. In S3 they stay until yo
 
 ## Use the results
 
-The discovered IAM principals can drive the creation of Confluent Cloud ACLs. When you pass `--state-file` and `--cluster-id` to `kcp iac acls iam generate`, kcp reads the IAM principals of the discovered clients and converts their permissions into Confluent Cloud ACLs, so you don't have to list roles by hand. For the command and its options, see [kcp iac acls iam generate](command-reference/iac/acls/iam/generate.md).
+The discovered IAM principals can drive the creation of Confluent Cloud ACLs. When you pass `--state-file` and `--cluster-id` to `kcp iac acls iam generate`, kcp reads the IAM principals of the discovered clients and converts their permissions into Confluent Cloud ACLs, so you don't have to list roles by hand. For the command and its options, see [kcp iac acls iam generate](../../command-reference/iac/acls/iam/generate.md).
 
 ## Related content
 
-- [Scan MSK Broker Logs for Clients](client-inventory-log-sources.md)
-- [`kcp scan client-inventory` command reference](command-reference/scan/client-inventory.md)
-- [Getting Started](getting-started.md)
-- [Source Compatibility](source-compatibility.md)
+- [Scan MSK Broker Logs for Clients](scan-broker-logs.md)
+- [`kcp scan client-inventory` command reference](../../command-reference/scan/client-inventory.md)
+- [Getting Started](../../getting-started.md)
+- [Source Compatibility](../../source-compatibility.md)
 - AWS Documentation: [Amazon MSK logging](https://docs.aws.amazon.com/msk/latest/developerguide/msk-logging.html)
