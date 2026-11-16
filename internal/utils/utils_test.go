@@ -102,6 +102,11 @@ func TestExtractRegionFromS3Uri(t *testing.T) {
 			expectedOutput: "eu-west-1",
 		},
 		{
+			name:           "valid s3 uri with a bucket prefix before AWSLogs",
+			input:          "s3://kcp-playground-public-msk-logs/broker-logs/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/kcp-playground-public-a54f2f41-e8ce-4546-acc5-45f08db7110d-2/2026-11-04-08/",
+			expectedOutput: "us-east-1",
+		},
+		{
 			name:          "invalid s3 uri",
 			input:         "s3://kcp-demo-logs/AWSLogs/",
 			expectedError: fmt.Errorf("invalid S3 URI format: expected at least 5 path segments"),
@@ -197,6 +202,16 @@ func TestExtractClusterNameFromS3Uri(t *testing.T) {
 		{
 			name:           "valid s3 uri - extracts mytestcluster",
 			input:          "s3://kcp-demo-test-logs/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/mytestcluster-a5adc230-1179-4e38-83bc-bf96b62377b3-2/2025-12-01-10/",
+			expectedOutput: "mytestcluster",
+		},
+		{
+			name:           "valid s3 uri with a bucket prefix before AWSLogs",
+			input:          "s3://kcp-playground-public-msk-logs/broker-logs/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/kcp-playground-public-a54f2f41-e8ce-4546-acc5-45f08db7110d-2/2026-11-04-08/",
+			expectedOutput: "kcp-playground-public",
+		},
+		{
+			name:           "valid s3 uri with a multi-segment bucket prefix",
+			input:          "s3://logs/team/msk/AWSLogs/635910096382/KafkaBrokerLogs/us-east-1/mytestcluster-a5adc230-1179-4e38-83bc-bf96b62377b3-2/2025-12-01-10/",
 			expectedOutput: "mytestcluster",
 		},
 		{

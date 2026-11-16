@@ -12,6 +12,9 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// maxLogLineBytes bounds a single broker log line; CloudWatch caps events at 1 MiB.
+const maxLogLineBytes = 16 * 1024 * 1024
+
 var (
 	// lines that match this pattern will be parsed by kafka trace line parser
 	KafkaApiTracePattern = regexp.MustCompile(`^\[.*\] TRACE \[KafkaApi-\d+\].*\(kafka\.server\.KafkaApis\)$`)
@@ -157,6 +160,9 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, chunk LogC
 
 	var requestsMetadata []RequestMetadata
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	// MSK truncates very large TRACE response lines at exactly 64 KiB, which with the
+	// trailing newline overruns bufio's default token limit and would abort the whole chunk.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
 	lineNumber := 0
 
 	for scanner.Scan() {
