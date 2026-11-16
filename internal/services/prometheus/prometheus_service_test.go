@@ -374,6 +374,41 @@ func TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
 	assert.False(t, warnedBytesOut, "non-overridden empty metric should not be logged at WARN")
 }
 
+func TestPrometheusService_CollectMetrics_GlobalPartitionCountMissingWarns(t *testing.T) {
+	// GlobalPartitionCount is controller-only, so a missing series is actionable
+	// even without an override. Other empty default queries stay at DEBUG.
+	mockData := map[string][]float64{
+		"partitioncount": {50.0, 50.0},
+	}
+	server := newMockPrometheusServer(t, mockData)
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	svc := NewPrometheusService(client.NewPrometheusClient(server.URL), BrokerQueryDefinitions(nil), nil)
+
+	_, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+
+	var warnedGlobal, warnedBytesOut bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if !strings.Contains(line, "level=WARN") {
+			continue
+		}
+		if strings.Contains(line, "GlobalPartitionCount") {
+			warnedGlobal = true
+		}
+		if strings.Contains(line, "BytesOutPerSec") {
+			warnedBytesOut = true
+		}
+	}
+	assert.True(t, warnedGlobal, "missing GlobalPartitionCount should be logged at WARN")
+	assert.False(t, warnedBytesOut, "other non-overridden empty metrics should not be logged at WARN")
+}
+
 // TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud is the
 // Connect analog of TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud:
 // it proves the shared overridden-but-empty WARN path also fires for Connect

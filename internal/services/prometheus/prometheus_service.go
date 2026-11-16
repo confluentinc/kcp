@@ -242,9 +242,14 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 			dataPoints += len(r.Values)
 		}
 		if dataPoints == 0 {
-			if mq.Overridden {
+			switch {
+			case mq.Overridden:
 				slog.Warn("Overridden Prometheus metric returned no data points — check the configured metric-name override", "label", mq.Label, "query", query)
-			} else {
+			case mq.Label == "GlobalPartitionCount":
+				// Exists only on controller nodes, so an empty result means the
+				// exporter isn't scraping them; matches the Jolokia collector.
+				slog.Warn("Controller metric not available from Prometheus — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.", "label", mq.Label, "query", query)
+			default:
 				slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
 			}
 		}
