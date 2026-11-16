@@ -148,7 +148,7 @@ Never use a wildcard identity or issuer pattern, such as `.*`. A wildcard accept
 ## Related content
 
 - [Get started with kcp](getting-started.md)
-- [Migrate to Confluent Cloud with kcp](README.md)
+- [Discover and Migrate Kafka Clusters With kcp](README.md)
 - [Apache Kafka credentials](apache-kafka-configuration/credentials.md)
 - [`kcp ui` command reference](command-reference/ui.md)
 - Sigstore: [Cosign documentation](https://docs.sigstore.dev/)

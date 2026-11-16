@@ -274,7 +274,7 @@ The UI runs locally at `http://localhost:5556`. For its options, see [`kcp ui`](
 
 ## Related content
 
-- [Migrate to Confluent Cloud with kcp](README.md)
+- [Discover and Migrate Kafka Clusters With kcp](README.md)
 - [Source compatibility for kcp commands](source-compatibility.md)
 - [Run kcp in Docker](running-kcp-in-docker.md)
 - [Apache Kafka credentials](apache-kafka-configuration/credentials.md)

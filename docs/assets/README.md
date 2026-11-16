@@ -1,6 +1,6 @@
-# Migrate to Confluent Cloud With kcp
+# Discover and Migrate Kafka Clusters With kcp
 
-kcp is a command-line tool that plans and runs migrations from Amazon MSK and Apache Kafka® to Confluent Cloud. This page covers how to install kcp, how it authenticates to AWS, the migration workflow, and the infrastructure decisions to make before you start.
+kcp is a command-line tool that discovers your Apache Kafka®-compatible clusters, such as Amazon MSK and Confluent Platform, and plans and runs migrations from them to Confluent Cloud or Confluent Platform. This page covers how to install kcp, how it authenticates to AWS, the migration workflow, and the infrastructure decisions to make before you start.
 
 ## Source types
 
