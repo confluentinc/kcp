@@ -5,6 +5,7 @@ nav:
   - Getting Started: getting-started.md
   - Running in Docker: running-kcp-in-docker.md
 - Source Compatibility: source-compatibility.md
+- Client Inventory Log Sources: client-inventory-log-sources.md
 - command-reference
 - apache-kafka-configuration
 - Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
