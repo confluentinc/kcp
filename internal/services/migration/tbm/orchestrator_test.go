@@ -20,6 +20,12 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
+// setGatewayService swaps the gateway service the actions drive, as the
+// Transitioner holds it privately.
+func setGatewayService(a *TBMActions, svc gateway.Service) {
+	a.gw = gateway.NewTransitioner(svc, func() gateway.Reporter { return a.reporter })
+}
+
 func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationConfig) {
 	t.Helper()
 
@@ -70,10 +76,13 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	// Force the fence step to block on ctx: a real gateway wait that never
 	// resolves on its own, cancellable only by ctx, is what proves the walk
 	// stops mid-step rather than after the whole Execute call completes.
-	orchestrator.actions.gatewayService.(*mockGatewayService).waitForGatewayAcceptedFn = func(ctx context.Context, _, _ string, _, _ time.Duration) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	setGatewayService(orchestrator.actions, &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		waitForGatewayAcceptedFn: func(ctx context.Context, _, _ string, _, _ time.Duration) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -1100,7 +1109,7 @@ func failedAfterFenceTBM(t *testing.T, failAt string) (int, string, string, erro
 	t.Helper()
 	orchestrator, _ := newTestOrchestrator(t)
 	var patches int
-	orchestrator.actions.gatewayService = &mockGatewayService{
+	setGatewayService(orchestrator.actions, &mockGatewayService{
 		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			patches++
 			if failAt == EventSwitch && patches == 2 { // the fence is the first patch, the switch the second
@@ -1108,7 +1117,7 @@ func failedAfterFenceTBM(t *testing.T, failAt string) (int, string, string, erro
 			}
 			return "", nil
 		},
-	}
+	})
 	if failAt == EventPromote {
 		orchestrator.actions.clusterLinkService = &mockClusterLinkService{
 			promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -1187,7 +1196,7 @@ func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mock
 	t.Helper()
 	orch, _ := newTestOrchestrator(t)
 	gw := &mockGatewayService{}
-	orch.actions.gatewayService = gw
+	setGatewayService(orch.actions, gw)
 	out, errOut := &strings.Builder{}, &strings.Builder{}
 	orch.reporter = &reporter{out: out, err: errOut}
 	res := realisticReconcileResult()

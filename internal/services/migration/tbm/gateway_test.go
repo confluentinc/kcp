@@ -665,7 +665,7 @@ func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *test
 	config := testTBMConfig()
 	config.GatewayConfigPort = 9999
 
-	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
+	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
 	assert.Equal(t, 9999, sawPort)
 }
 
@@ -685,9 +685,8 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 	config := testTBMConfig()
 	config.GatewayConfigPort = 0
 
-	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
-	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
-	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
+	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort, "an unset port reaches the capability probe as the default")
 }
 
 // TestTBMActions_Fence_UnconfirmedFenceIsMarked: once the fence patch has
