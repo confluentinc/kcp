@@ -18,10 +18,10 @@ import (
 // the generation baseline feeds.
 func rolloutVerifiedGateway() *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
 	}
@@ -34,17 +34,17 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		gw := rolloutVerifiedGateway()
 
 		var calls []string
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			calls = append(calls, "read-generation")
 			return 11, nil
 		}
-		gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		gw.PatchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			calls = append(calls, "apply")
 			return configID, nil
 		}
 
 		var gotBaseline int64 = -1
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			gotBaseline = baseline
 			return nil
 		}
@@ -65,16 +65,16 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// before anything is written. Nothing was written, so there is no
 		// rollback and the error is not ErrFenceUnconfirmed.
 		gw := rolloutVerifiedGateway()
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 0, fmt.Errorf("deployments.apps \"gw-1\" is forbidden")
 		}
 		var patched bool
-		gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		gw.PatchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			patched = true
 			return configID, nil
 		}
 		var waited bool
-		gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 			waited = true
 			return nil
 		}
@@ -99,14 +99,14 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 
 		generations := []int64{20, 21}
 		var reads int
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			gen := generations[reads]
 			reads++
 			return gen, nil
 		}
 
 		var baselines []int64
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			baselines = append(baselines, baseline)
 			return nil
 		}
@@ -125,15 +125,15 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// takes the pod-replacement path — which needs the same baseline to know a
 		// roll is coming at all.
 		gw := rolloutVerifiedGateway()
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 30, nil
 		}
-		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		gw.GetGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{"pod-a": {}}, nil
 		}
 
 		var gotBaseline int64 = -1
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			gotBaseline = baseline
 			return nil
 		}
@@ -152,10 +152,10 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// not stop the migration.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 0, fmt.Errorf("no permission to read deployments")
 		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("must not fall back to the rollout wait when a configId was applied")
 			return nil
 		}
@@ -175,12 +175,12 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// latter is what would cut a legitimate rollout short after fencing.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 17, nil
 		}
 
 		var got gateway.ConfigWaitOptions
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			got = opts
 			return nil
 		}
@@ -203,12 +203,12 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// unfence would report traffic restored off a Deployment that was already
 		// healthy at the fenced generation.
 		gw := rolloutVerifiedGateway()
-		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 42, nil
 		}
 
 		var baselines []int64
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, baseline int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			baselines = append(baselines, baseline)
 			return nil
 		}

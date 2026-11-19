@@ -25,10 +25,10 @@ import (
 
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
-	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
-	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	GetGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
+	PatchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
+	WaitForGatewayPodsFn     func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	WaitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
@@ -63,10 +63,10 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	// Default mock implementations. The gateway CR must be a real routed gateway
 	// CR: FenceGateway derives its fence RoutePatch from it (deriveFenceRoutePatch
 	// splices FenceYAML onto Route), so a scalar placeholder would fail to parse.
-	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
+	GetGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil
 	}
-	patchGatewayRouteFn := func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+	PatchGatewayRouteFn := func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 		return configID, nil
 	}
 
@@ -93,24 +93,24 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	// Default nil → mock returns success
-	var waitForGatewayPodsFn func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	var WaitForGatewayPodsFn func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	// Default nil → mock treats the spec as accepted by the operator
-	var waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	var WaitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 
 	// Apply overrides if provided
 	if len(overrides) > 0 {
 		o := overrides[0]
-		if o.getGatewayYAMLFn != nil {
-			getGatewayYAMLFn = o.getGatewayYAMLFn
+		if o.GetGatewayYAMLFn != nil {
+			GetGatewayYAMLFn = o.GetGatewayYAMLFn
 		}
-		if o.patchGatewayRouteFn != nil {
-			patchGatewayRouteFn = o.patchGatewayRouteFn
+		if o.PatchGatewayRouteFn != nil {
+			PatchGatewayRouteFn = o.PatchGatewayRouteFn
 		}
-		if o.waitForGatewayPodsFn != nil {
-			waitForGatewayPodsFn = o.waitForGatewayPodsFn
+		if o.WaitForGatewayPodsFn != nil {
+			WaitForGatewayPodsFn = o.WaitForGatewayPodsFn
 		}
-		if o.waitForGatewayAcceptedFn != nil {
-			waitForGatewayAcceptedFn = o.waitForGatewayAcceptedFn
+		if o.WaitForGatewayAcceptedFn != nil {
+			WaitForGatewayAcceptedFn = o.WaitForGatewayAcceptedFn
 		}
 		if o.promoteMirrorTopicsFn != nil {
 			promoteMirrorTopicsFn = o.promoteMirrorTopicsFn
@@ -118,17 +118,17 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	gw := &mockGatewayService{
-		getGatewayYAMLFn: getGatewayYAMLFn,
+		GetGatewayYAMLFn: GetGatewayYAMLFn,
 		// checkRedundantAuthStagedFn left unset: the mock's default passes validation.
-		patchGatewayRouteFn: patchGatewayRouteFn,
-		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
+		PatchGatewayRouteFn: PatchGatewayRouteFn,
+		GetGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{
 				"uid-1": {},
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn:     waitForGatewayPodsFn,
-		waitForGatewayAcceptedFn: waitForGatewayAcceptedFn,
+		WaitForGatewayPodsFn:     WaitForGatewayPodsFn,
+		WaitForGatewayAcceptedFn: WaitForGatewayAcceptedFn,
 	}
 
 	cl := &mockClusterLinkService{
@@ -255,7 +255,7 @@ func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
@@ -279,7 +279,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	var appliedPatches []gateway.RoutePatch
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			// Record every applied patch so the unfence (a whole-route replace,
 			// distinct from the fence/switchover field-set patches) can be
 			// asserted below.
@@ -350,7 +350,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 	var applyCallCount int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCallCount, 1)
 			if n == 1 {
 				// First apply is the fence — succeed
@@ -404,7 +404,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		// Every rollout transition waits via WaitForGatewayPods: the first call
 		// is the fence (succeeds), the second the unfence — fail that one to
 		// exercise the "unfence never converges" path.
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			if atomic.AddInt64(&waitCallCount, 1) == 1 {
 				return nil
 			}
@@ -505,7 +505,7 @@ func TestOrchestrator_Execute_RestoreOffsetSync_FiresAfterSwitch(t *testing.T) {
 	}
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			record("apply")
 			return "", nil
 		},
@@ -544,7 +544,7 @@ func TestOrchestrator_Execute_RestoreFails_StopsAtSwitched(t *testing.T) {
 	var applyCalls int64
 	var failRestore int32 = 1
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return "", nil
 		},
@@ -602,7 +602,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	}
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			record("apply")
 			return "", nil
 		},
@@ -679,11 +679,11 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	var applyCalls, waitCalls, alterCalls int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return "", nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
 			return nil
 		},
@@ -730,13 +730,13 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 	var readyCalls int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			appliedPatches = append(appliedPatches, rp)
 			mu.Unlock()
 			return "", nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			// First call is the fence's own verification — fail it. The second is
 			// the restore's, which must succeed for the compensation to complete.
 			if atomic.AddInt64(&readyCalls, 1) == 1 {
@@ -776,13 +776,13 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			if atomic.AddInt64(&applyCalls, 1) == 2 {
 				return "", fmt.Errorf("k8s API unavailable")
 			}
 			return "", nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -807,7 +807,7 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return "", fmt.Errorf("admission webhook denied the request")
 		},
@@ -840,13 +840,13 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 	var mu sync.Mutex
 	var acceptCalls int64
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			appliedPatches = append(appliedPatches, rp)
 			mu.Unlock()
 			return "", nil
 		},
-		waitForGatewayAcceptedFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+		WaitForGatewayAcceptedFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
 			// Reject the fence's acceptance wait; let the restore's own wait pass.
 			if atomic.AddInt64(&acceptCalls, 1) == 1 {
 				return rejection
@@ -891,7 +891,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 2 {
 				return "", fmt.Errorf("k8s API unavailable") // the unfence attempt
@@ -949,7 +949,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(c context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(c context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 1 {
 				return "", nil // fence
@@ -997,11 +997,11 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	}
 
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			record("apply")
 			return "", nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			record("wait-ready")
 			return nil
 		},
@@ -1075,7 +1075,7 @@ func TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) {
 	var mu sync.Mutex
 	var patches []gateway.RoutePatch
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			patches = append(patches, rp)
@@ -1116,7 +1116,7 @@ func TestOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) {
 func TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
 	var patches int64
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&patches, 1)
 			return "", nil
 		},
@@ -1153,11 +1153,11 @@ func TestOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
 func TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
 	var patches int64
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&patches, 1)
 			return "", nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -1181,7 +1181,7 @@ func TestOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
 	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
 	var patches int64
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			atomic.AddInt64(&patches, 1)
 			return "", nil
 		},
@@ -1278,7 +1278,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 				// unfence patch whole-route-replaces it. Failing only the latter
 				// (the non-fence patch) cancels abort_fence, so the FSM honestly
 				// rests at offset_sync_paused.
-				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+				PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 					if rp.Field != "fence" {
 						return "", fmt.Errorf("k8s API unavailable")
 					}
@@ -1339,7 +1339,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 				// fence patch sets the fence field; because switch failures do not
 				// roll back, no unfence (also a whole-route replace) runs here, so
 				// Field == "" uniquely identifies the switch patch.
-				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+				PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 					if rp.Field == "" {
 						return "", fmt.Errorf("switchover apply failed")
 					}
@@ -1524,7 +1524,7 @@ func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testin
 	var mu sync.Mutex
 	var appliedPatches []gateway.RoutePatch
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			appliedPatches = append(appliedPatches, rp)
 			mu.Unlock()
@@ -1583,7 +1583,7 @@ func TestOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) {
 	var mu sync.Mutex
 	var appliedPatches []gateway.RoutePatch
 	overrides := orchestratorOverrides{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			appliedPatches = append(appliedPatches, rp)
 			mu.Unlock()
@@ -1756,20 +1756,20 @@ func newAAOKillPointOrchestrator(
 	}
 
 	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+		GetGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
 			return []byte(testInitialCR), nil
 		},
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&patches, 1)
 			return configID, nil
 		},
-		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
+		GetGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{
 				"uid-1": {},
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			for _, p := range readyProgress {
 				mu.Lock()
 				readyEvents = append(readyEvents, p)
@@ -2260,7 +2260,7 @@ func fencedResume(config *MigrationConfig) *migplan.Result {
 // recordingGateway records every route patch the run applies.
 func recordingGateway(mu *sync.Mutex, patches *[]gateway.RoutePatch) orchestratorOverrides {
 	return orchestratorOverrides{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			mu.Lock()
 			*patches = append(*patches, rp)
 			mu.Unlock()
@@ -2381,7 +2381,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 	var alters []clusterlink.ConfigAlteration
 	overrides := recordingGateway(&mu, &patches)
 	var readinessWaits int64
-	overrides.waitForGatewayPodsFn = func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+	overrides.WaitForGatewayPodsFn = func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 		if atomic.AddInt64(&readinessWaits, 1) == 1 {
 			return fmt.Errorf("gateway pods did not converge") // the fence's wait; the restore's succeeds
 		}
@@ -2423,7 +2423,7 @@ func TestAAOFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
 	var patches []gateway.RoutePatch
 	var waits int64
 	overrides := recordingGateway(&mu, &patches)
-	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 1) // the fence's wait; the unfence's succeeds
+	overrides.WaitForGatewayPodsFn = overduePodWaits(&waits, 1) // the fence's wait; the unfence's succeeds
 	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	var promotes int64
 	orch.actions.clusterLinkService.(*mockClusterLinkService).promoteMirrorTopicsFn = func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -2456,7 +2456,7 @@ func TestAAOSwitch_OverduePodFailsAtPromoted(t *testing.T) {
 	var patches []gateway.RoutePatch
 	var waits int64
 	overrides := recordingGateway(&mu, &patches)
-	overrides.waitForGatewayPodsFn = overduePodWaits(&waits, 2) // the fence's wait succeeds; the switchover's is overdue
+	overrides.WaitForGatewayPodsFn = overduePodWaits(&waits, 2) // the fence's wait succeeds; the switchover's is overdue
 	orch, config := newHappyPathOrchestrator(t, nil, overrides)
 	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
 
@@ -2538,13 +2538,13 @@ func TestOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
 	res.GatewayGeneration = 4
 	gw := gatewayMock(orch)
 	// The fence write reports no generation, so the CR is still at 4 at promote.
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
 	require.NoError(t, err)
-	require.NotEmpty(t, gw.routeExpected)
-	assert.Equal(t, int64(4), gw.routeExpected[0], "the fence patch is guarded on the generation reconcile read")
+	require.NotEmpty(t, gw.RouteExpected)
+	assert.Equal(t, int64(4), gw.RouteExpected[0], "the fence patch is guarded on the generation reconcile read")
 }
 
 func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T) {
@@ -2556,8 +2556,8 @@ func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T
 	}
 	var patches []gateway.RoutePatch
 	gw := gatewayMock(orch)
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
 	res := resultFromConfig(config)
 	res.GatewayGeneration = 4
 
@@ -2610,9 +2610,9 @@ func TestOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *t
 	}
 	var patches []gateway.RoutePatch
 	gw := gatewayMock(orch)
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
 	// The CR moves once the first batch is accepted.
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(requests) == 0 {
@@ -2637,7 +2637,7 @@ func TestOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *t
 func TestOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
 	orch, config, out, _, alters := generationRun(t)
 	var patches []gateway.RoutePatch
-	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
 	res.GatewayGeneration = 4
 
@@ -2655,7 +2655,7 @@ func TestOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoWrit
 	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
 	orch, config, out, _, alters := generationRun(t)
 	var patches []gateway.RoutePatch
-	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
 	res.GatewayGeneration = 4
 
@@ -2676,7 +2676,7 @@ func unconfirmedFenceRun(t *testing.T) (*MigrationOrchestrator, *MigrationConfig
 	t.Helper()
 	orch, config, out, _, alters := generationRun(t)
 	var accepts int64
-	gatewayMock(orch).waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gatewayMock(orch).WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		if atomic.AddInt64(&accepts, 1) == 1 {
 			return fmt.Errorf("gateway spec not accepted")
 		}
@@ -2689,7 +2689,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *t
 	orch, config, _, alters := unconfirmedFenceRun(t)
 	var patches []gateway.RoutePatch
 	gw := gatewayMock(orch)
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
 	res := fencedResume(config)
 	res.GatewayGeneration = 4
 
@@ -2698,14 +2698,14 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *t
 	require.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the restoring apply")
-	assert.Equal(t, []int64{4, 5}, gw.routeExpected, "the restore is guarded on the generation the fence left")
+	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the restore is guarded on the generation the fence left")
 	assert.Contains(t, *alters, offsetSyncBackOn, "the compensation still restores offset sync")
 }
 
 func TestOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testing.T) {
 	orch, config, out, alters := unconfirmedFenceRun(t)
 	var patches []gateway.RoutePatch
-	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 	res := fencedResume(config)
 	res.GatewayGeneration = 4
 
@@ -2723,7 +2723,7 @@ func TestOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testing.
 	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
 	orch, config, out, _, alters := generationRun(t)
 	var patches []gateway.RoutePatch
-	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 	res := resultFromConfig(config)
 	res.GatewayGeneration = 4
 
@@ -2741,7 +2741,7 @@ func TestOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testing.
 func TestOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopicsPromoted(t *testing.T) {
 	orch, config, out, _, alters := generationRun(t)
 	var patches []gateway.RoutePatch
-	gatewayMock(orch).patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
 	res.RollbackAllowed = false
 	res.GatewayGeneration = 4
@@ -2811,8 +2811,8 @@ func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *tes
 	}
 	var patches []gateway.RoutePatch
 	gw := gatewayMock(orch)
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if sent == 0 {

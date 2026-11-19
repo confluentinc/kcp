@@ -32,30 +32,30 @@ type hotReloadWorld struct {
 func newHotReloadWorld() *hotReloadWorld {
 	w := &hotReloadWorld{rec: &patchRecorder{}}
 	w.svc = w.rec.service()
-	w.svc.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+	w.svc.DetectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 		w.detects++
 		return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true, HotReloadEnabled: true}, nil
 	}
-	w.svc.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+	w.svc.PatchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 		w.rec.mu.Lock()
 		defer w.rec.mu.Unlock()
 		w.rec.patches = append(w.rec.patches, rp)
 		w.routeConfigIDs = append(w.routeConfigIDs, configID)
 		return configID, nil
 	}
-	w.svc.patchGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
+	w.svc.PatchGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
 		w.stamped = append(w.stamped, configID)
 		return configID, nil
 	}
-	w.svc.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+	w.svc.WaitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 		w.waits = append(w.waits, opts)
 		return w.failWaitOn[len(w.waits)]
 	}
-	w.svc.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+	w.svc.GetGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 		w.podCaptures++
 		return map[k8stypes.UID]struct{}{}, nil
 	}
-	w.svc.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+	w.svc.WaitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 		w.podWaits++
 		return nil
 	}

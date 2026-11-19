@@ -14,7 +14,7 @@ import (
 func TestResolveGatewayCapability(t *testing.T) {
 	t.Run("adopts per-pod configId verification", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{
 					Mode:                gateway.VerifyPerPodConfigID,
 					CRDSupportsConfigID: true,
@@ -46,7 +46,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 	t.Run("hands the detector the CRs the migration will apply", func(t *testing.T) {
 		var gotFenced, gotSwitchover []byte
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(_ context.Context, _, _ string, _ int, fenced, switchover []byte) (gateway.Capability, error) {
+			DetectCapabilityFn: func(_ context.Context, _, _ string, _ int, fenced, switchover []byte) (gateway.Capability, error) {
 				gotFenced, gotSwitchover = fenced, switchover
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
@@ -73,7 +73,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 
 	t.Run("adopts rollout verification on a pre-hot-reload cluster", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{
 					Mode:     gateway.VerifyRollout,
 					Advisory: "the installed CFK operator's Gateway CRD does not declare spec.configId",
@@ -107,7 +107,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 
 	t.Run("a detection failure aborts", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{}, fmt.Errorf("k8s 403 on customresourcedefinitions")
 			},
 		}
@@ -172,7 +172,7 @@ func detectedConfigPort(t *testing.T, config *MigrationConfig) int {
 	t.Helper()
 	port := -1
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(_ context.Context, _, _ string, p int, _, _ []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(_ context.Context, _, _ string, p int, _, _ []byte) (gateway.Capability, error) {
 			port = p
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},

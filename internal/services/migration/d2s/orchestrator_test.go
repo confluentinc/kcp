@@ -169,7 +169,7 @@ func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSaysARerunChec
 		"acceptance fails after the patch": func(rec *patchRecorder) *mockGatewayService {
 			gw := rec.service()
 			accepts := 0
-			gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+			gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 				accepts++
 				if accepts == 2 {
 					return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
@@ -245,7 +245,7 @@ func unconfirmedFenceRun(t *testing.T, restoreFails bool) (*testRun, *patchRecor
 	}
 	gw := rec.service()
 	accepts := 0
-	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		accepts++
 		if accepts == 1 {
 			return fmt.Errorf("operator never reconciled")

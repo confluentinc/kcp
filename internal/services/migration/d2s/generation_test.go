@@ -72,13 +72,13 @@ func TestD2SOrchestrator_Execute_FencePatchIsGuardedOnTheReconcileGeneration(t *
 	w.facts.Gateway.Generation = 4
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	require.NoError(t, run.execute(context.Background(), res))
 
-	require.NotEmpty(t, gw.routeExpected)
-	assert.Equal(t, int64(4), gw.routeExpected[0], "the fence patch is guarded on the generation reconcile read")
+	require.NotEmpty(t, gw.RouteExpected)
+	assert.Equal(t, int64(4), gw.RouteExpected[0], "the fence patch is guarded on the generation reconcile read")
 }
 
 func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t *testing.T) {
@@ -86,7 +86,7 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t 
 	w.facts.Gateway.Generation = 7
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
 
 	err := run.execute(context.Background(), res)
 
@@ -105,8 +105,8 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherWithGenerationUnknown_Proceeds
 	w.facts.Gateway.Generation = 0
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	require.NoError(t, run.execute(context.Background(), res))
 
@@ -118,8 +118,8 @@ func TestD2SOrchestrator_Execute_CRMovedBeforeSyncOffsets_StopsWithNoWrite(t *te
 	w.facts.Gateway.Generation = 6
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 8, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 8, nil }
 
 	err := run.execute(context.Background(), res)
 
@@ -135,7 +135,7 @@ func TestD2SOrchestrator_Execute_CRMovedBeforeSyncOffsets_StopsWithNoWrite(t *te
 func TestD2SOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
 	run, gw, res := generationRun(cleanWorld(), true)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 
 	err := run.execute(context.Background(), res)
 
@@ -150,7 +150,7 @@ func TestD2SOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoW
 	t.Setenv(killpoint.FailEnvVar, EventFence)
 	run, gw, res := generationRun(cleanWorld(), true)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 
 	err := run.execute(context.Background(), res)
 
@@ -168,7 +168,7 @@ func unconfirmedFenceGenerationRun(t *testing.T) (*testRun, *mockGatewayService,
 	t.Helper()
 	run, gw, res := generationRun(cleanWorld(), false)
 	accepts := 0
-	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		accepts++
 		if accepts == 1 {
 			return fmt.Errorf("gateway spec not accepted")
@@ -181,20 +181,20 @@ func unconfirmedFenceGenerationRun(t *testing.T) (*testRun, *mockGatewayService,
 func TestD2SOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *testing.T) {
 	run, gw, res := unconfirmedFenceGenerationRun(t)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
 
 	err := run.execute(context.Background(), res)
 
 	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the removing apply")
-	assert.Equal(t, []int64{4, 5}, gw.routeExpected, "the removal is guarded on the generation the fence left")
+	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the removal is guarded on the generation the fence left")
 }
 
 func TestD2SOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testing.T) {
 	run, gw, res := unconfirmedFenceGenerationRun(t)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 
 	err := run.execute(context.Background(), res)
 
@@ -209,7 +209,7 @@ func TestD2SOrchestrator_Execute_RefusalDuringAbortFence_StopsWithNoWrite(t *tes
 	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
 	run, gw, res := generationRun(cleanWorld(), false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 
 	err := run.execute(context.Background(), res)
 
@@ -224,8 +224,8 @@ func TestD2SOrchestrator_Execute_RefusalDuringAbortFence_StopsWithNoWrite(t *tes
 func TestD2SOrchestrator_Execute_SwitchRefusal_StopsWithNoFenceKeptMessage(t *testing.T) {
 	run, gw, res := generationRun(cleanWorld(), false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 5, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 5, nil }
 
 	err := run.execute(context.Background(), res)
 
