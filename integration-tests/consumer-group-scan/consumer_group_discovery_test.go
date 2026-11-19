@@ -113,6 +113,26 @@ func ensureTopic(t *testing.T, bootstrap, topic string, partitions int32) {
 	if err != nil && !errors.Is(err, sarama.ErrTopicAlreadyExists) {
 		require.NoError(t, err, "failed to create topic %q", topic)
 	}
+
+	// CreateTopic returns before partition leaders are elected and visible to
+	// clients. Producing immediately can fail with NotLeaderForPartition
+	// (seen flaking the kafka-4.0-classic cell in CI), so wait until every
+	// partition reports a leader.
+	require.Eventually(t, func() bool {
+		md, err := admin.DescribeTopics([]string{topic})
+		if err != nil || len(md) != 1 || md[0].Err != sarama.ErrNoError {
+			return false
+		}
+		if int32(len(md[0].Partitions)) < partitions {
+			return false
+		}
+		for _, p := range md[0].Partitions {
+			if p.Err != sarama.ErrNoError || p.Leader < 0 {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, 200*time.Millisecond, "topic %q partitions never all had a leader", topic)
 }
 
 // produceRecords writes a few records so a joining group has something to
