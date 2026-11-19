@@ -149,49 +149,21 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.patch_cr",
 		stepAttr(step), attribute.Bool("kcp.gateway.config_id_injected", v.Capability.InjectsConfigID()))
 	defer func() { tracing.End(span, err) }()
-	var configID string
-	if v.Capability.InjectsConfigID() {
-		var err error
-		configID, err = NewConfigID()
-		if err != nil {
-			return ApplyResult{}, err
-		}
-	}
-
-	// A rolling gateway replaces its pods, so record which exist before the
-	// patch. Failing to capture is fatal and happens before anything is written,
-	// so it is deliberately not an ErrApplyUnverified.
-	var preApplyPodUIDs map[types.UID]struct{}
-	if !v.Capability.InjectsConfigID() {
-		preApplyPodUIDs, err = v.capturePods(ctx, namespace, crName, step)
-		if err != nil {
-			return ApplyResult{}, fmt.Errorf("failed to capture the gateway pods before %s: %w", step, err)
-		}
-	}
-
-	// A rolling gateway's later waits compare against this generation, so an
-	// unreadable baseline (silently 0) could make them hang forever. Refuse
-	// before anything is written; like the capture, not an ErrApplyUnverified.
-	var baseline int64
-	if v.Capability.InjectsConfigID() {
-		baseline = v.DeploymentBaseline(ctx, namespace, crName, step)
-	} else {
-		baseline, err = v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
-		if err != nil {
-			return ApplyResult{}, fmt.Errorf("failed to read the gateway deployment generation before %s: %w", step, err)
-		}
+	prep, err := strategyForCapability(v.Capability).prepare(ctx, v, namespace, crName, step)
+	if err != nil {
+		return ApplyResult{}, err
 	}
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
-		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
+		"route", rp.RouteName, "field", rp.Field, "configId", prep.configID, "baselineDeploymentGeneration", prep.baseline)
 
-	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, v.expectedGeneration())
+	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, prep.configID, v.expectedGeneration())
 	v.recordGeneration(patched.Generation)
 	if err != nil {
 		// An unverified write still reached the cluster; hand back what it produced.
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, err
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: prep.baseline, Generation: patched.Generation, PreApplyPodUIDs: prep.podUIDs}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: prep.baseline, Generation: patched.Generation, PreApplyPodUIDs: prep.podUIDs}, nil
 }
 
 // capturePods records the gateway pods that exist now, in a gateway.capture_pods
@@ -307,24 +279,9 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.verify_transition", stepAttr(step))
 	defer func() { tracing.End(span, err) }()
-	mechanism := "rollout"
-	if applied.ConfigID != "" {
-		mechanism = "config_id"
-	}
-	span.SetAttributes(attribute.String("kcp.gateway.mechanism", mechanism))
-	if applied.ConfigID != "" {
-		return v.WaitForConfigApplied(ctx, namespace, crName, port, applied, step)
-	}
-
-	v.Reporter.Detail("Waiting for the replaced gateway pods to be gone...")
-	slog.Debug("waiting for the replaced gateway pods", "step", step, "rolloutTimeout", v.RolloutTimeout,
-		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration, "preApplyPods", len(applied.PreApplyPodUIDs))
-
-	if err := v.Service.WaitForGatewayPods(ctx, namespace, crName, applied.PreApplyPodUIDs,
-		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printPodRolloutProgress); err != nil {
-		return fmt.Errorf("failed waiting for the gateway pods to be replaced during %s: %w", step, err)
-	}
-	return nil
+	strategy := strategyForApplied(applied)
+	span.SetAttributes(attribute.String("kcp.gateway.mechanism", strategy.name()))
+	return strategy.confirm(ctx, v, namespace, crName, port, applied, step)
 }
 
 // printConfigWaitProgress renders one line per poll tick of the per-pod
