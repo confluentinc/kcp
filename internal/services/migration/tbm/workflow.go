@@ -41,9 +41,6 @@ type TBMActions struct {
 	// gw applies and confirms every gateway patch, and owns the capability,
 	// expected generation and start-of-run pod bookkeeping those need.
 	gw *gateway.Transitioner
-	// gatewayService is the client gw was built over, held only so validate
-	// can report a nil one: every gateway call goes through gw.
-	gatewayService gateway.TransitionClient
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
 	promoteSubmitted bool
@@ -69,7 +66,6 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 		sourceOffset:        sourceOffset,
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
-		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		promotePollInterval: 5 * time.Second,
 	}
@@ -85,7 +81,7 @@ func (a *TBMActions) validate() error {
 	if a.clusterLinkService == nil {
 		missing = append(missing, "ClusterLinkService")
 	}
-	if a.gatewayService == nil {
+	if a.gw == nil || !a.gw.HasClient() {
 		missing = append(missing, "GatewayService")
 	}
 	if len(missing) > 0 {

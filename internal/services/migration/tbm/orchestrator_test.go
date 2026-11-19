@@ -23,7 +23,6 @@ import (
 // setGatewayService swaps the gateway service the actions drive, as the
 // Transitioner holds it privately.
 func setGatewayService(a *TBMActions, svc gateway.TransitionClient) {
-	a.gatewayService = svc
 	a.gw = gateway.NewTransitioner(svc, func() gateway.Reporter { return a.reporter })
 }
 

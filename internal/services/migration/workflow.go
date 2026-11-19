@@ -32,10 +32,7 @@ const maxConsecutiveSweepFailures = 3
 type MigrationActions struct {
 	// gw applies and confirms every gateway patch, and owns the capability,
 	// expected generation and start-of-run pod bookkeeping those need.
-	gw *gateway.Transitioner
-	// gatewayService is the client gw was built over, held only so validate
-	// can report a nil one: every gateway call goes through gw.
-	gatewayService      gateway.TransitionClient
+	gw                  *gateway.Transitioner
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
 	destinationOffset   offset.Provider
@@ -58,7 +55,6 @@ func NewMigrationActions(
 	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
 	s := &MigrationActions{
-		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
@@ -76,7 +72,7 @@ func (s *MigrationActions) validate() error {
 	if s.clusterLinkService == nil {
 		missing = append(missing, "ClusterLinkService")
 	}
-	if s.gatewayService == nil {
+	if s.gw == nil || !s.gw.HasClient() {
 		missing = append(missing, "GatewayService")
 	}
 	if len(missing) > 0 {

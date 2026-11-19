@@ -472,3 +472,9 @@ func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
 	assert.Equal(t, 7*time.Minute, svc.waits[1].RollTimeout)
 	assert.Equal(t, 3*time.Minute, svc.waits[1].HotReloadTimeout)
 }
+
+func TestTransitionerHasClient(t *testing.T) {
+	rep := func() Reporter { return &recordingReporter{} }
+	assert.True(t, NewTransitioner(&mockService{}, rep).HasClient())
+	assert.False(t, NewTransitioner(nil, rep).HasClient())
+}

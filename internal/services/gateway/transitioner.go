@@ -80,6 +80,9 @@ func NewTransitioner(svc TransitionClient, reporter func() Reporter, opts ...Tra
 	return t
 }
 
+// HasClient reports whether the Transitioner was built over a gateway client.
+func (t *Transitioner) HasClient() bool { return t.svc != nil }
+
 // SetExpectedGeneration seeds the Gateway CR generation patches are guarded on.
 func (t *Transitioner) SetExpectedGeneration(g int64) { t.generation = g }
 
