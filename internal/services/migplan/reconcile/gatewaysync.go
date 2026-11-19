@@ -81,7 +81,7 @@ func gatewayStepsAlreadyDone(plan *Plan) []string {
 	if plan.Artifacts != nil && plan.Artifacts.FencedAtStart {
 		done = append(done, "the fence")
 	}
-	convert := plan.Mode == convertMode
+	convert := plan.Mode == ModeConvert
 	if n := len(plan.Report.Unchanged); n > 0 {
 		if convert {
 			done = append(done, fmt.Sprintf("%d link topic(s) routed to the target", n))

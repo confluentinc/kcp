@@ -39,7 +39,7 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 	}
 	rc := gw.Route
 
-	if rc.Mode == "static" {
+	if rc.Mode == RouteModeStatic {
 		res = append(res, pass("route is static"))
 	} else {
 		res = append(res, fail("route is static", fmt.Sprintf("staticMigration is declared but route %q is %q; it requires a static (all-at-once) route", rc.Name, rc.Mode)))
@@ -116,7 +116,7 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 
 // staticDomainBootstrapIDs maps each streaming domain the CR declares (at
 // spec.streamingDomains[]) to the bootstrap server ids it defines under
-// kafkaCluster.bootstrapServers. Mirrors gateway.domainBootstrapIDs.
+// kafkaCluster.bootstrapServers. This is the canonical implementation.
 func staticDomainBootstrapIDs(gw *GatewayConfig) map[string]map[string]struct{} {
 	domains := map[string]map[string]struct{}{}
 	if gw == nil || gw.RawObj == nil {
@@ -157,7 +157,7 @@ func staticDomainBootstrapIDs(gw *GatewayConfig) map[string]map[string]struct{} 
 }
 
 // stagedAuthFor returns route's pre-staged security.cluster.<domainName>
-// block, if present. Mirrors gateway.stagedAuthFor.
+// block, if present. This is the canonical implementation.
 func stagedAuthFor(route map[string]any, domainName string) (map[string]any, bool) {
 	security, _ := mapField(route, "security")
 	cluster, _ := mapField(security, "cluster")
@@ -165,9 +165,8 @@ func stagedAuthFor(route map[string]any, domainName string) (map[string]any, boo
 }
 
 // staticSecretRefKeys are the Gateway CRD's Secret-naming field names —
-// mirrors internal/services/gateway/validate.go's own secretRefKeys,
-// duplicated here rather than imported, to avoid a new dependency from
-// reconcile on internal/services/gateway.
+// the canonical list for the static-route strategy, local to reconcile (which
+// imports neither manifest nor gateway).
 var staticSecretRefKeys = map[string]struct{}{
 	"secretRef":            {},
 	"configSecretRef":      {},

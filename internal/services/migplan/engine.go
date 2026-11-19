@@ -96,7 +96,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 
 	var missingSecrets []string
 	var secretCheckSkipped string
-	if in.Type == reconcile.TypeStatic && gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+	if in.Type == reconcile.TypeStatic && gw != nil && gw.Route != nil && gw.Route.Mode == reconcile.RouteModeStatic {
 		if names := reconcile.ResolveStagedSecretNames(gw, in.TargetDomain); len(names) > 0 {
 			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(ctx, names)
 			if err != nil {

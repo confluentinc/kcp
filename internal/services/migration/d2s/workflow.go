@@ -19,9 +19,6 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// convertMode is migplan.Result.Mode for a route conversion.
-const convertMode = "convert"
-
 // Policy is the conversion's execute-time policies; Workers is already resolved to its default.
 type Policy struct {
 	// DetectUnroutedCommitsDuration is the gap between verify_fence's two snapshots; 0 skips the check.
@@ -156,7 +153,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
-	if res.Mode != convertMode {
+	if res.Mode != reconcile.ModeConvert {
 		return fmt.Errorf("the d2s state machine runs a route conversion only; reconcile planned mode %q", res.Mode)
 	}
 	var missing []string

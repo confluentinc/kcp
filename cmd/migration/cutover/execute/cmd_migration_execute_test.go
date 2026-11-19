@@ -11,6 +11,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
@@ -740,7 +741,7 @@ func TestExecutePlan_NothingToDo_RunsNoStateMachine(t *testing.T) {
 	for _, mode := range []string{"static", "dynamic"} {
 		t.Run(mode, func(t *testing.T) {
 			var builds serviceBuilds
-			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
+			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: reconcile.PlanMode(mode), NothingToDo: true}
 
 			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(nil, nil), &builds))
 

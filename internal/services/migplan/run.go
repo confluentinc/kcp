@@ -90,7 +90,7 @@ type Result struct {
 	// documents for static; whole rules: blocks for the fence and rollback and
 	// a whole {route: …} (the route converted to static) for the switchover
 	// under convert. Each applies to the named route, never as the whole CR.
-	Mode string
+	Mode reconcile.PlanMode
 }
 
 // reconcileOptions holds the dependencies Reconcile builds by default but lets
@@ -142,7 +142,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	defer func() {
 		if res != nil {
 			span.SetAttributes(
-				attribute.String("kcp.route.mode", res.Mode),
+				attribute.String("kcp.route.mode", string(res.Mode)),
 				attribute.Bool("kcp.refused", res.Refused),
 				attribute.Bool("kcp.nothing_to_do", res.NothingToDo),
 				attribute.Int("kcp.topics.migrate", len(res.MigrateTopics)),
