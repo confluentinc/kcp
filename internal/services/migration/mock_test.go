@@ -10,7 +10,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
-// mockGatewayService implements gateway.Service using function fields for test control.
+// mockGatewayService implements gateway.TransitionClient using function fields for test control.
 type mockGatewayService struct {
 	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
 	detectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)

@@ -111,7 +111,7 @@ type D2SActions struct {
 }
 
 // NewD2SActions creates the conversion's actions over gatewayService and deps.
-func NewD2SActions(gatewayService gateway.Service, deps Dependencies, opts ...gateway.TransitionerOption) *D2SActions {
+func NewD2SActions(gatewayService gateway.TransitionClient, deps Dependencies, opts ...gateway.TransitionerOption) *D2SActions {
 	if deps.Wait == nil {
 		deps.Wait = groupoffsets.Sleep
 	}

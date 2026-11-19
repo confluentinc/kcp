@@ -14,7 +14,6 @@ import (
 	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,24 +39,17 @@ const (
 // fails here must treat the patch as landed, not as a no-op.
 var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
 
-// Service defines gateway operations
-type Service interface {
-	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
+// TransitionClient is what applying and confirming a gateway transition needs from the cluster.
+type TransitionClient interface {
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
-	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
-	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error)
 	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error)
-	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
-	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
-	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
-	// WaitForGatewayReady only waits for the Deployment rollout to report
-	// complete. It must NOT be used to verify a gateway transition: it returns
-	// while replaced pods still serve. Use WaitForGatewayPods or
-	// WaitForGatewayConfigID.
-	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
 }
 
 // PatchResult is what a Gateway CR patch reports back. Generation is the
@@ -136,42 +128,6 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 
 	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
 	return yamlBytes, nil
-}
-
-// CheckPermissions checks if the user has the required Kubernetes permissions
-func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return false, fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	sar := &authorizationv1.SelfSubjectAccessReview{
-		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: namespace,
-				Verb:      verb,
-				Group:     group,
-				Resource:  resource,
-			},
-		},
-	}
-
-	response, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(
-		ctx,
-		sar,
-		metav1.CreateOptions{},
-	)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check permissions: %w", err)
-	}
-
-	return response.Status.Allowed, nil
 }
 
 // PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC

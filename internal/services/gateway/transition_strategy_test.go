@@ -34,7 +34,7 @@ func TestStrategyForApplied(t *testing.T) {
 func TestVerifyTransition_DispatchesOnTheAppliedConfigIDNotTheCapability(t *testing.T) {
 	ctx := context.Background()
 	svc := &mockService{}
-	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{},
+	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{},
 		Capability: Capability{Mode: VerifyPerPodConfigID}}
 	applied := ApplyResult{PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}} // no ConfigID
 	require.NoError(t, v.VerifyTransition(ctx, "ns", "gw", 9180, applied, "fence"))

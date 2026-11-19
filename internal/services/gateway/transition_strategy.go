@@ -82,7 +82,7 @@ func (rolloutStrategy) prepare(ctx context.Context, v *TransitionVerifier, names
 	// A rolling gateway's later waits compare against this generation, so an
 	// unreadable baseline (silently 0) could make them hang forever. Refuse
 	// before anything is written; like the capture, not an ErrApplyUnverified.
-	baseline, err := v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
+	baseline, err := v.Client.GetGatewayDeploymentGeneration(ctx, namespace, crName)
 	if err != nil {
 		return applyPrep{}, fmt.Errorf("failed to read the gateway deployment generation before %s: %w", step, err)
 	}
@@ -94,7 +94,7 @@ func (rolloutStrategy) confirm(ctx context.Context, v *TransitionVerifier, names
 	slog.Debug("waiting for the replaced gateway pods", "step", step, "rolloutTimeout", v.RolloutTimeout,
 		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration, "preApplyPods", len(applied.PreApplyPodUIDs))
 
-	if err := v.Service.WaitForGatewayPods(ctx, namespace, crName, applied.PreApplyPodUIDs,
+	if err := v.Client.WaitForGatewayPods(ctx, namespace, crName, applied.PreApplyPodUIDs,
 		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printPodRolloutProgress); err != nil {
 		return fmt.Errorf("failed waiting for the gateway pods to be replaced during %s: %w", step, err)
 	}

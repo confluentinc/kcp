@@ -25,7 +25,7 @@ type testRun struct {
 	out    *strings.Builder
 }
 
-func newTestRun(gw gateway.Service, deps Dependencies) *testRun {
+func newTestRun(gw gateway.TransitionClient, deps Dependencies) *testRun {
 	config := &migration.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
 	actions := NewD2SActions(gw, deps)
 	out := &strings.Builder{}

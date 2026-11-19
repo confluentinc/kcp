@@ -43,7 +43,7 @@ type TransitionResult struct {
 // the run's expected Gateway CR generation, and the start-of-run pod set an
 // unfence must not wait on. It is not safe for concurrent use: one FSM run, one goroutine.
 type Transitioner struct {
-	svc      Service
+	svc      TransitionClient
 	reporter func() Reporter
 
 	rolloutTimeout   time.Duration
@@ -72,7 +72,7 @@ func WithTimeouts(rollout, hotReload time.Duration) TransitionerOption {
 
 // NewTransitioner returns a Transitioner over svc. reporter is a provider, not
 // a value, so a caller that replaces its reporter after construction is honored.
-func NewTransitioner(svc Service, reporter func() Reporter, opts ...TransitionerOption) *Transitioner {
+func NewTransitioner(svc TransitionClient, reporter func() Reporter, opts ...TransitionerOption) *Transitioner {
 	t := &Transitioner{svc: svc, reporter: reporter}
 	for _, opt := range opts {
 		opt(t)
@@ -98,7 +98,7 @@ func (t *Transitioner) Capability() Capability { return t.capability }
 // verifier builds the shared apply/wait/verify mechanism for one call.
 func (t *Transitioner) verifier() *TransitionVerifier {
 	return &TransitionVerifier{
-		Service:          t.svc,
+		Client:           t.svc,
 		Reporter:         t.reporter(),
 		Capability:       t.capability,
 		RolloutTimeout:   t.rolloutTimeout,

@@ -16,7 +16,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
-// mockGatewayService implements gateway.Service with function fields, d2s's own copy of tbm's (test doubles
+// mockGatewayService implements gateway.TransitionClient with function fields, d2s's own copy of tbm's (test doubles
 // are kept per package).
 type mockGatewayService struct {
 	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
@@ -232,7 +232,7 @@ func convertResult() *migplan.Result {
 	}
 }
 
-func gatewayActions(gw gateway.Service, opts ...gateway.TransitionerOption) *D2SActions {
+func gatewayActions(gw gateway.TransitionClient, opts ...gateway.TransitionerOption) *D2SActions {
 	a := NewD2SActions(gw, cleanWorld().deps(), opts...)
 	a.reporter = quietReporter()
 	return a

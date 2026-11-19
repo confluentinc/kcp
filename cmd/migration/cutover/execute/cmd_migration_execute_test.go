@@ -704,7 +704,7 @@ func countingDeps(base executorDependencies, b *serviceBuilds) executorDependenc
 			b.offsets++
 			return base.offsets(g)
 		},
-		gateway: func(g *manifest.GatewayMigration) (gateway.Service, error) {
+		gateway: func(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
 			b.gateway++
 			return base.gateway(g)
 		},

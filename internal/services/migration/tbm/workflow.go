@@ -59,7 +59,7 @@ type TBMActions struct {
 // command (execute-tbm) that always eventually reaches wait_for_lags, fence
 // and promote, unlike migration's separate init-only path, so there is no
 // legitimate construction path without them.
-func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service, clusterLinkService clusterlink.Service, opts ...gateway.TransitionerOption) *TBMActions {
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.TransitionClient, clusterLinkService clusterlink.Service, opts ...gateway.TransitionerOption) *TBMActions {
 	a := &TBMActions{
 		reporter:            newReporter(),
 		sourceOffset:        sourceOffset,

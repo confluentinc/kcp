@@ -49,7 +49,7 @@ type MigrationActions struct {
 }
 
 func NewMigrationActions(
-	gatewayService gateway.Service,
+	gatewayService gateway.TransitionClient,
 	clusterLinkService clusterlink.Service,
 	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
@@ -65,7 +65,7 @@ func NewMigrationActions(
 }
 
 func NewMigrationActionsWithOffsets(
-	gatewayService gateway.Service,
+	gatewayService gateway.TransitionClient,
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,

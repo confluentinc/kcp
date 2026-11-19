@@ -15,7 +15,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
-// mockGatewayService implements gateway.Service using function fields for test
+// mockGatewayService implements gateway.TransitionClient using function fields for test
 // control, mirroring migration's own (unexported, package-private)
 // mockGatewayService — this is TBM's own copy: test
 // doubles are kept per-package even where the underlying interface is
