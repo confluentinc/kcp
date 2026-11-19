@@ -315,6 +315,32 @@ func TestTransitionerEnsureCapability_ResolvesAndSmokeTestsOnce(t *testing.T) {
 	assert.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
 }
 
+func TestTransitionerResolveCapability_MarksTheSmokeTestAttempted(t *testing.T) {
+	configIDPatches := 0
+	svc := &mockService{
+		detectCapabilityFn: perPodCapability,
+		patchGatewayConfigIDFn: func(ctx context.Context, ns, gw, configID string) (string, error) {
+			configIDPatches++
+			return echoConfigID(ctx, ns, gw, configID)
+		},
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget()))
+	require.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
+
+	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	assert.Equal(t, 1, svc.detects)
+	assert.Equal(t, 0, configIDPatches, "a direct ResolveCapability owns the smoke test, so Apply must not run it")
+}
+
 func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
 	configIDPatches := 0
 	smokeBoom := errors.New("smoke boom")

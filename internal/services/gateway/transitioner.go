@@ -41,7 +41,7 @@ type TransitionResult struct {
 // call, on top of TransitionVerifier. It owns the per-process state every FSM
 // needs around that: the capability (resolved once, smoke-tested at most once),
 // the run's expected Gateway CR generation, and the start-of-run pod set an
-// unfence must not wait on.
+// unfence must not wait on. It is not safe for concurrent use: one FSM run, one goroutine.
 type Transitioner struct {
 	svc      Service
 	reporter func() Reporter
@@ -115,7 +115,7 @@ func (t *Transitioner) CheckGeneration(ctx context.Context, target Target, step 
 // EnsureCapability resolves the capability once per process and then, at most
 // once per process even if it failed, smoke-tests hot-reload.
 func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) error {
-	if err := t.ResolveCapability(ctx, target); err != nil {
+	if err := t.resolveCapability(ctx, target); err != nil {
 		return err
 	}
 	if t.smokeAttempted {
@@ -125,8 +125,18 @@ func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) erro
 }
 
 // ResolveCapability resolves the gateway capability without the hot-reload
-// smoke test. It is a no-op once resolved.
+// smoke test, and marks the smoke test as attempted: a caller that resolves
+// directly owns the smoke test (it runs VerifyHotReload itself, or skips it),
+// as AAO's tests do, so a later Apply or EnsureCapability never runs it. The
+// resolve itself is a no-op once resolved.
 func (t *Transitioner) ResolveCapability(ctx context.Context, target Target) error {
+	t.smokeAttempted = true
+	return t.resolveCapability(ctx, target)
+}
+
+// resolveCapability resolves the capability once per process, leaving the
+// smoke test to EnsureCapability.
+func (t *Transitioner) resolveCapability(ctx context.Context, target Target) error {
 	if t.resolved {
 		return nil
 	}
