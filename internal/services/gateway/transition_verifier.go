@@ -236,7 +236,16 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 }
 
 // WaitForConfigApplied blocks until every ready gateway pod reports the
-// applied configId.
+// applied configId. This is the mechanism-agnostic check: it holds whether CFK
+// chose a hot-reload or a pod roll, so kcp never has to predict which.
+//
+// Correctness does not depend on the mechanism, but the budget does. A
+// hot-reload converges in seconds and gets the bounded hot-reload budget; a roll
+// has to pull images and pass readiness probes, so the moment one is observed the
+// wait switches to the user's --rollout-timeout. Without that switch a
+// transition that legitimately rolls — a switchover whose CR adds a route or a
+// TLS secret, exactly the case that motivated per-pod verification — would be cut
+// off at 90s with traffic already fenced.
 func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_config_applied", stepAttr(step))
 	defer func() { tracing.End(span, err) }()

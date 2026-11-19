@@ -1709,7 +1709,7 @@ func aaoFullResult() *migplan.Result {
 // FenceGateway's and SwitchGateway's confirm step share this one mock
 // (neither this build's default capability nor detection is configured to
 // route either through a different wait mechanism — see confirmFence's
-// default case and VerifyTransition), so a non-empty readyProgress is
+// verifyGatewayTransition call and VerifyTransition), so a non-empty readyProgress is
 // replayed on every call reaching it, fence's and switch's alike.
 func newAAOKillPointOrchestrator(
 	t *testing.T,
