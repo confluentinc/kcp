@@ -63,10 +63,7 @@ func newHotReloadWorld() *hotReloadWorld {
 }
 
 func hotReloadActions(w *hotReloadWorld) *D2SActions {
-	a := gatewayActions(w.svc)
-	a.SetRolloutTimeout(7 * time.Minute)
-	a.SetHotReloadTimeout(3 * time.Minute)
-	return a
+	return gatewayActions(w.svc, gateway.WithTimeouts(7*time.Minute, 3*time.Minute))
 }
 
 // assertStampedAndWaited checks the transition stamped one configId on the route and waited for exactly that id

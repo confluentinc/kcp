@@ -111,7 +111,7 @@ type D2SActions struct {
 }
 
 // NewD2SActions creates the conversion's actions over gatewayService and deps.
-func NewD2SActions(gatewayService gateway.Service, deps Dependencies) *D2SActions {
+func NewD2SActions(gatewayService gateway.Service, deps Dependencies, opts ...gateway.TransitionerOption) *D2SActions {
 	if deps.Wait == nil {
 		deps.Wait = groupoffsets.Sleep
 	}
@@ -120,7 +120,7 @@ func NewD2SActions(gatewayService gateway.Service, deps Dependencies) *D2SAction
 	}
 	a := &D2SActions{reporter: newReporter(), deps: deps}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter })
+	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter }, opts...)
 	return a
 }
 
@@ -144,16 +144,6 @@ func (a *D2SActions) target(config *migration.MigrationConfig) gateway.Target {
 			return fencedCR, switchedCR, nil
 		},
 	}
-}
-
-// SetRolloutTimeout sets the deadline applied to the replaced-pod waits. 0 means no deadline.
-func (a *D2SActions) SetRolloutTimeout(d time.Duration) {
-	a.gw.SetRolloutTimeout(d)
-}
-
-// SetHotReloadTimeout sets the deadline for per-pod configId verification. 0 uses the gateway default.
-func (a *D2SActions) SetHotReloadTimeout(d time.Duration) {
-	a.gw.SetHotReloadTimeout(d)
 }
 
 // Initialize runs the initialize transition: it checks the reconcile result is a feasible conversion with all

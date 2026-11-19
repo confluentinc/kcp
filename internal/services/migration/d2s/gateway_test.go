@@ -232,8 +232,8 @@ func convertResult() *migplan.Result {
 	}
 }
 
-func gatewayActions(gw gateway.Service) *D2SActions {
-	a := NewD2SActions(gw, cleanWorld().deps())
+func gatewayActions(gw gateway.Service, opts ...gateway.TransitionerOption) *D2SActions {
+	a := NewD2SActions(gw, cleanWorld().deps(), opts...)
 	a.reporter = quietReporter()
 	return a
 }

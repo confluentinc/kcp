@@ -51,6 +51,7 @@ type MigrationActions struct {
 func NewMigrationActions(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
+	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
 	s := &MigrationActions{
 		clusterLinkService:  clusterLinkService,
@@ -59,7 +60,7 @@ func NewMigrationActions(
 		reporter:            newReporter(),
 	}
 	// The reporter is read at call time: tests replace s.reporter after construction.
-	s.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return s.reporter })
+	s.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return s.reporter }, opts...)
 	return s
 }
 
@@ -68,8 +69,9 @@ func NewMigrationActionsWithOffsets(
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,
+	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
-	s := NewMigrationActions(gatewayService, clusterLinkService)
+	s := NewMigrationActions(gatewayService, clusterLinkService, opts...)
 	s.sourceOffset = sourceOffset
 	s.destinationOffset = destinationOffset
 	return s
@@ -98,19 +100,6 @@ func (s *MigrationActions) target(config *MigrationConfig) gateway.Target {
 			return fencedCR, switchedCR, nil
 		},
 	}
-}
-
-// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
-// A value of 0 means no deadline.
-func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
-	s.gw.SetRolloutTimeout(d)
-}
-
-// SetHotReloadTimeout sets the deadline for per-pod configId verification.
-// A value of 0 falls back to gateway.DefaultHotReloadTimeout — unlike the
-// rollout waits, this one is never allowed to run unbounded.
-func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
-	s.gw.SetHotReloadTimeout(d)
 }
 
 // ResolveGatewayCapability determines how gateway state transitions will be
@@ -317,7 +306,7 @@ func formatLag64(n int64) string {
 // it replaced are gone (or, on a hot-reload gateway, every pod reports the new
 // configId). The wait runs without a deadline by
 // default — the operator drives convergence. An optional per-workflow
-// rolloutTimeout caps the wait when set (via SetRolloutTimeout). Ctrl-C does
+// rolloutTimeout caps the wait when set (via gateway.WithTimeouts). Ctrl-C does
 // not unwind a wedged wait: kcp installs no signal handler, so it ends the
 // process with the gateway as it is (fenced, if the fence was applied) and a
 // re-run continues from there. Whatever the timeout, a replaced pod still

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
@@ -37,9 +38,7 @@ func runDynamicBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink)
-	actions.SetRolloutTimeout(policy.RolloutTimeout)
-	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
+	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout))
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
 	applyCommonPolicy(config, policy.CommonPolicies)

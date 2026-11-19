@@ -137,14 +137,12 @@ func TestGatewayHotReloadTimeout(t *testing.T) {
 	})
 
 	t.Run("honours an explicit value", func(t *testing.T) {
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-		actions.SetHotReloadTimeout(30 * time.Second)
+		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{}, gateway.WithTimeouts(0, 30*time.Second))
 		assert.Equal(t, 30*time.Second, actions.gatewayHotReloadTimeout())
 	})
 
 	t.Run("treats a negative value as unset", func(t *testing.T) {
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-		actions.SetHotReloadTimeout(-1 * time.Second)
+		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{}, gateway.WithTimeouts(0, -1*time.Second))
 		assert.Equal(t, gateway.DefaultHotReloadTimeout, actions.gatewayHotReloadTimeout())
 	})
 }

@@ -59,23 +59,26 @@ type Transitioner struct {
 	generation int64
 }
 
+// TransitionerOption configures a Transitioner at construction.
+type TransitionerOption func(*Transitioner)
+
+// WithTimeouts sets the rollout and hot-reload verification budgets.
+func WithTimeouts(rollout, hotReload time.Duration) TransitionerOption {
+	return func(t *Transitioner) {
+		t.rolloutTimeout = rollout
+		t.hotReloadTimeout = hotReload
+	}
+}
+
 // NewTransitioner returns a Transitioner over svc. reporter is a provider, not
 // a value, so a caller that replaces its reporter after construction is honored.
-func NewTransitioner(svc Service, reporter func() Reporter) *Transitioner {
-	return &Transitioner{svc: svc, reporter: reporter}
+func NewTransitioner(svc Service, reporter func() Reporter, opts ...TransitionerOption) *Transitioner {
+	t := &Transitioner{svc: svc, reporter: reporter}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
-
-// SetTimeouts sets the rollout and hot-reload verification budgets.
-func (t *Transitioner) SetTimeouts(rollout, hotReload time.Duration) {
-	t.rolloutTimeout = rollout
-	t.hotReloadTimeout = hotReload
-}
-
-// SetRolloutTimeout sets the rollout verification budget, leaving the hot-reload one as is.
-func (t *Transitioner) SetRolloutTimeout(d time.Duration) { t.rolloutTimeout = d }
-
-// SetHotReloadTimeout sets the hot-reload verification budget, leaving the rollout one as is.
-func (t *Transitioner) SetHotReloadTimeout(d time.Duration) { t.hotReloadTimeout = d }
 
 // SetExpectedGeneration seeds the Gateway CR generation patches are guarded on.
 func (t *Transitioner) SetExpectedGeneration(g int64) { t.generation = g }

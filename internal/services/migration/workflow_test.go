@@ -935,8 +935,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 		},
 	}
 	cl := &mockClusterLinkService{}
-	wf := NewMigrationActions(gw, cl)
-	wf.SetRolloutTimeout(100 * time.Millisecond)
+	wf := NewMigrationActions(gw, cl, gateway.WithTimeouts(100*time.Millisecond, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
@@ -980,8 +979,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 		},
 	}
 	cl := &mockClusterLinkService{}
-	wf := NewMigrationActions(gw, cl)
-	wf.SetRolloutTimeout(15 * time.Minute)
+	wf := NewMigrationActions(gw, cl, gateway.WithTimeouts(15*time.Minute, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
@@ -1271,8 +1269,7 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 			return nil
 		},
 	}
-	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	wf.SetRolloutTimeout(15 * time.Minute)
+	wf := NewMigrationActions(gw, &mockClusterLinkService{}, gateway.WithTimeouts(15*time.Minute, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))

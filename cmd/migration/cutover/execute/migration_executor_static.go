@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/tracing"
@@ -39,9 +40,7 @@ func runStaticBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := migration.NewMigrationActionsWithOffsets(svc.gateway, svc.clusterLink, svc.sourceOffset, svc.destinationOffset)
-	actions.SetRolloutTimeout(policy.RolloutTimeout)
-	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
+	actions := migration.NewMigrationActionsWithOffsets(svc.gateway, svc.clusterLink, svc.sourceOffset, svc.destinationOffset, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout))
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
 	applyCommonPolicy(config, policy.CommonPolicies)

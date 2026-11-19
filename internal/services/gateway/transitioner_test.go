@@ -117,8 +117,7 @@ func TestTransitionerApply_HotReloadStampsTheConfigIDAndWaitsForIt(t *testing.T)
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
-	tn.SetTimeouts(7*time.Minute, 3*time.Minute)
+	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
 
 	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
 
@@ -452,4 +451,24 @@ func TestTransitionerApply_NormalizesTheConfigPort(t *testing.T) {
 			assert.Equal(t, tt.want, svc.waits[1].Port)
 		})
 	}
+}
+
+func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
+	svc := &mockService{
+		detectCapabilityFn:     perPodCapability,
+		patchGatewayConfigIDFn: echoConfigID,
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
+
+	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	require.Len(t, svc.waits, 2, "the smoke test, then the transition")
+	assert.Equal(t, 7*time.Minute, svc.waits[1].RollTimeout)
+	assert.Equal(t, 3*time.Minute, svc.waits[1].HotReloadTimeout)
 }

@@ -59,7 +59,7 @@ type TBMActions struct {
 // command (execute-tbm) that always eventually reaches wait_for_lags, fence
 // and promote, unlike migration's separate init-only path, so there is no
 // legitimate construction path without them.
-func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service, clusterLinkService clusterlink.Service) *TBMActions {
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service, clusterLinkService clusterlink.Service, opts ...gateway.TransitionerOption) *TBMActions {
 	a := &TBMActions{
 		reporter:            newReporter(),
 		sourceOffset:        sourceOffset,
@@ -69,7 +69,7 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 		promotePollInterval: 5 * time.Second,
 	}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter })
+	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter }, opts...)
 	return a
 }
 
@@ -94,18 +94,6 @@ func (a *TBMActions) target(config *migration.MigrationConfig) gateway.Target {
 			return fencedCR, switchedCR, nil
 		},
 	}
-}
-
-// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
-// A value of 0 means no deadline.
-func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
-	a.gw.SetRolloutTimeout(d)
-}
-
-// SetHotReloadTimeout sets the deadline for per-pod configId verification.
-// A value of 0 falls back to gateway.DefaultHotReloadTimeout.
-func (a *TBMActions) SetHotReloadTimeout(d time.Duration) {
-	a.gw.SetHotReloadTimeout(d)
 }
 
 // SetPromoteBatchSize caps how many mirror topics Promote submits per batch.

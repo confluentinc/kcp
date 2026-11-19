@@ -185,9 +185,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		actions.SetRolloutTimeout(25 * time.Minute)
-		actions.SetHotReloadTimeout(45 * time.Second)
+		actions := NewMigrationActions(gw, &mockClusterLinkService{}, gateway.WithTimeouts(25*time.Minute, 45*time.Second))
 
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
