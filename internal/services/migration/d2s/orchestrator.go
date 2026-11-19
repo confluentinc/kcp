@@ -195,7 +195,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if step.Event == EventSwitch {
-		if errors.Is(stepErr, ErrSwitchUnconfirmed) {
+		if errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
 			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, and the gateway pods may still serve the fenced dynamic route. " +
 				"A re-run checks the gateway pods before doing anything")
 			return stepFailure

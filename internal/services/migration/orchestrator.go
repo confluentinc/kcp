@@ -31,6 +31,14 @@ var ErrUnroutedProducers = offset.ErrUnroutedProducers
 // right compensation even when the fence appears not to have landed at all.
 var ErrFenceUnconfirmed = errors.New("fence could not be confirmed on every gateway pod")
 
+// ErrSwitchUnconfirmed marks a switchover whose patch reached the Gateway CR
+// but could not be confirmed (the operator rejected or never accepted it, the
+// stored configId could not be read back, or the pods never reported it). The
+// CR already holds the switchover while the pods may still serve the fenced
+// route. Every FSM (AAO, TBM, d2s) marks its switch with it, and none rolls
+// back: a re-run's reconcile checks the pods before doing anything.
+var ErrSwitchUnconfirmed = errors.New("the switchover reached the Gateway CR but could not be confirmed")
+
 // WorkflowStep defines a single step in the migration workflow. It is pure FSM
 // topology plus an ops-facing Description; user-facing presentation lives in
 // stepHeaders, keyed by event, so the edge definitions stay presentation-free.
@@ -275,6 +283,11 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 // reconcile forbade a rollback (MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
 
+// switchUnconfirmedWarning is what the operator sees when the switchover
+// reached the CR but could not be confirmed (ErrSwitchUnconfirmed).
+const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
+	"A re-run checks the gateway pods before doing anything"
+
 // handleStepFailure maps a failed workflow step to its compensating rollback.
 // While kcp's fence is up and nothing is promoted yet, ANY halting error rolls
 // back: unfence, then restore the offset-sync config. The fence is up once this
@@ -307,6 +320,13 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 			return stepFailure
 		}
 		return o.restoreAfterUnconfirmedFence(ctx, stepFailure, params)
+	}
+
+	// A switchover that reached the CR but was not confirmed is past promote,
+	// so nothing rolls back (as below); only the operator message differs.
+	if step.Event == EventSwitch && errors.Is(stepErr, ErrSwitchUnconfirmed) {
+		o.reporter.warn(switchUnconfirmedWarning)
+		return stepFailure
 	}
 
 	// Roll back for ANY halting error while kcp's fence is up and nothing is

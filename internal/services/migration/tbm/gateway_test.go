@@ -406,6 +406,34 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 	assert.ErrorAs(t, err, &rejected, "a GatewayRejectedError must be unwrappable by the caller")
 }
 
+// TestTBMSwitch_LandedButUnconfirmedIsMarked: once the switchover patch has
+// reached the CR, a failure confirming it is marked
+// migration.ErrSwitchUnconfirmed; a patch that never reached the CR is
+// returned unmarked.
+func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
+	t.Run("acceptance fails after the patch landed", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+			WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
+			},
+		}
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+	})
+	t.Run("the patch never reached the CR", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("connection refused")
+			},
+		}
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+	})
+}
+
 // TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim proves Switch never
 // mutates config.SwitchoverYAML before applying — there is no per-consumer
 // normalization step here, unlike the historical fencing[].blocked issue

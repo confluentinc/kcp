@@ -935,13 +935,19 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	// Apply resolves the capability first; that is a no-op when FenceGateway
 	// already did in this process, and load-bearing for a resume that jumps
 	// straight to switch in a fresh process.
-	if err := s.gw.Apply(ctx, s.target(config), gateway.Transition{
+	// Once the patch has reached the cluster every failure is marked
+	// ErrSwitchUnconfirmed, as d2s's Switch does.
+	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:    "switchover",
 		Patch:   switchRP,
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
-	}).Err; err != nil {
-		return err
+	})
+	if res.Landed && res.Err != nil {
+		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, res.Err)
+	}
+	if res.Err != nil {
+		return res.Err
 	}
 
 	slog.Debug("gateway switchover complete")

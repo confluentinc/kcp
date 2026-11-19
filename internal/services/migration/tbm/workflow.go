@@ -592,13 +592,19 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 		return fmt.Errorf("failed to build switch route patch: %w", err)
 	}
 
-	if err := a.gw.Apply(ctx, a.target(config), gateway.Transition{
+	// Once the patch has reached the cluster every failure is marked
+	// migration.ErrSwitchUnconfirmed, as d2s's Switch does.
+	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:    "switchover",
 		Patch:   switchRP,
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
-	}).Err; err != nil {
-		return err
+	})
+	if res.Landed && res.Err != nil {
+		return fmt.Errorf("%w: %w", migration.ErrSwitchUnconfirmed, res.Err)
+	}
+	if res.Err != nil {
+		return res.Err
 	}
 
 	a.reporter.Success("Gateway switchover complete")

@@ -1158,6 +1158,41 @@ func TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence(t *testing.T) {
 	assert.Equal(t, StatePromoted, state)
 }
 
+// TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence: a switchover
+// patch that reached the CR but was not confirmed leaves the CR switched while
+// the pods may still serve the fenced route. The warning says so and that a
+// re-run checks the pods first; no unfence is attempted.
+func TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
+	orchestrator, _ := newTestOrchestrator(t)
+	var patches int
+	setGatewayService(orchestrator.actions, &mockGatewayService{
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			patches++
+			return "", nil
+		},
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			if patches == 2 { // the switchover has been patched: its acceptance fails
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
+			}
+			return nil
+		},
+	})
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
+
+	require.ErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+	assert.Equal(t, 2, patches, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orchestrator.fsm.Current())
+	s := out.String()
+	assert.Contains(t, s, "Switch could not be confirmed")
+	assert.Contains(t, s, "the Gateway CR already holds the switchover")
+	assert.Contains(t, s, "the gateway pods may still serve the fenced route")
+	assert.Contains(t, s, "A re-run checks the gateway pods before doing anything")
+	assert.NotContains(t, s, "attempting to remove the fence")
+}
+
 // --- Gateway CR generation checks ---
 
 // changedCR is the refusal a guarded write or check returns once the CR moved.

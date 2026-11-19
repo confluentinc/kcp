@@ -2469,6 +2469,39 @@ func TestAAOSwitch_OverduePodFailsAtPromoted(t *testing.T) {
 	assert.Equal(t, StatePromoted, orch.fsm.Current())
 }
 
+// TestAAOOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence: a switchover
+// patch that reached the CR but was not confirmed leaves the CR switched while
+// the pods may still serve the fenced route. The warning says so and that a
+// re-run checks the pods first; no unfence is attempted.
+func TestAAOOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
+	var mu sync.Mutex
+	var patches []gateway.RoutePatch
+	overrides := recordingGateway(&mu, &patches)
+	overrides.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(patches) == 2 { // the switchover has been patched: its acceptance fails
+			return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
+		}
+		return nil
+	}
+	orch, config := newHappyPathOrchestrator(t, nil, overrides)
+	var out strings.Builder
+	orch.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
+
+	require.ErrorIs(t, err, ErrSwitchUnconfirmed)
+	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orch.fsm.Current())
+	s := out.String()
+	assert.Contains(t, s, "Switch could not be confirmed")
+	assert.Contains(t, s, "the Gateway CR already holds the switchover")
+	assert.Contains(t, s, "the gateway pods may still serve the fenced route")
+	assert.Contains(t, s, "A re-run checks the gateway pods before doing anything")
+	assert.NotContains(t, s, "attempting to remove the fence")
+}
+
 // --- Gateway CR generation checks ---
 
 // gatewayMock returns the orchestrator's mock gateway service, for scripting

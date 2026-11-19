@@ -1256,6 +1256,39 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	assert.NotErrorAs(t, err, &rejected, "a transport failure is not an operator rejection")
 }
 
+// TestAAOSwitchGateway_LandedButUnconfirmedIsMarked: once the switchover patch
+// has reached the CR, a failure confirming it is marked ErrSwitchUnconfirmed;
+// a patch that never reached the CR is returned unmarked.
+func TestAAOSwitchGateway_LandedButUnconfirmedIsMarked(t *testing.T) {
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
+
+	t.Run("acceptance fails after the patch landed", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+				return configID, nil
+			},
+			WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return rejectionError("gw-1")
+			},
+		}
+		err := NewMigrationActions(gw, &mockClusterLinkService{}).SwitchGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrSwitchUnconfirmed)
+		var rejected *gateway.GatewayRejectedError
+		assert.ErrorAs(t, err, &rejected, "the marked error still carries the operator's rejection")
+	})
+	t.Run("the patch never reached the CR", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("connection refused")
+			},
+		}
+		err := NewMigrationActions(gw, &mockClusterLinkService{}).SwitchGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrSwitchUnconfirmed)
+	})
+}
+
 // TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait ensures
 // --rollout-timeout bounds the acceptance wait too, not just the readiness wait.
 func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.T) {
