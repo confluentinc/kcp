@@ -71,6 +71,12 @@ func (t *Transitioner) SetTimeouts(rollout, hotReload time.Duration) {
 	t.hotReloadTimeout = hotReload
 }
 
+// SetRolloutTimeout sets the rollout verification budget, leaving the hot-reload one as is.
+func (t *Transitioner) SetRolloutTimeout(d time.Duration) { t.rolloutTimeout = d }
+
+// SetHotReloadTimeout sets the hot-reload verification budget, leaving the rollout one as is.
+func (t *Transitioner) SetHotReloadTimeout(d time.Duration) { t.hotReloadTimeout = d }
+
 // SetExpectedGeneration seeds the Gateway CR generation patches are guarded on.
 func (t *Transitioner) SetExpectedGeneration(g int64) { t.generation = g }
 

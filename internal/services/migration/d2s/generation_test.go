@@ -64,7 +64,7 @@ func TestD2SActions_Initialize_CopiesTheGatewayGeneration(t *testing.T) {
 
 	require.NoError(t, a.Initialize(context.Background(), &migration.MigrationConfig{}, res))
 
-	assert.Equal(t, int64(9), a.gatewayGeneration)
+	assert.Equal(t, int64(9), a.gw.ExpectedGeneration())
 }
 
 func TestD2SOrchestrator_Execute_FencePatchIsGuardedOnTheReconcileGeneration(t *testing.T) {

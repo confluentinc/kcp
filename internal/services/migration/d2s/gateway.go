@@ -1,7 +1,6 @@
 package d2s
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -64,70 +63,4 @@ func deriveSwitchRoutePatch(config *migration.MigrationConfig) (gateway.RoutePat
 		return gateway.RoutePatch{}, err
 	}
 	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
-}
-
-// verifier builds the shared gateway apply/wait/verify mechanism with this run's capability and timeouts.
-func (a *D2SActions) verifier() *gateway.TransitionVerifier {
-	return &gateway.TransitionVerifier{
-		Service:          a.gatewayService,
-		Reporter:         a.reporter,
-		Capability:       a.gatewayCapability,
-		RolloutTimeout:   a.rolloutTimeout,
-		HotReloadTimeout: a.hotReloadTimeout,
-		Generation:       &a.gatewayGeneration,
-	}
-}
-
-// ensureGatewayCapability resolves the gateway capability at most once per process and proves hot-reload
-// works when the gateway claims it; the first gateway-touching step (Fence, Switch, or a rollback's unfence)
-// does it.
-func (a *D2SActions) ensureGatewayCapability(ctx context.Context, config *migration.MigrationConfig) error {
-	if a.capabilityResolved {
-		return nil
-	}
-	if err := a.resolveGatewayCapability(ctx, config); err != nil {
-		return err
-	}
-	if err := a.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort); err != nil {
-		return err
-	}
-	a.capabilityResolved = true
-	return nil
-}
-
-// resolveGatewayCapability probes the live gateway with the fenced CR and the switched CR, so the detector
-// sees the spec.hotReload either one would put in force.
-func (a *D2SActions) resolveGatewayCapability(ctx context.Context, config *migration.MigrationConfig) error {
-	if config.GatewayConfigPort == 0 {
-		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
-	}
-	fencedCR, err := deriveFencedCRYAML(config)
-	if err != nil {
-		return fmt.Errorf("failed to derive fenced gateway CR: %w", err)
-	}
-	switchedCR, err := deriveSwitchedCRYAML(config)
-	if err != nil {
-		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
-	}
-	capability, err := a.verifier().ResolveCapability(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort, fencedCR, switchedCR)
-	if err != nil {
-		return err
-	}
-	a.gatewayCapability = capability
-	if capability.Mode == gateway.VerifyPerPodConfigID {
-		a.reporter.Success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
-	}
-	return nil
-}
-
-func (a *D2SActions) patchGatewayRoute(ctx context.Context, config *migration.MigrationConfig, rp gateway.RoutePatch, step string) (gateway.ApplyResult, error) {
-	return a.verifier().PatchCR(ctx, config.K8sNamespace, config.InitialCrName, rp, step)
-}
-
-func (a *D2SActions) waitForGatewayAccepted(ctx context.Context, config *migration.MigrationConfig, step string) error {
-	return a.verifier().WaitForAccepted(ctx, config.K8sNamespace, config.InitialCrName, step)
-}
-
-func (a *D2SActions) verifyGatewayTransition(ctx context.Context, config *migration.MigrationConfig, applied gateway.ApplyResult, step string) error {
-	return a.verifier().VerifyTransition(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort, applied, step)
 }
