@@ -51,7 +51,7 @@ spec:
       # valid Enterprise licence the gateway applies trial feature limits and
       # never starts its config-file watcher — CFK still reports success, so the
       # whole suite would pass its Kubernetes assertions and silently prove
-      # nothing. See VerifyHotReloadCapability.
+      # nothing. See SmokeTestHotReload.
       - name: GATEWAY_LICENSES
         valueFrom:
           secretKeyRef:

@@ -13,7 +13,8 @@ import (
 
 // Fake implements gateway.TransitionClient using function fields for test
 // control. Unset fields fall back to the defaults documented per method; the
-// error texts keep their historical "mockGatewayService" prefix.
+// error texts keep their historical "mockGatewayService" prefix. Not safe for
+// concurrent use: RouteExpected is appended unlocked.
 type Fake struct {
 	GetGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
 	DetectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)

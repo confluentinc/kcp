@@ -32,7 +32,7 @@ func deriveFencedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 // detection, which needs to see both the fenced and switched CR to correctly
 // infer verification mode — a detector shown only the live gateway could
 // pick rollout verification for a migration that will hot-reload, and then
-// observe nothing (see migration.ResolveGatewayCapability's comment).
+// observe nothing (see gateway.Transitioner.ResolveCapability).
 func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 	var base map[string]interface{}
 	if err := yaml.Unmarshal([]byte(config.GatewayYAML), &base); err != nil {
@@ -55,9 +55,9 @@ func deriveRulesRoutePatch(config *migration.MigrationConfig, yamlSrc string) (g
 
 // deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
 // rules fragment onto config.Route. Consumed by Fence's write path;
-// resolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR
-// bytes since capability detection needs a complete CR to apply, not a route
-// patch.
+// the Transitioner's capability probe still uses full CR bytes (see
+// deriveSwitchedCRYAML) since capability detection needs a complete CR to
+// apply, not a route patch.
 func deriveFenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
 	return deriveRulesRoutePatch(config, config.FenceYAML)
 }

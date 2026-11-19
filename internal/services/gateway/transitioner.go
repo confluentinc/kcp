@@ -53,6 +53,10 @@ type Transitioner struct {
 	resolved       bool
 	smokeAttempted bool
 
+	// firstApplyDone: the start-of-run pod set is captured only on the first
+	// Apply of the process, even if PatchCR failed before capturing; a later
+	// RestoresStart apply then waits on all pods, as the old code did when
+	// capture failed.
 	firstApplyDone bool
 	startPods      map[types.UID]struct{}
 

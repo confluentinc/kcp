@@ -264,7 +264,8 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	// A switchover that reached the CR but was not confirmed is past promote,
-	// so nothing rolls back (as below); only the operator message differs.
+	// so the rollback logic below would not roll back past promote either; only
+	// the operator message differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
 		o.reporter.warn(switchUnconfirmedWarning)
 		return stepFailure

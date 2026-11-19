@@ -122,8 +122,9 @@ func (s *MigrationActions) target(config *MigrationConfig) gateway.Target {
 // ResolveGatewayCapability determines how gateway state transitions will be
 // verified on the live cluster and adopts it for this run, without the
 // hot-reload smoke test: a caller that resolves directly owns that test (see
-// gateway.Transitioner.ResolveCapability). Production never calls it; every
-// gateway patch resolves the capability itself through the Transitioner.
+// gateway.Transitioner.ResolveCapability). Exported for tests only, with no
+// production caller: every gateway patch resolves the capability itself
+// through the Transitioner.
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
 	return s.gw.ResolveCapability(ctx, s.target(config))
 }
@@ -133,7 +134,7 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 // to the LIVE Gateway CR. See gateway.TransitionVerifier.SmokeTestHotReload's
 // doc comment for why this matters and why patching only spec.configId —
 // touching no other field — makes it safe to call at any point, including a
-// resume.
+// resume. Exported for tests only, with no production caller.
 func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *MigrationConfig) error {
 	return s.gw.SmokeTestHotReload(ctx, s.target(config))
 }
@@ -403,7 +404,7 @@ func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 // deriveFencedCRYAML builds the fenced CR bytes from the gateway CR snapshot
 // migplan captured (config.GatewayYAML) by splicing config.FenceYAML onto
 // config.Route. There is no separately-snapshotted fenced CR: FenceGateway's
-// apply and ResolveGatewayCapability's detection both derive from the same
+// apply and the Transitioner's capability detection both derive from the same
 // source, so they can never drift from each other.
 //
 // This FSM only runs for static routes (the command layer sends a dynamic
@@ -420,8 +421,8 @@ func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
 // deriveSwitchedCRYAML builds the switched CR bytes from the gateway CR
 // snapshot migplan captured (config.GatewayYAML) by splicing
 // config.SwitchoverYAML onto config.Route. There is no separately-snapshotted
-// switched CR: SwitchGateway's apply and ResolveGatewayCapability's detection
-// both derive from the same source, so they can never drift from each other —
+// switched CR: SwitchGateway's apply and the Transitioner's capability
+// detection both derive from the same source, so they can never drift from each other —
 // the same property deriveFencedCRYAML gives the fenced CR.
 //
 // Static-route-only by construction — see deriveFencedCRYAML's comment.
@@ -435,8 +436,9 @@ func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
 
 // deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
 // fence fragment onto config.Route. Consumed by FenceGateway's write path;
-// ResolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR bytes
-// since capability detection needs a complete CR to apply, not a route patch.
+// the Transitioner's capability probe still uses deriveFencedCRYAML/full CR
+// bytes since capability detection needs a complete CR to apply, not a route
+// patch.
 func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
 	v, err := gateway.FragmentValue([]byte(config.FenceYAML), "fence")
 	if err != nil {

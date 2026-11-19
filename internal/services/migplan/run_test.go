@@ -266,6 +266,7 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 
 	require.Error(t, err, "the fake API server is unreachable")
 	assert.NotContains(t, err.Error(), "no configuration has been provided", "the home kubeconfig must be used")
+	assert.Contains(t, err.Error(), "127.0.0.1:1", "the client must call the API server named in ~/.kube/config")
 }
 
 func TestBuildReconcileInput_Conversion(t *testing.T) {

@@ -202,7 +202,7 @@ func (r *recordingClusterLinkService) maxBatch() int {
 
 // recordingGatewayService is stubGatewayServiceImpl plus a record of the port
 // passed to DetectCapability — the first place a gateway transition reads
-// config.GatewayConfigPort (see tbm.resolveGatewayCapability). Observing it here
+// config.GatewayConfigPort (see gateway.Transitioner.EnsureCapability). Observing it here
 // proves the override reached config.GatewayConfigPort BEFORE the capability
 // probe ran.
 type recordingGatewayService struct {

@@ -45,7 +45,7 @@ const (
 
 // testReconcileResult returns the migplan.Result Initialize expects to
 // receive, carrying testInitialCR's route and fragments so
-// ResolveGatewayCapability's fence/switch derivation succeeds against it.
+// the fence/switch derivation succeeds against it.
 func testReconcileResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",

@@ -467,7 +467,7 @@ func TestTBMActions_Switch_PatchesSwitchoverYAMLVerbatim(t *testing.T) {
 // TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch proves
 // capability resolution happens at most once per process: when Fence runs
 // before Switch in the same TBMActions instance (the normal, same-invocation
-// case), Switch's own call to ensureGatewayCapability must be a no-op.
+// case), Switch's own capability resolution through the Transitioner must be a no-op.
 func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *testing.T) {
 	var detectCalls int
 	gw := &mockGatewayService{
@@ -559,10 +559,9 @@ func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t 
 }
 
 // TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability proves
-// resolveGatewayCapability passes config.GatewayConfigPort — not a hard-coded
-// constant — through to DetectCapability, mirroring
-// migration.ResolveGatewayCapability's own port-settling behavior (see
-// internal/services/migration/workflow.go's ResolveGatewayCapability).
+// the Transitioner's EnsureCapability passes config.GatewayConfigPort — not a
+// hard-coded constant — through to DetectCapability (see
+// gateway.Transitioner's port settling).
 // mockGatewayService already supports overriding DetectCapability via its
 // DetectCapabilityFn function field, so no new stub type is needed here.
 func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *testing.T) {
@@ -583,8 +582,8 @@ func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *test
 
 // TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves an unset
 // (zero-value) config.GatewayConfigPort still settles onto
-// gateway.DefaultGatewayConfigPort before the capability probe, exactly like
-// migration.ResolveGatewayCapability.
+// gateway.DefaultGatewayConfigPort before the capability probe, as the AAO
+// path does through the same Transitioner.
 func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 	var sawPort int
 	gw := &mockGatewayService{
