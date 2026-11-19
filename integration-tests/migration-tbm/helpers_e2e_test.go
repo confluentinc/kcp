@@ -410,12 +410,11 @@ func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 
 // ensureFencingBlocked fills in the CRD-required `blocked` on any fencing entry
 // the engine emitted without it. The engine renders a batch fence as
-// {topics: [...]} — fence = block those topics during cutover — but the CFK
-// CFK 3.4.0 Gateway CRD marks fencing[].blocked a required field, so a raw apply is
-// rejected. The harness fills it (blocked: true matches the fence's intent) the way
-// tbm's PrependFence does for the real orchestrator; it is not an engine defect the
-// tests should mask
-// elsewhere.
+// {topics: [...]} (fence = block those topics during cutover), but the CFK 3.4.0
+// Gateway CRD marks fencing[].blocked a required field, so a raw apply is
+// rejected. The harness fills it (blocked: true matches the fence's intent), as
+// reconcile's RulesTree.PrependFence does, which the real TBM orchestrator relies
+// on. This is not an engine defect the tests should mask elsewhere.
 func ensureFencingBlocked(rules map[string]any) {
 	fencing, ok := rules["fencing"].([]any)
 	if !ok {

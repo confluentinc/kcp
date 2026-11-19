@@ -96,6 +96,16 @@ func TestD2SOrchestrator_Execute_MissingDependenciesFailBeforeAnyStep(t *testing
 	assert.Empty(t, rec.patches)
 }
 
+func TestD2SOrchestrator_Execute_MissingGatewayClientFailsBeforeAnyStep(t *testing.T) {
+	run := newTestRun(nil, cleanWorld().deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.EqualError(t, err, "the route conversion is missing dependencies: GatewayService")
+	assert.Equal(t, StateUninitialized, run.state(), "no step may run")
+	assert.Empty(t, run.out.String(), "no step header or step output may be printed")
+}
+
 // A failure while this run's fence is up rolls back: abort_fence restores reconcile's rollback rules.
 func TestD2SOrchestrator_Execute_AFailureWhileFencedRollsBack(t *testing.T) {
 	for _, step := range []string{EventVerifyFence, EventSyncOffsets} {

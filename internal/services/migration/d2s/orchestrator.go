@@ -111,7 +111,7 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
-	if err := o.actions.deps.validate(); err != nil {
+	if err := o.actions.validate(); err != nil {
 		return err
 	}
 	// A cancellable child context, so the test-only kill point can interrupt the run after a chosen

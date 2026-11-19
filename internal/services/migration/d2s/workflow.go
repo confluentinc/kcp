@@ -61,6 +61,11 @@ type Dependencies struct {
 
 // validate reports the dependencies a conversion cannot run without.
 func (d Dependencies) validate() error {
+	return missingDependenciesError(d.missing())
+}
+
+// missing names the unset Dependencies fields a conversion cannot run without.
+func (d Dependencies) missing() []string {
 	var missing []string
 	if d.Input.Route == "" {
 		missing = append(missing, "Input.Route")
@@ -86,10 +91,24 @@ func (d Dependencies) validate() error {
 	if d.Committers == nil {
 		missing = append(missing, "Committers")
 	}
+	return missing
+}
+
+// missingDependenciesError is nil for an empty list, else the conversion's missing-dependencies error.
+func missingDependenciesError(missing []string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("the route conversion is missing dependencies: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// validate reports the Dependencies and the gateway client a conversion cannot run without.
+func (a *D2SActions) validate() error {
+	missing := a.deps.missing()
+	if a.gw == nil || !a.gw.HasClient() {
+		missing = append(missing, "GatewayService")
+	}
+	return missingDependenciesError(missing)
 }
 
 // D2SActions holds the business logic behind each transition.
