@@ -175,7 +175,7 @@ func (r *patchRecordingGateway) patched() []string {
 	return append([]string(nil), r.fields...)
 }
 
-func convertDeps(gw gateway.Service, w *convertWorld) executorDependencies {
+func convertDeps(gw gateway.TransitionClient, w *convertWorld) executorDependencies {
 	d := stubDeps(gw, nil)
 	d.convert = w.services
 	return d

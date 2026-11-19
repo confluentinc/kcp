@@ -143,7 +143,7 @@ func (r *readinessRecordingGateway) WaitForGatewayPods(_ context.Context, _, _ s
 	return nil
 }
 
-// RolloutTimeout reaches MigrationActions.SetRolloutTimeout: every gateway
+// RolloutTimeout reaches MigrationActions through gateway.WithTimeouts: every gateway
 // readiness wait (fence and switch) is bounded by it.
 func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
 	rec := &readinessRecordingGateway{}

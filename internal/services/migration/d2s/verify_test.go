@@ -309,7 +309,7 @@ func TestVerifyFence_ANilGatheredGatewayFallsThroughToThePreconditions(t *testin
 
 	a := NewD2SActions(&mockGatewayService{}, w.deps())
 	a.reporter = quietReporter()
-	a.gatewayGeneration = 7
+	a.gw.SetExpectedGeneration(7)
 
 	var err error
 	require.NotPanics(t, func() {

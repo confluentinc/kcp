@@ -25,7 +25,7 @@ type testRun struct {
 	out    *strings.Builder
 }
 
-func newTestRun(gw gateway.Service, deps Dependencies) *testRun {
+func newTestRun(gw gateway.TransitionClient, deps Dependencies) *testRun {
 	config := &migration.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
 	actions := NewD2SActions(gw, deps)
 	out := &strings.Builder{}
@@ -94,6 +94,16 @@ func TestD2SOrchestrator_Execute_MissingDependenciesFailBeforeAnyStep(t *testing
 	assert.Contains(t, err.Error(), "Gather")
 	assert.Equal(t, StateUninitialized, run.state())
 	assert.Empty(t, rec.patches)
+}
+
+func TestD2SOrchestrator_Execute_MissingGatewayClientFailsBeforeAnyStep(t *testing.T) {
+	run := newTestRun(nil, cleanWorld().deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.EqualError(t, err, "the route conversion is missing dependencies: GatewayService")
+	assert.Equal(t, StateUninitialized, run.state(), "no step may run")
+	assert.Empty(t, run.out.String(), "no step header or step output may be printed")
 }
 
 // A failure while this run's fence is up rolls back: abort_fence restores reconcile's rollback rules.
@@ -169,7 +179,7 @@ func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSaysARerunChec
 		"acceptance fails after the patch": func(rec *patchRecorder) *mockGatewayService {
 			gw := rec.service()
 			accepts := 0
-			gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+			gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 				accepts++
 				if accepts == 2 {
 					return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
@@ -245,7 +255,7 @@ func unconfirmedFenceRun(t *testing.T, restoreFails bool) (*testRun, *patchRecor
 	}
 	gw := rec.service()
 	accepts := 0
-	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		accepts++
 		if accepts == 1 {
 			return fmt.Errorf("operator never reconciled")

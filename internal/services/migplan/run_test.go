@@ -259,8 +259,14 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 	g := &manifest.GatewayMigration{}
 	g.Spec.Gateway.Namespace = "confluent"
 
-	_, err := buildSecretExistenceChecker(g)
-	require.NoError(t, err, "building the checker from ~/.kube/config must succeed")
+	svc, err := buildGatewayService(g)
+	require.NoError(t, err)
+	checker := buildSecretExistenceChecker(g, svc)
+	_, _, err = checker.MissingSecrets(context.Background(), []string{"s"})
+
+	require.Error(t, err, "the fake API server is unreachable")
+	assert.NotContains(t, err.Error(), "no configuration has been provided", "the home kubeconfig must be used")
+	assert.Contains(t, err.Error(), "127.0.0.1:1", "the client must call the API server named in ~/.kube/config")
 }
 
 func TestBuildReconcileInput_Conversion(t *testing.T) {

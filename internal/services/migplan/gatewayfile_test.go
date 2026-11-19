@@ -43,7 +43,7 @@ func TestGatewayFileLoad(t *testing.T) {
 func TestFindRouteModeResolvesStructurallyWhenAbsent(t *testing.T) {
 	// A route with a plural streamingDomains array but no explicit `mode` must
 	// resolve to "dynamic" via the structural fallback (resolveModeStructurally)
-	// — mirroring gateway.ResolveRouteMode's production behavior, since the real
+	// — the canonical structural resolution, since the real
 	// Gateway CRD carries no mode field at all.
 	doc := map[string]any{
 		"spec": map[string]any{
@@ -156,7 +156,7 @@ func TestGatewayFile_Load_ModeFieldWinsWhenPresent(t *testing.T) {
 func TestGatewayFile_Load_ErrorsOnRouteWithNeitherBinding(t *testing.T) {
 	// A route with no mode field and neither streamingDomain nor
 	// streamingDomains declared is malformed — must error, not silently
-	// default to static (mirrors gateway.ResolveRouteMode's old strictness).
+	// default to static (structural resolution is strict).
 	_, err := NewGatewayFile("testdata/gateway-route-neither-binding.yaml", "migration-route").Load(context.Background())
 	if err == nil {
 		t.Fatal("expected an error for a route declaring neither binding, got nil")

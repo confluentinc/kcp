@@ -21,8 +21,8 @@ import (
 // run needs, plus a close function for both.
 type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination offset.Provider, closeFn func() error, err error)
 
-// gatewayServiceFunc builds the gateway.Service the fence/switch steps use.
-type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.Service, error)
+// gatewayServiceFunc builds the gateway.TransitionClient the fence/switch steps use.
+type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.TransitionClient, error)
 
 // clusterLinkServiceFunc builds the clusterlink.Service the promote step (and
 // the static branch's offset-sync pause/restore) uses.
@@ -55,7 +55,7 @@ var liveExecutorDependencies = executorDependencies{
 type executorServices struct {
 	sourceOffset      offset.Provider
 	destinationOffset offset.Provider
-	gateway           gateway.Service
+	gateway           gateway.TransitionClient
 	clusterLink       clusterlink.Service
 	// restAuth authenticates the cluster-link REST API with the link
 	// credentials, which may name a broader principal than the destination
@@ -193,9 +193,9 @@ func newConsumerGroupClientForConn(conn types.KafkaSourceConn) (*client.Consumer
 	return client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
 }
 
-// buildGatewayService opens a real gateway.Service against the manifest's
+// buildGatewayService opens a real gateway.TransitionClient against the manifest's
 // kubeconfig (see manifest.GatewayMigration.KubeconfigPath for its default).
-func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) {
+func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
 	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {
 		return nil, err

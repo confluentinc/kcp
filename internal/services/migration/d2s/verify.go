@@ -59,8 +59,8 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
 		// would roll back); it stops the run with no further gateway write.
 		// A nil gateway falls through to CheckPreconditions, which refuses it as a missing route.
-		if facts.Gateway != nil && facts.Gateway.Generation > 0 && a.gatewayGeneration > 0 && facts.Gateway.Generation != a.gatewayGeneration {
-			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gatewayGeneration, Observed: facts.Gateway.Generation}
+		if facts.Gateway != nil && facts.Gateway.Generation > 0 && a.gw.ExpectedGeneration() > 0 && facts.Gateway.Generation != a.gw.ExpectedGeneration() {
+			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gw.ExpectedGeneration(), Observed: facts.Gateway.Generation}
 		}
 		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
 		view = v

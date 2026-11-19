@@ -3,131 +3,13 @@ package migration
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/gateway"
-	k8stypes "k8s.io/apimachinery/pkg/types"
+	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 )
 
-// mockGatewayService implements gateway.Service using function fields for test control.
-type mockGatewayService struct {
-	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
-	detectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
-	waitForConfigIDFn      func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	checkPermissionsFn     func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	patchGatewayRouteFn    func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	patchGatewayConfigIDFn func(ctx context.Context, namespace, name, configID string) (string, error)
-	getGatewayGenerationFn func(ctx context.Context, namespace, name string) (int64, error)
-	// patchRouteGenFn, when set, takes precedence over patchGatewayRouteFn and
-	// scripts the full PatchResult (generation included) or a refusal.
-	patchRouteGenFn func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error)
-	// routeExpected records every PatchGatewayRoute call's expectedGeneration.
-	routeExpected            []int64
-	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
-	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
-	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
-}
-
-func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
-	if m.getGatewayYAMLFn != nil {
-		return m.getGatewayYAMLFn(ctx, namespace, name)
-	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
-}
-
-// DetectCapability defaults to VerifyRollout — the mode every pre-hot-reload
-// cluster gets — so tests that do not care about hot-reload keep exercising the
-// pre-existing rollout path.
-func (m *mockGatewayService) DetectCapability(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error) {
-	if m.detectCapabilityFn != nil {
-		return m.detectCapabilityFn(ctx, namespace, name, port, fenced, switchover)
-	}
-	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error {
-	if m.waitForConfigIDFn != nil {
-		return m.waitForConfigIDFn(ctx, namespace, name, opts)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	if m.checkPermissionsFn != nil {
-		return m.checkPermissionsFn(ctx, verb, resource, group, namespace)
-	}
-	return true, nil
-}
-
-func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error) {
-	m.routeExpected = append(m.routeExpected, expectedGeneration)
-	if m.patchRouteGenFn != nil {
-		return m.patchRouteGenFn(ctx, namespace, name, rp, configID, expectedGeneration)
-	}
-	if m.patchGatewayRouteFn != nil {
-		str, err := m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
-		return gateway.PatchResult{ConfigID: str}, err
-	}
-	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
-}
-
-func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string, _ int64) (gateway.PatchResult, error) {
-	if m.patchGatewayConfigIDFn != nil {
-		str, err := m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
-		return gateway.PatchResult{ConfigID: str}, err
-	}
-	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
-}
-
-func (m *mockGatewayService) GetGatewayGeneration(ctx context.Context, namespace, name string) (int64, error) {
-	if m.getGatewayGenerationFn != nil {
-		return m.getGatewayGenerationFn(ctx, namespace, name)
-	}
-	return 0, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
-	if m.waitForGatewayAcceptedFn != nil {
-		return m.waitForGatewayAcceptedFn(ctx, namespace, name, pollInterval, timeout)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
-	if m.getGatewayPodUIDsFn != nil {
-		return m.getGatewayPodUIDsFn(ctx, namespace, name)
-	}
-	// A one-UID default: PatchCR captures the pods of a rolling gateway before
-	// every patch. Tests that care override getGatewayPodUIDsFn.
-	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
-}
-
-// GetGatewayDeploymentGeneration defaults to 0 — the "could not read it"
-// baseline, which the rollout waits treat as "any generation counts as a bump".
-// Tests that care about the baseline set getDeploymentGenFn.
-func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
-	if m.getDeploymentGenFn != nil {
-		return m.getDeploymentGenFn(ctx, namespace, name)
-	}
-	return 0, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
-	if m.waitForGatewayPodsFn != nil {
-		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
-	if m.waitForGatewayReadyFn != nil {
-		return m.waitForGatewayReadyFn(ctx, namespace, name, baselineGeneration, pollInterval, timeout, onProgress)
-	}
-	return nil
-}
+// mockGatewayService is the shared gateway.TransitionClient fake.
+type mockGatewayService = gatewaytest.Fake
 
 // mockClusterLinkService implements clusterlink.Service using function fields for test control.
 type mockClusterLinkService struct {

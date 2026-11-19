@@ -69,7 +69,7 @@ func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
 
 func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	cl := &mockClusterLinkService{
 		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -758,11 +758,11 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 // plan's artifact, not the promote set.
 func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when FenceYAML is empty")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when FenceYAML is empty")
 			return "", nil
 		},
@@ -783,7 +783,7 @@ func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
 func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
 	var applyCalls int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			applyCalls++
 			return "", nil
 		},
@@ -801,11 +801,11 @@ func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
 // artifact short-circuits Switch even when Topics is non-empty.
 func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when SwitchoverYAML is empty")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when SwitchoverYAML is empty")
 			return "", nil
 		},
@@ -825,7 +825,7 @@ func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
 func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
 	var applyCalls int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			applyCalls++
 			return "", nil
 		},
@@ -837,4 +837,14 @@ func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T
 	err := actions.Switch(context.Background(), config)
 	require.NoError(t, err, "Switch with SwitchoverYAML set + no Topics must still switch")
 	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
+}
+
+func TestTBMActions_InitializeNilResultIsAnError(t *testing.T) {
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &migration.MigrationConfig{}
+
+	err := actions.Initialize(context.Background(), config, nil)
+
+	require.EqualError(t, err, "no reconcile result to initialize the migration from")
+	assert.Empty(t, config.Topics)
 }

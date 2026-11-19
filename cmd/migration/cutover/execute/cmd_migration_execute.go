@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -242,14 +243,14 @@ func executePlan(
 }
 
 // planModeFor is the migplan.Result.Mode a plan reconciled for t carries.
-func planModeFor(t manifest.MigrationType) string {
+func planModeFor(t manifest.MigrationType) reconcile.PlanMode {
 	switch t {
 	case manifest.MigrationTypeStatic:
-		return "static"
+		return reconcile.ModeStatic
 	case manifest.MigrationTypeDynamic:
-		return "dynamic"
+		return reconcile.ModeDynamic
 	default:
-		return "convert"
+		return reconcile.ModeConvert
 	}
 }
 

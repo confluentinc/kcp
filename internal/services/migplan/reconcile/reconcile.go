@@ -21,7 +21,7 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
 	report.Preconditions = pcs
 	if !ok {
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 
 	// Resolve the selector (exact names + patterns) to concrete topic names by
@@ -29,7 +29,7 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	batch, err := Explode(in.Topics, in.TopicPatterns, sourceTopics)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("selector patterns compile", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 
 	srcSet := toSet(sourceTopics)
@@ -74,10 +74,10 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// Refusal gate: any failed precondition or fail-fast topic means we emit no
 	// artifacts at all (all-or-nothing).
 	if report.Refused() {
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	if len(toMigrate) == 0 {
-		return &Plan{Report: report, Mode: "dynamic", NothingToDo: true}
+		return &Plan{Report: report, Mode: ModeDynamic, NothingToDo: true}
 	}
 
 	// Build both artifacts from one pristine copy of the operator's rules, so the
@@ -89,14 +89,14 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	fence, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules clone", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	fence.PrependFence(toMigrate)
 
 	switchover, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover rules clone", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	// The switched state is unfenced for our topics: on a resume the base was
 	// pulled already-fenced, so drop kcp's own fence before routing to target
@@ -112,38 +112,38 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	rollback, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("rollback rules clone", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	rollback.DropFence(toMigrate)
 
 	fenceBytes, err := fence.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules serialize", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	switchBytes, err := switchover.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover rules serialize", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 	rollbackBytes, err := rollback.Serialize()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("rollback rules serialize", err.Error()))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 
 	// Guardrail: refuse if either serialized rules block exceeds the size limit.
 	if len(fenceBytes) > MaxRulesBytes || len(switchBytes) > MaxRulesBytes {
 		report.Preconditions = append(report.Preconditions, fail("rules block within size limit",
 			fmt.Sprintf("rules block is %d bytes (> %d) — narrow the selector or migrate a smaller batch", max(len(fenceBytes), len(switchBytes)), MaxRulesBytes)))
-		return &Plan{Report: report, Mode: "dynamic"}
+		return &Plan{Report: report, Mode: ModeDynamic}
 	}
 
 	promoteSorted := append([]string(nil), promote...)
 	sort.Strings(promoteSorted)
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
-	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+	return &Plan{Report: report, Mode: ModeDynamic, Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
 		FenceRules: fenceBytes, SwitchoverRules: switchBytes, RollbackFenceRules: rollbackBytes, RollbackAllowed: rollbackAllowed(report),
 		FencedAtStart: base.HasFence(toMigrate),
 		MigrateTopics: sortedCopy(toMigrate)}}
@@ -170,13 +170,13 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	pcs, view, ok := CheckStaticPreconditions(in, gw, missingSecrets, secretCheckSkipped, ids)
 	report.Preconditions = pcs
 	if !ok {
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 
 	batch, err := Explode(in.Topics, in.TopicPatterns, sourceTopics)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("selector patterns compile", err.Error()))
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 
 	srcSet := toSet(sourceTopics)
@@ -210,7 +210,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	toMigrate := topicsOf(report.Migratable, report.AwaitStopped, report.SwitchOnly)
 
 	if report.Refused() {
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 	// A restore is owed when the pause is opted in and either this run pauses
 	// (a cutover is in flight) or an earlier run's pause was never restored
@@ -219,23 +219,23 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		(len(toMigrate) > 0 || offsetSyncEnabled != in.OffsetSyncBaselineEnabled)
 	if len(toMigrate) == 0 {
 		report.RestoreOffsetSync = restoreOffsetSync
-		return &Plan{Report: report, Mode: "static", NothingToDo: !restoreOffsetSync}
+		return &Plan{Report: report, Mode: ModeStatic, NothingToDo: !restoreOffsetSync}
 	}
 
 	fenceFragment, err := BuildFenceFragment()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence fragment builds", err.Error()))
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 	switchoverRoute, err := BuildSwitchoverRoute(gw.Route.Raw, in.TargetDomain, view.BootstrapServerID)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover route builds", err.Error()))
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 	rollbackRoute, err := BuildRollbackFenceRoute(gw.Route.Raw)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("rollback route builds", err.Error()))
-		return &Plan{Report: report, Mode: "static"}
+		return &Plan{Report: report, Mode: ModeStatic}
 	}
 
 	report.RestoreOffsetSync = restoreOffsetSync
@@ -243,7 +243,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	sort.Strings(promoteSorted)
 	awaitStoppedSorted := topicsOf(report.AwaitStopped)
 	sort.Strings(awaitStoppedSorted)
-	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
+	return &Plan{Report: report, Mode: ModeStatic, Artifacts: &Artifacts{PromoteTopics: promoteSorted, AwaitStopped: awaitStoppedSorted,
 		FenceRules: fenceFragment, SwitchoverRules: switchoverRoute, RollbackFenceRules: rollbackRoute, RollbackAllowed: rollbackAllowed(report),
 		FencedAtStart: hasKcpStaticFence(gw.Route.Raw),
 		MigrateTopics: sortedCopy(toMigrate)}}
@@ -265,7 +265,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	case TypeDynamic:
 		return applyGatewaySync(reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids), gw)
 	case TypeDynamicToStatic:
-		return &Plan{Mode: convertMode, Report: Report{Preconditions: []PreconditionResult{fail(
+		return &Plan{Mode: ModeConvert, Report: Report{Preconditions: []PreconditionResult{fail(
 			"conversion reconciled by ReconcileConvert",
 			"the declared type is a dynamic-to-static conversion, so this run must be reconciled by ReconcileConvert, not the topic-migration strategies")}}}
 	default:

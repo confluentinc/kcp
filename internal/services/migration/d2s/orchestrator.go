@@ -111,7 +111,7 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
-	if err := o.actions.deps.validate(); err != nil {
+	if err := o.actions.validate(); err != nil {
 		return err
 	}
 	// A cancellable child context, so the test-only kill point can interrupt the run after a chosen
@@ -195,7 +195,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if step.Event == EventSwitch {
-		if errors.Is(stepErr, ErrSwitchUnconfirmed) {
+		if errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
 			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, and the gateway pods may still serve the fenced dynamic route. " +
 				"A re-run checks the gateway pods before doing anything")
 			return stepFailure
