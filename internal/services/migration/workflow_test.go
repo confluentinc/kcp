@@ -1350,7 +1350,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML, FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1377,7 +1377,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML, FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1651,6 +1651,8 @@ func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T)
 		GatewayYAML:       testFencedCaptureCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
@@ -1684,6 +1686,8 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 		GatewayYAML:       testInitialCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1709,6 +1713,8 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 		GatewayYAML:       testInitialCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)

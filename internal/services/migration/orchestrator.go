@@ -367,14 +367,8 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		}
 	} else {
 		// This run never reached fenced, so there is no abort_fence edge to take:
-		// only the cluster needs putting right, as for an unconfirmed fence. Its
-		// fence step never resolved the gateway capability either, so resolve it
-		// first: without it the unfence would be verified with the unresolved
-		// zero-value capability.
-		err := o.actions.ensureGatewayCapability(ctx, o.config)
-		if err == nil {
-			err = o.actions.unfenceGateway(ctx, o.config)
-		}
+		// only the cluster needs putting right, as for an unconfirmed fence.
+		err := o.actions.unfenceGateway(ctx, o.config)
 		if errors.Is(err, gateway.ErrGatewayChanged) {
 			rollbackErr = err
 			return o.stopOnGatewayChange(stepFailure, err, o.stoppedAt())

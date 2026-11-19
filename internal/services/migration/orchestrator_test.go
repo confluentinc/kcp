@@ -175,9 +175,14 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	actions.promotePollInterval = time.Millisecond
 
 	orch := NewMigrationOrchestrator(config, actions)
+	happyPathGateways.Store(orch, gw)
 
 	return orch, config
 }
+
+// happyPathGateways maps each orchestrator newHappyPathOrchestrator built to
+// its mock gateway service, which the Transitioner holds privately.
+var happyPathGateways sync.Map
 
 // uninitializedReconcileResult builds the migplan.Result an orchestrator test
 // starting at StateUninitialized must pass to Initialize/Execute (onInitialize
@@ -2469,7 +2474,11 @@ func TestAAOSwitch_OverduePodFailsAtPromoted(t *testing.T) {
 // gatewayMock returns the orchestrator's mock gateway service, for scripting
 // generations after construction.
 func gatewayMock(orch *MigrationOrchestrator) *mockGatewayService {
-	return orch.actions.gatewayService.(*mockGatewayService)
+	gw, ok := happyPathGateways.Load(orch)
+	if !ok {
+		panic("gatewayMock: orchestrator was not built by newHappyPathOrchestrator")
+	}
+	return gw.(*mockGatewayService)
 }
 
 // changedCR is the refusal a guarded write or check returns once the CR moved.

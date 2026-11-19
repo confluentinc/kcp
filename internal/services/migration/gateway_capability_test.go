@@ -34,9 +34,9 @@ func TestResolveGatewayCapability(t *testing.T) {
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		assert.Equal(t, gateway.VerifyPerPodConfigID, actions.gatewayCapability.Mode)
-		assert.True(t, actions.gatewayCapability.HotReloadEnabled)
-		assert.True(t, actions.gatewayCapability.InjectsConfigID())
+		assert.Equal(t, gateway.VerifyPerPodConfigID, actions.gw.Capability().Mode)
+		assert.True(t, actions.gw.Capability().HotReloadEnabled)
+		assert.True(t, actions.gw.Capability().InjectsConfigID())
 	})
 
 	// Detection is only as good as its inputs. The fenced and switchover CRs are
@@ -92,22 +92,17 @@ func TestResolveGatewayCapability(t *testing.T) {
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		assert.Equal(t, gateway.VerifyRollout, actions.gatewayCapability.Mode)
-		assert.False(t, actions.gatewayCapability.InjectsConfigID(),
+		assert.Equal(t, gateway.VerifyRollout, actions.gw.Capability().Mode)
+		assert.False(t, actions.gw.Capability().InjectsConfigID(),
 			"a rollout-mode cluster must never be sent a configId")
 	})
 
 	t.Run("defaults the config port and preserves an explicit one", func(t *testing.T) {
-		gw := &mockGatewayService{}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-
 		unset := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
-		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), unset))
-		assert.Equal(t, gateway.DefaultGatewayConfigPort, unset.GatewayConfigPort)
+		assert.Equal(t, gateway.DefaultGatewayConfigPort, detectedConfigPort(t, unset))
 
 		explicit := &MigrationConfig{GatewayConfigPort: 19180, GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
-		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), explicit))
-		assert.Equal(t, 19180, explicit.GatewayConfigPort)
+		assert.Equal(t, 19180, detectedConfigPort(t, explicit))
 	})
 
 	t.Run("a detection failure aborts", func(t *testing.T) {
@@ -128,7 +123,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 		// The zero value must be the safe one: if nothing ever resolves a
 		// capability, kcp must behave exactly as it did before hot-reload support.
 		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-		assert.False(t, actions.gatewayCapability.InjectsConfigID())
+		assert.False(t, actions.gw.Capability().InjectsConfigID())
 	})
 }
 
@@ -167,7 +162,24 @@ func TestGatewayConfigPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, gatewayConfigPort(&MigrationConfig{GatewayConfigPort: tt.port}))
+			config := &MigrationConfig{GatewayConfigPort: tt.port, GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+			assert.Equal(t, tt.want, detectedConfigPort(t, config))
 		})
 	}
+}
+
+// detectedConfigPort resolves the capability for config on a fresh
+// MigrationActions and returns the /config port the detector was handed.
+func detectedConfigPort(t *testing.T, config *MigrationConfig) int {
+	t.Helper()
+	port := -1
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(_ context.Context, _, _ string, p int, _, _ []byte) (gateway.Capability, error) {
+			port = p
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		},
+	}
+	actions := NewMigrationActions(gw, &mockClusterLinkService{})
+	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+	return port
 }
