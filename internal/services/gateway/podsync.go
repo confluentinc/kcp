@@ -44,14 +44,9 @@ func (s *K8sService) CheckPodSync(ctx context.Context, namespace, gatewayName st
 		return PodSync{}, err
 	}
 
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return PodSync{}, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return PodSync{}, fmt.Errorf("failed to create clientset: %w", err)
+		return PodSync{}, err
 	}
 
 	pods := clientset.CoreV1().Pods(namespace)
