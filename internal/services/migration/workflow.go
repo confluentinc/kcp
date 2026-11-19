@@ -208,21 +208,6 @@ func (s *MigrationActions) patchGatewayRoute(ctx context.Context, config *Migrat
 	return s.verifier().PatchCR(ctx, config.K8sNamespace, config.InitialCrName, rp, step)
 }
 
-// waitForGatewayConfigApplied blocks until every ready gateway pod reports the
-// applied configId. This is the mechanism-agnostic check: it holds whether CFK
-// chose a hot-reload or a pod roll, so kcp never has to predict which.
-//
-// Correctness does not depend on the mechanism, but the budget does. A
-// hot-reload converges in seconds and gets the bounded hot-reload budget; a roll
-// has to pull images and pass readiness probes, so the moment one is observed the
-// wait switches to the user's --rollout-timeout. Without that switch a
-// transition that legitimately rolls — a switchover whose CR adds a route or a
-// TLS secret, exactly the case that motivated per-pod verification — would be cut
-// off at 90s with traffic already fenced.
-func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, applied gateway.ApplyResult, step string) error {
-	return s.verifier().WaitForConfigApplied(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config), applied, step)
-}
-
 // verifyGatewayTransition confirms a transition landed, by whichever means the
 // cluster supports. An empty applied.ConfigID means the cluster cannot report a
 // config revision, so this falls back to the Deployment rollout wait.
@@ -533,14 +518,7 @@ func (s *MigrationActions) confirmFence(
 		return err
 	}
 
-	switch {
-	case applied.ConfigID != "":
-		// Covers both mechanisms, and subsumes the pod-replacement wait the
-		// default branch makes.
-		return s.waitForGatewayConfigApplied(ctx, config, applied, "fence")
-	default:
-		return s.verifyGatewayTransition(ctx, config, applied, "fence")
-	}
+	return s.verifyGatewayTransition(ctx, config, applied, "fence")
 }
 
 // parseGatewayYAML parses config.GatewayYAML — the whole gateway CR migplan
