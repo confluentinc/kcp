@@ -132,6 +132,12 @@ func NewK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kuberne
 	c.configOnce.Do(func() {})
 	c.dynamicOnce.Do(func() {})
 	c.clientsetOnce.Do(func() {})
+	if dynamicClient == nil {
+		c.dynamicErr = errors.New("gateway service built without a dynamic client")
+	}
+	if clientset == nil {
+		c.clientsetErr = errors.New("gateway service built without a clientset")
+	}
 	return &K8sService{clients: c}
 }
 

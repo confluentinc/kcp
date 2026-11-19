@@ -13,9 +13,9 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// TestK8sService_ClientsBuiltOncePerService checks that a service built from
+// TestK8sService_InjectedClientsServeWithoutKubeconfig checks that a service built from
 // injected clients serves an exported method with no kubeconfig at all.
-func TestK8sService_ClientsBuiltOncePerService(t *testing.T) {
+func TestK8sService_InjectedClientsServeWithoutKubeconfig(t *testing.T) {
 	gw := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": GatewayGroup + "/" + GatewayVersion,
 		"kind":       GatewayKind,

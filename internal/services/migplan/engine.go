@@ -11,6 +11,21 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing"
 )
 
+// SecretExistenceChecker reports which of a list of Kubernetes Secret names
+// don't exist in its namespace. Namespace is bound at construction (mirrors
+// GatewayLive/ClusterLinkStatus's shape), not passed per-call — the static
+// route strategy's one live-I/O precondition: does every secret the
+// switchover target's own staged auth block references actually exist. Not
+// a CR-scanning interface — the caller (engine.go) resolves which names to
+// check via reconcile.ResolveStagedSecretNames and passes exactly those.
+//
+// skipReason is non-empty when the check could not run at all (a permission
+// denial, not a missing secret) — see MissingSecrets' own doc comment for
+// why this must never be conflated with err.
+type SecretExistenceChecker interface {
+	MissingSecrets(ctx context.Context, names []string) (missing []string, skipReason string, err error)
+}
+
 // ReconciliationEngine is the I/O layer: it holds the five provider seams,
 // performs the live reads, and hands plain data to the pure core.
 type ReconciliationEngine struct {
