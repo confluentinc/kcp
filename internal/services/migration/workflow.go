@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -31,7 +32,10 @@ const maxConsecutiveSweepFailures = 3
 type MigrationActions struct {
 	// gw applies and confirms every gateway patch, and owns the capability,
 	// expected generation and start-of-run pod bookkeeping those need.
-	gw                  *gateway.Transitioner
+	gw *gateway.Transitioner
+	// gatewayService is the client gw was built over, held only so validate
+	// can report a nil one: every gateway call goes through gw.
+	gatewayService      gateway.TransitionClient
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
 	destinationOffset   offset.Provider
@@ -54,6 +58,7 @@ func NewMigrationActions(
 	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
 	s := &MigrationActions{
+		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
@@ -62,6 +67,22 @@ func NewMigrationActions(
 	// The reporter is read at call time: tests replace s.reporter after construction.
 	s.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return s.reporter }, opts...)
 	return s
+}
+
+// validate reports the dependencies a migration cannot run without. The
+// offset providers are not checked here: the steps that read them do.
+func (s *MigrationActions) validate() error {
+	var missing []string
+	if s.clusterLinkService == nil {
+		missing = append(missing, "ClusterLinkService")
+	}
+	if s.gatewayService == nil {
+		missing = append(missing, "GatewayService")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the migration is missing dependencies: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func NewMigrationActionsWithOffsets(
@@ -148,6 +169,9 @@ func (s *MigrationActions) Initialize(
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
+	if res == nil {
+		return errors.New("no reconcile result to initialize the migration from")
+	}
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}

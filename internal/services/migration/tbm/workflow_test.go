@@ -838,3 +838,13 @@ func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T
 	require.NoError(t, err, "Switch with SwitchoverYAML set + no Topics must still switch")
 	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
 }
+
+func TestTBMActions_InitializeNilResultIsAnError(t *testing.T) {
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &migration.MigrationConfig{}
+
+	err := actions.Initialize(context.Background(), config, nil)
+
+	require.EqualError(t, err, "no reconcile result to initialize the migration from")
+	assert.Empty(t, config.Topics)
+}

@@ -137,7 +137,7 @@ func NewMigrationOrchestrator(
 	orchestrator := &MigrationOrchestrator{
 		config:   config,
 		actions:  actions,
-		reporter: newReporter(),
+		reporter: actions.reporter,
 	}
 
 	// Build FSM events from canonical workflow
@@ -221,6 +221,9 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
+	if err := o.actions.validate(); err != nil {
+		return err
+	}
 
 	params := ExecutionParams{
 		LagThreshold:    lagThreshold,

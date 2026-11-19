@@ -108,7 +108,7 @@ func NewTBMOrchestrator(
 	orchestrator := &TBMOrchestrator{
 		config:   config,
 		actions:  actions,
-		reporter: newReporter(),
+		reporter: actions.reporter,
 	}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
@@ -178,6 +178,9 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
+	if err := o.actions.validate(); err != nil {
+		return err
+	}
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 

@@ -2865,3 +2865,41 @@ func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *tes
 	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
 	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
 }
+
+// --- Constructor and startup hygiene (mirrors d2s) ---
+
+func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
+	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	orch := NewMigrationOrchestrator(&MigrationConfig{}, actions)
+
+	assert.Same(t, actions.reporter, orch.reporter)
+}
+
+func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
+	tests := []struct {
+		name    string
+		gateway gateway.TransitionClient
+		link    clusterlink.Service
+		wantErr string
+	}{
+		{"nil gateway service", nil, &mockClusterLinkService{}, "the migration is missing dependencies: GatewayService"},
+		{"nil cluster-link service", &mockGatewayService{}, nil, "the migration is missing dependencies: ClusterLinkService"},
+		{"both nil", nil, nil, "the migration is missing dependencies: ClusterLinkService, GatewayService"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions := NewMigrationActions(tt.gateway, tt.link)
+			var out strings.Builder
+			actions.reporter = &reporter{out: &out, err: &out}
+			config := &MigrationConfig{MigrationId: "test-migration-1"}
+			orch := NewMigrationOrchestrator(config, actions)
+
+			err := orch.Execute(context.Background(), 10, clusterlink.BasicAuth{}, uninitializedReconcileResult(nil))
+
+			require.EqualError(t, err, tt.wantErr)
+			assert.Equal(t, StateUninitialized, orch.CurrentState(), "no step may run")
+			assert.Empty(t, config.Topics, "initialize must not have copied the plan")
+			assert.Empty(t, out.String(), "no step header or step output may be printed")
+		})
+	}
+}

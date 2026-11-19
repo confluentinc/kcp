@@ -2048,3 +2048,13 @@ func TestAAOUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
 	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
 		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
 }
+
+func TestMigrationActions_InitializeNilResultIsAnError(t *testing.T) {
+	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	config := &MigrationConfig{}
+
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{}, nil)
+
+	require.EqualError(t, err, "no reconcile result to initialize the migration from")
+	assert.Empty(t, config.Topics)
+}

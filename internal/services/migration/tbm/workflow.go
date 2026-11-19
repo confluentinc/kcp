@@ -2,6 +2,7 @@ package tbm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -40,6 +41,9 @@ type TBMActions struct {
 	// gw applies and confirms every gateway patch, and owns the capability,
 	// expected generation and start-of-run pod bookkeeping those need.
 	gw *gateway.Transitioner
+	// gatewayService is the client gw was built over, held only so validate
+	// can report a nil one: every gateway call goes through gw.
+	gatewayService gateway.TransitionClient
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
 	promoteSubmitted bool
@@ -65,12 +69,29 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 		sourceOffset:        sourceOffset,
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
+		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		promotePollInterval: 5 * time.Second,
 	}
 	// The reporter is read at call time: tests replace a.reporter after construction.
 	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter }, opts...)
 	return a
+}
+
+// validate reports the dependencies a migration cannot run without. The
+// offset providers are not checked here: the steps that read them do.
+func (a *TBMActions) validate() error {
+	var missing []string
+	if a.clusterLinkService == nil {
+		missing = append(missing, "ClusterLinkService")
+	}
+	if a.gatewayService == nil {
+		missing = append(missing, "GatewayService")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the migration is missing dependencies: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // target names the gateway this run drives. Probe derives the fenced and
@@ -111,6 +132,9 @@ func (a *TBMActions) SetPromoteBatchSize(n int) {
 // (contacting source/target/gateway/cluster-link) already happened producing
 // res; this step is pure validate-and-copy.
 func (a *TBMActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
+	if res == nil {
+		return errors.New("no reconcile result to initialize the migration from")
+	}
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
