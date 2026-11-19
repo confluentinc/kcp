@@ -85,9 +85,9 @@ func TestTracing_ResolveCapability_RecordsTheMode(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestTracing_VerifyHotReloadCapability_NoSpanWhenNotApplicable(t *testing.T) {
+func TestTracing_SmokeTestHotReload_NoSpanWhenNotApplicable(t *testing.T) {
 	rec := tracingtest.Install(t)
 	v := &TransitionVerifier{Client: &mockService{}, Reporter: noopReporter{}} // zero Capability: no configId injection
-	require.NoError(t, v.VerifyHotReloadCapability(context.Background(), "confluent", "gw", 9180))
+	require.NoError(t, v.SmokeTestHotReload(context.Background(), "confluent", "gw", 9180))
 	assert.Empty(t, tracingtest.Spans(rec), "a no-op check opens no span")
 }

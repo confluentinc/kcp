@@ -269,6 +269,27 @@ func TestPatchConfigIDOnly(t *testing.T) {
 	assert.Equal(t, int64(3), res.BaselineDeploymentGeneration)
 }
 
+func TestSmokeTestHotReload_WritesOnlyTheConfigID(t *testing.T) {
+	var gotConfigID string
+	patches := 0
+	svc := &mockService{
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+			patches++
+			gotConfigID = configID
+			return configID, nil
+		},
+	}
+	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+
+	require.NoError(t, v.SmokeTestHotReload(context.Background(), "ns", "gw", 9180))
+
+	assert.Equal(t, 1, patches, "the smoke test writes exactly once, a configId-only patch")
+	assert.NotEmpty(t, gotConfigID)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute", "no route or spec change is written")
+	require.Len(t, svc.waits, 1)
+	assert.Equal(t, gotConfigID, svc.waits[0].ConfigID, "the wait is for the configId that was written")
+}
+
 func TestTransitionVerifier_GenerationFollowsOwnWrites(t *testing.T) {
 	svc := &mockService{patchResults: []PatchResult{{Generation: 5}, {Generation: 6}, {Generation: 6}}}
 	gen := int64(4)

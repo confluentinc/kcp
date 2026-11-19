@@ -111,13 +111,14 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	return s.gw.ResolveCapability(ctx, s.target(config))
 }
 
-// VerifyHotReloadCapability proves the gateway really does apply config
-// revisions, before any traffic-affecting change is made. See
-// gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
-// this matters and why patching only spec.configId — touching no other
-// field — makes it safe to call at any point, including a resume.
-func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
-	return s.gw.VerifyHotReload(ctx, s.target(config))
+// SmokeTestHotReload proves the gateway really does apply config revisions,
+// before any traffic-affecting change is made. It writes a fresh spec.configId
+// to the LIVE Gateway CR. See gateway.TransitionVerifier.SmokeTestHotReload's
+// doc comment for why this matters and why patching only spec.configId —
+// touching no other field — makes it safe to call at any point, including a
+// resume.
+func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *MigrationConfig) error {
+	return s.gw.SmokeTestHotReload(ctx, s.target(config))
 }
 
 // gatewayHotReloadTimeout returns the configId verification deadline, never

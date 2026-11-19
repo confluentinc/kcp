@@ -130,12 +130,12 @@ func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) erro
 	if t.smokeAttempted {
 		return nil
 	}
-	return t.VerifyHotReload(ctx, target)
+	return t.SmokeTestHotReload(ctx, target)
 }
 
 // ResolveCapability resolves the gateway capability without the hot-reload
 // smoke test, and marks the smoke test as attempted: a caller that resolves
-// directly owns the smoke test (it runs VerifyHotReload itself, or skips it),
+// directly owns the smoke test (it runs SmokeTestHotReload itself, or skips it),
 // as AAO's tests do, so a later Apply or EnsureCapability never runs it. The
 // resolve itself is a no-op once resolved.
 func (t *Transitioner) ResolveCapability(ctx context.Context, target Target) error {
@@ -169,11 +169,12 @@ func (t *Transitioner) resolveCapability(ctx context.Context, target Target) err
 	return nil
 }
 
-// VerifyHotReload runs the hot-reload smoke test and records it as attempted,
-// so EnsureCapability never runs it again.
-func (t *Transitioner) VerifyHotReload(ctx context.Context, target Target) error {
+// SmokeTestHotReload runs the hot-reload smoke test and records it as
+// attempted, so EnsureCapability never runs it again. It writes a fresh
+// spec.configId to the LIVE Gateway CR (see TransitionVerifier.SmokeTestHotReload).
+func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) error {
 	t.smokeAttempted = true
-	return t.verifier().VerifyHotReloadCapability(ctx, target.Namespace, target.Name, configPort(target))
+	return t.verifier().SmokeTestHotReload(ctx, target.Namespace, target.Name, configPort(target))
 }
 
 // Apply patches tr onto the target gateway and confirms it landed: capability,

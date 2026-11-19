@@ -321,7 +321,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 	})
 }
 
-func TestVerifyHotReloadCapability(t *testing.T) {
+func TestSmokeTestHotReload(t *testing.T) {
 	t.Run("applies a fresh configId alone, never the live spec", func(t *testing.T) {
 		// Safe at any point in a migration, including a resume: the only field
 		// this check ever touches is spec.configId, via a JSON Patch
@@ -346,7 +346,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-		require.NoError(t, actions.VerifyHotReloadCapability(context.Background(), config))
+		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
 
 		require.Len(t, appliedConfigIDs, 1)
 		assert.NotEmpty(t, appliedConfigIDs[0])
@@ -371,7 +371,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-		require.NoError(t, actions.VerifyHotReloadCapability(context.Background(), config))
+		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
 	})
 
 	t.Run("fails when the revision never reaches the pods", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		err := actions.VerifyHotReloadCapability(context.Background(), config)
+		err := actions.SmokeTestHotReload(context.Background(), config)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out")
 	})
@@ -411,7 +411,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 			stdout = captureStdout(t, func() {
 				actions := NewMigrationActions(gw, &mockClusterLinkService{})
 				resolveErr = actions.ResolveGatewayCapability(context.Background(), config)
-				verifyErr = actions.VerifyHotReloadCapability(context.Background(), config)
+				verifyErr = actions.SmokeTestHotReload(context.Background(), config)
 			})
 		})
 		require.NoError(t, resolveErr)

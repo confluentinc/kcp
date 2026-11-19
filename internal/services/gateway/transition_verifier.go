@@ -180,7 +180,7 @@ func (v *TransitionVerifier) capturePods(ctx context.Context, namespace, crName,
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
-// without touching anything else. Used only by VerifyHotReloadCapability.
+// without touching anything else. Used only by SmokeTestHotReload.
 func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
 	configID, err := NewConfigID()
 	if err != nil {
@@ -345,8 +345,13 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining, waiting, FormatElapsed(p.Elapsed))
 }
 
-// VerifyHotReloadCapability proves the gateway really does apply config
-// revisions, before any traffic-affecting change is made.
+// SmokeTestHotReload proves the gateway really does apply config revisions,
+// before any traffic-affecting change is made.
+//
+// It WRITES to the cluster: it patches a fresh spec.configId onto the LIVE
+// Gateway CR, then waits for the operator to accept it and for every pod to
+// report that configId. It is not a read-only check; nothing else on the CR
+// is changed.
 //
 // This closes a hole that no Kubernetes or CFK signal can: the gateway gates
 // its config-file watcher on an Enterprise licence, so with a trial licence
@@ -371,7 +376,7 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 // a later one omits it. A JSON Patch naming only spec.configId declares no
 // manager and no spec, so it can't create that hazard either, which is what
 // makes this safe to run at any point in a migration, including a resume.
-func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) (err error) {
+func (v *TransitionVerifier) SmokeTestHotReload(ctx context.Context, namespace, crName string, port int) (err error) {
 	if !v.Capability.InjectsConfigID() {
 		return nil
 	}
