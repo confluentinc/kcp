@@ -43,6 +43,19 @@ type mockService struct {
 	waitForGatewayPodsFn func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error
 	waitPodsCalls        int
 	waitReadyCalls       int
+
+	// detectCapabilityFn scripts DetectCapability (nil = zero Capability);
+	// detects counts its invocations.
+	detectCapabilityFn func() (Capability, error)
+	detects            int
+
+	// waitConfigIDFn scripts WaitForGatewayConfigID (nil = succeed); waits
+	// records the options of every call.
+	waitConfigIDFn func(opts ConfigWaitOptions) error
+	waits          []ConfigWaitOptions
+
+	// waitAcceptedFn scripts WaitForGatewayAccepted (nil = succeed).
+	waitAcceptedFn func() error
 }
 
 func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
@@ -50,10 +63,18 @@ func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, e
 }
 
 func (m *mockService) DetectCapability(context.Context, string, string, int, []byte, []byte) (Capability, error) {
+	m.detects++
+	if m.detectCapabilityFn != nil {
+		return m.detectCapabilityFn()
+	}
 	return Capability{}, nil
 }
 
-func (m *mockService) WaitForGatewayConfigID(context.Context, string, string, ConfigWaitOptions) error {
+func (m *mockService) WaitForGatewayConfigID(_ context.Context, _, _ string, opts ConfigWaitOptions) error {
+	m.waits = append(m.waits, opts)
+	if m.waitConfigIDFn != nil {
+		return m.waitConfigIDFn(opts)
+	}
 	return nil
 }
 
@@ -97,6 +118,9 @@ func (m *mockService) GetGatewayGeneration(ctx context.Context, namespace, name 
 }
 
 func (m *mockService) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {
+	if m.waitAcceptedFn != nil {
+		return m.waitAcceptedFn()
+	}
 	return nil
 }
 
