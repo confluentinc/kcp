@@ -19,7 +19,7 @@ import (
 // verification, recording every applied configId.
 func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{
 				Mode:                gateway.VerifyPerPodConfigID,
 				CRDSupportsConfigID: true,
@@ -27,11 +27,11 @@ func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 				HotReloadDeclaredIn: []string{"the live gateway CR"},
 			}, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			*applied = append(*applied, configID)
 			return configID, nil
 		},
-		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		PatchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
 	}
@@ -62,12 +62,12 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		gw := hotReloadCapableGateway(&applied)
 
 		var verified string
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			configID := opts.ConfigID
 			verified = configID
 			return nil
 		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("must not fall back to the rollout wait when a configId was applied")
 			return nil
 		}
@@ -85,15 +85,15 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("uses the rollout wait on a pre-hot-reload cluster", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		gw.DetectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		readyCalled := false
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			readyCalled = true
 			return nil
 		}
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			t.Fatal("must not verify by configId when the cluster cannot report one")
 			return nil
 		}
@@ -114,11 +114,11 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		// never be satisfied. Per-pod verification is the stronger guarantee.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("the pod-replacement wait can never be satisfied by a hot-reload")
 			return nil
 		}
-		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		gw.GetGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			t.Fatal("no need to snapshot pods when verifying by configId")
 			return nil, nil
 		}
@@ -133,14 +133,14 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("waits for replaced pods whether or not detection is on", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		gw.DetectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		podsCalled := false
-		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		gw.GetGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{"uid-1": {}}, nil
 		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			podsCalled = true
 			return nil
 		}
@@ -157,7 +157,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("a configId verification failure fails the fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s")
 		}
 
@@ -180,7 +180,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	t.Run("an apply failure is not an unconfirmed fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		gw.PatchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("k8s API unavailable")
 		}
 
@@ -201,7 +201,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		// despite both surfacing from the same call.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		gw.PatchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified, "gw-1")
 		}
 
@@ -220,7 +220,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		// reconcile could still act on it. Restoring the initial CR removes it.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+		gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 			return fmt.Errorf("operator never reconciled")
 		}
 
@@ -236,7 +236,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	t.Run("a partial configId convergence is an unconfirmed fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 1m30s waiting for the gateway to apply the configId on every pod: 1 of 2 ready pods report it")
 		}
 
@@ -256,10 +256,10 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		// the same restore.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		gw.DetectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		}
 
@@ -289,7 +289,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 		var verified string
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			configID := opts.ConfigID
 			verified = configID
 			return nil
@@ -321,7 +321,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 	})
 }
 
-func TestVerifyHotReloadCapability(t *testing.T) {
+func TestSmokeTestHotReload(t *testing.T) {
 	t.Run("applies a fresh configId alone, never the live spec", func(t *testing.T) {
 		// Safe at any point in a migration, including a resume: the only field
 		// this check ever touches is spec.configId, via a JSON Patch
@@ -329,16 +329,16 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		// path, so it can never leave a later apply with something to prune.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.getGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
+		gw.GetGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("must not read the live CR — the check no longer re-applies it")
 			return nil, nil
 		}
-		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		gw.PatchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("must not apply a full CR — only PatchGatewayConfigID")
 			return "", nil
 		}
 		var appliedConfigIDs []string
-		gw.patchGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
+		gw.PatchGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
 			appliedConfigIDs = append(appliedConfigIDs, configID)
 			return configID, nil
 		}
@@ -346,7 +346,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-		require.NoError(t, actions.VerifyHotReloadCapability(context.Background(), config))
+		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
 
 		require.Len(t, appliedConfigIDs, 1)
 		assert.NotEmpty(t, appliedConfigIDs[0])
@@ -359,10 +359,10 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 	// hot-reload is already running and a configId-only apply is a pure hot-reload.
 	t.Run("is a no-op on a cluster that cannot report a configId", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
-			patchGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
+			PatchGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
 				t.Fatal("must not touch the cluster when hot-reload is not in use")
 				return "", nil
 			},
@@ -371,7 +371,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
-		require.NoError(t, actions.VerifyHotReloadCapability(context.Background(), config))
+		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
 	})
 
 	t.Run("fails when the revision never reaches the pods", func(t *testing.T) {
@@ -379,7 +379,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		// config. This check is the only place that failure is visible.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
 		}
 
@@ -387,7 +387,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		err := actions.VerifyHotReloadCapability(context.Background(), config)
+		err := actions.SmokeTestHotReload(context.Background(), config)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out")
 	})
@@ -398,7 +398,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		// showing the logs — the PR's own e2e (setup.sh) omits -c entirely.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		gw.WaitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
 		}
 		config := hotReloadConfig()
@@ -411,7 +411,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 			stdout = captureStdout(t, func() {
 				actions := NewMigrationActions(gw, &mockClusterLinkService{})
 				resolveErr = actions.ResolveGatewayCapability(context.Background(), config)
-				verifyErr = actions.VerifyHotReloadCapability(context.Background(), config)
+				verifyErr = actions.SmokeTestHotReload(context.Background(), config)
 			})
 		})
 		require.NoError(t, resolveErr)
@@ -429,11 +429,11 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	var applied []string
 	gw := hotReloadCapableGateway(&applied)
-	gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+	gw.DetectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 		return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 	}
 	var waitCalls int
-	gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+	gw.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 		waitCalls++
 		return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 	}

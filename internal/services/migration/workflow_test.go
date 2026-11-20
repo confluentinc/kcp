@@ -45,7 +45,7 @@ const (
 
 // testReconcileResult returns the migplan.Result Initialize expects to
 // receive, carrying testInitialCR's route and fragments so
-// ResolveGatewayCapability's fence/switch derivation succeeds against it.
+// the fence/switch derivation succeeds against it.
 func testReconcileResult() *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
@@ -115,7 +115,7 @@ func TestWorkflow_Initialize_RefusedResult(t *testing.T) {
 // a missing copy leaves that field empty and fails here.
 func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+		GetGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
 			return []byte(testInitialCR), nil
 		},
 	}
@@ -741,11 +741,11 @@ func TestWorkflow_PromoteTopics_NoTopicsIsNoop(t *testing.T) {
 func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
 	}
@@ -765,11 +765,11 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "wait")
 			if onProgress != nil {
 				onProgress(gateway.PodRolloutProgress{InitialPodCount: 3, NewPodsReady: 3, OldPodsRemaining: 0, RolloutDetected: true})
@@ -797,23 +797,23 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 		// With detection disabled the workflow makes no pod capture of its own;
 		// the only capture is the shared TransitionVerifier.PatchCR one, which
 		// is what VerifyTransition then waits on.
-		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
+		GetGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
 			uidCaptures++
 			return podUIDs, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitPodsCalls++
 			passedUIDs = initialPodUIDs
 			return nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			acceptedCalled = true
 			return nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		WaitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -842,13 +842,13 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -868,19 +868,19 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(
 	oldUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
 	var passedUIDs map[k8stypes.UID]struct{}
 	gw := &mockGatewayService{
-		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
+		GetGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
 			callOrder = append(callOrder, "getUIDs")
 			return oldUIDs, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "reconcile")
 			return nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "waitPods")
 			passedUIDs = initialPodUIDs
 			if onProgress != nil {
@@ -888,7 +888,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(
 			}
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		WaitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -911,7 +911,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(
 
 func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
 			return "", fmt.Errorf("k8s 403")
 		},
 	}
@@ -927,16 +927,15 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 
 func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 		},
 	}
 	cl := &mockClusterLinkService{}
-	wf := NewMigrationActions(gw, cl)
-	wf.SetRolloutTimeout(100 * time.Millisecond)
+	wf := NewMigrationActions(gw, cl, gateway.WithTimeouts(100*time.Millisecond, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
@@ -946,10 +945,10 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 
 func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
@@ -971,17 +970,16 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
 	}
 	cl := &mockClusterLinkService{}
-	wf := NewMigrationActions(gw, cl)
-	wf.SetRolloutTimeout(15 * time.Minute)
+	wf := NewMigrationActions(gw, cl, gateway.WithTimeouts(15*time.Minute, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	err := wf.FenceGateway(context.Background(), config)
@@ -992,10 +990,10 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1020,7 +1018,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 func TestWorkflow_FenceGateway_NoFenceYAMLIsNoop(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return configID, nil
 		},
@@ -1044,7 +1042,7 @@ func TestWorkflow_FenceGateway_NoFenceYAMLIsNoop(t *testing.T) {
 func TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return configID, nil
 		},
@@ -1066,12 +1064,12 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	var callOrder []string
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "wait")
 			return nil
 		},
@@ -1142,10 +1140,10 @@ func TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute(t *testing.T)
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
@@ -1186,13 +1184,13 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1216,15 +1214,15 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
@@ -1240,10 +1238,10 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 // failures distinguishable from operator rejections.
 func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
@@ -1258,21 +1256,53 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	assert.NotErrorAs(t, err, &rejected, "a transport failure is not an operator rejection")
 }
 
+// TestAAOSwitchGateway_LandedButUnconfirmedIsMarked: once the switchover patch
+// has reached the CR, a failure confirming it is marked ErrSwitchUnconfirmed;
+// a patch that never reached the CR is returned unmarked.
+func TestAAOSwitchGateway_LandedButUnconfirmedIsMarked(t *testing.T) {
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
+
+	t.Run("acceptance fails after the patch landed", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+				return configID, nil
+			},
+			WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return rejectionError("gw-1")
+			},
+		}
+		err := NewMigrationActions(gw, &mockClusterLinkService{}).SwitchGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrSwitchUnconfirmed)
+		var rejected *gateway.GatewayRejectedError
+		assert.ErrorAs(t, err, &rejected, "the marked error still carries the operator's rejection")
+	})
+	t.Run("the patch never reached the CR", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("connection refused")
+			},
+		}
+		err := NewMigrationActions(gw, &mockClusterLinkService{}).SwitchGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrSwitchUnconfirmed)
+	})
+}
+
 // TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait ensures
 // --rollout-timeout bounds the acceptance wait too, not just the readiness wait.
 func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
 			observedTimeout = timeout
 			return nil
 		},
 	}
-	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	wf.SetRolloutTimeout(15 * time.Minute)
+	wf := NewMigrationActions(gw, &mockClusterLinkService{}, gateway.WithTimeouts(15*time.Minute, 0))
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, Topics: []string{"topic-a", "topic-b", "topic-c"}}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
@@ -1288,7 +1318,7 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 func TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return configID, nil
 		},
@@ -1314,7 +1344,7 @@ func TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop(t *testing.T) {
 func TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
 			return configID, nil
 		},
@@ -1338,19 +1368,19 @@ func TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(
 func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML, FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1363,21 +1393,21 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
 			return configID, nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		WaitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML, FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1441,7 +1471,7 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 	// (see TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack).
 	var applyCalled bool
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
 			return configID, nil
 		},
@@ -1639,7 +1669,7 @@ func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
 func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			return configID, nil
 		},
@@ -1651,6 +1681,8 @@ func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T)
 		GatewayYAML:       testFencedCaptureCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
@@ -1663,11 +1695,11 @@ func TestWorkflow_UnfenceGateway_AppliesTheReconciledRollbackRoute(t *testing.T)
 func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 	var applyCalled, waitCalled bool
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waitCalled = true
 			assert.True(t, applyCalled, "readiness wait must happen after the CR is applied")
 			assert.Equal(t, "confluent", namespace)
@@ -1684,6 +1716,8 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 		GatewayYAML:       testInitialCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1693,10 +1727,10 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 
 func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -1709,6 +1743,8 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 		GatewayYAML:       testInitialCR,
 		Route:             "migration-route",
 		RollbackFenceYAML: testRollbackFenceYAML,
+		FenceYAML:         testFenceYAML,
+		SwitchoverYAML:    testSwitchoverYAML,
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1967,16 +2003,16 @@ func fenceThenUnfenceWaits(t *testing.T, fencedAtStart bool) []map[k8stypes.UID]
 	var captured int
 	var waits []map[k8stypes.UID]struct{}
 	gw := &mockGatewayService{
-		getGatewayPodUIDsFn: func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		GetGatewayPodUIDsFn: func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			require.Less(t, captured, len(captures), "only the fence and the unfence capture pods")
 			c := captures[captured]
 			captured++
 			return c, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waits = append(waits, initialPodUIDs)
 			return nil
 		},
@@ -2011,4 +2047,14 @@ func TestAAOUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
 
 	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
 		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
+}
+
+func TestMigrationActions_InitializeNilResultIsAnError(t *testing.T) {
+	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	config := &MigrationConfig{}
+
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{}, nil)
+
+	require.EqualError(t, err, "no reconcile result to initialize the migration from")
+	assert.Empty(t, config.Topics)
 }

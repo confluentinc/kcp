@@ -69,7 +69,7 @@ func ExcludePods(set, exclude map[types.UID]struct{}) map[types.UID]struct{} {
 // warning on a changed mode, reporting a mode-specific message) — stays in
 // each package's own thin wrapper around this type.
 type TransitionVerifier struct {
-	Service          Service
+	Client           TransitionClient
 	Reporter         Reporter
 	Capability       Capability
 	RolloutTimeout   time.Duration
@@ -108,7 +108,7 @@ func (v *TransitionVerifier) CheckGeneration(ctx context.Context, namespace, crN
 		slog.Debug("generation check skipped: expected generation unknown", "step", step)
 		return nil
 	}
-	observed, err := v.Service.GetGatewayGeneration(ctx, namespace, crName)
+	observed, err := v.Client.GetGatewayGeneration(ctx, namespace, crName)
 	if err != nil {
 		return fmt.Errorf("failed to read the gateway generation during %s: %w", step, err)
 	}
@@ -132,7 +132,7 @@ func (v *TransitionVerifier) HotReloadTimeoutOrDefault() time.Duration {
 // PatchConfigIDOnly: 0 makes the rollout path conservative rather than wrong.
 // On rolling gateways PatchCR refuses to patch when the read fails.
 func (v *TransitionVerifier) DeploymentBaseline(ctx context.Context, namespace, crName, step string) int64 {
-	baseline, err := v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
+	baseline, err := v.Client.GetGatewayDeploymentGeneration(ctx, namespace, crName)
 	if err != nil {
 		slog.Debug("could not read the gateway deployment generation before applying; "+
 			"any generation will count as a rollout", "step", step, "error", err)
@@ -149,49 +149,21 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.patch_cr",
 		stepAttr(step), attribute.Bool("kcp.gateway.config_id_injected", v.Capability.InjectsConfigID()))
 	defer func() { tracing.End(span, err) }()
-	var configID string
-	if v.Capability.InjectsConfigID() {
-		var err error
-		configID, err = NewConfigID()
-		if err != nil {
-			return ApplyResult{}, err
-		}
-	}
-
-	// A rolling gateway replaces its pods, so record which exist before the
-	// patch. Failing to capture is fatal and happens before anything is written,
-	// so it is deliberately not an ErrApplyUnverified.
-	var preApplyPodUIDs map[types.UID]struct{}
-	if !v.Capability.InjectsConfigID() {
-		preApplyPodUIDs, err = v.capturePods(ctx, namespace, crName, step)
-		if err != nil {
-			return ApplyResult{}, fmt.Errorf("failed to capture the gateway pods before %s: %w", step, err)
-		}
-	}
-
-	// A rolling gateway's later waits compare against this generation, so an
-	// unreadable baseline (silently 0) could make them hang forever. Refuse
-	// before anything is written; like the capture, not an ErrApplyUnverified.
-	var baseline int64
-	if v.Capability.InjectsConfigID() {
-		baseline = v.DeploymentBaseline(ctx, namespace, crName, step)
-	} else {
-		baseline, err = v.Service.GetGatewayDeploymentGeneration(ctx, namespace, crName)
-		if err != nil {
-			return ApplyResult{}, fmt.Errorf("failed to read the gateway deployment generation before %s: %w", step, err)
-		}
+	prep, err := strategyForCapability(v.Capability).prepare(ctx, v, namespace, crName, step)
+	if err != nil {
+		return ApplyResult{}, err
 	}
 
 	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
-		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
+		"route", rp.RouteName, "field", rp.Field, "configId", prep.configID, "baselineDeploymentGeneration", prep.baseline)
 
-	patched, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID, v.expectedGeneration())
+	patched, err := v.Client.PatchGatewayRoute(ctx, namespace, crName, rp, prep.configID, v.expectedGeneration())
 	v.recordGeneration(patched.Generation)
 	if err != nil {
 		// An unverified write still reached the cluster; hand back what it produced.
-		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, err
+		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: prep.baseline, Generation: patched.Generation, PreApplyPodUIDs: prep.podUIDs}, err
 	}
-	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation, PreApplyPodUIDs: preApplyPodUIDs}, nil
+	return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: prep.baseline, Generation: patched.Generation, PreApplyPodUIDs: prep.podUIDs}, nil
 }
 
 // capturePods records the gateway pods that exist now, in a gateway.capture_pods
@@ -200,7 +172,7 @@ func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName stri
 func (v *TransitionVerifier) capturePods(ctx context.Context, namespace, crName, step string) (uids map[types.UID]struct{}, err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.capture_pods", stepAttr(step))
 	defer func() { tracing.End(span, err) }()
-	uids, err = v.Service.GetGatewayPodUIDs(ctx, namespace, crName)
+	uids, err = v.Client.GetGatewayPodUIDs(ctx, namespace, crName)
 	if err == nil {
 		span.SetAttributes(attribute.Int("kcp.gateway.pods", len(uids)))
 	}
@@ -208,7 +180,7 @@ func (v *TransitionVerifier) capturePods(ctx context.Context, namespace, crName,
 }
 
 // PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
-// without touching anything else. Used only by VerifyHotReloadCapability.
+// without touching anything else. Used only by SmokeTestHotReload.
 func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
 	configID, err := NewConfigID()
 	if err != nil {
@@ -217,7 +189,7 @@ func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, c
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
-	patched, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID, v.expectedGeneration())
+	patched, err := v.Client.PatchGatewayConfigID(ctx, namespace, crName, configID, v.expectedGeneration())
 	v.recordGeneration(patched.Generation)
 	if err != nil {
 		return ApplyResult{ConfigID: patched.ConfigID, BaselineDeploymentGeneration: baseline, Generation: patched.Generation}, err
@@ -249,7 +221,7 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 	v.Reporter.Detail("Waiting for gateway reconcile...")
 	slog.Debug("waiting for gateway acceptance", "step", step, "gateway", crName, "rolloutTimeout", v.RolloutTimeout)
 
-	err = v.Service.WaitForGatewayAccepted(ctx, namespace, crName, 2*time.Second, v.RolloutTimeout)
+	err = v.Client.WaitForGatewayAccepted(ctx, namespace, crName, 2*time.Second, v.RolloutTimeout)
 	if err == nil {
 		return nil
 	}
@@ -264,7 +236,16 @@ func (v *TransitionVerifier) WaitForAccepted(ctx context.Context, namespace, crN
 }
 
 // WaitForConfigApplied blocks until every ready gateway pod reports the
-// applied configId.
+// applied configId. This is the mechanism-agnostic check: it holds whether CFK
+// chose a hot-reload or a pod roll, so kcp never has to predict which.
+//
+// Correctness does not depend on the mechanism, but the budget does. A
+// hot-reload converges in seconds and gets the bounded hot-reload budget; a roll
+// has to pull images and pass readiness probes, so the moment one is observed the
+// wait switches to the user's --rollout-timeout. Without that switch a
+// transition that legitimately rolls — a switchover whose CR adds a route or a
+// TLS secret, exactly the case that motivated per-pod verification — would be cut
+// off at 90s with traffic already fenced.
 func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_config_applied", stepAttr(step))
 	defer func() { tracing.End(span, err) }()
@@ -273,7 +254,7 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 		"port", port, "hotReloadTimeout", v.HotReloadTimeoutOrDefault(),
 		"rollTimeout", v.RolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
 
-	err = v.Service.WaitForGatewayConfigID(ctx, namespace, crName, ConfigWaitOptions{
+	err = v.Client.WaitForGatewayConfigID(ctx, namespace, crName, ConfigWaitOptions{
 		ConfigID:                     applied.ConfigID,
 		Port:                         port,
 		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
@@ -307,24 +288,9 @@ func (v *TransitionVerifier) WaitForConfigApplied(ctx context.Context, namespace
 func (v *TransitionVerifier) VerifyTransition(ctx context.Context, namespace, crName string, port int, applied ApplyResult, step string) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.verify_transition", stepAttr(step))
 	defer func() { tracing.End(span, err) }()
-	mechanism := "rollout"
-	if applied.ConfigID != "" {
-		mechanism = "config_id"
-	}
-	span.SetAttributes(attribute.String("kcp.gateway.mechanism", mechanism))
-	if applied.ConfigID != "" {
-		return v.WaitForConfigApplied(ctx, namespace, crName, port, applied, step)
-	}
-
-	v.Reporter.Detail("Waiting for the replaced gateway pods to be gone...")
-	slog.Debug("waiting for the replaced gateway pods", "step", step, "rolloutTimeout", v.RolloutTimeout,
-		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration, "preApplyPods", len(applied.PreApplyPodUIDs))
-
-	if err := v.Service.WaitForGatewayPods(ctx, namespace, crName, applied.PreApplyPodUIDs,
-		applied.BaselineDeploymentGeneration, 5*time.Second, v.RolloutTimeout, v.printPodRolloutProgress); err != nil {
-		return fmt.Errorf("failed waiting for the gateway pods to be replaced during %s: %w", step, err)
-	}
-	return nil
+	strategy := strategyForApplied(applied)
+	span.SetAttributes(attribute.String("kcp.gateway.mechanism", strategy.name()))
+	return strategy.confirm(ctx, v, namespace, crName, port, applied, step)
 }
 
 // printConfigWaitProgress renders one line per poll tick of the per-pod
@@ -379,8 +345,13 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining, waiting, FormatElapsed(p.Elapsed))
 }
 
-// VerifyHotReloadCapability proves the gateway really does apply config
-// revisions, before any traffic-affecting change is made.
+// SmokeTestHotReload proves the gateway really does apply config revisions,
+// before any traffic-affecting change is made.
+//
+// It WRITES to the cluster: it patches a fresh spec.configId onto the LIVE
+// Gateway CR, then waits for the operator to accept it and for every pod to
+// report that configId. It is not a read-only check; nothing else on the CR
+// is changed.
 //
 // This closes a hole that no Kubernetes or CFK signal can: the gateway gates
 // its config-file watcher on an Enterprise licence, so with a trial licence
@@ -391,7 +362,7 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 // would mean discovering it with traffic already blocked.
 //
 // The check applies spec.configId alone, as a JSON Patch
-// (Service.PatchGatewayConfigID) rather than re-applying the live spec under
+// (Client.PatchGatewayConfigID) rather than re-applying the live spec under
 // the caller's usual manager. That used to be the design — re-apply the live
 // CR verbatim plus a fresh configId — and it was safe to run at any point in
 // a migration for the same reason it was dangerous: server-side apply shares
@@ -405,7 +376,7 @@ func (v *TransitionVerifier) printPodRolloutProgress(p PodRolloutProgress) {
 // a later one omits it. A JSON Patch naming only spec.configId declares no
 // manager and no spec, so it can't create that hazard either, which is what
 // makes this safe to run at any point in a migration, including a resume.
-func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) (err error) {
+func (v *TransitionVerifier) SmokeTestHotReload(ctx context.Context, namespace, crName string, port int) (err error) {
 	if !v.Capability.InjectsConfigID() {
 		return nil
 	}
@@ -448,7 +419,7 @@ func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, name
 func (v *TransitionVerifier) ResolveCapability(ctx context.Context, namespace, crName string, port int, fencedCRYAML, switchedCRYAML []byte) (_ Capability, err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.resolve_capability")
 	defer func() { tracing.End(span, err) }()
-	capability, err := v.Service.DetectCapability(ctx, namespace, crName, port, fencedCRYAML, switchedCRYAML)
+	capability, err := v.Client.DetectCapability(ctx, namespace, crName, port, fencedCRYAML, switchedCRYAML)
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
 	}

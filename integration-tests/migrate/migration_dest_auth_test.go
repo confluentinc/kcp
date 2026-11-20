@@ -4,7 +4,7 @@
 // methods. Unlike migrate_clusterlink_*_test.go (which shell out to
 // `kcp migrate apply`), `kcp migration cutover execute` cannot run against
 // docker-compose alone — it requires a live Kubernetes gateway CR
-// (GetGatewayYAML / ResolveGatewayCapability), which only the Minikube e2e tier
+// (GetGatewayYAML / the Transitioner's capability resolution), which only the Minikube e2e tier
 // (integration-tests/migration/) provides. But the destination-auth code those
 // command runs is NOT gated by the gateway: the destination offset provider
 // dials the destination broker BEFORE the gateway is ever touched, and the REST leg's auth

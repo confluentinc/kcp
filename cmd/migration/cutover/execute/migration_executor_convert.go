@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/d2s"
@@ -52,9 +53,7 @@ func runConvertBranch(
 		svc.deps.Out = cmd.OutOrStdout()
 	}
 
-	actions := d2s.NewD2SActions(gatewayService, svc.deps)
-	actions.SetRolloutTimeout(policy.RolloutTimeout)
-	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
+	actions := d2s.NewD2SActions(gatewayService, svc.deps, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout))
 
 	applyCommonPolicy(config, policy.CommonPolicies)
 

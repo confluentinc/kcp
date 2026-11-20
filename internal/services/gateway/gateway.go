@@ -8,13 +8,13 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // Kubernetes resource constants
@@ -40,24 +41,17 @@ const (
 // fails here must treat the patch as landed, not as a no-op.
 var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
 
-// Service defines gateway operations
-type Service interface {
-	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
+// TransitionClient is what applying and confirming a gateway transition needs from the cluster.
+type TransitionClient interface {
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
-	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
-	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error)
 	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error)
-	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
-	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
-	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
-	// WaitForGatewayReady only waits for the Deployment rollout to report
-	// complete. It must NOT be used to verify a gateway transition: it returns
-	// while replaced pods still serve. Use WaitForGatewayPods or
-	// WaitForGatewayConfigID.
-	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
 }
 
 // PatchResult is what a Gateway CR patch reports back. Generation is the
@@ -93,28 +87,122 @@ type GatewayReadinessProgress struct {
 	Ready           bool
 }
 
-// K8sService implements gateway operations using Kubernetes clients
+// K8sService implements gateway operations using Kubernetes clients. Its
+// clients are built lazily on first use and then reused for the life of the
+// service. Construct it with NewK8sService or NewK8sServiceWithClients.
 type K8sService struct {
-	kubeConfigPath string
+	// clients is shared by pointer so a copy of the service reuses the same
+	// clients and never copies a sync.Once.
+	clients *k8sClients
 }
 
-// NewK8sService creates a new gateway service
+// k8sClients holds the lazily built clients. Each build runs at most once and
+// caches its error, so a bad kubeconfig fails the same way on every call.
+type k8sClients struct {
+	kubeConfigPath string
+	// restConfig builds the REST config; RESTConfig outside tests.
+	restConfig func(string) (*rest.Config, error)
+
+	configOnce sync.Once
+	config     *rest.Config
+	configErr  error
+
+	dynamicOnce sync.Once
+	dynamic     dynamic.Interface
+	dynamicErr  error
+
+	clientsetOnce sync.Once
+	clientset     kubernetes.Interface
+	clientsetErr  error
+}
+
+// NewK8sService creates a new gateway service for kubeConfigPath. Nothing is
+// read until the first method that needs a client runs.
 func NewK8sService(kubeConfigPath string) *K8sService {
-	return &K8sService{
+	return &K8sService{clients: &k8sClients{
 		kubeConfigPath: kubeConfigPath,
+		restConfig:     RESTConfig,
+	}}
+}
+
+// NewK8sServiceWithClients creates a gateway service over already built
+// clients; no kubeconfig is read.
+func NewK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kubernetes.Interface) *K8sService {
+	c := &k8sClients{dynamic: dynamicClient, clientset: clientset}
+	c.configOnce.Do(func() {})
+	c.dynamicOnce.Do(func() {})
+	c.clientsetOnce.Do(func() {})
+	if dynamicClient == nil {
+		c.dynamicErr = errors.New("gateway service built without a dynamic client")
 	}
+	if clientset == nil {
+		c.clientsetErr = errors.New("gateway service built without a clientset")
+	}
+	return &K8sService{clients: c}
+}
+
+// Clientset returns the service's typed Kubernetes client, building it on
+// first use.
+func (s *K8sService) Clientset() (kubernetes.Interface, error) {
+	return s.clients.getClientset()
+}
+
+// dynamicClient returns the service's dynamic client, building it on first use.
+func (s *K8sService) dynamicClient() (dynamic.Interface, error) {
+	return s.clients.getDynamic()
+}
+
+func (c *k8sClients) restConfigOnce() (*rest.Config, error) {
+	c.configOnce.Do(func() {
+		config, err := c.restConfig(c.kubeConfigPath)
+		if err != nil {
+			c.configErr = fmt.Errorf("failed to build config: %w", err)
+			return
+		}
+		c.config = config
+	})
+	return c.config, c.configErr
+}
+
+func (c *k8sClients) getDynamic() (dynamic.Interface, error) {
+	c.dynamicOnce.Do(func() {
+		config, err := c.restConfigOnce()
+		if err != nil {
+			c.dynamicErr = err
+			return
+		}
+		client, err := dynamic.NewForConfig(config)
+		if err != nil {
+			c.dynamicErr = fmt.Errorf("failed to create dynamic client: %w", err)
+			return
+		}
+		c.dynamic = client
+	})
+	return c.dynamic, c.dynamicErr
+}
+
+func (c *k8sClients) getClientset() (kubernetes.Interface, error) {
+	c.clientsetOnce.Do(func() {
+		config, err := c.restConfigOnce()
+		if err != nil {
+			c.clientsetErr = err
+			return
+		}
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			c.clientsetErr = fmt.Errorf("failed to create clientset: %w", err)
+			return
+		}
+		c.clientset = client
+	})
+	return c.clientset, c.clientsetErr
 }
 
 // GetGatewayYAML retrieves the gateway resource as YAML
 func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, err
 	}
 
 	gatewayGVR := schema.GroupVersionResource{
@@ -136,42 +224,6 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 
 	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
 	return yamlBytes, nil
-}
-
-// CheckPermissions checks if the user has the required Kubernetes permissions
-func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return false, fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	sar := &authorizationv1.SelfSubjectAccessReview{
-		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: namespace,
-				Verb:      verb,
-				Group:     group,
-				Resource:  resource,
-			},
-		},
-	}
-
-	response, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(
-		ctx,
-		sar,
-		metav1.CreateOptions{},
-	)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check permissions: %w", err)
-	}
-
-	return response.Status.Allowed, nil
 }
 
 // PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC
@@ -199,13 +251,9 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 // the read and the write. Both return a *GenerationChangedError (Is
 // ErrGatewayChanged). 0 means unknown and leaves the write unguarded.
 func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
+		return PatchResult{}, err
 	}
 	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID, expectedGeneration)
 }
@@ -280,13 +328,9 @@ func patchFailure(ctx context.Context, dynamicClient dynamic.Interface, namespac
 
 // GetGatewayGeneration returns the Gateway CR's current metadata.generation.
 func (s *K8sService) GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return 0, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create dynamic client: %w", err)
+		return 0, err
 	}
 	return getGatewayGeneration(ctx, dynamicClient, namespace, gatewayName)
 }
@@ -307,13 +351,9 @@ func getGatewayGeneration(ctx context.Context, dynamicClient dynamic.Interface, 
 // resulting generation. expectedGeneration guards the write exactly as in
 // PatchGatewayRoute; 0 leaves it unguarded.
 func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
+		return PatchResult{}, err
 	}
 	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID, expectedGeneration)
 }
@@ -466,14 +506,9 @@ func isFatalGatewayConditionReason(reason string) bool {
 // turns that hang into a fast, actionable error carrying the operator's own
 // message.
 func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return err
 	}
 
 	return waitForGatewayAccepted(ctx, dynamicClient, namespace, gatewayName, pollInterval, timeout)
@@ -672,14 +707,9 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
 func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, err
 	}
 
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
@@ -720,14 +750,9 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_pods")
 	defer func() { tracing.End(span, err) }()
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return err
 	}
 
 	return waitForGatewayPods(ctx, clientset, namespace, gatewayName, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
@@ -961,13 +986,9 @@ func isPodReady(pod *corev1.Pod) bool {
 // gateway transition: it returns while replaced pods still serve. Use
 // WaitForGatewayPods or the configId wait instead.
 func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return err
 	}
 	return waitForGatewayReady(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval, timeout, onProgress)
 }

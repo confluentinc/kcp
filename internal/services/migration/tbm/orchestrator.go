@@ -108,7 +108,7 @@ func NewTBMOrchestrator(
 	orchestrator := &TBMOrchestrator{
 		config:   config,
 		actions:  actions,
-		reporter: newReporter(),
+		reporter: actions.reporter,
 	}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
@@ -178,6 +178,9 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
+	if err := o.actions.validate(); err != nil {
+		return err
+	}
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
@@ -260,6 +263,14 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		return o.removeUnconfirmedFence(ctx, stepFailure)
 	}
 
+	// A switchover that reached the CR but was not confirmed is past promote,
+	// so the rollback logic below would not roll back past promote either; only
+	// the operator message differs.
+	if step.Event == EventSwitch && errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
+		o.reporter.warn(switchUnconfirmedWarning)
+		return stepFailure
+	}
+
 	// Roll back while kcp's fence is up and nothing is promoted yet: this run's
 	// fence has landed (fenced, the state abort_fence can leave), or an
 	// interrupted run's fence was up at the start and this run has not reached
@@ -327,6 +338,11 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 // rollbackForbiddenReason is why a failure keeps the fence when reconcile
 // forbade a rollback (MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch"
+
+// switchUnconfirmedWarning is what the operator sees when the switchover
+// reached the CR but could not be confirmed (migration.ErrSwitchUnconfirmed).
+const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
+	"A re-run checks the gateway pods before doing anything"
 
 // removeUnconfirmedFence sets the route's rules to reconcile's rollback target
 // after a fence that reached the cluster but could not be confirmed on every

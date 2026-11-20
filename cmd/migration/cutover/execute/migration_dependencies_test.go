@@ -23,7 +23,7 @@ import (
 // stubDeps is executorDependencies over the shared stubs below, with gw and cl
 // substituted when non-nil so a test can record what reaches them. Both
 // branches' tests drive their runs through it.
-func stubDeps(gw gateway.Service, cl clusterlink.Service) executorDependencies {
+func stubDeps(gw gateway.TransitionClient, cl clusterlink.Service) executorDependencies {
 	if gw == nil {
 		gw = stubGatewayServiceImpl{}
 	}
@@ -32,7 +32,7 @@ func stubDeps(gw gateway.Service, cl clusterlink.Service) executorDependencies {
 	}
 	return executorDependencies{
 		offsets:     stubOffsetProviders,
-		gateway:     func(*manifest.GatewayMigration) (gateway.Service, error) { return gw, nil },
+		gateway:     func(*manifest.GatewayMigration) (gateway.TransitionClient, error) { return gw, nil },
 		clusterLink: func(*manifest.GatewayMigration) (clusterlink.Service, error) { return cl, nil },
 	}
 }
@@ -57,7 +57,7 @@ func stubOffsetProviders(*manifest.GatewayMigration) (offset.Provider, offset.Pr
 	return zeroLagOffsetProvider{}, zeroLagOffsetProvider{}, func() error { return nil }, nil
 }
 
-// stubGatewayServiceImpl implements gateway.Service with always-succeeding
+// stubGatewayServiceImpl implements gateway.TransitionClient with always-succeeding
 // no-op behavior (VerifyRollout, so no configId is injected), so the fence and
 // switch transitions walk without reaching a real Kubernetes cluster. The
 // engine's own gateway behavior is exercised in internal/services/gateway and
@@ -202,7 +202,7 @@ func (r *recordingClusterLinkService) maxBatch() int {
 
 // recordingGatewayService is stubGatewayServiceImpl plus a record of the port
 // passed to DetectCapability — the first place a gateway transition reads
-// config.GatewayConfigPort (see tbm.resolveGatewayCapability). Observing it here
+// config.GatewayConfigPort (see gateway.Transitioner.EnsureCapability). Observing it here
 // proves the override reached config.GatewayConfigPort BEFORE the capability
 // probe ran.
 type recordingGatewayService struct {

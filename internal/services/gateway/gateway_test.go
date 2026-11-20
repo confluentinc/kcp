@@ -1210,3 +1210,9 @@ func TestWaitForGatewayPods_TerminatingWithinGraceStillBlocks(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrReplacedPodOverdue))
 	assert.Contains(t, err.Error(), "timed out")
 }
+
+// TestK8sServiceSatisfiesTransitionClient is a compile-time assertion that the
+// real client provides everything a gateway transition needs.
+func TestK8sServiceSatisfiesTransitionClient(t *testing.T) {
+	var _ TransitionClient = (*K8sService)(nil)
+}

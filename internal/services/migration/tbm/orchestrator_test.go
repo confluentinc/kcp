@@ -20,6 +20,12 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
+// setGatewayService swaps the gateway service the actions drive, as the
+// Transitioner holds it privately.
+func setGatewayService(a *TBMActions, svc gateway.TransitionClient) {
+	a.gw = gateway.NewTransitioner(svc, func() gateway.Reporter { return a.reporter })
+}
+
 func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationConfig) {
 	t.Helper()
 
@@ -29,7 +35,7 @@ func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationCo
 		InitialCrName: "gateway-initial",
 	}
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	// Configured (not the bare zero-value mock) because realisticReconcileResult
 	// (used by several tests below) sets Topics: []string{"t1.order"}, which a
@@ -70,10 +76,13 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	// Force the fence step to block on ctx: a real gateway wait that never
 	// resolves on its own, cancellable only by ctx, is what proves the walk
 	// stops mid-step rather than after the whole Execute call completes.
-	orchestrator.actions.gatewayService.(*mockGatewayService).waitForGatewayAcceptedFn = func(ctx context.Context, _, _ string, _, _ time.Duration) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	setGatewayService(orchestrator.actions, &mockGatewayService{
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayAcceptedFn: func(ctx context.Context, _, _ string, _, _ time.Duration) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -118,7 +127,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	var lastRP gateway.RoutePatch
 	var call int32
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			applyCount++
 			lastRP = rp
 			return "", nil
@@ -185,7 +194,7 @@ func TestTBMOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) 
 	var lastRP gateway.RoutePatch
 	var call int32
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			lastRP = rp
 			return "", nil
 		},
@@ -225,7 +234,7 @@ func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) 
 	var applyCount int
 	var call int32
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
 			applyCount++
 			return "", nil
 		},
@@ -262,7 +271,7 @@ func TestTBMOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
 	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
 	var applyCount int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
 			applyCount++
 			return "", nil
 		},
@@ -297,7 +306,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 	var lastRP gateway.RoutePatch
 	var call int32
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			applyCount++
 			lastRP = rp
 			return "", nil
@@ -339,7 +348,7 @@ func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) 
 	var applyCount int
 	var call int32
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			applyCount++
 			return "", nil
 		},
@@ -492,11 +501,11 @@ func newTBMKillPointOrchestrator(
 	var readyEvents []gateway.PodRolloutProgress
 
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 			patches = append(patches, rp)
 			return configID, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		WaitForGatewayPodsFn: func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			for _, p := range readyProgress {
 				readyEvents = append(readyEvents, p)
 				onProgress(p)
@@ -718,7 +727,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 	var t1ListCalls int64
 
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	cl := &mockClusterLinkService{
 		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
@@ -949,7 +958,7 @@ func fencedResumeTBM(t *testing.T, failAt string, fencedAtStart, rollbackAllowed
 	t.Setenv(killpoint.FailEnvVar, failAt)
 	var applyCount int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
 			applyCount++
 			return "", nil
 		},
@@ -1026,14 +1035,14 @@ func unconfirmedFenceTBM(t *testing.T, rollbackAllowed, restoreFails bool) ([]ga
 	var patches []gateway.RoutePatch
 	var accepts int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			patches = append(patches, rp)
 			if restoreFails && len(patches) == 2 {
 				return "", fmt.Errorf("k8s API unavailable")
 			}
 			return "", nil
 		},
-		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			accepts++
 			if accepts == 1 {
 				return fmt.Errorf("operator never reconciled") // the fence's wait; the restore's succeeds
@@ -1100,15 +1109,15 @@ func failedAfterFenceTBM(t *testing.T, failAt string) (int, string, string, erro
 	t.Helper()
 	orchestrator, _ := newTestOrchestrator(t)
 	var patches int
-	orchestrator.actions.gatewayService = &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+	setGatewayService(orchestrator.actions, &mockGatewayService{
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			patches++
 			if failAt == EventSwitch && patches == 2 { // the fence is the first patch, the switch the second
 				return "", fmt.Errorf("k8s API unavailable")
 			}
 			return "", nil
 		},
-	}
+	})
 	if failAt == EventPromote {
 		orchestrator.actions.clusterLinkService = &mockClusterLinkService{
 			promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -1149,6 +1158,41 @@ func TestTBMOrchestrator_Execute_SwitchFails_KeepsTheFence(t *testing.T) {
 	assert.Equal(t, StatePromoted, state)
 }
 
+// TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence: a switchover
+// patch that reached the CR but was not confirmed leaves the CR switched while
+// the pods may still serve the fenced route. The warning says so and that a
+// re-run checks the pods first; no unfence is attempted.
+func TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
+	orchestrator, _ := newTestOrchestrator(t)
+	var patches int
+	setGatewayService(orchestrator.actions, &mockGatewayService{
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			patches++
+			return "", nil
+		},
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			if patches == 2 { // the switchover has been patched: its acceptance fails
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
+			}
+			return nil
+		},
+	})
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
+
+	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
+
+	require.ErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+	assert.Equal(t, 2, patches, "the fence and the switchover: no unfence")
+	assert.Equal(t, StatePromoted, orchestrator.fsm.Current())
+	s := out.String()
+	assert.Contains(t, s, "Switch could not be confirmed")
+	assert.Contains(t, s, "the Gateway CR already holds the switchover")
+	assert.Contains(t, s, "the gateway pods may still serve the fenced route")
+	assert.Contains(t, s, "A re-run checks the gateway pods before doing anything")
+	assert.NotContains(t, s, "attempting to remove the fence")
+}
+
 // --- Gateway CR generation checks ---
 
 // changedCR is the refusal a guarded write or check returns once the CR moved.
@@ -1187,7 +1231,7 @@ func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mock
 	t.Helper()
 	orch, _ := newTestOrchestrator(t)
 	gw := &mockGatewayService{}
-	orch.actions.gatewayService = gw
+	setGatewayService(orch.actions, gw)
 	out, errOut := &strings.Builder{}, &strings.Builder{}
 	orch.reporter = &reporter{out: out, err: errOut}
 	res := realisticReconcileResult()
@@ -1205,13 +1249,13 @@ func overduePodRunTBM(t *testing.T, overdueOn ...int64) (*TBMOrchestrator, *[]ga
 	var mu sync.Mutex
 	var patches []gateway.RoutePatch
 	var promotes, waits int64
-	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+	gw.PatchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 		mu.Lock()
 		patches = append(patches, rp)
 		mu.Unlock()
 		return "", nil
 	}
-	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+	gw.WaitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 		n := atomic.AddInt64(&waits, 1)
 		for _, o := range overdueOn {
 			if n == o {
@@ -1258,14 +1302,14 @@ func TestTBMSwitch_OverduePodFailsAtPromoted(t *testing.T) {
 	var mu sync.Mutex
 	var patches []gateway.RoutePatch
 	var waits int64
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil } // the CR stays where reconcile read it
-	gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil } // the CR stays where reconcile read it
+	gw.PatchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 		mu.Lock()
 		patches = append(patches, rp)
 		mu.Unlock()
 		return "", nil
 	}
-	gw.waitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+	gw.WaitForGatewayPodsFn = func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 		if atomic.AddInt64(&waits, 1) == 2 { // the fence's wait succeeds; the switchover's is overdue
 			return fmt.Errorf("wait: %w", gateway.ErrReplacedPodOverdue)
 		}
@@ -1284,15 +1328,15 @@ func TestTBMSwitch_OverduePodFailsAtPromoted(t *testing.T) {
 func TestTBMOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
 	orch, gw, res, _, _ := generationRunTBM(t, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
 	// The fence write reports no generation, so the CR is still at 4 at promote.
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
 	require.NoError(t, err)
-	require.NotEmpty(t, gw.routeExpected)
-	assert.Equal(t, int64(4), gw.routeExpected[0], "the fence patch is guarded on the generation reconcile read")
+	require.NotEmpty(t, gw.RouteExpected)
+	assert.Equal(t, int64(4), gw.RouteExpected[0], "the fence patch is guarded on the generation reconcile read")
 }
 
 func TestTBMOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T) {
@@ -1305,8 +1349,8 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testin
 		},
 	}
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1358,9 +1402,9 @@ func TestTBMOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t
 		},
 	}
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
 	// The CR moves once the first batch is accepted.
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(requests) == 0 {
@@ -1383,8 +1427,8 @@ func TestTBMOrchestrator_Execute_NoTopics_SkipsThePromoteCheck(t *testing.T) {
 	orch, gw, res, _, _ := generationRunTBM(t, false)
 	res.PromoteTopics, res.MigrateTopics = nil, nil
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches)
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 9, nil }
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 9, nil }
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1394,7 +1438,7 @@ func TestTBMOrchestrator_Execute_NoTopics_SkipsThePromoteCheck(t *testing.T) {
 func TestTBMOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T) {
 	orch, gw, res, out, _ := generationRunTBM(t, true)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1409,7 +1453,7 @@ func TestTBMOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoW
 	t.Setenv(killpoint.FailEnvVar, EventWaitForLags)
 	orch, gw, res, out, _ := generationRunTBM(t, true)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1427,7 +1471,7 @@ func unconfirmedFenceRunTBM(t *testing.T) (*TBMOrchestrator, *mockGatewayService
 	t.Helper()
 	orch, gw, res, out, _ := generationRunTBM(t, false)
 	var accepts int64
-	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		if atomic.AddInt64(&accepts, 1) == 1 {
 			return fmt.Errorf("gateway spec not accepted")
 		}
@@ -1439,20 +1483,20 @@ func unconfirmedFenceRunTBM(t *testing.T) (*TBMOrchestrator, *mockGatewayService
 func TestTBMOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *testing.T) {
 	orch, gw, res, _ := unconfirmedFenceRunTBM(t)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
 	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the removing apply")
-	assert.Equal(t, []int64{4, 5}, gw.routeExpected, "the removal is guarded on the generation the fence left")
+	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the removal is guarded on the generation the fence left")
 }
 
 func TestTBMOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testing.T) {
 	orch, gw, res, out := unconfirmedFenceRunTBM(t)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1467,7 +1511,7 @@ func TestTBMOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testi
 	t.Setenv(killpoint.FailEnvVar, EventVerifyFence)
 	orch, gw, res, out, _ := generationRunTBM(t, false)
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1483,7 +1527,7 @@ func TestTBMOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopic
 	orch, gw, res, out, _ := generationRunTBM(t, true)
 	res.RollbackAllowed = false
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
@@ -1547,8 +1591,8 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *
 		},
 	}
 	var patches []gateway.RoutePatch
-	gw.patchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
-	gw.getGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if sent == 0 {
@@ -1565,4 +1609,42 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *
 	require.Len(t, patches, 1, "the fence only: no unfence")
 	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, some topics already promoted.")
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
+}
+
+// --- Constructor and startup hygiene (mirrors d2s) ---
+
+func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	orch := NewTBMOrchestrator(&migration.MigrationConfig{}, actions)
+
+	assert.Same(t, actions.reporter, orch.reporter)
+}
+
+func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
+	tests := []struct {
+		name    string
+		gateway gateway.TransitionClient
+		link    clusterlink.Service
+		wantErr string
+	}{
+		{"nil gateway service", nil, &mockClusterLinkService{}, "the migration is missing dependencies: GatewayService"},
+		{"nil cluster-link service", &mockGatewayService{}, nil, "the migration is missing dependencies: ClusterLinkService"},
+		{"both nil", nil, nil, "the migration is missing dependencies: ClusterLinkService, GatewayService"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tt.gateway, tt.link)
+			var out strings.Builder
+			actions.reporter = &reporter{out: &out, err: &out}
+			config := &migration.MigrationConfig{MigrationId: "test-tbm-1"}
+			orch := NewTBMOrchestrator(config, actions)
+
+			err := orch.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
+
+			require.EqualError(t, err, tt.wantErr)
+			assert.Equal(t, StateUninitialized, orch.fsm.Current(), "no step may run")
+			assert.Empty(t, config.Topics, "initialize must not have copied the plan")
+			assert.Empty(t, out.String(), "no step header or step output may be printed")
+		})
+	}
 }
