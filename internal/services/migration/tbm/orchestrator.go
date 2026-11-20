@@ -495,9 +495,10 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 // rollback so the FSM stays at fenced — the next run's from-zero walk
 // re-applies the fence step (a no-op if the gateway never diverged)
 // before anything downstream trusts it. Mirrors migration.onAbortFence,
-// minus the reason branch (TBM's abort_fence has only one source state,
-// fenced — every rollback is an unrouted-producer detection) and the
-// sync-config restore (TBM has no pause_offset_sync stage).
+// minus the sync-config restore (TBM has no pause_offset_sync stage).
+// TBM's abort_fence has only one source state, fenced, and handleStepFailure
+// fires it for any halting error before promote while the fence is up, not
+// only an unrouted-producer detection; that function announces the reason.
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	// Reason is announced by handleStepFailure; this callback owns only the unfence.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {

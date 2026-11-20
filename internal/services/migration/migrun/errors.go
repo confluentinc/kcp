@@ -8,7 +8,7 @@ import (
 
 // ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
 // effect on the gateway was never confirmed. The orchestrator catches it to
-// restore the initial CR — see the AAO orchestrator's restoreAfterUnconfirmedFence for why that is the
+// remove the fence — see the AAO orchestrator's restoreAfterUnconfirmedFence for why that is the
 // right compensation even when the fence appears not to have landed at all.
 var ErrFenceUnconfirmed = errors.New(gateway.FenceUnconfirmedMessage)
 

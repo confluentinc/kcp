@@ -326,7 +326,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 	// Once the patch has landed (including an ErrApplyUnverified read-back), the
 	// fenced spec is live in the cluster, so every later failure leaves it there,
 	// possibly holding client traffic on some or all of the gateway. Marking them all lets
-	// the orchestrator restore the initial CR rather than exiting with the
+	// the orchestrator remove the fence rather than exiting with the
 	// gateway in a state kcp created and did not resolve. A patch that never
 	// reached the cluster is deliberately outside the mark: nothing to undo.
 	if res.Landed && res.Err != nil {
@@ -385,8 +385,8 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *migrun.Mi
 		Label:         "unfence",
 		Change:        unfenceChange(config),
 		RestoresStart: true,
-		What:          "initial gateway CR",
-		Applied:       "Initial gateway CR applied",
+		What:          "unfenced gateway CR",
+		Applied:       "Unfenced gateway CR applied",
 	}).Err
 }
 
@@ -835,9 +835,10 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.Mig
 		return nil
 	}
 
-	// Apply prepares its verification on first use; that is a no-op when
-	// FenceGateway already ran in this process, and load-bearing for a resume that jumps
-	// straight to switch in a fresh process.
+	// Apply prepares its verification on first use; that is a no-op when an
+	// earlier Apply in this process (the fence) already did so, and matters
+	// when the fence step was skipped (no fence artifact in the plan). The FSM
+	// always walks from uninitialized, so a resume never starts at switch.
 	// Once the patch has reached the cluster every failure is marked
 	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.
 	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{

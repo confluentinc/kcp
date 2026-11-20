@@ -462,7 +462,8 @@ func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stop
 	return fmt.Errorf("%w; kcp made no further gateway write: %w", stepFailure, err)
 }
 
-// restoreAfterUnconfirmedFence reapplies the initial gateway CR after a fence
+// restoreAfterUnconfirmedFence applies the rollback route (the start-of-run route
+// with kcp's fence removed) after a fence
 // that reached the cluster but was never confirmed as in force on the gateway.
 //
 // The compensation runs for every unconfirmed fence, not only for one seen to be
@@ -480,7 +481,7 @@ func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stop
 //     the rejection and loses the other way, with the fence landing after kcp
 //     has exited and nobody watching.
 //
-// Reapplying the initial CR settles both without having to tell them apart. It
+// Applying the rollback route settles both without having to tell them apart. It
 // carries a fresh revision marker, so it supersedes any change still in flight
 // rather than racing it, and against a gateway that was never fenced it restores
 // the spec already in force — a no-op in effect, one extra change cycle in cost.
@@ -500,7 +501,7 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	// must hear the definite story and the gateway's own reason, not be sent hunting for a
 	// partial application that cannot exist.
 	definiteRejection := gateway.WasRejected(stepFailure)
-	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "restore the initial gateway CR"))
+	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "remove the fence"))
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
@@ -508,13 +509,13 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 			return o.stopOnGatewayChange(stepFailure, err, gateway.UnconfirmedFenceStopped)
 		}
 		slog.Error("failed to restore the gateway after an unconfirmed fence", "error", err)
-		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "restoring the initial gateway CR", "the fenced config")
+		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "removing the fence", "the fenced config")
 	}
 
 	if definiteRejection {
-		o.reporter.Success("Initial gateway CR restored — the rejected fenced spec has been superseded")
+		o.reporter.Success("Fence removed — the rejected fenced spec has been superseded")
 	} else {
-		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
+		o.reporter.Success("Fence removed — the fenced config cannot take effect later")
 	}
 	// An earlier, interrupted run may have paused offset sync.
 	rollbackErr = o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)

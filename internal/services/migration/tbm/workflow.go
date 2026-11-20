@@ -297,8 +297,10 @@ func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 // (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
 // batch taken out). Called only by onAbortFence.
 //
-// It works whether or not this process fenced, like Fence: a process can
-// resume directly at verify_fence.
+// It works whether or not this process fenced, like Fence: a rollback can
+// come before this run's own fence step lands, when an earlier, interrupted
+// run's fence was already up at the start (config.FencedAtStart). The FSM
+// itself always starts at uninitialized.
 func (a *TBMActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:          "unfence",

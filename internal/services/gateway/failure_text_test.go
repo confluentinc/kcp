@@ -49,10 +49,10 @@ func TestUnconfirmedFenceWarning(t *testing.T) {
 		attempt     string
 		want        string
 	}{
-		{"AAO timeout", timeout, "restore the initial gateway CR",
-			"Fence could not be confirmed on every gateway pod — attempting to restore the initial gateway CR"},
-		{"AAO rejection", rejected, "restore the initial gateway CR",
-			"Confluent operator rejected the fenced gateway spec (reason: InvalidSpec) — it never took effect; attempting to restore the initial gateway CR"},
+		{"AAO timeout", timeout, "remove the fence",
+			"Fence could not be confirmed on every gateway pod — attempting to remove the fence"},
+		{"AAO rejection", rejected, "remove the fence",
+			"Confluent operator rejected the fenced gateway spec (reason: InvalidSpec) — it never took effect; attempting to remove the fence"},
 		{"TBM and d2s timeout", timeout, "remove it",
 			"Fence could not be confirmed on every gateway pod — attempting to remove it"},
 		{"TBM and d2s rejection", rejected, "remove it",
@@ -80,8 +80,8 @@ func TestUnconfirmedFenceNotRestored(t *testing.T) {
 		did, held string
 		want      string
 	}{
-		{"AAO", "restoring the initial gateway CR", "the fenced config",
-			"failed during fence: timed out; additionally, restoring the initial gateway CR failed: patch refused; the gateway may still hold the fenced config on some pods, so inspect it before re-running"},
+		{"AAO", "removing the fence", "the fenced config",
+			"failed during fence: timed out; additionally, removing the fence failed: patch refused; the gateway may still hold the fenced config on some pods, so inspect it before re-running"},
 		{"TBM and d2s", "removing the fence", "the fenced rules",
 			"failed during fence: timed out; additionally, removing the fence failed: patch refused; the gateway may still hold the fenced rules on some pods, so inspect it before re-running"},
 	}
