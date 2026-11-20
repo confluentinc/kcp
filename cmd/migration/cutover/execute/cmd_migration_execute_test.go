@@ -13,7 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/testsupport"
@@ -153,7 +153,7 @@ func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
 
 // freshConfig builds the MigrationConfig runMigrationExecute builds for f's
 // manifest, via buildFreshMigrationConfig.
-func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migration.MigrationConfig) {
+func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migrun.MigrationConfig) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
@@ -926,14 +926,14 @@ func TestApplyPolicyOverrides_ZeroStillOverrides(t *testing.T) {
 
 func TestExecutePlan_UnknownTypeErrors(t *testing.T) {
 	cmd := newExecuteCmd(t)
-	err := executePlan(cmd, &manifest.GatewayMigration{}, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
+	err := executePlan(cmd, &manifest.GatewayMigration{}, &migrun.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
 }
 
 func TestExecutePlan_ResultModeMustMatchDeclaredType(t *testing.T) {
 	cmd := newExecuteCmd(t)
 	g := gatewayOf(t, manifest.MigrationTypeDynamic)
-	err := executePlan(cmd, g, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
+	err := executePlan(cmd, g, &migrun.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "does not match the declared")
 }
 

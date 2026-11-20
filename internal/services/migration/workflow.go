@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"log/slog"
 	"sort"
 	"strings"
@@ -95,7 +96,7 @@ func NewMigrationActionsWithOffsets(
 
 // target names the gateway this run drives and the fence and switch edits it
 // makes; the gateway package derives whatever verification needs from them.
-func (s *MigrationActions) target(config *MigrationConfig) gateway.Target {
+func (s *MigrationActions) target(config *migrun.MigrationConfig) gateway.Target {
 	return gateway.Target{
 		Namespace:        config.K8sNamespace,
 		Name:             config.InitialCrName,
@@ -113,7 +114,7 @@ func (s *MigrationActions) target(config *MigrationConfig) gateway.Target {
 // gateway.Transitioner.ResolveCapability). Exported for tests only, with no
 // production caller: every gateway patch resolves the capability itself
 // through the Transitioner.
-func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *migrun.MigrationConfig) error {
 	return s.gw.ResolveCapability(ctx, s.target(config))
 }
 
@@ -123,7 +124,7 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 // doc comment for why this matters and why patching only spec.configId —
 // touching no other field — makes it safe to call at any point, including a
 // resume. Exported for tests only, with no production caller.
-func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *migrun.MigrationConfig) error {
 	return s.gw.SmokeTestHotReload(ctx, s.target(config))
 }
 
@@ -142,7 +143,7 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 // re-checked here.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 	restAuth clusterlink.Authenticator,
 	res *migplan.Result,
 ) error {
@@ -182,7 +183,7 @@ func (s *MigrationActions) Initialize(
 // CheckLags polls source and destination offsets until lag is below threshold
 func (s *MigrationActions) CheckLags(
 	ctx context.Context,
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 	lagThreshold int64,
 	restAuth clusterlink.Authenticator,
 ) error {
@@ -316,7 +317,7 @@ func formatLag64(n int64) string {
 // re-run continues from there. Whatever the timeout, a replaced pod still
 // listed more than replacedPodOverdueMargin past its deletion deadline fails
 // the wait (gateway.ErrReplacedPodOverdue), so a lost node cannot wedge it.
-func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	// Plan-driven no-op: reconcile emitted no fence artifact, so there is
@@ -358,7 +359,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// gateway in a state kcp created and did not resolve. A patch that never
 	// reached the cluster is deliberately outside the mark: nothing to undo.
 	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", ErrFenceUnconfirmed, res.Err)
+		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
 	}
 	if res.Err != nil {
 		return res.Err
@@ -374,14 +375,14 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 // (the command layer sends a dynamic route to the TBM FSM). The write path
 // takes its RoutePatch from it and the capability probe the whole fenced CR,
 // so the two can never drift from each other.
-func fenceChange(config *MigrationConfig) gateway.RouteChange {
+func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteFence, Artifact: []byte(config.FenceYAML)}
 }
 
 // switchChange is the switch edit: reconcile's switched route
 // (config.SwitchoverYAML) -- unfenced, bound to the target domain, carrying the
 // route's pre-staged target auth -- replacing config.Route whole.
-func switchChange(config *MigrationConfig) gateway.RouteChange {
+func switchChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRoute, Artifact: []byte(config.SwitchoverYAML)}
 }
 
@@ -389,19 +390,19 @@ func switchChange(config *MigrationConfig) gateway.RouteChange {
 // (config.RollbackFenceYAML) -- the start-of-run route with the fence taken
 // out -- replacing config.Route whole. The static switch and rollback both
 // remove the fence, which a single-field patch cannot.
-func unfenceChange(config *MigrationConfig) gateway.RouteChange {
+func unfenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRoute, Artifact: []byte(config.RollbackFenceYAML)}
 }
 
-func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+func deriveFenceRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
 	return fenceChange(config).Patch(config.Route)
 }
 
-func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+func deriveSwitchRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
 	return switchChange(config).Patch(config.Route)
 }
 
-func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+func deriveUnfenceRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
 	return unfenceChange(config).Patch(config.Route)
 }
 
@@ -411,7 +412,7 @@ func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error
 // (or the configId applied on every pod) — the same convergence check
 // FenceGateway uses. Without the wait we would report traffic restored while
 // pods are still cycling, and miss rollout failures entirely.
-func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	// The rollback patch gets a fresh configId too. Without one it would carry
 	// whatever revision the initial CR was captured with, and the verification
 	// below would match against a value the pods already report — passing
@@ -452,7 +453,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 // same SET — safe whether or not a prior attempt already landed it.
 func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 	restAuth clusterlink.Authenticator,
 ) error {
 	if !config.PauseConsumerOffsetSync {
@@ -521,7 +522,7 @@ func (s *MigrationActions) PauseOffsetSync(
 // unfence.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	ctx context.Context,
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 	restAuth clusterlink.Authenticator,
 ) error {
 	if !config.PauseConsumerOffsetSync {
@@ -546,7 +547,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 // live cluster link. A failed SET fails the step and leaves the FSM at
 // switched. The switch has landed, so nothing rolls back; a re-run, whose
 // reconcile still finds the restore owed, retries it.
-func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *migrun.MigrationConfig, restAuth clusterlink.Authenticator) error {
 	if !config.RestoreOffsetSync {
 		tracing.MarkSkipped(ctx, "nothing_to_restore")
 		if !config.PauseConsumerOffsetSync {
@@ -580,7 +581,7 @@ func (s *MigrationActions) RestoreOffsetSync(ctx context.Context, config *Migrat
 // detection; a network/fetch error propagates as-is. Either way we just
 // return it — what happens next (a rollback, or keeping the fence when
 // reconcile forbids one) is the orchestrator's handleStepFailure.
-func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) VerifyFence(ctx context.Context, config *migrun.MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("unrouted producer detection disabled, skipping")
 		s.reporter.Detail("Detection disabled (spec.staticMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
@@ -609,7 +610,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+func (s *MigrationActions) PromoteTopics(ctx context.Context, config *migrun.MigrationConfig, restAuth clusterlink.Authenticator) error {
 	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
 	// nothing to promote this run. Read the plan (config.Topics), never the
 	// live cluster — the reconcile engine already decided.
@@ -864,7 +865,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // switchover the operator refused — the failure mode described on
 // gateway.TransitionVerifier.WaitForAccepted, hit on 2026-07-27 while setting up the live-cluster
 // e2e test infrastructure.
-func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
@@ -889,7 +890,7 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	// already did in this process, and load-bearing for a resume that jumps
 	// straight to switch in a fresh process.
 	// Once the patch has reached the cluster every failure is marked
-	// ErrSwitchUnconfirmed, as d2s's Switch does.
+	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.
 	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:    "switchover",
 		Patch:   switchRP,
@@ -897,7 +898,7 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 		Applied: "Switchover gateway CR applied",
 	})
 	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, res.Err)
+		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
 	}
 	if res.Err != nil {
 		return res.Err

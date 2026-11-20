@@ -10,7 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -51,8 +51,8 @@ spec:
           default: source
 `
 
-func testTBMConfig() *migration.MigrationConfig {
-	return &migration.MigrationConfig{
+func testTBMConfig() *migrun.MigrationConfig {
+	return &migrun.MigrationConfig{
 		MigrationId:       "tbm-1",
 		K8sNamespace:      "confluent",
 		InitialCrName:     "gateway-initial",
@@ -408,7 +408,7 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 
 // TestTBMSwitch_LandedButUnconfirmedIsMarked: once the switchover patch has
 // reached the CR, a failure confirming it is marked
-// migration.ErrSwitchUnconfirmed; a patch that never reached the CR is
+// migrun.ErrSwitchUnconfirmed; a patch that never reached the CR is
 // returned unmarked.
 func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
 	t.Run("acceptance fails after the patch landed", func(t *testing.T) {
@@ -420,7 +420,7 @@ func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
 		}
 		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
 		require.Error(t, err)
-		assert.ErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+		assert.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	})
 	t.Run("the patch never reached the CR", func(t *testing.T) {
 		gw := &mockGatewayService{
@@ -430,7 +430,7 @@ func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
 		}
 		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+		assert.NotErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	})
 }
 
@@ -600,7 +600,7 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 
 // TestTBMActions_Fence_UnconfirmedFenceIsMarked: once the fence patch has
 // reached the cluster, every later failure leaves the fenced rules there, so
-// Fence marks it migration.ErrFenceUnconfirmed for the orchestrator to remove.
+// Fence marks it migrun.ErrFenceUnconfirmed for the orchestrator to remove.
 // A patch that never reached the cluster is not marked.
 func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 	patchOK := func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil }
@@ -640,9 +640,9 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 
 			require.Error(t, err)
 			if tc.marked {
-				assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
+				assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
 			} else {
-				assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
+				assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
 			}
 		})
 	}
@@ -671,7 +671,7 @@ func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	err := actions.Fence(context.Background(), testTBMConfig())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
 	assert.Zero(t, promoteSideCalls, "nothing promote-side may run after a failed fence")
 }

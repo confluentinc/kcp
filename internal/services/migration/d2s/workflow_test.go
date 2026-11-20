@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInitialize_CopiesTheConversionArtifactsOntoConfig(t *testing.T) {
 	a := gatewayActions(&mockGatewayService{})
-	config := &migration.MigrationConfig{Topics: []string{"stale"}, MigrateTopics: []string{"stale"}, AwaitStopped: []string{"stale"}}
+	config := &migrun.MigrationConfig{Topics: []string{"stale"}, MigrateTopics: []string{"stale"}, AwaitStopped: []string{"stale"}}
 	res := convertResult()
 	res.FencedAtStart = true
 
@@ -31,7 +31,7 @@ func TestInitialize_CopiesTheConversionArtifactsOntoConfig(t *testing.T) {
 }
 
 func TestInitialize_RefusedPlanFailsWithReasonsAndLeavesConfigAlone(t *testing.T) {
-	config := &migration.MigrationConfig{}
+	config := &migrun.MigrationConfig{}
 	res := &migplan.Result{Mode: "convert", Refused: true, Reasons: []string{"orders: its mirror is ACTIVE, not promoted"}}
 
 	err := gatewayActions(&mockGatewayService{}).Initialize(context.Background(), config, res)
@@ -45,7 +45,7 @@ func TestInitialize_RejectsAPlanThatIsNotAConversion(t *testing.T) {
 	res := convertResult()
 	res.Mode = "dynamic"
 
-	err := gatewayActions(&mockGatewayService{}).Initialize(context.Background(), &migration.MigrationConfig{}, res)
+	err := gatewayActions(&mockGatewayService{}).Initialize(context.Background(), &migrun.MigrationConfig{}, res)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"dynamic"`)
@@ -62,7 +62,7 @@ func TestInitialize_RejectsAConversionWithoutItsArtifacts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			res := convertResult()
 			edit(res)
-			err := gatewayActions(&mockGatewayService{}).Initialize(context.Background(), &migration.MigrationConfig{}, res)
+			err := gatewayActions(&mockGatewayService{}).Initialize(context.Background(), &migrun.MigrationConfig{}, res)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "without its "+name+" artifact")
 		})

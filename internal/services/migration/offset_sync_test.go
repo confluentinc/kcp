@@ -3,6 +3,7 @@ package migration
 import (
 	"context"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"io"
 	"os"
 	"strings"
@@ -95,7 +96,7 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 	} {
 		t.Run(tc.baseline, func(t *testing.T) {
 			cl, rec := newFakeClusterLink()
-			cfg := &MigrationConfig{
+			cfg := &migrun.MigrationConfig{
 				ClusterLinkName:            "link-1",
 				PauseConsumerOffsetSync:    true,
 				ConsumerOffsetSyncBaseline: tc.baseline,
@@ -111,7 +112,7 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 
 func TestRestoreOffsetSync_UnsetBaselineDefaultsToEnabled(t *testing.T) {
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
 	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertAltered(t, offsetSyncEnableKey, "true")
@@ -121,7 +122,7 @@ func TestRestoreOffsetSync_NotInPlanIsNoop(t *testing.T) {
 	// The pause is opted in, but reconcile found the link already at its
 	// baseline: nothing to restore, and no call to the link.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: false}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: false}
 
 	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertNoCalls(t)
@@ -130,7 +131,7 @@ func TestRestoreOffsetSync_NotInPlanIsNoop(t *testing.T) {
 func TestRestoreOffsetSync_ReappliesTheSameSet(t *testing.T) {
 	// A re-run applies the same idempotent SET again.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:            "link-1",
 		PauseConsumerOffsetSync:    true,
 		ConsumerOffsetSyncBaseline: manifest.OffsetSyncBaselineEnabled,
@@ -170,7 +171,7 @@ func captureStderr(t *testing.T, fn func()) string {
 
 func TestRestoreOffsetSync_AlterFails_ReturnsError(t *testing.T) {
 	cl, rec := newFailingAlterClusterLink(fmt.Errorf("503 unavailable"))
-	cfg := &MigrationConfig{ClusterLinkName: "link-hard", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-hard", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
 	err := NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil)
 
@@ -190,7 +191,7 @@ func TestRestoreOffsetSync_CancelledCtx_ReturnsError(t *testing.T) {
 			return ctx.Err()
 		},
 	}
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -205,7 +206,7 @@ func TestRestoreOffsetSync_CancelledCtx_ReturnsError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWarnIfPaused_NotRequested_NoOutput(t *testing.T) {
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
 
 	out := captureStderr(t, func() {
 		WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
@@ -216,7 +217,7 @@ func TestWarnIfPaused_NotRequested_NoOutput(t *testing.T) {
 func TestWarnIfPaused_Requested_Warns(t *testing.T) {
 	// The guidance is a single generic reminder gated only on the
 	// manifest-declared PauseConsumerOffsetSync.
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 	}
@@ -236,7 +237,7 @@ func TestWarnIfPaused_Requested_Warns(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildClusterLinkConfig_CarriesAllFields(t *testing.T) {
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterRestEndpoint: "https://pkc.us-east-1.aws.confluent.cloud:443",
 		ClusterId:           "lkc-abc",
 		ClusterLinkName:     "link-xyz",
@@ -268,7 +269,7 @@ func pauseActions(cl *mockClusterLinkService) *MigrationActions {
 
 func TestPauseOffsetSync_NotRequestedIsNoop(t *testing.T) {
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false, FenceYAML: testFenceYAML}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false, FenceYAML: testFenceYAML}
 
 	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.NoError(t, err)
@@ -279,7 +280,7 @@ func TestPauseOffsetSync_NoInFlightIsNoop(t *testing.T) {
 	// FenceYAML=="" means reconcile emitted no cutover work this run — nothing
 	// to pause. Plan-driven: read the plan, never the live link.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, FenceYAML: ""}
+	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, FenceYAML: ""}
 
 	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.NoError(t, err)
@@ -288,7 +289,7 @@ func TestPauseOffsetSync_NoInFlightIsNoop(t *testing.T) {
 
 func TestPauseOffsetSync_DisablesWhenInFlight(t *testing.T) {
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		FenceYAML:               testFenceYAML,
@@ -305,7 +306,7 @@ func TestPauseOffsetSync_IdempotentOnResume(t *testing.T) {
 	// idempotent SET rather than reading a flipped marker to decide whether
 	// to skip.
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		FenceYAML:               testFenceYAML,
@@ -320,7 +321,7 @@ func TestPauseOffsetSync_IdempotentOnResume(t *testing.T) {
 
 func TestPauseOffsetSync_AlterFails_Surfaces(t *testing.T) {
 	cl, _ := newFailingAlterClusterLink(fmt.Errorf("500 internal"))
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		FenceYAML:               testFenceYAML,
@@ -341,7 +342,7 @@ func TestPauseOffsetSync_AlterFails_Surfaces(t *testing.T) {
 func TestPauseOffsetSync_Drain_WaitsBeforeDisabling(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	const drain = 40 * time.Millisecond
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:                 "link-1",
 		PauseConsumerOffsetSync:         true,
 		FenceYAML:                       testFenceYAML,
@@ -359,7 +360,7 @@ func TestPauseOffsetSync_Drain_WaitsBeforeDisabling(t *testing.T) {
 
 func TestPauseOffsetSync_Drain_ContextCancelledLeavesSyncEnabled(t *testing.T) {
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:                 "link-1",
 		PauseConsumerOffsetSync:         true,
 		FenceYAML:                       testFenceYAML,
@@ -377,7 +378,7 @@ func TestPauseOffsetSync_Drain_ContextCancelledLeavesSyncEnabled(t *testing.T) {
 
 func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 	cl, rec := newFakeClusterLink()
-	cfg := &MigrationConfig{
+	cfg := &migrun.MigrationConfig{
 		ClusterLinkName:                 "link-1",
 		PauseConsumerOffsetSync:         true,
 		FenceYAML:                       testFenceYAML,

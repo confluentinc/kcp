@@ -13,8 +13,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -26,10 +26,10 @@ func setGatewayService(a *TBMActions, svc gateway.TransitionClient) {
 	a.gw = gateway.NewTransitioner(svc, func() gateway.Reporter { return a.reporter })
 }
 
-func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migration.MigrationConfig) {
+func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migrun.MigrationConfig) {
 	t.Helper()
 
-	config := &migration.MigrationConfig{
+	config := &migrun.MigrationConfig{
 		MigrationId:   "test-tbm-1",
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
@@ -149,7 +149,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 			return map[int32]int64{0: 1500}, nil // rogue producer during the window
 		},
 	}
-	config := &migration.MigrationConfig{
+	config := &migrun.MigrationConfig{
 		MigrationId:   "test-tbm-rollback",
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
@@ -209,7 +209,7 @@ func TestTBMOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) 
 			return map[int32]int64{0: 1500}, nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-resume-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-resume-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
 	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
 
@@ -247,7 +247,7 @@ func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) 
 			return map[int32]int64{0: 1500}, nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-no-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-no-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
@@ -276,7 +276,7 @@ func TestTBMOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
 			return "", nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-fail-hook", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-fail-hook", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
 	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
 
@@ -323,7 +323,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 			return map[int32]int64{0: 1000}, nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-verify-fetch-error", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-verify-fetch-error", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
 	var out strings.Builder
@@ -364,7 +364,7 @@ func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) 
 			return map[int32]int64{0: 1000}, nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-ctx-cancel", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-ctx-cancel", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
 
@@ -482,10 +482,10 @@ func newTBMKillPointOrchestrator(
 	allMirrorTopics []string,
 	initiallyStopped []string,
 	readyProgress []gateway.PodRolloutProgress,
-) (orch *TBMOrchestrator, config *migration.MigrationConfig, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
+) (orch *TBMOrchestrator, config *migrun.MigrationConfig, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
 	t.Helper()
 
-	config = &migration.MigrationConfig{
+	config = &migrun.MigrationConfig{
 		MigrationId:   "test-tbm-killpoint",
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
@@ -766,7 +766,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 			return resp, nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-await", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-await", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
 	actions.promotePollInterval = time.Millisecond
 	orch := NewTBMOrchestrator(config, actions)
@@ -963,7 +963,7 @@ func fencedResumeTBM(t *testing.T, failAt string, fencedAtStart, rollbackAllowed
 			return "", nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-fenced-at-start", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-fenced-at-start", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
@@ -1050,7 +1050,7 @@ func unconfirmedFenceTBM(t *testing.T, rollbackAllowed, restoreFails bool) ([]ga
 			return nil
 		},
 	}
-	config := &migration.MigrationConfig{MigrationId: "test-tbm-unconfirmed-fence", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	config := &migrun.MigrationConfig{MigrationId: "test-tbm-unconfirmed-fence", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
@@ -1067,7 +1067,7 @@ func unconfirmedFenceTBM(t *testing.T, rollbackAllowed, restoreFails bool) ([]ga
 func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence(t *testing.T) {
 	patches, out, state, err := unconfirmedFenceTBM(t, true, false)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	require.Len(t, patches, 2, "the fence, then the patch removing it")
 	want, ferr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
 	require.NoError(t, ferr)
@@ -1084,7 +1084,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovesTheFence(t *testing.T) 
 func TestTBMOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(t *testing.T) {
 	patches, out, _, err := unconfirmedFenceTBM(t, false, false)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Len(t, patches, 1, "the fence only: nothing removes it")
 	assert.Contains(t, out, "keeping the fence")
 }
@@ -1095,7 +1095,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFen
 func TestTBMOrchestrator_Execute_UnconfirmedFence_RemovalFails_ReportsBoth(t *testing.T) {
 	patches, _, _, err := unconfirmedFenceTBM(t, true, true)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Len(t, patches, 2)
 	assert.Contains(t, err.Error(), "operator never reconciled", "the fence's own failure")
 	assert.Contains(t, err.Error(), "k8s API unavailable", "the removal's failure")
@@ -1182,7 +1182,7 @@ func TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
 
-	require.ErrorIs(t, err, migration.ErrSwitchUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	assert.Equal(t, 2, patches, "the fence and the switchover: no unfence")
 	assert.Equal(t, StatePromoted, orchestrator.fsm.Current())
 	s := out.String()
@@ -1281,7 +1281,7 @@ func TestTBMFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
 	orch, patches, promotes, waits, err := overduePodRunTBM(t, 1) // the fence's wait; the unfence's succeeds
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
 	require.Len(t, *patches, 2, "the fence, then the patch removing it")
 	rollback, rerr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "rules")
@@ -1487,7 +1487,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the removing apply")
 	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the removal is guarded on the generation the fence left")
@@ -1501,7 +1501,7 @@ func TestTBMOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *te
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the refused removal")
 	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied but not confirmed on every gateway pod.")
@@ -1615,7 +1615,7 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *
 
 func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	orch := NewTBMOrchestrator(&migration.MigrationConfig{}, actions)
+	orch := NewTBMOrchestrator(&migrun.MigrationConfig{}, actions)
 
 	assert.Same(t, actions.reporter, orch.reporter)
 }
@@ -1636,7 +1636,7 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tt.gateway, tt.link)
 			var out strings.Builder
 			actions.reporter = &reporter{out: &out, err: &out}
-			config := &migration.MigrationConfig{MigrationId: "test-tbm-1"}
+			config := &migrun.MigrationConfig{MigrationId: "test-tbm-1"}
 			orch := NewTBMOrchestrator(config, actions)
 
 			err := orch.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})

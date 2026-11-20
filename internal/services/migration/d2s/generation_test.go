@@ -8,8 +8,8 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,7 +62,7 @@ func TestD2SActions_Initialize_CopiesTheGatewayGeneration(t *testing.T) {
 	res := convertResult()
 	res.GatewayGeneration = 9
 
-	require.NoError(t, a.Initialize(context.Background(), &migration.MigrationConfig{}, res))
+	require.NoError(t, a.Initialize(context.Background(), &migrun.MigrationConfig{}, res))
 
 	assert.Equal(t, int64(9), a.gw.ExpectedGeneration())
 }
@@ -186,7 +186,7 @@ func TestD2SOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t
 
 	err := run.execute(context.Background(), res)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the removing apply")
 	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the removal is guarded on the generation the fence left")
@@ -200,7 +200,7 @@ func TestD2SOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *te
 	err := run.execute(context.Background(), res)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the refused removal")
 	assert.Contains(t, run.out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied but not confirmed on every gateway pod.")

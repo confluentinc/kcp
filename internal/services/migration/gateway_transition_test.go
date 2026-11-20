@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,8 +38,8 @@ func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 	}
 }
 
-func hotReloadConfig() *MigrationConfig {
-	return &MigrationConfig{
+func hotReloadConfig() *migrun.MigrationConfig {
+	return &migrun.MigrationConfig{
 		K8sNamespace:  "confluent",
 		InitialCrName: "gw-1",
 		// A real routed CR: FenceGateway's fenceChange splices FenceYAML
@@ -190,7 +191,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, ErrFenceUnconfirmed,
+		assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed,
 			"nothing reached the cluster, so there is no fenced spec to restore")
 	})
 
@@ -211,7 +212,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrFenceUnconfirmed,
+		assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed,
 			"the apply reached the cluster and persisted the fenced spec — this must restore the initial CR like any other unconfirmed fence")
 	})
 
@@ -230,7 +231,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+		assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	})
 
 	t.Run("a partial configId convergence is an unconfirmed fence", func(t *testing.T) {
@@ -246,7 +247,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+		assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 		assert.Contains(t, err.Error(), "1 of 2 ready pods",
 			"the underlying counts must survive the wrap — they are how an operator tells a rejected canary from a stalled rollout")
 	})
@@ -269,7 +270,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+		assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	})
 
 	t.Run("a confirmed fence is not marked", func(t *testing.T) {
@@ -424,7 +425,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 
 // TestAAOFence_WaitTimeoutIsFenceUnconfirmed: on a rolling gateway the replaced
 // pods never going away (WaitForGatewayPods fails) leaves the fenced spec live,
-// so the fence fails as ErrFenceUnconfirmed (the orchestrator then restores the
+// so the fence fails as migrun.ErrFenceUnconfirmed (the orchestrator then restores the
 // initial CR) and nothing on the promote side runs.
 func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	var applied []string
@@ -456,7 +457,7 @@ func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	err := actions.FenceGateway(context.Background(), config)
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFenceUnconfirmed), "a wait failure after the apply must be marked unconfirmed: %v", err)
+	assert.True(t, errors.Is(err, migrun.ErrFenceUnconfirmed), "a wait failure after the apply must be marked unconfirmed: %v", err)
 	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
 	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteSideCalls), "nothing promote-side may run after a failed fence")
 }

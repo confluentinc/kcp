@@ -12,7 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -34,7 +34,7 @@ var ErrVerifyRefused = errors.New("the conversion's checks refused after the fen
 //  8. hand the last snapshot (2, or 1 if steps 4-6 were skipped), restricted to G, to sync_offsets.
 //
 // A refusal is returned as ErrVerifyRefused; a read failure is a plain error, never a refusal.
-func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, p Policy) error {
+func (a *D2SActions) VerifyFence(ctx context.Context, config *migrun.MigrationConfig, p Policy) error {
 	a.handoff = nil
 	if p.DetectUnroutedCommitsDuration < 0 {
 		return fmt.Errorf("verify_fence needs a detection window of zero (skip) or above, got %s", p.DetectUnroutedCommitsDuration)
@@ -184,7 +184,7 @@ func convertFenceCheck(gw *reconcile.GatewayConfig) reconcile.PreconditionResult
 }
 
 // refuse renders report as --dry-run would and returns ErrVerifyRefused carrying every failed check.
-func (a *D2SActions) refuse(config *migration.MigrationConfig, report reconcile.Report) error {
+func (a *D2SActions) refuse(config *migrun.MigrationConfig, report reconcile.Report) error {
 	migplan.RenderReport(a.deps.Out, report, migplan.RenderView{Route: config.Route, TargetDomain: a.deps.Input.TargetDomain, Conversion: true})
 	var reasons []string
 	for _, pc := range report.Preconditions {

@@ -10,8 +10,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/looplab/fsm"
 	"go.opentelemetry.io/otel/attribute"
@@ -63,7 +63,7 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 
 // D2SOrchestrator manages the FSM and coordinates the conversion. Mirrors tbm.TBMOrchestrator.
 type D2SOrchestrator struct {
-	config   *migration.MigrationConfig
+	config   *migrun.MigrationConfig
 	fsm      *fsm.FSM
 	actions  *D2SActions
 	reporter *reporter
@@ -71,7 +71,7 @@ type D2SOrchestrator struct {
 
 // NewD2SOrchestrator creates the orchestrator. The FSM always starts at uninitialized: there is nothing to
 // resume from, and every step re-derives its precondition from live state.
-func NewD2SOrchestrator(config *migration.MigrationConfig, actions *D2SActions) *D2SOrchestrator {
+func NewD2SOrchestrator(config *migrun.MigrationConfig, actions *D2SActions) *D2SOrchestrator {
 	o := &D2SOrchestrator{config: config, actions: actions, reporter: actions.reporter}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
@@ -139,7 +139,7 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 			return o.handleStepFailure(ctx, step, stepErr)
 		}
 		if step.Event == EventInitialize {
-			runSpan.SetAttributes(migration.RunAttributes(o.config)...)
+			runSpan.SetAttributes(migrun.RunAttributes(o.config)...)
 		}
 		o.reporter.stepDone()
 
@@ -186,7 +186,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		return o.stopOnGatewayChange(stepFailure, stepErr, stoppedAt(o.fsm.Current(), o.config.FencedAtStart))
 	}
 
-	if errors.Is(stepErr, migration.ErrFenceUnconfirmed) {
+	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
 			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
 			return stepFailure
@@ -195,7 +195,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if step.Event == EventSwitch {
-		if errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
+		if errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
 			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, and the gateway pods may still serve the fenced dynamic route. " +
 				"A re-run checks the gateway pods before doing anything")
 			return stepFailure
@@ -217,9 +217,9 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 	o.reporter.warn("%s — attempting to remove the fence", reason)
 
-	path := migration.RollbackPathAbortFence
+	path := migrun.RollbackPathAbortFence
 	if !thisRunsFence {
-		path = migration.RollbackPathEarlierRunFence
+		path = migrun.RollbackPathEarlierRunFence
 	}
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback", attribute.String("kcp.rollback.path", path))
 	var rollbackErr error
@@ -275,7 +275,7 @@ func rollbackReason(step WorkflowStep, err error) string {
 // cluster but could not be confirmed. A failed removal is reported with the fence's own failure.
 func (o *D2SOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailure error) error {
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback",
-		attribute.String("kcp.rollback.path", migration.RollbackPathUnconfirmedFence))
+		attribute.String("kcp.rollback.path", migrun.RollbackPathUnconfirmedFence))
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 

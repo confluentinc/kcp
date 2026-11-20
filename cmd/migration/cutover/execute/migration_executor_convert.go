@@ -6,8 +6,8 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/d2s"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +27,7 @@ type convertServicesFunc func(g *manifest.GatewayMigration, gw *gateway.K8sServi
 func runConvertBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {

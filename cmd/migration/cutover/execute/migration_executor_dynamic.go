@@ -6,7 +6,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
@@ -23,7 +23,7 @@ import (
 func runDynamicBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {

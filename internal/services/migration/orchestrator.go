@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"log/slog"
 	"strings"
 
@@ -24,20 +25,6 @@ import (
 // it) so every existing errors.Is call site in this package keeps working
 // unchanged.
 var ErrUnroutedProducers = offset.ErrUnroutedProducers
-
-// ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
-// effect on the serving pods was never confirmed. The orchestrator catches it to
-// restore the initial CR — see restoreAfterUnconfirmedFence for why that is the
-// right compensation even when the fence appears not to have landed at all.
-var ErrFenceUnconfirmed = errors.New("fence could not be confirmed on every gateway pod")
-
-// ErrSwitchUnconfirmed marks a switchover whose patch reached the Gateway CR
-// but could not be confirmed (the operator rejected or never accepted it, the
-// stored configId could not be read back, or the pods never reported it). The
-// CR already holds the switchover while the pods may still serve the fenced
-// route. Every FSM (AAO, TBM, d2s) marks its switch with it, and none rolls
-// back: a re-run's reconcile checks the pods before doing anything.
-var ErrSwitchUnconfirmed = errors.New("the switchover reached the Gateway CR but could not be confirmed")
 
 // WorkflowStep defines a single step in the migration workflow. It is pure FSM
 // topology plus an ops-facing Description; user-facing presentation lives in
@@ -123,7 +110,7 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
-	config   *MigrationConfig
+	config   *migrun.MigrationConfig
 	fsm      *fsm.FSM
 	actions  *MigrationActions
 	reporter *reporter // user-facing terminal output
@@ -131,7 +118,7 @@ type MigrationOrchestrator struct {
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 	actions *MigrationActions,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
@@ -257,7 +244,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			return o.handleStepFailure(ctx, step, stepErr, params)
 		}
 		if step.Event == EventInitialize {
-			runSpan.SetAttributes(RunAttributes(o.config)...)
+			runSpan.SetAttributes(migrun.RunAttributes(o.config)...)
 		}
 		o.reporter.stepDone()
 
@@ -283,11 +270,11 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 }
 
 // rollbackForbiddenReason is why a pre-promote failure keeps the fence when
-// reconcile forbade a rollback (MigrationConfig.RollbackAllowed false).
+// reconcile forbade a rollback (migrun.MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
 
 // switchUnconfirmedWarning is what the operator sees when the switchover
-// reached the CR but could not be confirmed (ErrSwitchUnconfirmed).
+// reached the CR but could not be confirmed (migrun.ErrSwitchUnconfirmed).
 const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
 	"A re-run checks the gateway pods before doing anything"
 
@@ -317,7 +304,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// outside the FSM: the fence transition was cancelled, so the machine never
 	// left its pre-fence state and there is no edge to travel back along. Only
 	// the cluster needs putting right.
-	if errors.Is(stepErr, ErrFenceUnconfirmed) {
+	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
 			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
 			return stepFailure
@@ -328,7 +315,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// A switchover that reached the CR but was not confirmed is past promote,
 	// so the rollback logic below would not roll back past promote either; only
 	// the operator message differs.
-	if step.Event == EventSwitch && errors.Is(stepErr, ErrSwitchUnconfirmed) {
+	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
 		o.reporter.warn(switchUnconfirmedWarning)
 		return stepFailure
 	}
@@ -365,9 +352,9 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
-	path := RollbackPathAbortFence
+	path := migrun.RollbackPathAbortFence
 	if !thisRunsFence {
-		path = RollbackPathEarlierRunFence
+		path = migrun.RollbackPathEarlierRunFence
 	}
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback", attribute.String("kcp.rollback.path", path))
 	var rollbackErr error
@@ -511,7 +498,7 @@ func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stop
 // machine still sits at its pre-fence state, which is already the truth.
 func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error, params ExecutionParams) error {
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback",
-		attribute.String("kcp.rollback.path", RollbackPathUnconfirmedFence))
+		attribute.String("kcp.rollback.path", migrun.RollbackPathUnconfirmedFence))
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,9 +23,9 @@ func routeChangeGolden(t *testing.T, name string) string {
 	return string(b)
 }
 
-func routeChangeGoldenConfig(t *testing.T) *migration.MigrationConfig {
+func routeChangeGoldenConfig(t *testing.T) *migrun.MigrationConfig {
 	t.Helper()
-	return &migration.MigrationConfig{
+	return &migrun.MigrationConfig{
 		GatewayYAML:       routeChangeGolden(t, "cr.yaml"),
 		Route:             "migration-route",
 		FenceYAML:         routeChangeGolden(t, "fence.yaml"),
@@ -38,7 +38,7 @@ func TestRouteChangeGoldens_Patches(t *testing.T) {
 	config := routeChangeGoldenConfig(t)
 	for _, tc := range []struct {
 		name   string
-		derive func(*migration.MigrationConfig) (gateway.RoutePatch, error)
+		derive func(*migrun.MigrationConfig) (gateway.RoutePatch, error)
 		golden string
 	}{
 		{"fence", deriveFenceRoutePatch, "fence_patch.golden"},
@@ -63,7 +63,7 @@ func TestRouteChangeGoldens_Patches(t *testing.T) {
 
 // probeCRs builds the capability probe CRs the gateway Transitioner derives
 // from the FSM's target, the same RouteProbe call over the same plain data.
-func probeCRs(a *TBMActions, config *migration.MigrationConfig) (fenced, switched []byte, err error) {
+func probeCRs(a *TBMActions, config *migrun.MigrationConfig) (fenced, switched []byte, err error) {
 	tg := a.target(config)
 	return gateway.RouteProbe(tg.GatewayCR, tg.Route, tg.Fence, tg.Switch)
 }

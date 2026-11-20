@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"io"
 	"os"
 	"slices"
@@ -36,14 +37,14 @@ type orchestratorOverrides struct {
 // succeeds. Like production, its FSM starts at StateUninitialized; a test
 // drives it with Execute and a plan (resultFromConfig or
 // uninitializedReconcileResult).
-func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig) {
+func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *migrun.MigrationConfig) {
 	t.Helper()
 
 	if len(topics) == 0 {
 		topics = []string{"topic-a", "topic-b"}
 	}
 
-	config := &MigrationConfig{
+	config := &migrun.MigrationConfig{
 		MigrationId:         "test-migration-1",
 		ClusterId:           "lkc-test",
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
@@ -214,7 +215,7 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 // mirroring config's own (possibly test-tweaked) plan fields, so a test that
 // adjusts config after construction keeps those adjustments through a full
 // walk from uninitialized.
-func resultFromConfig(config *MigrationConfig) *migplan.Result {
+func resultFromConfig(config *migrun.MigrationConfig) *migplan.Result {
 	return &migplan.Result{
 		Route:          config.Route,
 		PromoteTopics:  config.Topics,
@@ -750,7 +751,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge",
 		"the original cause must survive the compensation")
 
@@ -791,7 +792,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
 	assert.Contains(t, err.Error(), "k8s API unavailable", "the restore failure")
 	assert.Contains(t, err.Error(), "inspect it before re-running")
@@ -817,7 +818,7 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
 		"a failed fence apply must not be followed by a restoring apply")
 }
@@ -868,7 +869,7 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 	out := stdout + stderr
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	var rejected *gateway.GatewayRejectedError
 	assert.ErrorAs(t, err, &rejected, "the operator's rejection must survive in the error chain")
 
@@ -1169,7 +1170,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RollbackNotAllowed_KeepsTheFence(
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 	out := buf.String()
 
-	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&patches), "the fence only — no restoring apply")
 	assert.Contains(t, out, "keeping the fence")
 }
@@ -1268,7 +1269,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 	tests := []struct {
 		name      string
 		overrides orchestratorOverrides
-		configure func(orch *MigrationOrchestrator, config *MigrationConfig)
+		configure func(orch *MigrationOrchestrator, config *migrun.MigrationConfig)
 		wantState string
 	}{
 		{
@@ -1285,7 +1286,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 					return "", nil
 				},
 			},
-			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
+			configure: func(orch *MigrationOrchestrator, config *migrun.MigrationConfig) {
 				config.PauseConsumerOffsetSync = true
 				config.DetectUnroutedProducersDuration = time.Millisecond
 				config.GatewayYAML = validCR
@@ -1311,7 +1312,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 		{
 			name:      "fence_verified: promote fails after a successful pause+verify",
 			overrides: orchestratorOverrides{},
-			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
+			configure: func(orch *MigrationOrchestrator, config *migrun.MigrationConfig) {
 				config.PauseConsumerOffsetSync = true
 				// Detection disabled: verify_fence is an immediate success, so
 				// the promote failure rests the FSM at fence_verified.
@@ -1346,7 +1347,7 @@ func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *tes
 					return "", nil
 				},
 			},
-			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
+			configure: func(orch *MigrationOrchestrator, config *migrun.MigrationConfig) {
 				config.PauseConsumerOffsetSync = true
 				config.DetectUnroutedProducersDuration = 0
 				config.GatewayYAML = validCR
@@ -1721,7 +1722,7 @@ func newAAOKillPointOrchestrator(
 	t *testing.T,
 	initiallyStopped []string,
 	readyProgress []gateway.PodRolloutProgress,
-) (orch *MigrationOrchestrator, config *MigrationConfig, patchCalls *int64, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
+) (orch *MigrationOrchestrator, config *migrun.MigrationConfig, patchCalls *int64, promoteCalls *[][]string, readyEventsOut *[]gateway.PodRolloutProgress) {
 	t.Helper()
 
 	topics := []string{"topic-a", "topic-b"}
@@ -1730,7 +1731,7 @@ func newAAOKillPointOrchestrator(
 		stoppedSet[tpc] = true
 	}
 
-	config = &MigrationConfig{
+	config = &migrun.MigrationConfig{
 		MigrationId:         "test-migration-1",
 		ClusterId:           "lkc-test",
 		ClusterRestEndpoint: "https://pkc-test.confluent.cloud",
@@ -2252,7 +2253,7 @@ func assertNoFilesWritten(t *testing.T, dir string) {
 // fencedResume is the reconcile result a resume sees when the interrupted run
 // left kcp's fence on the route. Only Initialize's copy of the plan tells the
 // run so: config itself starts without it.
-func fencedResume(config *MigrationConfig) *migplan.Result {
+func fencedResume(config *migrun.MigrationConfig) *migplan.Result {
 	res := resultFromConfig(config)
 	res.FencedAtStart = true
 	return res
@@ -2396,7 +2397,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, fencedResume(config))
 
-	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	require.Len(t, patches, 2, "the fence, then the restoring apply")
 	assert.Contains(t, alters, offsetSyncBackOn, "the restore sets consumer offset sync back to the baseline")
 }
@@ -2436,7 +2437,7 @@ func TestAAOFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
 	require.Len(t, patches, 2, "the fence, then the unfence")
 	rollback, rerr := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")
@@ -2492,7 +2493,7 @@ func TestAAOOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, resultFromConfig(config))
 
-	require.ErrorIs(t, err, ErrSwitchUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	require.Len(t, patches, 2, "the fence and the switchover: no unfence")
 	assert.Equal(t, StatePromoted, orch.fsm.Current())
 	s := out.String()
@@ -2548,7 +2549,7 @@ func refusedAs(observed int64) func(int64) (gateway.PatchResult, error) {
 // generationRun builds a happy-path orchestrator with consumer offset sync
 // paused and the cluster-link config changes recorded, so a test can tell
 // whether the rollback's offset-sync restore ran.
-func generationRun(t *testing.T) (orch *MigrationOrchestrator, config *MigrationConfig, out, errOut *strings.Builder, alters *[]clusterlink.ConfigAlteration) {
+func generationRun(t *testing.T) (orch *MigrationOrchestrator, config *migrun.MigrationConfig, out, errOut *strings.Builder, alters *[]clusterlink.ConfigAlteration) {
 	t.Helper()
 	orch, config = newHappyPathOrchestrator(t, nil)
 	config.PauseConsumerOffsetSync = true
@@ -2706,7 +2707,7 @@ func TestOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoWrit
 
 // unconfirmedFenceRun fails the fence's acceptance wait once, so the fence
 // lands but is never confirmed and the orchestrator compensates.
-func unconfirmedFenceRun(t *testing.T) (*MigrationOrchestrator, *MigrationConfig, *strings.Builder, *[]clusterlink.ConfigAlteration) {
+func unconfirmedFenceRun(t *testing.T) (*MigrationOrchestrator, *migrun.MigrationConfig, *strings.Builder, *[]clusterlink.ConfigAlteration) {
 	t.Helper()
 	orch, config, out, _, alters := generationRun(t)
 	var accepts int64
@@ -2729,7 +2730,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *t
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
-	require.ErrorIs(t, err, ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.NotErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the restoring apply")
 	assert.Equal(t, []int64{4, 5}, gw.RouteExpected, "the restore is guarded on the generation the fence left")
@@ -2746,7 +2747,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testi
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
 	require.Len(t, patches, 2, "the fence, then the refused restore")
 	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
@@ -2871,7 +2872,7 @@ func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *tes
 
 func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
 	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-	orch := NewMigrationOrchestrator(&MigrationConfig{}, actions)
+	orch := NewMigrationOrchestrator(&migrun.MigrationConfig{}, actions)
 
 	assert.Same(t, actions.reporter, orch.reporter)
 }
@@ -2892,7 +2893,7 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 			actions := NewMigrationActions(tt.gateway, tt.link)
 			var out strings.Builder
 			actions.reporter = &reporter{out: &out, err: &out}
-			config := &MigrationConfig{MigrationId: "test-migration-1"}
+			config := &migrun.MigrationConfig{MigrationId: "test-migration-1"}
 			orch := NewMigrationOrchestrator(config, actions)
 
 			err := orch.Execute(context.Background(), 10, clusterlink.BasicAuth{}, uninitializedReconcileResult(nil))

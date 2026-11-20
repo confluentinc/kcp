@@ -10,7 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,8 +94,8 @@ const (
 	testSwitchoverYAML    = "route:\n  name: migration-route\n  endpoint: kafka-gw.example.com:9092\n  streamingDomain:\n    name: target\n    bootstrapServerId: sasl-plain\n  security:\n    cluster:\n      target:\n        auth: passthrough\n"
 )
 
-func testConfig() *migration.MigrationConfig {
-	return &migration.MigrationConfig{
+func testConfig() *migrun.MigrationConfig {
+	return &migrun.MigrationConfig{
 		MigrationId:       "d2s-1",
 		K8sNamespace:      "confluent",
 		InitialCrName:     "gateway-initial",
@@ -172,7 +172,7 @@ func TestFence_AFenceThatLandedButWasNotConfirmedIsMarked(t *testing.T) {
 
 	err := gatewayActions(gw).Fence(context.Background(), testConfig())
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 }
 
 // TestD2SFence_WaitTimeoutIsFenceUnconfirmed: the replaced gateway pods never
@@ -190,7 +190,7 @@ func TestD2SFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 
 	err := gatewayActions(gw).Fence(context.Background(), testConfig())
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
 	assert.Equal(t, []string{"rules"}, rec.fields(), "only the fence patch may have run")
 }
@@ -224,7 +224,7 @@ func TestD2SFence_OverduePodRollsBackAndNeverSwitches(t *testing.T) {
 	err := run.execute(context.Background(), convertResult())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.ErrorIs(t, err, gateway.ErrReplacedPodOverdue)
 	assert.Equal(t, 2, waits, "the fence's wait, then the unfence's")
 	require.Len(t, rec.patches, 2, "the fence, then the unfence: no switch")
@@ -256,7 +256,7 @@ func TestFence_APatchThatFailedIsNotUnconfirmed(t *testing.T) {
 	err := gatewayActions(rec.service()).Fence(context.Background(), testConfig())
 
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed, "a patch that never landed has nothing to remove")
+	assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed, "a patch that never landed has nothing to remove")
 }
 
 func TestSwitch_ReplacesTheWholeRouteWithTheStaticOne(t *testing.T) {

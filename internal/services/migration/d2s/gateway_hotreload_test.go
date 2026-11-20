@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -136,7 +136,7 @@ func TestD2SFence_HotReload_SmokeTestFailureWritesNoFence(t *testing.T) {
 	err := a.Fence(context.Background(), testConfig())
 
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Empty(t, w.rec.patches)
 	assert.Empty(t, w.routeConfigIDs)
 }
@@ -149,7 +149,7 @@ func TestD2SFence_HotReload_PodsNeverReportingTheConfigIDIsFenceUnconfirmed(t *t
 	err := a.Fence(context.Background(), testConfig())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, []string{"rules"}, w.rec.fields())
 }
 
@@ -161,6 +161,6 @@ func TestD2SSwitch_HotReload_PodsNeverReportingTheConfigIDIsSwitchUnconfirmed(t 
 	err := a.Switch(context.Background(), testConfig())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSwitchUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	assert.Equal(t, []string{""}, w.rec.fields())
 }

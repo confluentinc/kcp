@@ -1,4 +1,4 @@
-package migration
+package migrun
 
 import "time"
 

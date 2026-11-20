@@ -11,8 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/looplab/fsm"
@@ -94,7 +94,7 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config   *migration.MigrationConfig
+	config   *migrun.MigrationConfig
 	fsm      *fsm.FSM
 	actions  *TBMActions
 	reporter *reporter
@@ -102,7 +102,7 @@ type TBMOrchestrator struct {
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
 func NewTBMOrchestrator(
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	actions *TBMActions,
 ) *TBMOrchestrator {
 	orchestrator := &TBMOrchestrator{
@@ -204,7 +204,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			return o.handleStepFailure(ctx, step, stepErr)
 		}
 		if step.Event == EventInitialize {
-			runSpan.SetAttributes(migration.RunAttributes(o.config)...)
+			runSpan.SetAttributes(migrun.RunAttributes(o.config)...)
 		}
 		o.reporter.stepDone()
 
@@ -255,7 +255,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	// outside the FSM: the fence transition was cancelled, so the machine never
 	// left lags_ok and there is no edge to travel back along. Only the gateway
 	// needs putting right.
-	if errors.Is(stepErr, migration.ErrFenceUnconfirmed) {
+	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
 			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
 			return stepFailure
@@ -266,7 +266,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	// A switchover that reached the CR but was not confirmed is past promote,
 	// so the rollback logic below would not roll back past promote either; only
 	// the operator message differs.
-	if step.Event == EventSwitch && errors.Is(stepErr, migration.ErrSwitchUnconfirmed) {
+	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
 		o.reporter.warn(switchUnconfirmedWarning)
 		return stepFailure
 	}
@@ -294,9 +294,9 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
-	path := migration.RollbackPathAbortFence
+	path := migrun.RollbackPathAbortFence
 	if !thisRunsFence {
-		path = migration.RollbackPathEarlierRunFence
+		path = migrun.RollbackPathEarlierRunFence
 	}
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback", attribute.String("kcp.rollback.path", path))
 	var rollbackErr error
@@ -340,7 +340,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 const rollbackForbiddenReason = "part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch"
 
 // switchUnconfirmedWarning is what the operator sees when the switchover
-// reached the CR but could not be confirmed (migration.ErrSwitchUnconfirmed).
+// reached the CR but could not be confirmed (migrun.ErrSwitchUnconfirmed).
 const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
 	"A re-run checks the gateway pods before doing anything"
 
@@ -352,7 +352,7 @@ const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway 
 // fence's own failure, since the fence may still be up.
 func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailure error) error {
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback",
-		attribute.String("kcp.rollback.path", migration.RollbackPathUnconfirmedFence))
+		attribute.String("kcp.rollback.path", migrun.RollbackPathUnconfirmedFence))
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 

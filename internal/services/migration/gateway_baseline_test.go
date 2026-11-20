@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 		// A baseline of 0 on a rolling gateway can make the replaced-pod wait
 		// hang on a patch that rolls nothing, so the transition is refused
 		// before anything is written. Nothing was written, so there is no
-		// rollback and the error is not ErrFenceUnconfirmed.
+		// rollback and the error is not migrun.ErrFenceUnconfirmed.
 		gw := rolloutVerifiedGateway()
 		gw.GetDeploymentGenFn = func(context.Context, string, string) (int64, error) {
 			return 0, fmt.Errorf("deployments.apps \"gw-1\" is forbidden")
@@ -86,7 +87,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to read the gateway deployment generation before fence")
-		assert.False(t, errors.Is(err, ErrFenceUnconfirmed))
+		assert.False(t, errors.Is(err, migrun.ErrFenceUnconfirmed))
 		assert.False(t, patched, "the patch must never be called")
 		assert.False(t, waited, "the pod wait must never be called")
 	})

@@ -3,6 +3,7 @@ package migration
 import (
 	"context"
 	"fmt"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -22,7 +23,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 			},
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := &MigrationConfig{
+		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
@@ -51,7 +52,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 			},
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := &MigrationConfig{
+		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
@@ -80,7 +81,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 			},
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
-		config := &MigrationConfig{
+		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
 			GatewayYAML:    testInitialCR,
@@ -109,7 +110,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 
-		config := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+		config := &migrun.MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 		err := actions.ResolveGatewayCapability(context.Background(), config)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "403")
@@ -153,7 +154,7 @@ func detectedConfigPort(t *testing.T, opts ...gateway.TransitionerOption) int {
 		},
 	}
 	actions := NewMigrationActions(gw, &mockClusterLinkService{}, opts...)
-	config := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
+	config := &migrun.MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 	return port
 }

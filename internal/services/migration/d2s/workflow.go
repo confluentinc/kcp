@@ -14,7 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -137,7 +137,7 @@ func NewD2SActions(gatewayService gateway.TransitionClient, deps Dependencies, o
 
 // target names the gateway this run drives and the fence and switch edits it
 // makes; the gateway package derives whatever verification needs from them.
-func (a *D2SActions) target(config *migration.MigrationConfig) gateway.Target {
+func (a *D2SActions) target(config *migrun.MigrationConfig) gateway.Target {
 	return gateway.Target{
 		Namespace:        config.K8sNamespace,
 		Name:             config.InitialCrName,
@@ -152,7 +152,7 @@ func (a *D2SActions) target(config *migration.MigrationConfig) gateway.Target {
 // Initialize runs the initialize transition: it checks the reconcile result is a feasible conversion with all
 // its artifacts and copies them onto config. A refused or malformed result cancels the transition before
 // config is touched. A conversion promotes no topics, so Topics, MigrateTopics and AwaitStopped are cleared.
-func (a *D2SActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
+func (a *D2SActions) Initialize(ctx context.Context, config *migrun.MigrationConfig, res *migplan.Result) error {
 	if res == nil {
 		return errors.New("no reconcile result to initialize the route conversion from")
 	}
@@ -197,9 +197,9 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 // plus kcp's wildcard convert fence, topicPatterns ['.*']) and confirms the change on every gateway pod. It is
 // applied on every run, as TBM's fence is: when an earlier run's fence is already up the patch sets the same
 // rules, a no-op in effect. Once the patch has reached the cluster every failure is marked
-// migration.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
+// migrun.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
 // removes them.
-func (a *D2SActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
+func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) error {
 	fenceRP, err := deriveFenceRoutePatch(config)
 	if err != nil {
 		return fmt.Errorf("failed to build fence route patch: %w", err)
@@ -211,7 +211,7 @@ func (a *D2SActions) Fence(ctx context.Context, config *migration.MigrationConfi
 		Applied: "Fenced gateway CR applied (every topic on the route blocked)",
 	})
 	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, res.Err)
+		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
 	}
 	if res.Err != nil {
 		return res.Err
@@ -223,7 +223,7 @@ func (a *D2SActions) Fence(ctx context.Context, config *migration.MigrationConfi
 // unfenceGateway sets the route's rules to reconcile's rollback target (the start-of-run rules without kcp's
 // convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It resolves
 // the gateway capability first, like Fence: a run can reach a rollback without this process having fenced.
-func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.MigrationConfig) error {
+func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	unfenceRP, err := deriveUnfenceRoutePatch(config)
 	if err != nil {
 		return fmt.Errorf("failed to build unfence route patch: %w", err)
@@ -237,18 +237,11 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.Migra
 	}).Err
 }
 
-// ErrSwitchUnconfirmed marks a switch whose patch reached the Gateway CR but could not be confirmed (the
-// operator rejected or never accepted it, the stored configId could not be read back, or the pods never
-// reported it). The CR already holds the static route while the pods may still serve the fenced dynamic route.
-// A re-run's reconcile checks the pods before doing anything: it refuses while they don't serve the CR, and
-// finishes once they do. It is migration.ErrSwitchUnconfirmed, the sentinel every FSM marks its switch with.
-var ErrSwitchUnconfirmed = migration.ErrSwitchUnconfirmed
-
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular
 // streamingDomain bound to the target, no rules tree, so no fence), confirmed on every gateway pod. It is the
 // only point of no return; a failure keeps the fence (see handleStepFailure). Once the patch has reached the
-// cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migration.ErrFenceUnconfirmed.
-func (a *D2SActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
+// cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migrun.ErrFenceUnconfirmed.
+func (a *D2SActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
 	switchRP, err := deriveSwitchRoutePatch(config)
 	if err != nil {
 		return fmt.Errorf("failed to build switch route patch: %w", err)
@@ -260,7 +253,7 @@ func (a *D2SActions) Switch(ctx context.Context, config *migration.MigrationConf
 		Applied: "Static route applied",
 	})
 	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, res.Err)
+		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
 	}
 	if res.Err != nil {
 		return res.Err

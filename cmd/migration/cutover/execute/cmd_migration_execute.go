@@ -13,7 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -117,9 +117,9 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 // GatewayYAML and the rest) are not set here: the FSM's initialize transition
 // copies them in from the reconcile result. The effective policy, including
 // the gateway config port, is applied by the declared type's executor.
-func buildFreshMigrationConfig(g *manifest.GatewayMigration, id string) migration.MigrationConfig {
+func buildFreshMigrationConfig(g *manifest.GatewayMigration, id string) migrun.MigrationConfig {
 	pause, baseline := g.Spec.DeclaredOffsetSync()
-	return migration.MigrationConfig{
+	return migrun.MigrationConfig{
 		MigrationId:                id,
 		K8sNamespace:               g.Spec.Gateway.Namespace,
 		InitialCrName:              g.Spec.Gateway.CrName,
@@ -208,7 +208,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 func executePlan(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
