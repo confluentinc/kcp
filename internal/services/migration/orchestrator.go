@@ -269,6 +269,16 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	return nil
 }
 
+// servingBeforeSwitch describes the route the gateway pods may still serve when
+// a switch is unconfirmed: the fenced route when this run's plan carries a
+// fence or the run started fenced, otherwise the original route.
+func (o *MigrationOrchestrator) servingBeforeSwitch() string {
+	if o.config.FenceYAML != "" || o.config.FencedAtStart {
+		return "the fenced route"
+	}
+	return "the original route"
+}
+
 // rollbackForbiddenReason is why a pre-promote failure keeps the fence when
 // reconcile forbade a rollback (migrun.MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
@@ -311,7 +321,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// so the rollback logic below would not roll back past promote either; only
 	// the message to the user differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
-		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
+		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", o.servingBeforeSwitch()))
 		return stepFailure
 	}
 

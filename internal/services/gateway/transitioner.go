@@ -67,12 +67,14 @@ type Transitioner struct {
 	resolved       bool
 	smokeAttempted bool
 
-	// firstApplyDone: the start-of-run pod set is captured only on the first
-	// Apply of the process, even if PatchCR failed before capturing; a later
-	// RestoresStart apply then waits on all pods, as the old code did when
-	// capture failed.
-	firstApplyDone bool
-	startPods      map[types.UID]struct{}
+	// startCaptured: the start-of-run pod set has been captured, by the first
+	// non-restoring Apply whose PatchCR returned one. It is set only on a
+	// successful capture, so an Apply whose capture failed leaves a later one
+	// free to capture; once set, later Applys never overwrite it (a pod set
+	// taken after a fence landed would include fenced pods the unfence must
+	// still wait on).
+	startCaptured bool
+	startPods     map[types.UID]struct{}
 
 	// generation is what every patch is guarded on. It is seeded once from
 	// Target.PlanBaseline (seeded records that) and then advanced by each write;
@@ -252,10 +254,10 @@ func (t *Transitioner) Apply(ctx context.Context, target Target, tr Transition) 
 	v := t.verifier()
 
 	applied, err := v.PatchCR(ctx, target.Namespace, target.Name, patch, tr.Step)
-	if !t.firstApplyDone && !tr.RestoresStart && !target.StartRouteFenced && applied.PreApplyPodUIDs != nil {
+	if !t.startCaptured && !tr.RestoresStart && !target.StartRouteFenced && applied.PreApplyPodUIDs != nil {
 		t.startPods = applied.PreApplyPodUIDs
+		t.startCaptured = true
 	}
-	t.firstApplyDone = true
 	if err != nil {
 		return TransitionResult{Landed: errors.Is(err, ErrApplyUnverified), Err: fmt.Errorf("failed to apply %s: %w", tr.What, err)}
 	}

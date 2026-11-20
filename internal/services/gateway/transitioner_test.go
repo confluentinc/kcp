@@ -277,6 +277,41 @@ func TestTransitionerApply_StartRouteFencedKeepsEveryPod(t *testing.T) {
 	assert.Equal(t, uidSet("pre-1", "f1", "f2"), got)
 }
 
+func TestTransitionerApply_FailedFirstCaptureDoesNotLoseALaterFencesStartSet(t *testing.T) {
+	calls := 0
+	var initial map[types.UID]struct{}
+	svc := &mockService{
+		getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
+			calls++
+			switch calls {
+			case 1:
+				return nil, errors.New("list pods: boom") // first fence: capture fails, nothing written
+			case 2:
+				return uidSet("pre-1"), nil // retried fence: the start-of-run pod set
+			default:
+				return uidSet("pre-1", "f2"), nil // unfence
+			}
+		},
+		waitForGatewayPodsFn: func(got map[types.UID]struct{}, _ int64, _, _ time.Duration) error {
+			initial = got
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+
+	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	require.False(t, first.Landed)
+	require.Error(t, first.Err)
+
+	for _, tr := range []Transition{fenceTransition(), unfenceTransition()} {
+		result := tn.Apply(context.Background(), probeTarget(t), tr)
+		require.True(t, result.Landed, tr.Step)
+		require.NoError(t, result.Err, tr.Step)
+	}
+	assert.Equal(t, uidSet("f2"), initial, "the retried fence's start-of-run pod set must be kept")
+}
+
 func TestTransitionerApply_RestoreWithNoEarlierFenceWaitsOnEveryPod(t *testing.T) {
 	var initial map[types.UID]struct{}
 	svc := &mockService{
