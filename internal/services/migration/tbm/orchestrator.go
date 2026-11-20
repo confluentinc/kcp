@@ -426,8 +426,8 @@ func (o *TBMOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped st
 	var gce *gateway.GenerationChangedError
 	if errors.As(err, &gce) {
 		o.reporter.warn("%s", gce.Summary(stopped))
+		o.reporter.Remediation("%s", gce.Remediation())
 	}
-	o.reporter.Remediation("Inspect the gateway:\n   %s", gateway.InspectCommands(o.config.K8sNamespace, o.config.InitialCrName))
 	slog.Debug("stopping on a changed gateway CR", "stopped", stopped, "error", err)
 	if errors.Is(stepFailure, err) {
 		return stepFailure

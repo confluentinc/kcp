@@ -2603,7 +2603,7 @@ func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T
 	require.Len(t, patches, 1, "the fence only: no unfence")
 	assert.NotContains(t, *alters, offsetSyncBackOn, "no offset-sync restore")
 	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, not promoted.")
-	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+gateway.InspectCommands("confluent", "my-gateway"))
+	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+"kubectl -n confluent get gateway my-gateway -o yaml; kubectl -n confluent get pods -l app=my-gateway")
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 

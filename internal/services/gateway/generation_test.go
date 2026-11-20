@@ -18,8 +18,15 @@ func TestGenerationChangedError(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrApplyUnverified))
 }
 
-func TestInspectCommands(t *testing.T) {
+func TestGenerationChangedError_Remediation(t *testing.T) {
+	e := &GenerationChangedError{Namespace: "ns", Gateway: "gw"}
+	assert.Equal(t,
+		"Inspect the gateway:\n   kubectl -n ns get gateway gw -o yaml; kubectl -n ns get pods -l app=gw",
+		e.Remediation())
+}
+
+func TestInspectCommands_text(t *testing.T) {
 	assert.Equal(t,
 		"kubectl -n confluent get gateway gw -o yaml; kubectl -n confluent get pods -l app=gw",
-		InspectCommands("confluent", "gw"))
+		inspectCommands("confluent", "gw"))
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -23,14 +22,15 @@ type testRun struct {
 	orch   *D2SOrchestrator
 	config *migration.MigrationConfig
 	out    *strings.Builder
+	errOut *strings.Builder
 }
 
 func newTestRun(gw gateway.TransitionClient, deps Dependencies) *testRun {
 	config := &migration.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
 	actions := NewD2SActions(gw, deps)
-	out := &strings.Builder{}
-	actions.reporter = &reporter{out: out, err: io.Discard}
-	return &testRun{orch: NewD2SOrchestrator(config, actions), config: config, out: out}
+	out, errOut := &strings.Builder{}, &strings.Builder{}
+	actions.reporter = &reporter{out: out, err: errOut}
+	return &testRun{orch: NewD2SOrchestrator(config, actions), config: config, out: out, errOut: errOut}
 }
 
 func (r *testRun) execute(ctx context.Context, res *migplan.Result) error {

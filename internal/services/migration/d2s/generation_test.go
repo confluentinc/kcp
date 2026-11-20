@@ -96,6 +96,7 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t 
 	assert.Zero(t, w.src.lists, "no snapshot is taken")
 	require.Len(t, patches, 1, "the fence only: no unfence")
 	assert.Contains(t, run.out.String(), changedCR(6, 7).Summary("fence applied, not verified"))
+	assert.Contains(t, run.errOut.String(), "Inspect the gateway:\n   kubectl -n confluent get gateway gateway-initial -o yaml; kubectl -n confluent get pods -l app=gateway-initial")
 	assert.NotContains(t, run.out.String(), "attempting to remove the fence")
 	assert.Equal(t, StateFenced, run.state())
 }

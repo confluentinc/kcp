@@ -118,7 +118,7 @@ func checkPodSync(ctx context.Context, clientset kubernetes.Interface, probe pod
 		observedText = strconv.FormatInt(observed, 10)
 	}
 	r := &podSyncReport{
-		inspect: "inspect: " + InspectCommands(namespace, gatewayName),
+		inspect: "inspect: " + inspectCommands(namespace, gatewayName),
 	}
 	r.observe("CR %s/%s: metadata.generation %d, status.observedGeneration %s, spec.configId %s, hot reload %s",
 		namespace, gatewayName, generation, observedText, orNone(crConfigID), onOff(hotReload))

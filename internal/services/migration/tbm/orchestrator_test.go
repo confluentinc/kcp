@@ -1359,7 +1359,7 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testin
 	assert.Zero(t, atomic.LoadInt64(&promotes), "promote must not run")
 	require.Len(t, patches, 1, "the fence only: no unfence")
 	assert.Contains(t, out.String(), "metadata.generation is 6, kcp expected 5. Stopping with no gateway write — fence applied, not promoted.")
-	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+gateway.InspectCommands("confluent", "gateway-initial"))
+	assert.Contains(t, errOut.String(), "Inspect the gateway:\n   "+"kubectl -n confluent get gateway gateway-initial -o yaml; kubectl -n confluent get pods -l app=gateway-initial")
 	assert.Equal(t, StateFenceVerified, orch.fsm.Current())
 }
 
