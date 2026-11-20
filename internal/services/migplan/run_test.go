@@ -3,6 +3,7 @@ package migplan
 import (
 	"context"
 	"errors"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"io"
 	"os"
 	"path/filepath"
@@ -441,4 +442,29 @@ func TestBuildGatewaySourcePodCheck(t *testing.T) {
 	live, ok = without.(*GatewayLive)
 	require.True(t, ok)
 	assert.Nil(t, live.podCheck)
+}
+
+// WithGatewayService: an injected service is the one the CR read runs over and
+// nothing is built (a manifest whose kubeconfig cannot resolve still wires);
+// with no option migplan builds its own, and reports that failure as before.
+func TestWireGatewayAndSecrets_UsesTheInjectedServiceAndBuildsNone(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Gateway.Kubeconfig = "~/kube"
+	injected := gateway.NewK8sService("")
+
+	var o reconcileOptions
+	WithGatewayService(injected)(&o)
+	gw, secrets, err := wireGatewayAndSecrets(g, o, "migration-route")
+
+	require.NoError(t, err, "nothing is built, so the unresolvable kubeconfig is never read")
+	live, ok := gw.(*GatewayLive)
+	require.True(t, ok)
+	assert.Same(t, injected, live.svc)
+	assert.NotNil(t, secrets)
+
+	_, _, err = wireGatewayAndSecrets(g, reconcileOptions{}, "migration-route")
+	require.Error(t, err, "with no injected service migplan builds its own")
+	assert.Contains(t, err.Error(), "spec.gateway.kubeconfig")
 }

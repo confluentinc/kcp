@@ -216,7 +216,8 @@ func buildK8sService(g *manifest.GatewayMigration) (*gateway.K8sService, error) 
 }
 
 // buildGatewayService is the per-branch fallback used when a run does not
-// share a service (see shareGatewayService).
+// share a service (see shareGatewayService). It stays in liveExecutorDependencies
+// so a failed share falls back to per-stage building and error reporting.
 func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
 	return buildK8sService(g)
 }
@@ -224,14 +225,18 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient
 // shareGatewayService builds the run's gateway service once, through deps.k8s,
 // and returns it with deps rewired so the executors and the conversion's
 // providers use that same instance; the caller hands svc to migplan too. With
-// no deps.k8s it returns a nil svc and deps unchanged.
+// no deps.k8s, or when the service cannot be built (for example an unresolvable
+// kubeconfig path), it returns a nil svc and deps unchanged.
 func shareGatewayService(g *manifest.GatewayMigration, deps executorDependencies) (*gateway.K8sService, executorDependencies, error) {
 	if deps.k8s == nil {
 		return nil, deps, nil
 	}
 	svc, err := deps.k8s(g)
 	if err != nil {
-		return nil, deps, fmt.Errorf("failed to build gateway service: %w", err)
+		// Not this function's failure to report: with nothing shared, the plan
+		// read and each branch build their own service and surface the same
+		// error at their own stage, as they did before sharing.
+		return nil, deps, nil
 	}
 	deps.gateway = func(*manifest.GatewayMigration) (gateway.TransitionClient, error) { return svc, nil }
 	deps.convertOver = svc

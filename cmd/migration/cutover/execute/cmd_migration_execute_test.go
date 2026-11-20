@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -976,4 +977,36 @@ func TestExecute_BuildsOneGatewayServicePerRun(t *testing.T) {
 	assert.Same(t, built, svc, "migplan is handed the built service")
 	assert.Same(t, built, got, "the executors' gateway is that same service")
 	assert.Same(t, built, convertGW, "a conversion's providers get it too")
+}
+
+// An unresolvable kubeconfig path is reported where it always was: inside the
+// reconcile step, after the reconcile input is built, as "failed to produce the
+// reconcile plan: ..." -- sharing the gateway service must not move it earlier
+// or reword it.
+func TestExecute_UnresolvableKubeconfigIsReportedByTheReconcileStep(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "    cr-name: gateway-initial\n", "    cr-name: gateway-initial\n    kubeconfig: ~/kube\n", 1)
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
+
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), `failed to produce the reconcile plan: expanding "~/" in spec.gateway.kubeconfig: `), err.Error())
+	assert.NotContains(t, err.Error(), "failed to build gateway service")
+}
+
+// shareGatewayService never fails the run: when the service cannot be built it
+// shares nothing and leaves deps as given.
+func TestShareGatewayService_ABuildFailureSharesNothing(t *testing.T) {
+	g := loadGateway(t, newFixture(t, nil).manifestPath)
+	deps := stubDeps(nil, nil)
+	deps.k8s = func(*manifest.GatewayMigration) (*gateway.K8sService, error) { return nil, errors.New("boom") }
+
+	svc, shared, err := shareGatewayService(g, deps)
+
+	require.NoError(t, err)
+	assert.Nil(t, svc)
+	assert.Nil(t, shared.convertOver)
 }

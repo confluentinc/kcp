@@ -184,24 +184,9 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return runAndRender(ctx, engine, in, g, o)
 	}
 
-	// One service backs both the CR read and the staged-secret check, so the
-	// kubeconfig is resolved once and the clients are built once.
-	gw := o.gateway
-	secrets := o.secrets
-	if gw == nil || secrets == nil {
-		svc := o.svc
-		if svc == nil {
-			var err error
-			if svc, err = buildGatewayService(g); err != nil {
-				return nil, err
-			}
-		}
-		if gw == nil {
-			gw = gatewaySourceOver(svc, g, in.Route, true)
-		}
-		if secrets == nil {
-			secrets = buildSecretExistenceChecker(g, svc)
-		}
+	gw, secrets, err := wireGatewayAndSecrets(g, o, in.Route)
+	if err != nil {
+		return nil, err
 	}
 
 	link, err := buildLinkStatusProvider(g)
@@ -273,6 +258,32 @@ func newResult(plan *reconcile.Plan) *Result {
 		}
 	}
 	return r
+}
+
+// wireGatewayAndSecrets resolves the gateway source and the secret checker for
+// a topic migration, building whatever o does not supply. One service backs
+// both the CR read and the staged-secret check, so the kubeconfig is resolved
+// once and the clients are built once; o.svc, when set, is that service and
+// nothing is built.
+func wireGatewayAndSecrets(g *manifest.GatewayMigration, o reconcileOptions, route string) (GatewayConfigSource, SecretExistenceChecker, error) {
+	gw := o.gateway
+	secrets := o.secrets
+	if gw == nil || secrets == nil {
+		svc := o.svc
+		if svc == nil {
+			var err error
+			if svc, err = buildGatewayService(g); err != nil {
+				return nil, nil, err
+			}
+		}
+		if gw == nil {
+			gw = gatewaySourceOver(svc, g, route, true)
+		}
+		if secrets == nil {
+			secrets = buildSecretExistenceChecker(g, svc)
+		}
+	}
+	return gw, secrets, nil
 }
 
 // buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
