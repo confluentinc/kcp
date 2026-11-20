@@ -188,7 +188,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 
 	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
-			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			o.reporter.warn("%s", gateway.FenceKeptWarning(rollbackForbiddenReason))
 			return stepFailure
 		}
 		return o.removeUnconfirmedFence(ctx, stepFailure)
@@ -196,8 +196,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 
 	if step.Event == EventSwitch {
 		if errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
-			o.reporter.warn("Switch could not be confirmed — the Gateway CR already holds the static route, and the gateway pods may still serve the fenced dynamic route. " +
-				"A re-run checks the gateway pods before doing anything")
+			o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the static route", "the fenced dynamic route"))
 			return stepFailure
 		}
 		o.reporter.warn("Switch failed — keeping the fence: the static route never reached the Gateway CR, so the route is still fenced; resolve the failure, then re-run to finish the switch")
@@ -279,27 +278,18 @@ func (o *D2SOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 
-	var rejected *gateway.GatewayRejectedError
-	if errors.As(stepFailure, &rejected) {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to remove it", rejected.Reason)
-	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to remove it")
-	}
+	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "remove it"))
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
 		if errors.Is(err, gateway.ErrGatewayChanged) {
-			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+			return o.stopOnGatewayChange(stepFailure, err, gateway.UnconfirmedFenceStopped)
 		}
 		slog.Debug("failed to remove an unconfirmed fence", "error", err)
-		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
+		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "removing the fence", "the fenced rules")
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
 	return stepFailure
 }
-
-// unconfirmedFenceStop is where a run stops when the CR moved before the removal of an unconfirmed fence could
-// restore it.
-const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
 
 // stoppedAt says where a conversion stopped, for a stop on a changed gateway CR: how far the gateway got, read
 // from the FSM state the run halted at.

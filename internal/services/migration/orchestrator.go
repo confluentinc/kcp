@@ -273,11 +273,6 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 // reconcile forbade a rollback (migrun.MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"
 
-// switchUnconfirmedWarning is what the operator sees when the switchover
-// reached the CR but could not be confirmed (migrun.ErrSwitchUnconfirmed).
-const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
-	"A re-run checks the gateway pods before doing anything"
-
 // handleStepFailure maps a failed workflow step to its compensating rollback.
 // While kcp's fence is up and nothing is promoted yet, ANY halting error rolls
 // back: unfence, then restore the offset-sync config. The fence is up once this
@@ -306,7 +301,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// the cluster needs putting right.
 	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
-			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			o.reporter.warn("%s", gateway.FenceKeptWarning(rollbackForbiddenReason))
 			return stepFailure
 		}
 		return o.restoreAfterUnconfirmedFence(ctx, stepFailure, params)
@@ -316,7 +311,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// so the rollback logic below would not roll back past promote either; only
 	// the operator message differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
-		o.reporter.warn(switchUnconfirmedWarning)
+		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
 		return stepFailure
 	}
 
@@ -408,10 +403,6 @@ func beforeFenceStep(state string) bool {
 	}
 	return false
 }
-
-// unconfirmedFenceStop is where a run stops when the CR moved before the
-// compensation for an unconfirmed fence could restore it.
-const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
 
 // stoppedAt says where this run stopped, for a stop on a changed gateway CR.
 // Topics may already be promoted when reconcile forbade a rollback (it does
@@ -508,22 +499,16 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	// would fence if the operator's objection later clears — but the operator must
 	// hear the definite story and CFK's own reason, not be sent hunting for a
 	// partial application that cannot exist.
-	var rejected *gateway.GatewayRejectedError
-	definiteRejection := errors.As(stepFailure, &rejected)
-
-	if definiteRejection {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to restore the initial gateway CR", rejected.Reason)
-	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to restore the initial gateway CR")
-	}
+	definiteRejection := gateway.WasRejected(stepFailure)
+	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "restore the initial gateway CR"))
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
 		if errors.Is(err, gateway.ErrGatewayChanged) {
-			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+			return o.stopOnGatewayChange(stepFailure, err, gateway.UnconfirmedFenceStopped)
 		}
 		slog.Error("failed to restore the gateway after an unconfirmed fence", "error", err)
-		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
+		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "restoring the initial gateway CR", "the fenced config")
 	}
 
 	if definiteRejection {

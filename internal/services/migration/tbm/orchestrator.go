@@ -257,7 +257,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	// needs putting right.
 	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
-			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			o.reporter.warn("%s", gateway.FenceKeptWarning(rollbackForbiddenReason))
 			return stepFailure
 		}
 		return o.removeUnconfirmedFence(ctx, stepFailure)
@@ -267,7 +267,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	// so the rollback logic below would not roll back past promote either; only
 	// the operator message differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
-		o.reporter.warn(switchUnconfirmedWarning)
+		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
 		return stepFailure
 	}
 
@@ -339,11 +339,6 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 // forbade a rollback (MigrationConfig.RollbackAllowed false).
 const rollbackForbiddenReason = "part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch"
 
-// switchUnconfirmedWarning is what the operator sees when the switchover
-// reached the CR but could not be confirmed (migrun.ErrSwitchUnconfirmed).
-const switchUnconfirmedWarning = "Switch could not be confirmed — the Gateway CR already holds the switchover, and the gateway pods may still serve the fenced route. " +
-	"A re-run checks the gateway pods before doing anything"
-
 // removeUnconfirmedFence sets the route's rules to reconcile's rollback target
 // after a fence that reached the cluster but could not be confirmed on every
 // gateway pod. Whether the operator rejected the fenced rules or they are
@@ -356,27 +351,18 @@ func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailur
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 
-	var rejected *gateway.GatewayRejectedError
-	if errors.As(stepFailure, &rejected) {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to remove it", rejected.Reason)
-	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to remove it")
-	}
+	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "remove it"))
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
 		if errors.Is(err, gateway.ErrGatewayChanged) {
-			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+			return o.stopOnGatewayChange(stepFailure, err, gateway.UnconfirmedFenceStopped)
 		}
 		slog.Error("failed to remove an unconfirmed fence", "error", err)
-		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
+		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "removing the fence", "the fenced rules")
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
 	return stepFailure
 }
-
-// unconfirmedFenceStop is where a run stops when the CR moved before the
-// removal of an unconfirmed fence could restore it.
-const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
 
 // stoppedAt says where this run stopped, for a stop on a changed gateway CR.
 // Topics may already be promoted when reconcile forbade a rollback (it does
