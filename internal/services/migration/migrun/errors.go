@@ -4,7 +4,7 @@ import "errors"
 
 // ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
 // effect on the serving pods was never confirmed. The orchestrator catches it to
-// restore the initial CR — see restoreAfterUnconfirmedFence for why that is the
+// restore the initial CR — see the AAO orchestrator's restoreAfterUnconfirmedFence for why that is the
 // right compensation even when the fence appears not to have landed at all.
 var ErrFenceUnconfirmed = errors.New("fence could not be confirmed on every gateway pod")
 

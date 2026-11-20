@@ -3,13 +3,13 @@ package migplan
 import (
 	"context"
 	"errors"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -202,8 +202,9 @@ func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *t
 	// The CLI's --gateway-config-port relies on real cobra flag parsing
 	// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for
-	// what this test observes: runDynamicBranch reads GatewayConfigPort straight
-	// from g.Spec.DynamicMigration.Policies.
+	// what this test observes: runDynamicBranch reads the port straight from
+	// g.Spec.DynamicMigration.Policies.GatewayConfigPort and hands it to the
+	// Transitioner through gateway.WithConfigPort.
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DynamicMigration.Policies.GatewayConfigPort = 9999 }
 	_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubDeps(rec, nil))
 	require.NoError(t, err)

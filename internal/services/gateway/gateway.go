@@ -479,7 +479,7 @@ func isFatalGatewayConditionReason(reason string) bool {
 // Applying a CR bumps the Gateway's metadata.generation; until the operator
 // reconciles it (and, for a real spec change, writes the Deployment)
 // observedGeneration lags. Without this wait, the Deployment-based wait
-// (WaitForGatewayPods) see a perfectly healthy Deployment
+// (WaitForGatewayPods) sees a perfectly healthy Deployment
 // still running the *previous* generation's pods, and conclude "no restart
 // required" — reporting success for a switchover or fence that never happened.
 // The generation baseline those waits compare against cannot close this on its

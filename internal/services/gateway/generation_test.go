@@ -25,7 +25,7 @@ func TestGenerationChangedError_Remediation(t *testing.T) {
 		e.Remediation())
 }
 
-func TestInspectCommands_text(t *testing.T) {
+func TestInspectCommands(t *testing.T) {
 	assert.Equal(t,
 		"kubectl -n confluent get gateway gw -o yaml; kubectl -n confluent get pods -l app=gw",
 		inspectCommands("confluent", "gw"))

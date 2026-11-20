@@ -835,7 +835,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 // pod restart required" and let the migration continue to promote topics with
 // the gateway never actually fenced.
 func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
-	waitReadyCalled := false
+	waitPodsCalled := false
 	gw := &mockGatewayService{
 		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
@@ -844,7 +844,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 			return rejectionError("gw-1")
 		},
 		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			waitReadyCalled = true
+			waitPodsCalled = true
 			return nil
 		},
 	}
@@ -853,7 +853,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.False(t, waitReadyCalled, "a rejected fence must not fall through to the Deployment readiness wait")
+	assert.False(t, waitPodsCalled, "a rejected fence must not fall through to the Deployment readiness wait")
 	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 }
 
@@ -1171,7 +1171,7 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 // switchover CR. SwitchGateway must now fail, and fail with the operator's own
 // diagnosis.
 func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
-	waitReadyCalled := false
+	waitPodsCalled := false
 	gw := &mockGatewayService{
 		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
@@ -1180,7 +1180,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 			return rejectionError("gw-1")
 		},
 		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			waitReadyCalled = true
+			waitPodsCalled = true
 			return nil
 		},
 	}
@@ -1189,7 +1189,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
-	assert.False(t, waitReadyCalled, "must abort before the Deployment wait that would report 'No pod restart required'")
+	assert.False(t, waitPodsCalled, "must abort before the Deployment wait that would report 'No pod restart required'")
 
 	var rejected *gateway.GatewayRejectedError
 	require.ErrorAs(t, err, &rejected, "the typed rejection must survive to the caller")
@@ -1355,7 +1355,7 @@ func TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(
 // reporting restored traffic while the gateway is still fenced is the worst
 // place to be blind to a rejected apply.
 func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
-	waitReadyCalled := false
+	waitPodsCalled := false
 	gw := &mockGatewayService{
 		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
@@ -1364,7 +1364,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 			return rejectionError("gw-1")
 		},
 		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
-			waitReadyCalled = true
+			waitPodsCalled = true
 			return nil
 		},
 	}
@@ -1373,7 +1373,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.False(t, waitReadyCalled, "a rejected unfence must not report traffic restored")
+	assert.False(t, waitPodsCalled, "a rejected unfence must not report traffic restored")
 	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 }
 
