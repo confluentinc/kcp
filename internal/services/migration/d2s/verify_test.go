@@ -21,7 +21,7 @@ import (
 func verify(t *testing.T, w *world) (*D2SActions, error) {
 	t.Helper()
 	color.NoColor = true
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	return a, a.VerifyFence(context.Background(), testConfig(), testPolicy())
 }
@@ -202,7 +202,7 @@ func TestVerifyFence_ReadFailuresAreErrorsNotRefusals(t *testing.T) {
 		w := cleanWorld()
 		deps := w.deps()
 		deps.Wait = func(context.Context, time.Duration) error { return context.Canceled }
-		a := NewD2SActions(&mockGatewayService{}, deps)
+		a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), deps)
 		a.reporter = quietReporter()
 
 		err := a.VerifyFence(context.Background(), testConfig(), testPolicy())
@@ -215,7 +215,7 @@ func TestVerifyFence_ReadFailuresAreErrorsNotRefusals(t *testing.T) {
 func verifyWithPolicy(t *testing.T, w *world, p Policy) (*D2SActions, error) {
 	t.Helper()
 	color.NoColor = true
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	return a, a.VerifyFence(context.Background(), testConfig(), p)
 }
@@ -291,7 +291,7 @@ func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
 	color.NoColor = true
 	w := cleanWorld()
 	w.facts.TargetGroupListing = []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Empty"}}
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	out := &strings.Builder{}
 	a.reporter = &reporter{out: out, err: io.Discard}
 
@@ -307,7 +307,7 @@ func TestVerifyFence_ANilGatheredGatewayFallsThroughToThePreconditions(t *testin
 	w := cleanWorld()
 	w.facts.Gateway = nil
 
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	a.gw.SetExpectedGeneration(7)
 

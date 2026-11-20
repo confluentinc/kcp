@@ -122,7 +122,7 @@ func convertResult() *migplan.Result {
 }
 
 func gatewayActions(gw gateway.TransitionClient, opts ...gateway.TransitionerOption) *D2SActions {
-	a := NewD2SActions(gw, cleanWorld().deps(), opts...)
+	a := NewD2SActions(gateway.NewTransitionerFactory(gw, opts...), cleanWorld().deps())
 	a.reporter = quietReporter()
 	return a
 }
@@ -371,4 +371,10 @@ func TestD2SUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
 
 	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
 		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
+}
+
+// fakeTransitioner is the transitioner factory over a test gateway client; a
+// nil client yields a Transitioner whose HasClient is false.
+func fakeTransitioner(gw gateway.TransitionClient) gateway.TransitionerFactory {
+	return gateway.NewTransitionerFactory(gw)
 }

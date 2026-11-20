@@ -121,8 +121,8 @@ type D2SActions struct {
 	handoff groupoffsets.Snapshot
 }
 
-// NewD2SActions creates the conversion's actions over gatewayService and deps.
-func NewD2SActions(gatewayService gateway.TransitionClient, deps Dependencies, opts ...gateway.TransitionerOption) *D2SActions {
+// NewD2SActions creates the conversion's actions over gatewayTransitioner and deps.
+func NewD2SActions(gatewayTransitioner gateway.TransitionerFactory, deps Dependencies) *D2SActions {
 	if deps.Wait == nil {
 		deps.Wait = groupoffsets.Sleep
 	}
@@ -131,7 +131,7 @@ func NewD2SActions(gatewayService gateway.TransitionClient, deps Dependencies, o
 	}
 	a := &D2SActions{reporter: newReporter(), deps: deps}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter }, opts...)
+	a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
 	return a
 }
 

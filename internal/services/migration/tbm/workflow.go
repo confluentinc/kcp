@@ -60,7 +60,7 @@ type TBMActions struct {
 // command (execute-tbm) that always eventually reaches wait_for_lags, fence
 // and promote, unlike migration's separate init-only path, so there is no
 // legitimate construction path without them.
-func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.TransitionClient, clusterLinkService clusterlink.Service, opts ...gateway.TransitionerOption) *TBMActions {
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayTransitioner gateway.TransitionerFactory, clusterLinkService clusterlink.Service) *TBMActions {
 	a := &TBMActions{
 		reporter:            newReporter(),
 		sourceOffset:        sourceOffset,
@@ -70,7 +70,7 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayServi
 		promotePollInterval: 5 * time.Second,
 	}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return a.reporter }, opts...)
+	a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
 	return a
 }
 

@@ -41,7 +41,7 @@ func runStaticBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := migration.NewMigrationActionsWithOffsets(svc.gateway, svc.clusterLink, svc.sourceOffset, svc.destinationOffset, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort))
+	actions := migration.NewMigrationActionsWithOffsets(gateway.NewTransitionerFactory(svc.gateway, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort)), svc.clusterLink, svc.sourceOffset, svc.destinationOffset)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
 	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration

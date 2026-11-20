@@ -22,7 +22,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 				}, nil
 			},
 		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
@@ -51,7 +51,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
 		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
@@ -80,7 +80,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 				}, nil
 			},
 		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := &migrun.MigrationConfig{
 			K8sNamespace:   "confluent",
 			InitialCrName:  "gw-1",
@@ -108,7 +108,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 				return gateway.Capability{}, fmt.Errorf("k8s 403 on customresourcedefinitions")
 			},
 		}
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 
 		config := &migrun.MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 		err := actions.ResolveGatewayCapability(context.Background(), config)
@@ -119,7 +119,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 	t.Run("an unresolved capability defaults to the pre-hot-reload behaviour", func(t *testing.T) {
 		// The zero value must be the safe one: if nothing ever resolves a
 		// capability, kcp must behave exactly as it did before hot-reload support.
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 		assert.False(t, actions.gw.Capability().InjectsConfigID())
 	})
 }
@@ -153,7 +153,7 @@ func detectedConfigPort(t *testing.T, opts ...gateway.TransitionerOption) int {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewMigrationActions(gw, &mockClusterLinkService{}, opts...)
+	actions := NewMigrationActions(gateway.NewTransitionerFactory(gw, opts...), &mockClusterLinkService{})
 	config := &migrun.MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 	return port

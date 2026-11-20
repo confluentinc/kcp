@@ -171,7 +171,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		},
 	}
 
-	actions := NewMigrationActionsWithOffsets(gw, cl, srcOffset, dstOffset)
+	actions := NewMigrationActionsWithOffsets(fakeTransitioner(gw), cl, srcOffset, dstOffset)
 	actions.lagPollInterval = time.Millisecond
 	actions.promotePollInterval = time.Millisecond
 
@@ -1836,7 +1836,7 @@ func newAAOKillPointOrchestrator(
 		},
 	}
 
-	actions := NewMigrationActionsWithOffsets(gw, cl, srcOffset, dstOffset)
+	actions := NewMigrationActionsWithOffsets(fakeTransitioner(gw), cl, srcOffset, dstOffset)
 	actions.lagPollInterval = time.Millisecond
 	actions.promotePollInterval = time.Millisecond
 
@@ -2871,7 +2871,7 @@ func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *tes
 // --- Constructor and startup hygiene (mirrors d2s) ---
 
 func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
-	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewMigrationActions(fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	orch := NewMigrationOrchestrator(&migrun.MigrationConfig{}, actions)
 
 	assert.Same(t, actions.reporter, orch.reporter)
@@ -2890,7 +2890,7 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actions := NewMigrationActions(tt.gateway, tt.link)
+			actions := NewMigrationActions(fakeTransitioner(tt.gateway), tt.link)
 			var out strings.Builder
 			actions.reporter = &reporter{out: &out, err: &out}
 			config := &migrun.MigrationConfig{MigrationId: "test-migration-1"}

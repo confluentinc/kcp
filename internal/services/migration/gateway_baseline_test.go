@@ -50,7 +50,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -80,7 +80,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		err := actions.FenceGateway(context.Background(), config)
@@ -112,7 +112,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -139,7 +139,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		config.DetectUnroutedProducersDuration = 5 * time.Second
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -161,7 +161,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -186,7 +186,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{}, gateway.WithTimeouts(25*time.Minute, 45*time.Second))
+		actions := NewMigrationActions(gateway.NewTransitionerFactory(gw, gateway.WithTimeouts(25*time.Minute, 45*time.Second)), &mockClusterLinkService{})
 
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -214,7 +214,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.unfenceGateway(context.Background(), config))

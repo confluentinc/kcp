@@ -103,7 +103,7 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 				RestoreOffsetSync:          true,
 			}
 
-			require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
+			require.NoError(t, NewMigrationActions(fakeTransitioner(nil), cl).RestoreOffsetSync(context.Background(), cfg, nil))
 			rec.assertAltered(t, offsetSyncEnableKey, tc.want)
 			rec.assertNoListConfigs(t)
 		})
@@ -114,7 +114,7 @@ func TestRestoreOffsetSync_UnsetBaselineDefaultsToEnabled(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
-	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
+	require.NoError(t, NewMigrationActions(fakeTransitioner(nil), cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertAltered(t, offsetSyncEnableKey, "true")
 }
 
@@ -124,7 +124,7 @@ func TestRestoreOffsetSync_NotInPlanIsNoop(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, RestoreOffsetSync: false}
 
-	require.NoError(t, NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil))
+	require.NoError(t, NewMigrationActions(fakeTransitioner(nil), cl).RestoreOffsetSync(context.Background(), cfg, nil))
 	rec.assertNoCalls(t)
 }
 
@@ -137,7 +137,7 @@ func TestRestoreOffsetSync_ReappliesTheSameSet(t *testing.T) {
 		ConsumerOffsetSyncBaseline: manifest.OffsetSyncBaselineEnabled,
 		RestoreOffsetSync:          true,
 	}
-	actions := NewMigrationActions(nil, cl)
+	actions := NewMigrationActions(fakeTransitioner(nil), cl)
 
 	require.NoError(t, actions.RestoreOffsetSync(context.Background(), cfg, nil))
 	require.NoError(t, actions.RestoreOffsetSync(context.Background(), cfg, nil))
@@ -173,7 +173,7 @@ func TestRestoreOffsetSync_AlterFails_ReturnsError(t *testing.T) {
 	cl, rec := newFailingAlterClusterLink(fmt.Errorf("503 unavailable"))
 	cfg := &migrun.MigrationConfig{ClusterLinkName: "link-hard", PauseConsumerOffsetSync: true, RestoreOffsetSync: true}
 
-	err := NewMigrationActions(nil, cl).RestoreOffsetSync(context.Background(), cfg, nil)
+	err := NewMigrationActions(fakeTransitioner(nil), cl).RestoreOffsetSync(context.Background(), cfg, nil)
 
 	require.Error(t, err, "a failed restore must fail the step so a re-run retries it")
 	require.Len(t, rec.alterConfigs, 1, "the AlterConfigs attempt happened")
@@ -196,7 +196,7 @@ func TestRestoreOffsetSync_CancelledCtx_ReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := NewMigrationActions(nil, mock).RestoreOffsetSync(ctx, cfg, nil)
+	err := NewMigrationActions(fakeTransitioner(nil), mock).RestoreOffsetSync(ctx, cfg, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -264,7 +264,7 @@ func TestBuildClusterLinkConfig_CarriesAllFields(t *testing.T) {
 // pauseActions builds a MigrationActions with only the cluster-link service
 // wired; the pause engine never touches the gateway.
 func pauseActions(cl *mockClusterLinkService) *MigrationActions {
-	return NewMigrationActions(nil, cl)
+	return NewMigrationActions(fakeTransitioner(nil), cl)
 }
 
 func TestPauseOffsetSync_NotRequestedIsNoop(t *testing.T) {

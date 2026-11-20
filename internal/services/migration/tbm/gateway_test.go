@@ -98,7 +98,7 @@ func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -115,7 +115,7 @@ func TestTBMActions_Fence_PatchesRulesFieldWithFencingBlock(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -148,7 +148,7 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -168,7 +168,7 @@ func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testi
 			return fmt.Errorf("timed out waiting for pods to report the new configId")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -182,7 +182,7 @@ func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -207,7 +207,7 @@ func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil
 	config.FenceYAML = ""
@@ -234,7 +234,7 @@ func TestTBMActions_Fence_PatchesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 					return "", nil
 				},
 			}
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 			config := testTBMConfig()
 			config.FenceYAML = fmt.Sprintf("rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: %v\n", blocked)
 
@@ -260,7 +260,7 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -278,7 +278,7 @@ func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -295,7 +295,7 @@ func TestTBMActions_Switch_PatchesRulesFieldWithRoutingConditions(t *testing.T) 
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -327,7 +327,7 @@ func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *tes
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -347,7 +347,7 @@ func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *test
 			return fmt.Errorf("timed out waiting for pods to report the new configId")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -361,7 +361,7 @@ func TestTBMActions_Switch_ApplyErrorPropagates(t *testing.T) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -380,7 +380,7 @@ func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil
 	config.FenceYAML = ""
@@ -397,7 +397,7 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -418,7 +418,7 @@ func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
 				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 			},
 		}
-		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
 		require.Error(t, err)
 		assert.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	})
@@ -428,7 +428,7 @@ func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
 				return "", fmt.Errorf("connection refused")
 			},
 		}
-		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 	})
@@ -448,7 +448,7 @@ func TestTBMActions_Switch_PatchesSwitchoverYAMLVerbatim(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.SwitchoverYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\", \"t1.shipment\"]\n        streamingDomain: target\n"
 
@@ -477,7 +477,7 @@ func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *test
 		},
 		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -499,7 +499,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 		},
 		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -516,7 +516,7 @@ func TestTBMActions_UnfenceGateway_SetsRulesToTheReconciledRollbackTarget(t *tes
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -534,7 +534,7 @@ func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) 
 			return "", fmt.Errorf("the server rejected our request")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -549,7 +549,7 @@ func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t 
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "spec.routes[0] references an unknown streamingDomain"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -572,7 +572,7 @@ func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *test
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}, gateway.WithConfigPort(9999))
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gateway.NewTransitionerFactory(gw, gateway.WithConfigPort(9999)), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
@@ -591,7 +591,7 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}, gateway.WithConfigPort(0))
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gateway.NewTransitionerFactory(gw, gateway.WithConfigPort(0)), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
@@ -634,7 +634,7 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tc.gw, &mockClusterLinkService{})
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(tc.gw), &mockClusterLinkService{})
 
 			err := actions.Fence(context.Background(), testTBMConfig())
 
@@ -666,7 +666,7 @@ func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 			return nil, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 
 	err := actions.Fence(context.Background(), testTBMConfig())
 
@@ -700,7 +700,7 @@ func fenceThenUnfenceWaits(t *testing.T, fencedAtStart bool) []map[k8stypes.UID]
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.FencedAtStart = fencedAtStart
 
@@ -729,4 +729,10 @@ func TestTBMUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
 
 	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
 		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
+}
+
+// fakeTransitioner is the transitioner factory over a test gateway client; a
+// nil client yields a Transitioner whose HasClient is false.
+func fakeTransitioner(gw gateway.TransitionClient) gateway.TransitionerFactory {
+	return gateway.NewTransitionerFactory(gw)
 }

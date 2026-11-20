@@ -622,3 +622,26 @@ func TestTransitionerApply_ABadArtifactStopsBeforeAnyWrite(t *testing.T) {
 	assert.Empty(t, svc.patchExpected)
 	assert.Equal(t, 0, svc.detects)
 }
+
+func TestNewTransitionerFactory_AppliesOptionsAndReporter(t *testing.T) {
+	factory := NewTransitionerFactory(&mockService{}, WithTimeouts(7*time.Minute, 3*time.Minute), WithConfigPort(19180))
+
+	first, second := &recordingReporter{}, &recordingReporter{}
+	current := Reporter(first)
+	tn := factory(func() Reporter { return current })
+
+	require.True(t, tn.HasClient())
+	assert.Equal(t, 7*time.Minute, tn.rolloutTimeout)
+	assert.Equal(t, 3*time.Minute, tn.hotReloadTimeout)
+	assert.Equal(t, 19180, tn.configPort)
+
+	assert.Same(t, first, tn.reporter(), "the provider given at call time is used")
+	current = second
+	assert.Same(t, second, tn.reporter(), "a reporter replaced after construction is honored")
+}
+
+func TestNewTransitionerFactory_NilClientHasNoClient(t *testing.T) {
+	tn := NewTransitionerFactory(nil, WithConfigPort(19180))(func() Reporter { return &recordingReporter{} })
+	assert.False(t, tn.HasClient())
+	assert.Equal(t, 19180, tn.configPort)
+}

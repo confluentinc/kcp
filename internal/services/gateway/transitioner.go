@@ -100,6 +100,19 @@ func NewTransitioner(svc TransitionClient, reporter func() Reporter, opts ...Tra
 	return t
 }
 
+// TransitionerFactory builds a Transitioner for one FSM. The FSM supplies its
+// own reporter provider (so a reporter it replaces later is honored); the
+// client, timeouts and config port are fixed by whoever built the factory.
+type TransitionerFactory func(reporter func() Reporter) *Transitioner
+
+// NewTransitionerFactory returns a factory whose Transitioners run over svc with
+// opts. A nil svc yields Transitioners whose HasClient reports false.
+func NewTransitionerFactory(svc TransitionClient, opts ...TransitionerOption) TransitionerFactory {
+	return func(reporter func() Reporter) *Transitioner {
+		return NewTransitioner(svc, reporter, opts...)
+	}
+}
+
 // HasClient reports whether the Transitioner was built over a gateway client. A
 // nil receiver is not handled: callers guard a nil Transitioner themselves.
 func (t *Transitioner) HasClient() bool { return t.svc != nil }

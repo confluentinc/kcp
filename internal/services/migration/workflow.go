@@ -50,9 +50,8 @@ type MigrationActions struct {
 }
 
 func NewMigrationActions(
-	gatewayService gateway.TransitionClient,
+	gatewayTransitioner gateway.TransitionerFactory,
 	clusterLinkService clusterlink.Service,
-	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
 	s := &MigrationActions{
 		clusterLinkService:  clusterLinkService,
@@ -61,7 +60,7 @@ func NewMigrationActions(
 		reporter:            newReporter(),
 	}
 	// The reporter is read at call time: tests replace s.reporter after construction.
-	s.gw = gateway.NewTransitioner(gatewayService, func() gateway.Reporter { return s.reporter }, opts...)
+	s.gw = gatewayTransitioner(func() gateway.Reporter { return s.reporter })
 	return s
 }
 
@@ -82,13 +81,12 @@ func (s *MigrationActions) validate() error {
 }
 
 func NewMigrationActionsWithOffsets(
-	gatewayService gateway.TransitionClient,
+	gatewayTransitioner gateway.TransitionerFactory,
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,
-	opts ...gateway.TransitionerOption,
 ) *MigrationActions {
-	s := NewMigrationActions(gatewayService, clusterLinkService, opts...)
+	s := NewMigrationActions(gatewayTransitioner, clusterLinkService)
 	s.sourceOffset = sourceOffset
 	s.destinationOffset = destinationOffset
 	return s

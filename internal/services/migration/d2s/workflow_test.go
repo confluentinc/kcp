@@ -72,7 +72,7 @@ func TestInitialize_RejectsAConversionWithoutItsArtifacts(t *testing.T) {
 // sync_offsets never reads the source: without this run's verify_fence hand-off it must not run at all.
 func TestSyncOffsets_WithoutAHandedOverSnapshotIsAnError(t *testing.T) {
 	w := cleanWorld()
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 
 	err := a.SyncOffsets(context.Background(), testConfig(), testPolicy())

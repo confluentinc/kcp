@@ -27,7 +27,7 @@ type testRun struct {
 
 func newTestRun(gw gateway.TransitionClient, deps Dependencies) *testRun {
 	config := &migrun.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
-	actions := NewD2SActions(gw, deps)
+	actions := NewD2SActions(fakeTransitioner(gw), deps)
 	out, errOut := &strings.Builder{}, &strings.Builder{}
 	actions.reporter = &reporter{out: out, err: errOut}
 	return &testRun{orch: NewD2SOrchestrator(config, actions), config: config, out: out, errOut: errOut}

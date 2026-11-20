@@ -23,7 +23,7 @@ import (
 // setGatewayService swaps the gateway service the actions drive, as the
 // Transitioner holds it privately.
 func setGatewayService(a *TBMActions, svc gateway.TransitionClient) {
-	a.gw = gateway.NewTransitioner(svc, func() gateway.Reporter { return a.reporter })
+	a.gw = fakeTransitioner(svc)(func() gateway.Reporter { return a.reporter })
 }
 
 func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migrun.MigrationConfig) {
@@ -57,7 +57,7 @@ func newTestOrchestrator(t *testing.T) (*TBMOrchestrator, *migrun.MigrationConfi
 			return []clusterlink.MirrorTopic{{MirrorTopicName: "t1.order", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	actions.promotePollInterval = time.Millisecond
 	orchestrator := NewTBMOrchestrator(config, actions)
 	return orchestrator, config
@@ -154,7 +154,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
@@ -210,7 +210,7 @@ func TestTBMOrchestrator_Execute_RollbackOnResume_RemovesTheFence(t *testing.T) 
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-resume-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}))
 	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
 
 	res := realisticReconcileResult()
@@ -248,7 +248,7 @@ func TestTBMOrchestrator_Execute_RollbackNotAllowed_KeepsTheFence(t *testing.T) 
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-no-rollback", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
 
@@ -277,7 +277,7 @@ func TestTBMOrchestrator_Execute_FailureHookFailsTheStep(t *testing.T) {
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-fail-hook", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}))
 	orchestrator.reporter = &reporter{out: io.Discard, err: io.Discard}
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
@@ -324,7 +324,7 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-verify-fetch-error", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
@@ -365,7 +365,7 @@ func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) 
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-ctx-cancel", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
 
 	err := orchestrator.Execute(ctx, realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
@@ -543,7 +543,7 @@ func newTBMKillPointOrchestrator(
 		},
 	}
 
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	actions.promotePollInterval = time.Millisecond
 
 	orch = NewTBMOrchestrator(config, actions)
@@ -767,7 +767,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-await", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	actions.promotePollInterval = time.Millisecond
 	orch := NewTBMOrchestrator(config, actions)
 
@@ -964,7 +964,7 @@ func fencedResumeTBM(t *testing.T, failAt string, fencedAtStart, rollbackAllowed
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-fenced-at-start", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
 	res := realisticReconcileResult()
@@ -1051,7 +1051,7 @@ func unconfirmedFenceTBM(t *testing.T, rollbackAllowed, restoreFails bool) ([]ga
 		},
 	}
 	config := &migrun.MigrationConfig{MigrationId: "test-tbm-unconfirmed-fence", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
-	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}))
+	orchestrator := NewTBMOrchestrator(config, NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}))
 	var out strings.Builder
 	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
 	res := realisticReconcileResult()
@@ -1614,7 +1614,7 @@ func TestTBMOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *
 // --- Constructor and startup hygiene (mirrors d2s) ---
 
 func TestOrchestrator_SharesTheActionsReporter(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	orch := NewTBMOrchestrator(&migrun.MigrationConfig{}, actions)
 
 	assert.Same(t, actions.reporter, orch.reporter)
@@ -1633,7 +1633,7 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tt.gateway, tt.link)
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(tt.gateway), tt.link)
 			var out strings.Builder
 			actions.reporter = &reporter{out: &out, err: &out}
 			config := &migrun.MigrationConfig{MigrationId: "test-tbm-1"}

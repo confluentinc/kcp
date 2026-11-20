@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 )
 
@@ -125,4 +126,10 @@ func promoteVia(svc clusterlink.Service) func(context.Context, clusterlink.Confi
 	return func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 		return svc.PromoteMirrorTopics(ctx, config, topicNames)
 	}
+}
+
+// fakeTransitioner is the transitioner factory over a test gateway client; a
+// nil client yields a Transitioner whose HasClient is false.
+func fakeTransitioner(gw gateway.TransitionClient) gateway.TransitionerFactory {
+	return gateway.NewTransitionerFactory(gw)
 }

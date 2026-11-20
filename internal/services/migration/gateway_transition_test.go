@@ -73,7 +73,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -99,7 +99,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -124,7 +124,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return nil, nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		config.DetectUnroutedProducersDuration = 30 * time.Second
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -146,7 +146,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		config.DetectUnroutedProducersDuration = 30 * time.Second
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -162,7 +162,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return fmt.Errorf("timed out after 90s")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -185,7 +185,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			return "", fmt.Errorf("k8s API unavailable")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -206,7 +206,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified, "gw-1")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -225,7 +225,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			return fmt.Errorf("operator never reconciled")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -241,7 +241,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			return fmt.Errorf("timed out after 1m30s waiting for the gateway to apply the configId on every pod: 1 of 2 ready pods report it")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -264,7 +264,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			return fmt.Errorf("gateway pods did not converge")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -277,7 +277,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -296,7 +296,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 			return nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.SwitchGateway(context.Background(), config))
@@ -311,7 +311,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
@@ -344,7 +344,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 			return configID, nil
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
@@ -369,7 +369,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 			},
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.SmokeTestHotReload(context.Background(), config))
@@ -384,7 +384,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
 		}
 
-		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
@@ -410,7 +410,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 		var stdout string
 		stderr := captureStderr(t, func() {
 			stdout = captureStdout(t, func() {
-				actions := NewMigrationActions(gw, &mockClusterLinkService{})
+				actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 				resolveErr = actions.ResolveGatewayCapability(context.Background(), config)
 				verifyErr = actions.SmokeTestHotReload(context.Background(), config)
 			})
@@ -450,7 +450,7 @@ func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 		},
 	}
 
-	actions := NewMigrationActions(gw, cl)
+	actions := NewMigrationActions(fakeTransitioner(gw), cl)
 	config := hotReloadConfig()
 	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
