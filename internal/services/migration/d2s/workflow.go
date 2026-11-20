@@ -59,11 +59,6 @@ type Dependencies struct {
 	Out io.Writer
 }
 
-// validate reports the dependencies a conversion cannot run without.
-func (d Dependencies) validate() error {
-	return missingDependenciesError(d.missing())
-}
-
 // missing names the unset Dependencies fields a conversion cannot run without.
 func (d Dependencies) missing() []string {
 	var missing []string
