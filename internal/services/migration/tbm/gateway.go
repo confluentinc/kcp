@@ -8,7 +8,7 @@ import (
 // The fence, switch and rollback each set config.Route's rules from a
 // reconcile artifact, applied unmodified (migplan.Reconcile's artifacts already
 // satisfy the Gateway CRD). Each change yields the route patch a write applies
-// and the whole CR the capability probe inspects, so they cannot drift.
+// and the whole CR the gateway capability check inspects, so they cannot drift.
 func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteRules, Artifact: []byte(config.FenceYAML)}
 }

@@ -308,13 +308,13 @@ func formatLag64(n int64) string {
 // gateway accepted the new spec, then waits until the change has taken effect
 // (the replaced gateway instances are gone, or every instance reports the new
 // revision). The wait runs without a deadline by
-// default — the gateway drives convergence. An optional per-workflow
-// rolloutTimeout caps the wait when set (via gateway.WithTimeouts). Ctrl-C does
+// default — the gateway drives convergence. The run's configured timeout caps
+// the wait when set. Ctrl-C does
 // not unwind a wedged wait: kcp installs no signal handler, so it ends the
 // process with the gateway as it is (fenced, if the fence was applied) and a
-// re-run continues from there. Whatever the timeout, a replaced instance still
-// listed more than replacedPodOverdueMargin past its deletion deadline fails
-// the wait (gateway.ErrReplacedPodOverdue), so a lost node cannot wedge it.
+// re-run continues from there. Whatever the timeout, an instance that never goes
+// away is reported as an error by the gateway layer, so a lost node cannot wedge
+// the wait.
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
@@ -368,7 +368,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 // fenceChange is the fence edit: config.FenceYAML's static {fence: {...}}
 // fragment set on config.Route's fence. This FSM only runs for static routes
 // (the command layer sends a dynamic route to the TBM FSM). The write path
-// derives its route patch from it and the capability probe the whole fenced CR,
+// derives its route patch from it and the gateway capability check the whole fenced CR,
 // so the two can never drift from each other.
 func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteFence, Artifact: []byte(config.FenceYAML)}

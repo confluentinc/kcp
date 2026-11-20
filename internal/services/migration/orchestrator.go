@@ -494,10 +494,10 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	defer func() { tracing.End(rollback, rollbackErr) }()
 
 	// A definite rejection is not the ambiguous timeout the rest of this path is
-	// written for: CFK explicitly refused the fenced spec, so it never took effect
+	// written for: the gateway explicitly refused the fenced spec, so it never took effect
 	// on any gateway instance. Restoring is still right — the refused spec is live
 	// in the cluster and would fence if the objection later cleared — but the user
-	// must hear the definite story and CFK's own reason, not be sent hunting for a
+	// must hear the definite story and the gateway's own reason, not be sent hunting for a
 	// partial application that cannot exist.
 	definiteRejection := gateway.WasRejected(stepFailure)
 	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "restore the initial gateway CR"))

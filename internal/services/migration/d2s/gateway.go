@@ -8,7 +8,7 @@ import (
 // The fence and its rollback set config.Route's rules; the switch replaces
 // config.Route whole with the converted static route, as AAO's static switch
 // does (a field patch cannot remove streamingDomains and rules). Each change
-// yields the route patch a write applies and the whole CR the capability probe
+// yields the route patch a write applies and the whole CR the gateway capability check
 // inspects.
 func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteRules, Artifact: []byte(config.FenceYAML)}
