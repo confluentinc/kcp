@@ -504,6 +504,61 @@ func TestVerifyUnchangedSincePlan(t *testing.T) {
 	}
 }
 
+func TestVerifyObservedUnchangedSincePlan(t *testing.T) {
+	tests := []struct {
+		name               string
+		baseline, observed int64
+		wantErr            bool
+	}{
+		{"baseline unknown", 0, 7, false},
+		{"observed unknown", 5, 0, false},
+		{"equal", 5, 5, false},
+		{"moved", 5, 7, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &mockService{}
+			tn := NewTransitioner(svc, func() Reporter { return noopReporter{} })
+
+			err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, tc.baseline), tc.observed)
+
+			assert.Zero(t, svc.generationGets, "the observed version is the check: no read")
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrGatewayChanged)
+			var gce *GenerationChangedError
+			require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
+			assert.Equal(t, GenerationChangedError{Namespace: "ns", Gateway: "gw", Expected: 5, Observed: 7}, *gce)
+		})
+	}
+}
+
+// An unseeded Transitioner holds no baseline; the no-read check must seed it from the target first, or a
+// moved gateway would compare against 0 and pass silently.
+func TestVerifyObservedUnchangedSincePlan_SeedsTheBaselineFromTheTarget(t *testing.T) {
+	t.Run("first call seeds", func(t *testing.T) {
+		tn := NewTransitioner(&mockService{}, func() Reporter { return noopReporter{} })
+
+		err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 4), 7)
+
+		assert.ErrorIs(t, err, ErrGatewayChanged, "the target's baseline (4) must be seeded before comparing")
+	})
+	t.Run("seeds once, keeping a write's advance", func(t *testing.T) {
+		svc := &mockService{patchResults: []PatchResult{{Generation: 8}}}
+		rec, _ := newEventReporter()
+		tn := NewTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+
+		require.NoError(t, tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 7), 8), "compares with the last write")
+		assert.ErrorIs(t, tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 7), 7), ErrGatewayChanged,
+			"the target's baseline must not re-seed over the advance")
+	})
+}
+
 func TestVerifyUnchangedSincePlan_ComparesWithTheLastWrite(t *testing.T) {
 	svc := &mockService{
 		patchResults:           []PatchResult{{Generation: 8}},

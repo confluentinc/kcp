@@ -169,6 +169,19 @@ func (t *Transitioner) VerifyUnchangedSincePlan(ctx context.Context, target Targ
 	return t.verifier().checkGeneration(ctx, target.Namespace, target.Name, step)
 }
 
+// VerifyObservedUnchangedSincePlan is VerifyUnchangedSincePlan over a gateway
+// version the caller has already read, with no I/O of its own. Like every
+// other entry point it seeds the baseline from the target first. It returns nil
+// when the baseline or the observed version is unknown, or when they are equal,
+// and a *GenerationChangedError (ErrGatewayChanged) otherwise.
+func (t *Transitioner) VerifyObservedUnchangedSincePlan(target Target, observed int64) error {
+	t.seed(target)
+	if observed <= 0 || t.generation <= 0 || observed == t.generation {
+		return nil
+	}
+	return &GenerationChangedError{Namespace: target.Namespace, Gateway: target.Name, Expected: t.generation, Observed: observed}
+}
+
 // EnsureCapability resolves the capability once per process and then, at most
 // once per process even if it failed, smoke-tests hot-reload.
 func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) error {

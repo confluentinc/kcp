@@ -83,20 +83,21 @@ func TestD2SOrchestrator_Execute_FencePatchIsGuardedOnTheReconcileGeneration(t *
 	assert.Equal(t, int64(4), gw.RouteExpected[0], "the fence patch is guarded on the generation reconcile read")
 }
 
-func TestD2SOrchestrator_Execute_VerifyFenceOnAMovedCR_StopsWithNoWrite(t *testing.T) {
+func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t *testing.T) {
 	w := cleanWorld()
+	w.facts.Gateway.Generation = 7
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
 	gets := 0
 	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
 		gets++
-		return 7, nil
+		return 6, nil
 	}
 
 	err := run.execute(context.Background(), res)
 
-	assert.Equal(t, 1, gets, "verify_fence reads the gateway once more after its gather")
+	assert.Zero(t, gets, "the gather's read is the check: no extra read")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
@@ -109,11 +110,9 @@ func TestD2SOrchestrator_Execute_VerifyFenceOnAMovedCR_StopsWithNoWrite(t *testi
 	assert.Equal(t, StateFenced, run.state())
 }
 
-// verify_fence decides on the live gateway, not on the copy its gather read: a gathered CR at another version
-// does not stop a run whose live gateway is where kcp's fence left it.
-func TestD2SOrchestrator_Execute_VerifyFenceDecidesOnTheLiveGateway_Proceeds(t *testing.T) {
+func TestD2SOrchestrator_Execute_VerifyFenceGatherWithGenerationUnknown_Proceeds(t *testing.T) {
 	w := cleanWorld()
-	w.facts.Gateway.Generation = 7
+	w.facts.Gateway.Generation = 0
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
@@ -126,18 +125,11 @@ func TestD2SOrchestrator_Execute_VerifyFenceDecidesOnTheLiveGateway_Proceeds(t *
 
 func TestD2SOrchestrator_Execute_CRMovedBeforeSyncOffsets_StopsWithNoWrite(t *testing.T) {
 	w := cleanWorld()
+	w.facts.Gateway.Generation = 6
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
-	// verify_fence's read sees the CR where the fence left it; it moves before sync_offsets' read.
-	live := []int64{6, 8}
-	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
-		g := live[0]
-		if len(live) > 1 {
-			live = live[1:]
-		}
-		return g, nil
-	}
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 8, nil }
 
 	err := run.execute(context.Background(), res)
 
