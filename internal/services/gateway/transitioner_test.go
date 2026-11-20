@@ -478,3 +478,36 @@ func TestTransitionerHasClient(t *testing.T) {
 	assert.True(t, NewTransitioner(&mockService{}, rep).HasClient())
 	assert.False(t, NewTransitioner(nil, rep).HasClient())
 }
+
+func TestTransitionerCheckObservedGeneration(t *testing.T) {
+	target := Target{Namespace: "ns", Name: "gw"}
+	tests := []struct {
+		name               string
+		expected, observed int64
+		wantErr            bool
+	}{
+		{"expected unknown", 0, 7, false},
+		{"observed unknown", 5, 0, false},
+		{"equal", 5, 5, false},
+		{"moved", 5, 7, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tn := &Transitioner{}
+			tn.SetExpectedGeneration(tc.expected)
+			err := tn.CheckObservedGeneration(target, tc.observed)
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrGatewayChanged)
+			var gce *GenerationChangedError
+			require.True(t, errors.As(err, &gce))
+			assert.Equal(t, int64(5), gce.Expected)
+			assert.Equal(t, int64(7), gce.Observed)
+			assert.Equal(t, "ns", gce.Namespace)
+			assert.Equal(t, "gw", gce.Gateway)
+		})
+	}
+}

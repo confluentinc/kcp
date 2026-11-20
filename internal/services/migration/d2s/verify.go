@@ -9,7 +9,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -59,8 +58,10 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
 		// would roll back); it stops the run with no further gateway write.
 		// A nil gateway falls through to CheckPreconditions, which refuses it as a missing route.
-		if facts.Gateway != nil && facts.Gateway.Generation > 0 && a.gw.ExpectedGeneration() > 0 && facts.Gateway.Generation != a.gw.ExpectedGeneration() {
-			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gw.ExpectedGeneration(), Observed: facts.Gateway.Generation}
+		if facts.Gateway != nil {
+			if err := a.gw.CheckObservedGeneration(a.target(config), facts.Gateway.Generation); err != nil {
+				return err
+			}
 		}
 		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
 		view = v

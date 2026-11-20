@@ -129,6 +129,18 @@ func (t *Transitioner) CheckGeneration(ctx context.Context, target Target, step 
 	return t.verifier().CheckGeneration(ctx, target.Namespace, target.Name, step)
 }
 
+// CheckObservedGeneration compares a generation the caller already read (for
+// example from facts it gathered) with the one patches are guarded on. It does
+// no I/O, unlike CheckGeneration. It returns nil when the expected generation
+// is unknown (0), when observed is not positive, or when they are equal;
+// otherwise a *GenerationChangedError.
+func (t *Transitioner) CheckObservedGeneration(target Target, observed int64) error {
+	if observed <= 0 || t.generation <= 0 || observed == t.generation {
+		return nil
+	}
+	return &GenerationChangedError{Namespace: target.Namespace, Gateway: target.Name, Expected: t.generation, Observed: observed}
+}
+
 // EnsureCapability resolves the capability once per process and then, at most
 // once per process even if it failed, smoke-tests hot-reload.
 func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) error {
