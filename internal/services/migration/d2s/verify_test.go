@@ -21,7 +21,7 @@ import (
 func verify(t *testing.T, w *world) (*D2SActions, error) {
 	t.Helper()
 	color.NoColor = true
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	return a, a.VerifyFence(context.Background(), testConfig(), testPolicy())
 }
@@ -202,7 +202,7 @@ func TestVerifyFence_ReadFailuresAreErrorsNotRefusals(t *testing.T) {
 		w := cleanWorld()
 		deps := w.deps()
 		deps.Wait = func(context.Context, time.Duration) error { return context.Canceled }
-		a := NewD2SActions(&mockGatewayService{}, deps)
+		a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), deps)
 		a.reporter = quietReporter()
 
 		err := a.VerifyFence(context.Background(), testConfig(), testPolicy())
@@ -215,7 +215,7 @@ func TestVerifyFence_ReadFailuresAreErrorsNotRefusals(t *testing.T) {
 func verifyWithPolicy(t *testing.T, w *world, p Policy) (*D2SActions, error) {
 	t.Helper()
 	color.NoColor = true
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	return a, a.VerifyFence(context.Background(), testConfig(), p)
 }
@@ -291,7 +291,7 @@ func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
 	color.NoColor = true
 	w := cleanWorld()
 	w.facts.TargetGroupListing = []types.ConsumerGroupListing{{GroupID: "orders-app", State: "Empty"}}
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	out := &strings.Builder{}
 	a.reporter = &reporter{out: out, err: io.Discard}
 
@@ -301,22 +301,30 @@ func TestVerifyFence_APassPrintsTheIdleDestinationGroupWarning(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out.String(), "orders-app exist on the destination"), "printed once")
 }
 
-// The generation check reads the gathered gateway before CheckPreconditions, which tolerates a nil gateway:
-// a gather that returns none must reach that path (a refused "route exists" check), not panic.
+// The unchanged-since-the-plan check runs only on a gathered gateway, before CheckPreconditions, which
+// tolerates a nil gateway: a gather that returns none must reach that path (a refused "route exists" check),
+// not panic and not stop on the check.
 func TestVerifyFence_ANilGatheredGatewayFallsThroughToThePreconditions(t *testing.T) {
 	w := cleanWorld()
 	w.facts.Gateway = nil
 
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	gets := 0
+	gw := &mockGatewayService{GetGatewayGenerationFn: func(context.Context, string, string) (int64, error) {
+		gets++
+		return 0, nil
+	}}
+	a := NewD2SActions(fakeTransitioner(gw), w.deps())
 	a.reporter = quietReporter()
-	a.gatewayGeneration = 7
+	config := testConfig()
+	config.PlanBaseline = 7
 
 	var err error
 	require.NotPanics(t, func() {
-		err = a.VerifyFence(context.Background(), testConfig(), testPolicy())
+		err = a.VerifyFence(context.Background(), config, testPolicy())
 	})
 
 	require.ErrorIs(t, err, ErrVerifyRefused)
 	assert.Contains(t, err.Error(), "route exists: ", "the existing precondition handling refuses a missing route")
 	assert.Zero(t, w.src.lists, "refused before any snapshot")
+	assert.Zero(t, gets, "no gateway read without a gathered gateway")
 }

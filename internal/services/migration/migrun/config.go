@@ -1,4 +1,4 @@
-package migration
+package migrun
 
 import "time"
 
@@ -27,7 +27,7 @@ type MigrationConfig struct {
 	// promoting mirror. Empty on a first run (nothing promoted yet).
 	AwaitStopped []string
 
-	// PauseConsumerOffsetSync is the operator's opt-in (manifest
+	// PauseConsumerOffsetSync is the user's opt-in (manifest
 	// spec.staticMigration.consumerOffsetSync.pause, read each run) to pause
 	// cluster-link consumer offset sync for the duration of execute.
 	PauseConsumerOffsetSync bool
@@ -73,10 +73,11 @@ type MigrationConfig struct {
 	// result — the fence/switch derivation base.
 	GatewayYAML string
 
-	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
-	// on. Configurable because the contract requires it to be; nothing fronts
-	// this port, so kcp dials pod IPs on it directly.
-	GatewayConfigPort int
+	// PlanBaseline is the opaque version of the gateway the reconcile plan was
+	// made against, set each run from the reconcile result; 0 means unknown.
+	// The FSMs hand it to the gateway Transitioner, which stops the run if the
+	// gateway changed under kcp after the plan.
+	PlanBaseline int64
 
 	// Route is the single spec.route.name this migration fences and
 	// switches, read from the manifest each run. AAO, like TBM, only ever

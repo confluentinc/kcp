@@ -38,7 +38,7 @@ func BuildConvertedStaticRoute(raw map[string]any, targetDomain, bootstrapServer
 		"bootstrapServerId": bootstrapServerID,
 	}
 	if _, ok := route["mode"]; ok {
-		route["mode"] = "static"
+		route["mode"] = string(RouteModeStatic)
 	}
 	return yaml.Marshal(map[string]any{"route": route})
 }

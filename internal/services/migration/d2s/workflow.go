@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -15,14 +14,10 @@ import (
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 )
-
-// convertMode is migplan.Result.Mode for a route conversion.
-const convertMode = "convert"
 
 // Policy is the conversion's execute-time policies; Workers is already resolved to its default.
 type Policy struct {
@@ -64,8 +59,8 @@ type Dependencies struct {
 	Out io.Writer
 }
 
-// validate reports the dependencies a conversion cannot run without.
-func (d Dependencies) validate() error {
+// missing names the unset Dependencies fields a conversion cannot run without.
+func (d Dependencies) missing() []string {
 	var missing []string
 	if d.Input.Route == "" {
 		missing = append(missing, "Input.Route")
@@ -91,10 +86,24 @@ func (d Dependencies) validate() error {
 	if d.Committers == nil {
 		missing = append(missing, "Committers")
 	}
+	return missing
+}
+
+// missingDependenciesError is nil for an empty list, else the conversion's missing-dependencies error.
+func missingDependenciesError(missing []string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("the route conversion is missing dependencies: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// validate reports the Dependencies and the gateway client a conversion cannot run without.
+func (a *D2SActions) validate() error {
+	missing := a.deps.missing()
+	if a.gw == nil || !a.gw.HasClient() {
+		missing = append(missing, "GatewayService")
+	}
+	return missingDependenciesError(missing)
 }
 
 // D2SActions holds the business logic behind each transition.
@@ -102,31 +111,9 @@ type D2SActions struct {
 	reporter *reporter
 	deps     Dependencies
 
-	gatewayService gateway.Service
-	// gatewayCapability is how gateway transitions are verified for this run; the zero value (VerifyRollout,
-	// no configId) is the safe default until ensureGatewayCapability resolves it.
-	gatewayCapability gateway.Capability
-	// capabilityResolved is true once gatewayCapability was resolved against the live cluster in this
-	// process.
-	capabilityResolved bool
-	// rolloutTimeout bounds the replaced-pod waits; 0 means no deadline.
-	rolloutTimeout time.Duration
-	// hotReloadTimeout bounds per-pod configId verification; 0 uses gateway.DefaultHotReloadTimeout.
-	hotReloadTimeout time.Duration
-	// gatewayGeneration is the Gateway CR metadata.generation this run expects: the one reconcile read, then the
-	// one each of kcp's own writes left. It lives here because verifier() builds a fresh verifier per call. 0
-	// means unknown, and leaves every patch and check unguarded.
-	gatewayGeneration int64
-
-	// preFencePodUIDs is the set of gateway pods this run's fence captured
-	// before its patch, on a gateway whose pods roll. Those pods carry the
-	// pre-fence route, which is exactly what the rollback unfence restores, so
-	// the unfence does not wait for them to be gone (a pod stuck terminating
-	// would otherwise wedge the rollback). The pods the fence's roll created
-	// carry the fence and are still waited for. Left nil when the fence was
-	// already up at the start of the run (config.FencedAtStart): every pod
-	// then carries a fence. See design, Addendum A, Proposal 3.
-	preFencePodUIDs map[k8stypes.UID]struct{}
+	// gw applies and confirms every gateway patch, and owns the bookkeeping that needs, including whether
+	// the gateway changed under kcp since the plan.
+	gw *gateway.Transitioner
 
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
 	// restricted to the in-scope groups, for sync_offsets in the same run. nil until verify_fence
@@ -134,38 +121,46 @@ type D2SActions struct {
 	handoff groupoffsets.Snapshot
 }
 
-// NewD2SActions creates the conversion's actions over gatewayService and deps.
-func NewD2SActions(gatewayService gateway.Service, deps Dependencies) *D2SActions {
+// NewD2SActions creates the conversion's actions over gatewayTransitioner and deps.
+func NewD2SActions(gatewayTransitioner gateway.TransitionerFactory, deps Dependencies) *D2SActions {
 	if deps.Wait == nil {
 		deps.Wait = groupoffsets.Sleep
 	}
 	if deps.Out == nil {
 		deps.Out = os.Stdout
 	}
-	return &D2SActions{reporter: newReporter(), deps: deps, gatewayService: gatewayService}
+	a := &D2SActions{reporter: newReporter(), deps: deps}
+	// The reporter is read at call time: tests replace a.reporter after construction.
+	a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	return a
 }
 
-// SetRolloutTimeout sets the deadline applied to the replaced-pod waits. 0 means no deadline.
-func (a *D2SActions) SetRolloutTimeout(d time.Duration) {
-	a.rolloutTimeout = d
-}
-
-// SetHotReloadTimeout sets the deadline for per-pod configId verification. 0 uses the gateway default.
-func (a *D2SActions) SetHotReloadTimeout(d time.Duration) {
-	a.hotReloadTimeout = d
+// target names the gateway this run drives and the fence and switch edits it
+// makes; the gateway package derives whatever verification needs from them.
+func (a *D2SActions) target(config *migrun.MigrationConfig) gateway.Target {
+	return gateway.Target{
+		Namespace:        config.K8sNamespace,
+		Name:             config.InitialCrName,
+		StartRouteFenced: config.FencedAtStart,
+		GatewayCR:        []byte(config.GatewayYAML),
+		Route:            config.Route,
+		Fence:            fenceChange(config),
+		Switch:           switchChange(config),
+		PlanBaseline:     config.PlanBaseline,
+	}
 }
 
 // Initialize runs the initialize transition: it checks the reconcile result is a feasible conversion with all
 // its artifacts and copies them onto config. A refused or malformed result cancels the transition before
 // config is touched. A conversion promotes no topics, so Topics, MigrateTopics and AwaitStopped are cleared.
-func (a *D2SActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
+func (a *D2SActions) Initialize(ctx context.Context, config *migrun.MigrationConfig, res *migplan.Result) error {
 	if res == nil {
 		return errors.New("no reconcile result to initialize the route conversion from")
 	}
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
-	if res.Mode != convertMode {
+	if res.Mode != reconcile.ModeConvert {
 		return fmt.Errorf("the d2s state machine runs a route conversion only; reconcile planned mode %q", res.Mode)
 	}
 	var missing []string
@@ -187,7 +182,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 
 	config.Topics, config.MigrateTopics, config.AwaitStopped = nil, nil, nil
 	config.Route = res.Route
-	a.gatewayGeneration = res.GatewayGeneration
+	config.PlanBaseline = res.PlanBaseline
 	config.GatewayYAML = res.GatewayYAML
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
@@ -200,100 +195,60 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migration.Migration
 }
 
 // Fence runs the fence transition: it sets the route's rules to reconcile's fence artifact (the route's rules
-// plus kcp's wildcard convert fence, topicPatterns ['.*']) and confirms the change on every gateway pod. It is
+// plus kcp's wildcard convert fence, topicPatterns ['.*']) and confirms the change took effect on the gateway. It is
 // applied on every run, as TBM's fence is: when an earlier run's fence is already up the patch sets the same
 // rules, a no-op in effect. Once the patch has reached the cluster every failure is marked
-// migration.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
+// migrun.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
 // removes them.
-func (a *D2SActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) error {
+	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:    "fence",
+		Label:   "fence",
+		Change:  fenceChange(config),
+		What:    "fenced gateway CR",
+		Applied: "Fenced gateway CR applied (every topic on the route blocked)",
+	})
+	if res.Landed && res.Err != nil {
+		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
 	}
-	fenceRP, err := deriveFenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build fence route patch: %w", err)
-	}
-	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
-	// The fence's captured pods carry the pre-fence route the rollback unfence
-	// restores; recorded even when the patch errs, as long as it captured them.
-	if applied.PreApplyPodUIDs != nil && !config.FencedAtStart {
-		a.preFencePodUIDs = applied.PreApplyPodUIDs
-	}
-	if err != nil {
-		if errors.Is(err, gateway.ErrApplyUnverified) {
-			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", migration.ErrFenceUnconfirmed, err)
-		}
-		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
-	}
-	a.reporter.Success("Fenced gateway CR applied (every topic on the route blocked)")
-
-	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
-		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
-	}
-	if err := a.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
-		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
+	if res.Err != nil {
+		return res.Err
 	}
 	a.reporter.Success("Gateway fenced and ready")
 	return nil
 }
 
 // unfenceGateway sets the route's rules to reconcile's rollback target (the start-of-run rules without kcp's
-// convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It resolves
-// the gateway capability first, like Fence: a run can reach a rollback without this process having fenced.
-func (a *D2SActions) unfenceGateway(ctx context.Context, config *migration.MigrationConfig) error {
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
-	}
-	unfenceRP, err := deriveUnfenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build unfence route patch: %w", err)
-	}
-	applied, err := a.patchGatewayRoute(ctx, config, unfenceRP, "unfence")
-	if err != nil {
-		return fmt.Errorf("failed to apply unfenced gateway CR: %w", err)
-	}
-	a.reporter.Success("Unfenced gateway CR applied")
-	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
-		return err
-	}
-	excluded := len(applied.PreApplyPodUIDs)
-	applied.PreApplyPodUIDs = gateway.ExcludePods(applied.PreApplyPodUIDs, a.preFencePodUIDs)
-	slog.Debug("unfence skips this run's pre-fence pods", "excluded", excluded-len(applied.PreApplyPodUIDs))
-	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
+// convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It works
+// whether or not this process fenced, like Fence: a run can reach a rollback without this process having fenced.
+func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
+	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:          "unfence",
+		Label:         "unfence",
+		Change:        unfenceChange(config),
+		RestoresStart: true,
+		What:          "unfenced gateway CR",
+		Applied:       "Unfenced gateway CR applied",
+	}).Err
 }
 
-// ErrSwitchUnconfirmed marks a switch whose patch reached the Gateway CR but could not be confirmed (the
-// operator rejected or never accepted it, the stored configId could not be read back, or the pods never
-// reported it). The CR already holds the static route while the pods may still serve the fenced dynamic route.
-// A re-run's reconcile checks the pods before doing anything: it refuses while they don't serve the CR, and
-// finishes once they do.
-var ErrSwitchUnconfirmed = errors.New("the static route reached the Gateway CR but could not be confirmed")
-
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular
-// streamingDomain bound to the target, no rules tree, so no fence), confirmed on every gateway pod. It is the
+// streamingDomain bound to the target, no rules tree, so no fence), confirmed as in force on the gateway. It is the
 // only point of no return; a failure keeps the fence (see handleStepFailure). Once the patch has reached the
-// cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migration.ErrFenceUnconfirmed.
-func (a *D2SActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+// cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migrun.ErrFenceUnconfirmed.
+func (a *D2SActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
+	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:    "switchover",
+		Label:   "switch",
+		Change:  switchChange(config),
+		What:    "switchover gateway CR",
+		Applied: "Static route applied",
+	})
+	if res.Landed && res.Err != nil {
+		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
 	}
-	switchRP, err := deriveSwitchRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build switch route patch: %w", err)
-	}
-	applied, err := a.patchGatewayRoute(ctx, config, switchRP, "switchover")
-	if err != nil {
-		if errors.Is(err, gateway.ErrApplyUnverified) {
-			return fmt.Errorf("%w: failed to apply switchover gateway CR: %w", ErrSwitchUnconfirmed, err)
-		}
-		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
-	}
-	a.reporter.Success("Static route applied")
-	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
-		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, err)
-	}
-	if err := a.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
-		return fmt.Errorf("%w: %w", ErrSwitchUnconfirmed, err)
+	if res.Err != nil {
+		return res.Err
 	}
 	a.reporter.Success("Gateway switchover complete — the route is static on its target domain")
 	return nil

@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/testsupport"
@@ -151,7 +153,7 @@ func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
 
 // freshConfig builds the MigrationConfig runMigrationExecute builds for f's
 // manifest, via buildFreshMigrationConfig.
-func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migration.MigrationConfig) {
+func freshConfig(t *testing.T, f fixture) (*manifest.GatewayMigration, *migrun.MigrationConfig) {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
@@ -245,7 +247,6 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	})
 	g, cfg := freshConfig(t, f)
 	policy := g.Spec.StaticMigration.Policies
-	applyCommonPolicy(cfg, policy.CommonPolicies)
 	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 	cfg.ConsumerOffsetSyncDrainDuration = policy.ConsumerOffsetSyncDrainDuration
 
@@ -303,7 +304,6 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	require.Empty(t, g.Spec.ValidatePolicies())
 
 	policy := g.Spec.StaticMigration.Policies
-	applyCommonPolicy(cfg, policy.CommonPolicies)
 	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 	assert.Equal(t, 99, policy.LagThreshold,
 		"the override replaces the manifest default in the policy both branches read")
@@ -704,7 +704,7 @@ func countingDeps(base executorDependencies, b *serviceBuilds) executorDependenc
 			b.offsets++
 			return base.offsets(g)
 		},
-		gateway: func(g *manifest.GatewayMigration) (gateway.Service, error) {
+		gateway: func(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
 			b.gateway++
 			return base.gateway(g)
 		},
@@ -714,9 +714,9 @@ func countingDeps(base executorDependencies, b *serviceBuilds) executorDependenc
 		},
 	}
 	if base.convert != nil {
-		counted.convert = func(g *manifest.GatewayMigration) (convertServices, error) {
+		counted.convert = func(g *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error) {
 			b.convert++
-			return base.convert(g)
+			return base.convert(g, gw)
 		}
 	}
 	return counted
@@ -740,7 +740,7 @@ func TestExecutePlan_NothingToDo_RunsNoStateMachine(t *testing.T) {
 	for _, mode := range []string{"static", "dynamic"} {
 		t.Run(mode, func(t *testing.T) {
 			var builds serviceBuilds
-			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: mode, NothingToDo: true}
+			res := &migplan.Result{Route: "migration-route", PromoteTopics: []string{}, Mode: reconcile.PlanMode(mode), NothingToDo: true}
 
 			out, err := runExecutePlan(t, fixtureForMode(t, mode), res, countingDeps(stubDeps(nil, nil), &builds))
 
@@ -810,7 +810,7 @@ func TestExecutePlan_ConversionRunsTheConvertBranch(t *testing.T) {
 	var builds serviceBuilds
 	w := newConvertWorld("orders-app")
 
-	out, err := runExecutePlan(t, convertFixture(t), convertPlanResult(), countingDeps(convertDeps(&patchRecordingGateway{}, w), &builds))
+	out, err := runExecutePlan(t, convertFixture(t), convertPlanResult(), countingDeps(convertDeps(newPatchRecordingGateway(), w), &builds))
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1")
@@ -926,14 +926,14 @@ func TestApplyPolicyOverrides_ZeroStillOverrides(t *testing.T) {
 
 func TestExecutePlan_UnknownTypeErrors(t *testing.T) {
 	cmd := newExecuteCmd(t)
-	err := executePlan(cmd, &manifest.GatewayMigration{}, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
+	err := executePlan(cmd, &manifest.GatewayMigration{}, &migrun.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion")
 }
 
 func TestExecutePlan_ResultModeMustMatchDeclaredType(t *testing.T) {
 	cmd := newExecuteCmd(t)
 	g := gatewayOf(t, manifest.MigrationTypeDynamic)
-	err := executePlan(cmd, g, &migration.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
+	err := executePlan(cmd, g, &migrun.MigrationConfig{}, &migplan.Result{Mode: "static"}, executorDependencies{})
 	require.ErrorContains(t, err, "does not match the declared")
 }
 
@@ -944,4 +944,67 @@ func TestEffectivePolicyLogArgs_NamesTheType(t *testing.T) {
 	assert.Equal(t, "DYNAMIC", kv["migration_type"])
 	assert.Contains(t, kv, "promote_batch_size")
 	assert.NotContains(t, kv, "offset_sync_concurrency", "a dynamic migration's audit line carries only its own policies")
+}
+
+// One run builds the gateway service once: the plan read (migplan) and the
+// executors' dependencies, including a conversion's providers, share it.
+func TestExecute_BuildsOneGatewayServicePerRun(t *testing.T) {
+	g := loadGateway(t, newFixture(t, nil).manifestPath)
+	builds := 0
+	var built *gateway.K8sService
+	deps := stubDeps(nil, nil)
+	deps.k8s = func(*manifest.GatewayMigration) (*gateway.K8sService, error) {
+		builds++
+		built = gateway.NewK8sService("")
+		return built, nil
+	}
+	var convertGW *gateway.K8sService
+	deps.convert = func(_ *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error) {
+		convertGW = gw
+		return convertServices{}, nil
+	}
+
+	svc, shared, err := shareGatewayService(g, deps)
+	require.NoError(t, err)
+	got, err := shared.gateway(g)
+	require.NoError(t, err)
+	_, err = shared.convert(g, shared.convertOver)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, builds, "the service is built once per run")
+	assert.Same(t, built, svc, "migplan is handed the built service")
+	assert.Same(t, built, got, "the executors' gateway is that same service")
+	assert.Same(t, built, convertGW, "a conversion's providers get it too")
+}
+
+// An unresolvable kubeconfig path is reported where it always was: inside the
+// reconcile step, after the reconcile input is built, as "failed to produce the
+// reconcile plan: ..." -- sharing the gateway service must not move it earlier
+// or reword it.
+func TestExecute_UnresolvableKubeconfigIsReportedByTheReconcileStep(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "    cr-name: gateway-initial\n", "    cr-name: gateway-initial\n    kubeconfig: ~/kube\n", 1)
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
+
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), `failed to produce the reconcile plan: expanding "~/" in spec.gateway.kubeconfig: `), err.Error())
+	assert.NotContains(t, err.Error(), "failed to build gateway service")
+}
+
+// shareGatewayService never fails the run: when the service cannot be built it
+// shares nothing and leaves deps as given.
+func TestShareGatewayService_ABuildFailureSharesNothing(t *testing.T) {
+	g := loadGateway(t, newFixture(t, nil).manifestPath)
+	deps := stubDeps(nil, nil)
+	deps.k8s = func(*manifest.GatewayMigration) (*gateway.K8sService, error) { return nil, errors.New("boom") }
+
+	svc, shared, err := shareGatewayService(g, deps)
+
+	require.NoError(t, err)
+	assert.Nil(t, svc)
+	assert.Nil(t, shared.convertOver)
 }

@@ -103,7 +103,7 @@ type ConfigWaitOptions struct {
 	// means no deadline, matching --rollout-timeout's default: the operator
 	// drives a rollout to completion. Ctrl-C ends kcp with the gateway as it is
 	// (fenced, if the fence was applied) and a re-run continues from there. A
-	// replaced pod overdue past its deletion deadline by replacedPodOverdueMargin
+	// replaced pod overdue past its deletion deadline by ReplacedPodOverdueMargin
 	// fails the wait whatever this timeout.
 	RollTimeout time.Duration
 
@@ -113,14 +113,9 @@ type ConfigWaitOptions struct {
 // WaitForGatewayConfigID blocks until every Ready gateway pod reports
 // opts.ConfigID, or fails.
 func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error {
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return err
 	}
 
 	pods := clientset.CoreV1().Pods(namespace)

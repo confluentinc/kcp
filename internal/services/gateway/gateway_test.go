@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +19,6 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
-	ktesting "k8s.io/client-go/testing"
 )
 
 // ===========================================================================
@@ -83,205 +80,6 @@ func TestDeploymentRolloutComplete_Nil(t *testing.T) {
 }
 
 // ===========================================================================
-// waitForGatewayReady — happy paths
-// ===========================================================================
-
-func TestWaitForGatewayReady_NoGenerationBump_ReturnsNoOp(t *testing.T) {
-	// The Deployment's generation never moves past the pre-apply baseline, so the
-	// operator did not rewrite the pod template — report RolloutDetected=false and
-	// return rather than waiting for a rollout that is not coming.
-	shortenRollConfirmationWindow(t, 50*time.Millisecond)
-
-	dep := newGatewayDeployment("test-gw", "test-ns", 3,
-		withObservedGeneration(3),
-		withReplicas(2),
-		withUpdatedReplicas(2),
-		withAvailableReplicas(2),
-		withReadyReplicas(2),
-	)
-	cs := newFakeClientset(dep)
-
-	var progressCalls []GatewayReadinessProgress
-	progressMu := &sync.Mutex{}
-	onProgress := func(p GatewayReadinessProgress) {
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		progressCalls = append(progressCalls, p)
-	}
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 0, onProgress)
-	require.NoError(t, err)
-
-	progressMu.Lock()
-	defer progressMu.Unlock()
-	require.Len(t, progressCalls, 1, "no-op should fire onProgress exactly once")
-	assert.False(t, progressCalls[0].RolloutDetected)
-	assert.True(t, progressCalls[0].Ready)
-	assert.Equal(t, 2, progressCalls[0].InitialPodCount)
-}
-
-func TestWaitForGatewayReady_RolloutThenReady_ReturnsNil(t *testing.T) {
-	// Deployment starts with observedGeneration < generation (rollout in
-	// progress); a background goroutine transitions it to complete.
-	shortenRollConfirmationWindow(t, 30*time.Millisecond)
-
-	initial := newGatewayDeployment("test-gw", "test-ns", 7,
-		withObservedGeneration(6),
-		withReplicas(3),
-		withUpdatedReplicas(1),
-		withAvailableReplicas(1),
-		withReadyReplicas(1),
-	)
-	cs := newFakeClientset(initial)
-
-	go func() {
-		time.Sleep(80 * time.Millisecond)
-		updated := newGatewayDeployment("test-gw", "test-ns", 7,
-			withObservedGeneration(7),
-			withReplicas(3),
-			withUpdatedReplicas(3),
-			withAvailableReplicas(3),
-			withReadyReplicas(3),
-		)
-		updateDeployment(cs, updated)
-	}()
-
-	var progressCalls []GatewayReadinessProgress
-	progressMu := &sync.Mutex{}
-	onProgress := func(p GatewayReadinessProgress) {
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		progressCalls = append(progressCalls, p)
-	}
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 6, 15*time.Millisecond, 5*time.Second, onProgress)
-	require.NoError(t, err)
-
-	progressMu.Lock()
-	defer progressMu.Unlock()
-	require.NotEmpty(t, progressCalls)
-	final := progressCalls[len(progressCalls)-1]
-	assert.True(t, final.RolloutDetected, "rollout should have been detected")
-	assert.True(t, final.Ready, "final progress should reflect Ready=true")
-	assert.Greater(t, final.Elapsed, time.Duration(0))
-	assert.Equal(t, 3, final.PodsReady, "PodsReady comes from readyReplicas at completion")
-}
-
-func TestWaitForGatewayReady_NoDeadline_RunsUntilReady(t *testing.T) {
-	// timeout=0 means no deadline. Simulate a slow rollout (~300ms) and assert
-	// we wait it out instead of failing.
-	shortenRollConfirmationWindow(t, 20*time.Millisecond)
-
-	initial := newGatewayDeployment("test-gw", "test-ns", 2,
-		withObservedGeneration(1),
-		withReplicas(1),
-		withUpdatedReplicas(0),
-		withAvailableReplicas(0),
-	)
-	cs := newFakeClientset(initial)
-
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		updated := newGatewayDeployment("test-gw", "test-ns", 2,
-			withObservedGeneration(2),
-			withReplicas(1),
-			withUpdatedReplicas(1),
-			withAvailableReplicas(1),
-		)
-		updateDeployment(cs, updated)
-	}()
-
-	start := time.Now()
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 1, 20*time.Millisecond, 0, nil)
-	elapsed := time.Since(start)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, elapsed, 300*time.Millisecond, "wait should run for at least the rollout duration")
-}
-
-// ===========================================================================
-// waitForGatewayReady — timeout and cancellation
-// ===========================================================================
-
-func TestWaitForGatewayReady_TimeoutExceeded_ReturnsDeadlineExceeded(t *testing.T) {
-	shortenRollConfirmationWindow(t, 20*time.Millisecond)
-
-	dep := newGatewayDeployment("test-gw", "test-ns", 4,
-		withObservedGeneration(3),
-		withReplicas(2),
-		withUpdatedReplicas(1),
-		withAvailableReplicas(1),
-	)
-	cs := newFakeClientset(dep)
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 100*time.Millisecond, nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, context.DeadlineExceeded), "expected DeadlineExceeded, got: %v", err)
-}
-
-func TestWaitForGatewayReady_ParentCtxCancelled_ReturnsCanceled(t *testing.T) {
-	shortenRollConfirmationWindow(t, 20*time.Millisecond)
-
-	dep := newGatewayDeployment("test-gw", "test-ns", 4,
-		withObservedGeneration(3),
-		withReplicas(2),
-		withUpdatedReplicas(1),
-		withAvailableReplicas(1),
-	)
-	cs := newFakeClientset(dep)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-	}()
-
-	err := waitForGatewayReady(ctx, cs, "test-ns", "test-gw", 3, 10*time.Millisecond, 0, nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, context.Canceled), "expected Canceled, got: %v", err)
-}
-
-// ===========================================================================
-// waitForGatewayReady — error paths
-// ===========================================================================
-
-func TestWaitForGatewayReady_NoDeploymentFound_ReturnsError(t *testing.T) {
-	// No deployment in fake clientset — initial resolution fails.
-	shortenRollConfirmationWindow(t, 20*time.Millisecond)
-	cs := newFakeClientset()
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 0, 10*time.Millisecond, 0, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gateway deployment not found")
-}
-
-func TestWaitForGatewayReady_TransientAPIError_ReturnsError(t *testing.T) {
-	shortenRollConfirmationWindow(t, 100*time.Millisecond)
-
-	// Deployment is incomplete so detection loop polls and hits the transient error.
-	dep := newGatewayDeployment("test-gw", "test-ns", 5,
-		withObservedGeneration(4),
-		withReplicas(2),
-		withUpdatedReplicas(1),
-		withAvailableReplicas(1),
-	)
-	cs := newFakeClientset(dep)
-
-	// Fail the second Get (first is the initial resolution; second is the detection loop).
-	var getCount int32
-	cs.(*kubernetesfake.Clientset).PrependReactor("get", "deployments", func(action ktesting.Action) (bool, runtime.Object, error) {
-		n := atomic.AddInt32(&getCount, 1)
-		if n >= 2 {
-			return true, nil, fmt.Errorf("kube-api transient failure")
-		}
-		return false, nil, nil
-	})
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 4, 10*time.Millisecond, 0, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "transient failure")
-}
-
-// ===========================================================================
 // resolveGatewayDeployment — ownerReferences fallback tests
 // ===========================================================================
 
@@ -316,79 +114,6 @@ func TestResolveGatewayDeployment_OwnerRefFallback_OneMatch_Returns(t *testing.T
 	found, err := resolveGatewayDeployment(context.Background(), cs, "test-ns", "test-gw")
 	require.NoError(t, err)
 	assert.Equal(t, "test-gw-deploy", found.Name)
-}
-
-func TestWaitForGatewayReady_OwnerRefFallback_FullWait_ReturnsNil(t *testing.T) {
-	// Deployment is found via ownerReferences (name differs from gateway).
-	// Wait detects rollout in progress and converges to complete.
-	shortenRollConfirmationWindow(t, 30*time.Millisecond)
-
-	initial := newGatewayDeployment("test-gw-deploy", "test-ns", 5,
-		withGatewayOwner("test-gw"),
-		withObservedGeneration(4),
-		withReplicas(2),
-		withUpdatedReplicas(0),
-		withAvailableReplicas(0),
-	)
-	cs := newFakeClientset(initial)
-
-	go func() {
-		time.Sleep(80 * time.Millisecond)
-		updated := newGatewayDeployment("test-gw-deploy", "test-ns", 5,
-			withGatewayOwner("test-gw"),
-			withObservedGeneration(5),
-			withReplicas(2),
-			withUpdatedReplicas(2),
-			withAvailableReplicas(2),
-		)
-		updateDeployment(cs, updated)
-	}()
-
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 4, 15*time.Millisecond, 5*time.Second, nil)
-	require.NoError(t, err)
-}
-
-// ===========================================================================
-// waitForGatewayReady — progress callback invariants
-// ===========================================================================
-
-func TestWaitForGatewayReady_ProgressElapsedIsMonotonic(t *testing.T) {
-	shortenRollConfirmationWindow(t, 20*time.Millisecond)
-
-	initial := newGatewayDeployment("test-gw", "test-ns", 3,
-		withObservedGeneration(2),
-		withReplicas(2),
-		withUpdatedReplicas(1),
-		withAvailableReplicas(1),
-	)
-	cs := newFakeClientset(initial)
-
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		updated := newGatewayDeployment("test-gw", "test-ns", 3,
-			withObservedGeneration(3),
-			withReplicas(2),
-			withUpdatedReplicas(2),
-			withAvailableReplicas(2),
-		)
-		updateDeployment(cs, updated)
-	}()
-
-	var elapsedSeen []time.Duration
-	mu := &sync.Mutex{}
-	err := waitForGatewayReady(context.Background(), cs, "test-ns", "test-gw", 2, 25*time.Millisecond, 5*time.Second, func(p GatewayReadinessProgress) {
-		mu.Lock()
-		defer mu.Unlock()
-		elapsedSeen = append(elapsedSeen, p.Elapsed)
-	})
-	require.NoError(t, err)
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.GreaterOrEqual(t, len(elapsedSeen), 2)
-	for i := 1; i < len(elapsedSeen); i++ {
-		assert.GreaterOrEqual(t, elapsedSeen[i], elapsedSeen[i-1], "elapsed at index %d (%v) regressed from %v", i, elapsedSeen[i], elapsedSeen[i-1])
-	}
 }
 
 // ===========================================================================
@@ -1156,13 +881,13 @@ func TestWaitForGatewayPods_ParentCancelIsNotReportedAsTimeout(t *testing.T) {
 	assert.NotContains(t, err.Error(), "timed out")
 }
 
-// shortenOverdueMargin lowers replacedPodOverdueMargin for the test and
+// shortenOverdueMargin lowers ReplacedPodOverdueMargin for the test and
 // restores it on cleanup.
 func shortenOverdueMargin(t *testing.T, d time.Duration) {
 	t.Helper()
-	original := replacedPodOverdueMargin
-	replacedPodOverdueMargin = d
-	t.Cleanup(func() { replacedPodOverdueMargin = original })
+	original := ReplacedPodOverdueMargin
+	ReplacedPodOverdueMargin = d
+	t.Cleanup(func() { ReplacedPodOverdueMargin = original })
 }
 
 // TestWaitForGatewayPods_OverdueOldPodFailsWithoutDeadline: a captured pod still
@@ -1209,4 +934,10 @@ func TestWaitForGatewayPods_TerminatingWithinGraceStillBlocks(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrReplacedPodOverdue))
 	assert.Contains(t, err.Error(), "timed out")
+}
+
+// TestK8sServiceSatisfiesTransitionClient is a compile-time assertion that the
+// real client provides everything a gateway transition needs.
+func TestK8sServiceSatisfiesTransitionClient(t *testing.T) {
+	var _ TransitionClient = (*K8sService)(nil)
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 )
 
@@ -58,12 +58,12 @@ func liveMembersAware(newCommitter groupoffsets.CommitterFactory) groupoffsets.C
 // (groupoffsets.BuildPlan); then one admin commit per group on p.Workers workers (groupoffsets.Apply). A
 // refusal writes nothing; any failure triggers abort_fence, which is safe because offsets written before the
 // switch are inert.
-func (a *D2SActions) SyncOffsets(ctx context.Context, config *migration.MigrationConfig, p Policy) error {
+func (a *D2SActions) SyncOffsets(ctx context.Context, config *migrun.MigrationConfig, p Policy) error {
 	snap := a.handoff
 	if snap == nil {
 		return errNoHandoff
 	}
-	if err := a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "sync_offsets"); err != nil {
+	if err := a.gw.VerifyUnchangedSincePlan(ctx, a.target(config), "sync_offsets"); err != nil {
 		return err
 	}
 	hwm, err := groupoffsets.DestinationHighWaterMarks(ctx, a.deps.DestinationTopics, a.deps.HighWaterMarks, snap)

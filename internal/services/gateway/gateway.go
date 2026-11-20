@@ -8,13 +8,13 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
 	appsv1 "k8s.io/api/apps/v1"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // Kubernetes resource constants
@@ -40,24 +41,17 @@ const (
 // fails here must treat the patch as landed, not as a no-op.
 var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
 
-// Service defines gateway operations
-type Service interface {
-	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
+// TransitionClient is what applying and confirming a gateway transition needs from the cluster.
+type TransitionClient interface {
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
-	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
-	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error)
 	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error)
-	GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
-	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
-	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
+	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
-	// WaitForGatewayReady only waits for the Deployment rollout to report
-	// complete. It must NOT be used to verify a gateway transition: it returns
-	// while replaced pods still serve. Use WaitForGatewayPods or
-	// WaitForGatewayConfigID.
-	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
 }
 
 // PatchResult is what a Gateway CR patch reports back. Generation is the
@@ -82,39 +76,122 @@ type PodRolloutProgress struct {
 	OldPodNames []string
 }
 
-// GatewayReadinessProgress reports the current state of a gateway readiness wait.
-// The gate (whether the wait returns) comes from the underlying apps/v1
-// Deployment's rollout status; pod counts come from Deployment.status.readyReplicas.
-type GatewayReadinessProgress struct {
-	InitialPodCount int
-	PodsReady       int
-	Elapsed         time.Duration
-	RolloutDetected bool
-	Ready           bool
-}
-
-// K8sService implements gateway operations using Kubernetes clients
+// K8sService implements gateway operations using Kubernetes clients. Its
+// clients are built lazily on first use and then reused for the life of the
+// service. Construct it with NewK8sService or NewK8sServiceWithClients.
 type K8sService struct {
-	kubeConfigPath string
+	// clients is shared by pointer so a copy of the service reuses the same
+	// clients and never copies a sync.Once.
+	clients *k8sClients
 }
 
-// NewK8sService creates a new gateway service
+// k8sClients holds the lazily built clients. Each build runs at most once and
+// caches its error, so a bad kubeconfig fails the same way on every call.
+type k8sClients struct {
+	kubeConfigPath string
+	// restConfig builds the REST config; RESTConfig outside tests.
+	restConfig func(string) (*rest.Config, error)
+
+	configOnce sync.Once
+	config     *rest.Config
+	configErr  error
+
+	dynamicOnce sync.Once
+	dynamic     dynamic.Interface
+	dynamicErr  error
+
+	clientsetOnce sync.Once
+	clientset     kubernetes.Interface
+	clientsetErr  error
+}
+
+// NewK8sService creates a new gateway service for kubeConfigPath. Nothing is
+// read until the first method that needs a client runs.
 func NewK8sService(kubeConfigPath string) *K8sService {
-	return &K8sService{
+	return &K8sService{clients: &k8sClients{
 		kubeConfigPath: kubeConfigPath,
+		restConfig:     RESTConfig,
+	}}
+}
+
+// NewK8sServiceWithClients creates a gateway service over already built
+// clients; no kubeconfig is read.
+func NewK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kubernetes.Interface) *K8sService {
+	c := &k8sClients{dynamic: dynamicClient, clientset: clientset}
+	c.configOnce.Do(func() {})
+	c.dynamicOnce.Do(func() {})
+	c.clientsetOnce.Do(func() {})
+	if dynamicClient == nil {
+		c.dynamicErr = errors.New("gateway service built without a dynamic client")
 	}
+	if clientset == nil {
+		c.clientsetErr = errors.New("gateway service built without a clientset")
+	}
+	return &K8sService{clients: c}
+}
+
+// Clientset returns the service's typed Kubernetes client, building it on
+// first use.
+func (s *K8sService) Clientset() (kubernetes.Interface, error) {
+	return s.clients.getClientset()
+}
+
+// dynamicClient returns the service's dynamic client, building it on first use.
+func (s *K8sService) dynamicClient() (dynamic.Interface, error) {
+	return s.clients.getDynamic()
+}
+
+func (c *k8sClients) restConfigOnce() (*rest.Config, error) {
+	c.configOnce.Do(func() {
+		config, err := c.restConfig(c.kubeConfigPath)
+		if err != nil {
+			c.configErr = fmt.Errorf("failed to build config: %w", err)
+			return
+		}
+		c.config = config
+	})
+	return c.config, c.configErr
+}
+
+func (c *k8sClients) getDynamic() (dynamic.Interface, error) {
+	c.dynamicOnce.Do(func() {
+		config, err := c.restConfigOnce()
+		if err != nil {
+			c.dynamicErr = err
+			return
+		}
+		client, err := dynamic.NewForConfig(config)
+		if err != nil {
+			c.dynamicErr = fmt.Errorf("failed to create dynamic client: %w", err)
+			return
+		}
+		c.dynamic = client
+	})
+	return c.dynamic, c.dynamicErr
+}
+
+func (c *k8sClients) getClientset() (kubernetes.Interface, error) {
+	c.clientsetOnce.Do(func() {
+		config, err := c.restConfigOnce()
+		if err != nil {
+			c.clientsetErr = err
+			return
+		}
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			c.clientsetErr = fmt.Errorf("failed to create clientset: %w", err)
+			return
+		}
+		c.clientset = client
+	})
+	return c.clientset, c.clientsetErr
 }
 
 // GetGatewayYAML retrieves the gateway resource as YAML
 func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, err
 	}
 
 	gatewayGVR := schema.GroupVersionResource{
@@ -136,42 +213,6 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 
 	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
 	return yamlBytes, nil
-}
-
-// CheckPermissions checks if the user has the required Kubernetes permissions
-func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return false, fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	sar := &authorizationv1.SelfSubjectAccessReview{
-		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: namespace,
-				Verb:      verb,
-				Group:     group,
-				Resource:  resource,
-			},
-		},
-	}
-
-	response, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(
-		ctx,
-		sar,
-		metav1.CreateOptions{},
-	)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check permissions: %w", err)
-	}
-
-	return response.Status.Allowed, nil
 }
 
 // PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC
@@ -199,13 +240,9 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 // the read and the write. Both return a *GenerationChangedError (Is
 // ErrGatewayChanged). 0 means unknown and leaves the write unguarded.
 func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
+		return PatchResult{}, err
 	}
 	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID, expectedGeneration)
 }
@@ -280,13 +317,9 @@ func patchFailure(ctx context.Context, dynamicClient dynamic.Interface, namespac
 
 // GetGatewayGeneration returns the Gateway CR's current metadata.generation.
 func (s *K8sService) GetGatewayGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return 0, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create dynamic client: %w", err)
+		return 0, err
 	}
 	return getGatewayGeneration(ctx, dynamicClient, namespace, gatewayName)
 }
@@ -307,13 +340,9 @@ func getGatewayGeneration(ctx context.Context, dynamicClient dynamic.Interface, 
 // resulting generation. expectedGeneration guards the write exactly as in
 // PatchGatewayRoute; 0 leaves it unguarded.
 func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, expectedGeneration int64) (PatchResult, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to build config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return PatchResult{}, fmt.Errorf("failed to create dynamic client: %w", err)
+		return PatchResult{}, err
 	}
 	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID, expectedGeneration)
 }
@@ -449,8 +478,8 @@ func isFatalGatewayConditionReason(reason string) bool {
 // This is the guard that makes a downstream "no rollout observed" trustworthy.
 // Applying a CR bumps the Gateway's metadata.generation; until the operator
 // reconciles it (and, for a real spec change, writes the Deployment)
-// observedGeneration lags. Without this wait, the Deployment-based waits
-// (WaitForGatewayReady, WaitForGatewayPods) see a perfectly healthy Deployment
+// observedGeneration lags. Without this wait, the Deployment-based wait
+// (WaitForGatewayPods) sees a perfectly healthy Deployment
 // still running the *previous* generation's pods, and conclude "no restart
 // required" — reporting success for a switchover or fence that never happened.
 // The generation baseline those waits compare against cannot close this on its
@@ -466,14 +495,9 @@ func isFatalGatewayConditionReason(reason string) bool {
 // turns that hang into a fast, actionable error carrying the operator's own
 // message.
 func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return err
 	}
 
 	return waitForGatewayAccepted(ctx, dynamicClient, namespace, gatewayName, pollInterval, timeout)
@@ -672,14 +696,9 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
 func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, err
 	}
 
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
@@ -720,14 +739,9 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_pods")
 	defer func() { tracing.End(span, err) }()
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return err
 	}
 
 	return waitForGatewayPods(ctx, clientset, namespace, gatewayName, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
@@ -931,114 +945,6 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
-}
-
-// WaitForGatewayReady polls the underlying apps/v1 Deployment's rollout status
-// until the Deployment reports a complete rollout, or until ctx is cancelled.
-// When timeout > 0, a hard deadline is applied via context; a timeout of 0
-// means no deadline.
-//
-// The wait runs in two phases:
-//  1. Observation: watch the backing Deployment's metadata.generation for a bump
-//     past baselineGeneration. A bump proves the operator rewrote the pod
-//     template, so pods are being replaced. If none appears within the
-//     confirmation window there is no pod rollout to wait on — onProgress is
-//     invoked once with RolloutDetected=false and the wait returns nil.
-//  2. Convergence: polls until the Deployment reports rollout complete
-//     (observedGeneration >= generation, updatedReplicas == replicas,
-//     availableReplicas == replicas, replicas > 0), calling onProgress on
-//     every poll tick with monotonically increasing Elapsed.
-//
-// baselineGeneration is the Deployment's metadata.generation captured before the
-// apply, via GetGatewayDeploymentGeneration. Phase 1 asks a different question
-// than it used to: not "does the Deployment look unsettled right now", which a
-// fast roll can pass through unnoticed and which cannot separate a healthy
-// Deployment from one the operator has not written yet, but "did the operator
-// rewrite the pod template". Comparing generations answers that even when the
-// roll starts and finishes between two polls.
-//
-// It only waits for the Deployment rollout and must NOT be used to verify a
-// gateway transition: it returns while replaced pods still serve. Use
-// WaitForGatewayPods or the configId wait instead.
-func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
-	config, err := RESTConfig(s.kubeConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
-	}
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-	return waitForGatewayReady(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval, timeout, onProgress)
-}
-
-// waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
-// Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) (err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_ready")
-	defer func() { tracing.End(span, err) }()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-
-	// Phase 1: establish the mechanism. This also resolves the Deployment, so a
-	// missing or ambiguous one fails here rather than being discovered later.
-	mechanism, dep, err := observeRolloutMechanism(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval)
-	if err != nil {
-		return err
-	}
-	slog.Debug("resolved gateway deployment", "namespace", namespace, "gateway", gatewayName, "deployment", dep.Name, "mechanism", mechanism)
-
-	initialReplicas := dep.Status.Replicas
-	start := time.Now()
-
-	if mechanism == MechanismNoRollObserved {
-		slog.Debug("no pod rollout observed; nothing to converge on", "gateway", gatewayName)
-		if onProgress != nil {
-			onProgress(GatewayReadinessProgress{
-				InitialPodCount: int(initialReplicas),
-				PodsReady:       int(initialReplicas),
-				Elapsed:         time.Since(start),
-				RolloutDetected: false,
-				Ready:           true,
-			})
-		}
-		return nil
-	}
-
-	// Phase 2: convergence — poll until Deployment rollout is complete.
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
-		if err != nil {
-			return err
-		}
-		ready := deploymentRolloutComplete(dep)
-		if onProgress != nil {
-			onProgress(GatewayReadinessProgress{
-				InitialPodCount: int(initialReplicas),
-				PodsReady:       int(dep.Status.ReadyReplicas),
-				Elapsed:         time.Since(start),
-				RolloutDetected: true,
-				Ready:           ready,
-			})
-		}
-		if ready {
-			slog.Debug("gateway deployment rollout complete", "gateway", gatewayName, "elapsed", time.Since(start))
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pollInterval):
-		}
-	}
 }
 
 // resolveGatewayDeployment finds the Deployment backing a Gateway CR.

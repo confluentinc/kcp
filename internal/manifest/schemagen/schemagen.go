@@ -5,8 +5,11 @@ package schemagen
 
 import (
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	gwsvc "github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -215,11 +218,11 @@ func GenerateGateway() ([]byte, error) {
 		}
 		set("lagThreshold", "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.")
 		set("promoteBatchSize", "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
-		set("rolloutTimeout", "Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels, except that a replaced pod still listed more than 60s past its termination deadline fails the wait.")
+		set("rolloutTimeout", fmt.Sprintf("Maximum time to wait for the Confluent operator to report the gateway as Ready, and for the gateway pods it replaced to be gone, during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels, except that a replaced pod still listed more than %ds past its termination deadline fails the wait.", int(gwsvc.ReplacedPodOverdueMargin/time.Second)))
 		set("detectUnroutedProducersDuration", "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
 		set("consumerOffsetSyncDrainDuration", "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless consumerOffsetSync.pause is set. 0 (the default) disables the wait.")
-		set("hotReloadTimeout", "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.")
-		set("gatewayConfigPort", "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180).")
+		set("hotReloadTimeout", fmt.Sprintf("Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in %ds budget rather than waiting forever.", int(gwsvc.DefaultHotReloadTimeout/time.Second)))
+		set("gatewayConfigPort", fmt.Sprintf("Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (%d).", gwsvc.DefaultGatewayConfigPort))
 		set("detectUnroutedCommitsDuration", "Time between the two committed-offset snapshots taken after fencing, to detect a consumer committing to the source directly (bypassing the gateway), as a duration (e.g. 30s). 0 (the default) skips the check. When set the minimum is 10s.")
 		set("offsetSyncConcurrency", "Number of workers, each with its own broker connection, reading and writing consumer-group offsets, and reading every source consumer group's committed topics when reconciling (also on --dry-run). 0 (the default) uses 8.")
 	}

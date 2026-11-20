@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -65,13 +64,9 @@ var gatewayRollConfirmationWindow = 10 * time.Second
 // decided to replace the pods" that holds even when the roll starts and
 // finishes between two polls.
 func (s *K8sService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	clientset, err := s.Clientset()
 	if err != nil {
-		return 0, fmt.Errorf("failed to build config: %w", err)
-	}
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create clientset: %w", err)
+		return 0, err
 	}
 	return getGatewayDeploymentGeneration(ctx, clientset, namespace, gatewayName)
 }
