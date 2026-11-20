@@ -868,7 +868,7 @@ func TestReconcileNothingToDo(t *testing.T) {
 					in.TopicPatterns = []string{c.pattern}
 				}
 				p := Reconcile(in, gateway(c.switched, c.selected), c.source, c.source, c.mirrors, false, ClusterIDs{}, nil, "")
-				if p.Mode != mode {
+				if string(p.Mode) != mode {
 					t.Fatalf("Mode = %q, want %q", p.Mode, mode)
 				}
 				if p.NothingToDo != c.want {

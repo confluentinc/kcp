@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,16 +20,17 @@ import (
 // testRun is a real orchestrator over a mocked gateway and a fake world, with its terminal output captured.
 type testRun struct {
 	orch   *D2SOrchestrator
-	config *migration.MigrationConfig
+	config *migrun.MigrationConfig
 	out    *strings.Builder
+	errOut *strings.Builder
 }
 
-func newTestRun(gw gateway.Service, deps Dependencies) *testRun {
-	config := &migration.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
-	actions := NewD2SActions(gw, deps)
-	out := &strings.Builder{}
-	actions.reporter = &reporter{out: out, err: io.Discard}
-	return &testRun{orch: NewD2SOrchestrator(config, actions), config: config, out: out}
+func newTestRun(gw gateway.TransitionClient, deps Dependencies) *testRun {
+	config := &migrun.MigrationConfig{MigrationId: "test-d2s", K8sNamespace: "confluent", InitialCrName: "gateway-initial", Route: "migration-route"}
+	actions := NewD2SActions(fakeTransitioner(gw), deps)
+	out, errOut := &strings.Builder{}, &strings.Builder{}
+	actions.reporter = &reporter{out: out, err: errOut}
+	return &testRun{orch: NewD2SOrchestrator(config, actions), config: config, out: out, errOut: errOut}
 }
 
 func (r *testRun) execute(ctx context.Context, res *migplan.Result) error {
@@ -96,6 +96,16 @@ func TestD2SOrchestrator_Execute_MissingDependenciesFailBeforeAnyStep(t *testing
 	assert.Empty(t, rec.patches)
 }
 
+func TestD2SOrchestrator_Execute_MissingGatewayClientFailsBeforeAnyStep(t *testing.T) {
+	run := newTestRun(nil, cleanWorld().deps())
+
+	err := run.execute(context.Background(), convertResult())
+
+	require.EqualError(t, err, "the route conversion is missing dependencies: GatewayService")
+	assert.Equal(t, StateUninitialized, run.state(), "no step may run")
+	assert.Empty(t, run.out.String(), "no step header or step output may be printed")
+}
+
 // A failure while this run's fence is up rolls back: abort_fence restores reconcile's rollback rules.
 func TestD2SOrchestrator_Execute_AFailureWhileFencedRollsBack(t *testing.T) {
 	for _, step := range []string{EventVerifyFence, EventSyncOffsets} {
@@ -145,7 +155,7 @@ func TestD2SOrchestrator_Execute_SwitchFailureKeepsTheFence(t *testing.T) {
 		assert.Len(t, rec.patches, 2, "the fence and the failed switch: no rollback patch")
 		assert.Contains(t, run.out.String(), "keeping the fence")
 		assert.NotContains(t, run.out.String(), "attempting to remove the fence")
-		assert.NotErrorIs(t, err, ErrSwitchUnconfirmed, "the patch never reached the CR")
+		assert.NotErrorIs(t, err, migrun.ErrSwitchUnconfirmed, "the patch never reached the CR")
 		assert.Contains(t, run.out.String(), "the route is still fenced; resolve the failure, then re-run to finish the switch")
 		assert.NotContains(t, run.out.String(), "nothing to do")
 	})
@@ -169,7 +179,7 @@ func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSaysARerunChec
 		"acceptance fails after the patch": func(rec *patchRecorder) *mockGatewayService {
 			gw := rec.service()
 			accepts := 0
-			gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+			gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 				accepts++
 				if accepts == 2 {
 					return &gateway.GatewayRejectedError{Reason: "InvalidSpec"}
@@ -190,7 +200,7 @@ func TestD2SOrchestrator_Execute_ASwitchThatLandedButIsUnconfirmedSaysARerunChec
 
 			err := run.execute(context.Background(), convertResult())
 
-			require.ErrorIs(t, err, ErrSwitchUnconfirmed)
+			require.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
 			assert.Equal(t, StateOffsetsSynced, run.state())
 			assert.Len(t, rec.patches, 2, "the fence and the switch: kcp never restores the route here")
 			out := run.out.String()
@@ -245,7 +255,7 @@ func unconfirmedFenceRun(t *testing.T, restoreFails bool) (*testRun, *patchRecor
 	}
 	gw := rec.service()
 	accepts := 0
-	gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+	gw.WaitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
 		accepts++
 		if accepts == 1 {
 			return fmt.Errorf("operator never reconciled")
@@ -259,7 +269,7 @@ func unconfirmedFenceRun(t *testing.T, restoreFails bool) (*testRun, *patchRecor
 func TestD2SOrchestrator_Execute_AnUnconfirmedFenceIsRemoved(t *testing.T) {
 	run, rec, err := unconfirmedFenceRun(t, false)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	require.Len(t, rec.patches, 2, "the fence, then the patch removing it")
 	assert.Equal(t, rollbackRules(t), rec.patches[1].Value)
 	assert.Contains(t, run.out.String(), "attempting to remove it")
@@ -270,7 +280,7 @@ func TestD2SOrchestrator_Execute_AnUnconfirmedFenceIsRemoved(t *testing.T) {
 func TestD2SOrchestrator_Execute_AnUnconfirmedFenceWhoseRemovalFailsReportsBoth(t *testing.T) {
 	_, rec, err := unconfirmedFenceRun(t, true)
 
-	require.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	require.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Len(t, rec.patches, 2)
 	assert.Contains(t, err.Error(), "operator never reconciled")
 	assert.Contains(t, err.Error(), "k8s API unavailable")

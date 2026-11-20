@@ -14,14 +14,14 @@ import (
 // can stay Terminating indefinitely, so waiting longer cannot help.
 var ErrReplacedPodOverdue = errors.New("replaced gateway pod is overdue")
 
-// replacedPodOverdueMargin is how long past its metadata.deletionTimestamp a
+// ReplacedPodOverdueMargin is how long past its metadata.deletionTimestamp a
 // pod may stay listed before it counts as overdue. For a graceful delete the
 // deletionTimestamp is the request time plus the grace period, so past it the
 // kubelet should already have removed the pod. A var so tests can shorten it.
-var replacedPodOverdueMargin = 60 * time.Second
+var ReplacedPodOverdueMargin = 60 * time.Second
 
 // overduePod returns the first pod (by name) that include accepts, that is not
-// terminal, and whose deletionTimestamp is more than replacedPodOverdueMargin
+// terminal, and whose deletionTimestamp is more than ReplacedPodOverdueMargin
 // before now, along with how far past that margin it is. It returns nil, 0
 // when there is none.
 func overduePod(pods []corev1.Pod, include func(*corev1.Pod) bool, now time.Time) (pod *corev1.Pod, overdueBy time.Duration) {
@@ -34,7 +34,7 @@ func overduePod(pods []corev1.Pod, include func(*corev1.Pod) bool, now time.Time
 		// deletionTimestamp is API-server time while now is the local clock.
 		// Host clock skew beyond the margin reports a pod overdue early,
 		// which fails closed.
-		if now.Sub(p.DeletionTimestamp.Time) > replacedPodOverdueMargin {
+		if now.Sub(p.DeletionTimestamp.Time) > ReplacedPodOverdueMargin {
 			candidates = append(candidates, p)
 		}
 	}
@@ -43,7 +43,7 @@ func overduePod(pods []corev1.Pod, include func(*corev1.Pod) bool, now time.Time
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
 	first := candidates[0]
-	return first, now.Sub(first.DeletionTimestamp.Time) - replacedPodOverdueMargin
+	return first, now.Sub(first.DeletionTimestamp.Time) - ReplacedPodOverdueMargin
 }
 
 // overdueError builds the error for an overdue pod, wrapping

@@ -1,0 +1,8 @@
+{
+  "field": "fence",
+  "route_name": "migration-route",
+  "value": {
+    "errorCode": "BROKER_NOT_AVAILABLE",
+    "scope": "ALL"
+  }
+}

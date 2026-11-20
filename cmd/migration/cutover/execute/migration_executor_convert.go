@@ -4,9 +4,10 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/d2s"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
 )
@@ -20,13 +21,13 @@ type convertServices struct {
 }
 
 // convertServicesFunc builds a conversion's services from the manifest.
-type convertServicesFunc func(g *manifest.GatewayMigration) (convertServices, error)
+type convertServicesFunc func(g *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error)
 
 // Skips buildExecutorServices: a conversion uses neither its offset providers nor the link client.
 func runConvertBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
@@ -42,7 +43,7 @@ func runConvertBranch(
 		tracing.End(buildSpan, err)
 		return fmt.Errorf("failed to build gateway service: %w", err)
 	}
-	svc, err := deps.convert(g)
+	svc, err := deps.convert(g, deps.convertOver)
 	tracing.End(buildSpan, err)
 	if err != nil {
 		return fmt.Errorf("failed to build route-conversion services: %w", err)
@@ -52,11 +53,7 @@ func runConvertBranch(
 		svc.deps.Out = cmd.OutOrStdout()
 	}
 
-	actions := d2s.NewD2SActions(gatewayService, svc.deps)
-	actions.SetRolloutTimeout(policy.RolloutTimeout)
-	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
-
-	applyCommonPolicy(config, policy.CommonPolicies)
+	actions := d2s.NewD2SActions(gateway.NewTransitionerFactory(gatewayService, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort)), svc.deps)
 
 	orchestrator := d2s.NewD2SOrchestrator(config, actions)
 	if err := orchestrator.Execute(ctx, reconcileResult, d2s.Policy{

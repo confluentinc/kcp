@@ -562,7 +562,7 @@ func (e *env) crConfigID(t *testing.T, ctx context.Context) string {
 // operations, in the order its switchover artifact applies them
 // (migplan/reconcile/reconcile.go): drop kcp's fence for exactly these topics,
 // then prepend the exact-name routing condition to the target domain. They are
-// written as TBM's switch writes them (tbm.deriveSwitchRoutePatch): one route
+// written as TBM's switch writes them (tbm.switchChange): one route
 // patch replacing the route's `rules` field, carrying the new configId. Using
 // kcp's own operations rather than a hand-written JSON patch keeps the
 // switched shape identical to what isSwitchedToTarget reads after a real

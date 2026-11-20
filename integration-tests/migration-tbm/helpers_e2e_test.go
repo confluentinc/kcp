@@ -306,12 +306,13 @@ func startRogueProducer(t *testing.T, ctx context.Context, brokers, topic string
 
 // --- tbmHarness: the decide → apply → promote → advance seam ---------------
 
-// FSM seam: the real TBM orchestrator (internal/services/migration/tbm) will own
-// Decide, ApplyFence, ApplySwitchover, PromoteMirrors and ReRun once it consumes
-// migplan.Result. Until then this harness stands in, wiring the live engine to the
-// gateway hot-reload apply and the cluster-link REST promotion so the batch loop
-// (tbm_e2e_test.go) and halt assertions (tbm_halt_e2e_test.go) can drive a real
-// migration through the same shape the FSM will keep.
+// The real TBM orchestrator (internal/services/migration/tbm) exists and
+// consumes migplan.Result. This harness does not run it: it drives the gateway
+// and the cluster link directly (the live engine, the gateway hot-reload apply
+// and the cluster-link REST promotion) so the batch loop (tbm_e2e_test.go) and
+// halt assertions (tbm_halt_e2e_test.go) control the timing of each step. It
+// builds the fence and switch route patches by hand, so it can drift from
+// tbm's unexported derive* functions.
 type tbmHarness struct {
 	e   *env
 	ctx context.Context
@@ -369,9 +370,10 @@ func (h *tbmHarness) ApplySwitchover(t *testing.T, res *migplan.Result) string {
 // applyRules is the shared apply mechanic: extract the engine's `{rules: ...}`
 // artifact's inner value and patch it onto the migration route's `rules`
 // field (the artifact is cumulative — it already preserves prior edits — so a
-// whole-field replace is correct), mirroring the TBM workflow's own
-// deriveFenceRoutePatch/deriveSwitchRoutePatch (Field: "rules") rather than
-// applying a full CR. Then confirm the configId on every pod and assert no
+// whole-field replace is correct), the same shape as tbm's unexported
+// fenceChange/switchChange (Field: "rules"), built by hand
+// here and so able to drift from them, rather than applying a full CR. Then
+// confirm the configId on every pod and assert no
 // pod rolled.
 func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 	t.Helper()
@@ -408,11 +410,11 @@ func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 
 // ensureFencingBlocked fills in the CRD-required `blocked` on any fencing entry
 // the engine emitted without it. The engine renders a batch fence as
-// {topics: [...]} — fence = block those topics during cutover — but the CFK
-// CFK 3.4.0 Gateway CRD marks fencing[].blocked a required field, so a raw apply is
-// rejected. The harness fills it (blocked: true matches the fence's intent) the way
-// the future TBM FSM will have to; it is not an engine defect the tests should mask
-// elsewhere.
+// {topics: [...]} (fence = block those topics during cutover), but the CFK 3.4.0
+// Gateway CRD marks fencing[].blocked a required field, so a raw apply is
+// rejected. The harness fills it (blocked: true matches the fence's intent), as
+// reconcile's RulesTree.PrependFence does, which the real TBM orchestrator relies
+// on. This is not an engine defect the tests should mask elsewhere.
 func ensureFencingBlocked(rules map[string]any) {
 	fencing, ok := rules["fencing"].([]any)
 	if !ok {

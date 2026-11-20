@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -259,8 +260,14 @@ func TestBuildSecretExistenceChecker_UnsetKubeconfigOffAPodUsesTheHomeKubeconfig
 	g := &manifest.GatewayMigration{}
 	g.Spec.Gateway.Namespace = "confluent"
 
-	_, err := buildSecretExistenceChecker(g)
-	require.NoError(t, err, "building the checker from ~/.kube/config must succeed")
+	svc, err := buildGatewayService(g)
+	require.NoError(t, err)
+	checker := buildSecretExistenceChecker(g, svc)
+	_, _, err = checker.MissingSecrets(context.Background(), []string{"s"})
+
+	require.Error(t, err, "the fake API server is unreachable")
+	assert.NotContains(t, err.Error(), "no configuration has been provided", "the home kubeconfig must be used")
+	assert.Contains(t, err.Error(), "127.0.0.1:1", "the client must call the API server named in ~/.kube/config")
 }
 
 func TestBuildReconcileInput_Conversion(t *testing.T) {
@@ -435,4 +442,29 @@ func TestBuildGatewaySourcePodCheck(t *testing.T) {
 	live, ok = without.(*GatewayLive)
 	require.True(t, ok)
 	assert.Nil(t, live.podCheck)
+}
+
+// WithGatewayService: an injected service is the one the CR read runs over and
+// nothing is built (a manifest whose kubeconfig cannot resolve still wires);
+// with no option migplan builds its own, and reports that failure as before.
+func TestWireGatewayAndSecrets_UsesTheInjectedServiceAndBuildsNone(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	g := gm("migration-route", "cc", nil)
+	g.Spec.Gateway.Kubeconfig = "~/kube"
+	injected := gateway.NewK8sService("")
+
+	var o reconcileOptions
+	WithGatewayService(injected)(&o)
+	gw, secrets, err := wireGatewayAndSecrets(g, o, "migration-route")
+
+	require.NoError(t, err, "nothing is built, so the unresolvable kubeconfig is never read")
+	live, ok := gw.(*GatewayLive)
+	require.True(t, ok)
+	assert.Same(t, injected, live.svc)
+	assert.NotNil(t, secrets)
+
+	_, _, err = wireGatewayAndSecrets(g, reconcileOptions{}, "migration-route")
+	require.Error(t, err, "with no injected service migplan builds its own")
+	assert.Contains(t, err.Error(), "spec.gateway.kubeconfig")
 }

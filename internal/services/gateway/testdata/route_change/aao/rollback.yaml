@@ -1,0 +1,3 @@
+route:
+  name: migration-route
+  endpoint: gateway:9595

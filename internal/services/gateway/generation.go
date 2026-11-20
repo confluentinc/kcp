@@ -33,8 +33,14 @@ func (e *GenerationChangedError) Summary(stopped string) string {
 		e.Observed, e.Expected, stopped)
 }
 
-// InspectCommands returns the kubectl commands that show the Gateway CR and its pods.
-func InspectCommands(namespace, gatewayName string) string {
+// Remediation is the terminal text that tells the operator how to inspect the
+// gateway after a stop caused by this error.
+func (e *GenerationChangedError) Remediation() string {
+	return "Inspect the gateway:\n   " + inspectCommands(e.Namespace, e.Gateway)
+}
+
+// inspectCommands returns the kubectl commands that show the Gateway CR and its pods.
+func inspectCommands(namespace, gatewayName string) string {
 	return fmt.Sprintf("kubectl -n %s get gateway %s -o yaml; kubectl -n %s get pods -l app=%s",
 		namespace, gatewayName, namespace, gatewayName)
 }

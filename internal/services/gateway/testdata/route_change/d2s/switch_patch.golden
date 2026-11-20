@@ -1,0 +1,19 @@
+{
+  "field": "",
+  "route_name": "migration-route",
+  "value": {
+    "endpoint": "kafka-gw.example.com:9092",
+    "name": "migration-route",
+    "security": {
+      "cluster": {
+        "target": {
+          "auth": "passthrough"
+        }
+      }
+    },
+    "streamingDomain": {
+      "bootstrapServerId": "sasl-plain",
+      "name": "target"
+    }
+  }
+}

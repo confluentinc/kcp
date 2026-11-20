@@ -1,0 +1,12 @@
+{
+  "field": "rules",
+  "route_name": "migration-route",
+  "value": {
+    "routing": {
+      "coordination": {
+        "group": "source"
+      },
+      "default": "source"
+    }
+  }
+}

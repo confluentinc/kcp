@@ -15,6 +15,7 @@ import (
 	"github.com/confluentinc/kcp/internal/retry/retrytest"
 	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
+	"github.com/stretchr/testify/assert"
 )
 
 // newMockCluster starts a single MockBroker acting as controller and leader
@@ -692,5 +693,25 @@ func TestGetMany_AResetAndAFailedLoginInOneSweepReturnsTheLoginFailureAtOnce(t *
 	sweeps := tracingtest.FindAll(tracingtest.Spans(rec), "offset.get_many")
 	if attempts, ok := tracingtest.Attr(sweeps[len(sweeps)-1], "kcp.retry.attempts"); ok {
 		t.Fatalf("kcp.retry.attempts = %v, want unset: the sweep is not retried", attempts)
+	}
+}
+
+func TestFormatLag64(t *testing.T) {
+	tests := []struct {
+		input    int64
+		expected string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1,000"},
+		{21655, "21,655"},
+		{1000000, "1,000,000"},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%d", tc.input), func(t *testing.T) {
+			got := FormatLag64(tc.input)
+			assert.Equal(t, tc.expected, got, "FormatLag64(%d)", tc.input)
+		})
 	}
 }
