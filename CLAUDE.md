@@ -133,9 +133,14 @@ feasibility and produces the fence/switchover artifacts. A refusal is data
 
 The FSMs share no sequencing or orchestration code, by design. They do share
 the mechanics of applying and confirming a gateway patch
-(`gateway.Transitioner`, built on `gateway.TransitionVerifier`) and offset
-sweeps (`internal/services/offset`). Each FSM owns its sequencing, the intent
-of each patch, its rollback targets and which failures it marks — so don't
+(`gateway.Transitioner`, built on `gateway.TransitionVerifier`), offset
+sweeps (`internal/services/offset`), and the run types in
+`internal/services/migration/migrun` (run config, the unconfirmed-fence and
+unconfirmed-switch sentinels, rollback path constants). Each FSM owns its
+sequencing, the intent of each patch (which `gateway.RouteChange` to apply),
+its rollback targets and which failures it marks, and hands the Transitioner
+plain data — never naming a CR field, the hot-reload port, the probe CRs or the
+verification mechanism; kubectl text stays inside the `gateway` package. Don't
 assume near-identical logic there is accidental duplication before checking.
 
 ## Implementation patterns
