@@ -62,7 +62,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	// Default mock implementations. The gateway CR must be a real routed gateway
-	// CR: FenceGateway derives its fence RoutePatch from it (fenceChange
+	// CR: FenceGateway builds its fence patch from it (fenceChange
 	// splices FenceYAML onto Route), so a scalar placeholder would fail to parse.
 	GetGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil

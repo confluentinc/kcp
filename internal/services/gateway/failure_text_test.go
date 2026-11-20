@@ -19,10 +19,23 @@ func TestFenceUnconfirmedTexts(t *testing.T) {
 }
 
 func TestFenceKeptWarning(t *testing.T) {
-	// AAO, TBM and d2s each pass their own rollbackForbiddenReason.
-	assert.Equal(t,
-		"Fence could not be confirmed on every gateway pod — keeping the fence: part of this batch is already promoted",
-		FenceKeptWarning("part of this batch is already promoted"))
+	// AAO, TBM and d2s each pass their own rollbackForbiddenReason; the texts
+	// below are copied literally from the three orchestrators.
+	tests := []struct {
+		name   string
+		reason string
+	}{
+		{"AAO", "part of this migration is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the migration"},
+		{"TBM", "part of this batch is already promoted, and unfencing would send its clients back to the source. Resolve the failure, then re-run to complete the batch"},
+		{"d2s", "reconcile did not allow a rollback for this run. Resolve the failure, then re-run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t,
+				"Fence could not be confirmed on every gateway pod — keeping the fence: "+tt.reason,
+				FenceKeptWarning(tt.reason))
+		})
+	}
 }
 
 func TestUnconfirmedFenceWarning(t *testing.T) {

@@ -737,7 +737,7 @@ func TestWorkflow_PromoteTopics_NoTopicsIsNoop(t *testing.T) {
 // ===========================================================================
 
 // TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR: FenceGateway
-// derives a RoutePatch from config.FenceYAML for config.Route; the patch must
+// builds its fence patch (fenceChange) from config.FenceYAML for config.Route; the patch must
 // carry that fence.
 func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 	var gotRP gateway.RoutePatch
@@ -1096,11 +1096,11 @@ spec:
         name: source-kafka-cluster
 `
 
-// TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute: the switch replaces the
+// TestSwitchChange_Patch_AppliesTheReconciledRoute: the switch replaces the
 // whole route with reconcile's switched route exactly as given. Reconcile has
 // already removed the fence from it, so the start-of-run CR — fenced on a
 // resume — plays no part.
-func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
+func TestSwitchChange_Patch_AppliesTheReconciledRoute(t *testing.T) {
 	config := &migrun.MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
 
 	rp, err := switchChange(config).Patch(config.Route)
@@ -1112,10 +1112,10 @@ func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
 		"the switch must replace the whole route with reconcile's switched route, unchanged")
 }
 
-// TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute: the rollback
+// TestUnfenceChange_Patch_AppliesTheReconciledRollbackRoute: the rollback
 // replaces the whole route with reconcile's rollback route exactly as given —
 // never the start-of-run CR, which on a resume is still fenced.
-func TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute(t *testing.T) {
+func TestUnfenceChange_Patch_AppliesTheReconciledRollbackRoute(t *testing.T) {
 	config := &migrun.MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
 	rp, err := unfenceChange(config).Patch(config.Route)
