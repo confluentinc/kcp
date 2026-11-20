@@ -144,11 +144,11 @@ func (a *D2SActions) target(config *migration.MigrationConfig) gateway.Target {
 		ConfigPort:       config.GatewayConfigPort,
 		StartRouteFenced: config.FencedAtStart,
 		Probe: func() ([]byte, []byte, error) {
-			fencedCR, err := deriveFencedCRYAML(config)
+			fencedCR, err := fenceChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to derive fenced gateway CR: %w", err)
 			}
-			switchedCR, err := deriveSwitchedCRYAML(config)
+			switchedCR, err := switchChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to derive switched gateway CR: %w", err)
 			}

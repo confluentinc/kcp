@@ -63,9 +63,9 @@ func TestResolveGatewayCapability(t *testing.T) {
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
-		wantFenced, err := deriveFencedCRYAML(config)
+		wantFenced, err := fenceChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 		require.NoError(t, err)
-		wantSwitched, err := deriveSwitchedCRYAML(config)
+		wantSwitched, err := switchChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 		require.NoError(t, err)
 		assert.Equal(t, wantFenced, gotFenced)
 		assert.Equal(t, wantSwitched, gotSwitchover)

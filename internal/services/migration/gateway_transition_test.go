@@ -41,7 +41,7 @@ func hotReloadConfig() *MigrationConfig {
 	return &MigrationConfig{
 		K8sNamespace:  "confluent",
 		InitialCrName: "gw-1",
-		// A real routed CR: FenceGateway's deriveFencedCRYAML splices FenceYAML
+		// A real routed CR: FenceGateway's fenceChange splices FenceYAML
 		// onto Route, which needs spec.routes to contain it.
 		GatewayYAML:       "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n",
 		Route:             "migration-route",

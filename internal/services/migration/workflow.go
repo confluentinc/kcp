@@ -16,7 +16,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
-	"github.com/goccy/go-yaml"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -106,11 +105,11 @@ func (s *MigrationActions) target(config *MigrationConfig) gateway.Target {
 		ConfigPort:       config.GatewayConfigPort,
 		StartRouteFenced: config.FencedAtStart,
 		Probe: func() ([]byte, []byte, error) {
-			fencedCR, err := deriveFencedCRYAML(config)
+			fencedCR, err := fenceChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to derive fenced gateway CR: %w", err)
 			}
-			switchedCR, err := deriveSwitchedCRYAML(config)
+			switchedCR, err := switchChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to derive switched gateway CR: %w", err)
 			}
@@ -387,91 +386,40 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	return nil
 }
 
-// parseGatewayYAML parses config.GatewayYAML — the whole gateway CR migplan
-// pulled and cleaned of server-managed metadata (managedFields,
-// resourceVersion, uid, creationTimestamp, generation, status — see
-// migplan/gatewayfile.go's cleanGatewayDoc) — into a plain
-// map[string]interface{} for the splice helpers below. It does no cleaning of
-// its own: migplan cleans the CR when it pulls it.
-func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
-	var obj map[string]interface{}
-	if err := yaml.Unmarshal([]byte(gatewayYAML), &obj); err != nil {
-		return nil, fmt.Errorf("failed to parse gateway CR: %w", err)
-	}
-	return obj, nil
+// fenceChange is the fence edit: config.FenceYAML's static {fence: {...}}
+// fragment set on config.Route's fence. This FSM only runs for static routes
+// (the command layer sends a dynamic route to the TBM FSM). The write path
+// takes its RoutePatch from it and the capability probe the whole fenced CR,
+// so the two can never drift from each other.
+func fenceChange(config *MigrationConfig) gateway.RouteChange {
+	return gateway.RouteChange{Edit: gateway.EditRouteFence, Artifact: []byte(config.FenceYAML)}
 }
 
-// deriveFencedCRYAML builds the fenced CR bytes from the gateway CR snapshot
-// migplan captured (config.GatewayYAML) by splicing config.FenceYAML onto
-// config.Route. There is no separately-snapshotted fenced CR: FenceGateway's
-// apply and the Transitioner's capability detection both derive from the same
-// source, so they can never drift from each other.
-//
-// This FSM only runs for static routes (the command layer sends a dynamic
-// route to the TBM FSM), so FenceYAML here is always the static
-// {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
-func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
-	base, err := parseGatewayYAML(config.GatewayYAML)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.ReplaceRouteFenceObj(base, config.Route, []byte(config.FenceYAML))
+// switchChange is the switch edit: reconcile's switched route
+// (config.SwitchoverYAML) -- unfenced, bound to the target domain, carrying the
+// route's pre-staged target auth -- replacing config.Route whole.
+func switchChange(config *MigrationConfig) gateway.RouteChange {
+	return gateway.RouteChange{Edit: gateway.EditRoute, Artifact: []byte(config.SwitchoverYAML)}
 }
 
-// deriveSwitchedCRYAML builds the switched CR bytes from the gateway CR
-// snapshot migplan captured (config.GatewayYAML) by splicing
-// config.SwitchoverYAML onto config.Route. There is no separately-snapshotted
-// switched CR: SwitchGateway's apply and the Transitioner's capability
-// detection both derive from the same source, so they can never drift from each other —
-// the same property deriveFencedCRYAML gives the fenced CR.
-//
-// Static-route-only by construction — see deriveFencedCRYAML's comment.
-func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
-	base, err := parseGatewayYAML(config.GatewayYAML)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.ReplaceRouteObj(base, config.Route, []byte(config.SwitchoverYAML))
+// unfenceChange is the rollback edit: reconcile's rollback route
+// (config.RollbackFenceYAML) -- the start-of-run route with the fence taken
+// out -- replacing config.Route whole. The static switch and rollback both
+// remove the fence, which a single-field patch cannot.
+func unfenceChange(config *MigrationConfig) gateway.RouteChange {
+	return gateway.RouteChange{Edit: gateway.EditRoute, Artifact: []byte(config.RollbackFenceYAML)}
 }
 
-// deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
-// fence fragment onto config.Route. Consumed by FenceGateway's write path;
-// the Transitioner's capability probe still uses deriveFencedCRYAML/full CR
-// bytes since capability detection needs a complete CR to apply, not a route
-// patch.
 func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	v, err := gateway.FragmentValue([]byte(config.FenceYAML), "fence")
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	return gateway.RoutePatch{RouteName: config.Route, Field: "fence", Value: v}, nil
+	return fenceChange(config).Patch(config.Route)
 }
 
-// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: reconcile's
-// switched route (config.SwitchoverYAML) — unfenced, bound to the target
-// domain, carrying the route's pre-staged target auth — replacing config.Route
-// whole.
 func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	return wholeRoutePatch(config, config.SwitchoverYAML)
+	return switchChange(config).Patch(config.Route)
 }
 
-// deriveUnfenceRoutePatch builds the RoutePatch a rollback applies: reconcile's
-// rollback route (config.RollbackFenceYAML) — the start-of-run route with the
-// fence taken out — replacing config.Route whole.
 func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	return wholeRoutePatch(config, config.RollbackFenceYAML)
-}
-
-// wholeRoutePatch is the RoutePatch replacing config.Route with artifact's
-// {route: …} exactly as reconcile built it. The static switch and rollback both
-// remove the fence, which a single-field patch cannot, so both replace the
-// whole route.
-func wholeRoutePatch(config *MigrationConfig, artifact string) (gateway.RoutePatch, error) {
-	route, err := gateway.FragmentValue([]byte(artifact), "route")
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+	return unfenceChange(config).Patch(config.Route)
 }
 
 // unfenceGateway replaces config.Route with reconcile's rollback route
