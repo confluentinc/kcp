@@ -21,7 +21,7 @@ import (
 // fence. The refusal itself is printed with the reconcile report renderer, as --dry-run prints it.
 var ErrVerifyRefused = errors.New("the conversion's checks refused after the fence")
 
-// VerifyFence runs after the fence is confirmed on every gateway pod and re-reads every fact:
+// VerifyFence runs after the fence is confirmed as in force on the gateway and re-reads every fact:
 //
 //  1. gather the facts and re-run the route and credential checks; a refusal here comes before
 //     snapshot 1, because a denied probe means the listings may be partial;

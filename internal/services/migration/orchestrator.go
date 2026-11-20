@@ -309,7 +309,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 
 	// A switchover that reached the CR but was not confirmed is past promote,
 	// so the rollback logic below would not roll back past promote either; only
-	// the operator message differs.
+	// the message to the user differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
 		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
 		return stepFailure
@@ -388,7 +388,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 
 	// Restore the paused sync config now that the rollback landed. A failure is
-	// reported to the operator inside; here it only marks the rollback span.
+	// reported to the user inside; here it only marks the rollback span.
 	rollbackErr = o.actions.restoreOffsetSyncAfterRollback(ctx, o.config, params.RestAuth)
 
 	return stepFailure
@@ -446,7 +446,7 @@ func stoppedAt(state string, fencedAtStart, mayBePromoted bool) string {
 // stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last
 // knew (err Is gateway.ErrGatewayChanged). kcp makes no further gateway write
 // and skips the offset-sync restore: it reports what it observed and where it
-// stopped, and leaves the gateway for the operator to inspect. err is either
+// stopped, and leaves the gateway for the user to inspect. err is either
 // the step's own error or a compensation's, in which case it is joined onto
 // stepFailure so both survive.
 func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
@@ -463,27 +463,27 @@ func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stop
 }
 
 // restoreAfterUnconfirmedFence reapplies the initial gateway CR after a fence
-// that reached the cluster but was never confirmed on the serving pods.
+// that reached the cluster but was never confirmed as in force on the gateway.
 //
 // The compensation runs for every unconfirmed fence, not only for one seen to be
 // partially applied, because the two readings a timeout can produce are not
 // equally legible and neither is safe to leave alone:
 //
-//   - Some pods at the fenced revision. CFK promotes a hot-reloadable change
-//     only after its canary pod passes, so a partial reading means the change
-//     WAS promoted and propagation then stalled. Client traffic is being blocked
-//     on part of the fleet with nothing driving it to completion.
-//   - No pod at the fenced revision. This is the ambiguous one: a canary
-//     rejection (the shared config was never updated, so nothing is fenced) is
-//     indistinguishable from a promotion still in flight, and stays that way
+//   - The fence is in force on part of the gateway. The change is only taken
+//     up once a first instance accepts it, so a partial reading means the change
+//     WAS accepted and propagation then stalled. Client traffic is being blocked
+//     on part of the gateway with nothing driving it to completion.
+//   - The fence is in force nowhere. This is the ambiguous one: a rejection
+//     (the shared config was never updated, so nothing is fenced) is
+//     indistinguishable from a change still being taken up, and stays that way
 //     forever — there is no later signal that resolves it. Doing nothing bets on
 //     the rejection and loses the other way, with the fence landing after kcp
 //     has exited and nobody watching.
 //
 // Reapplying the initial CR settles both without having to tell them apart. It
-// carries a fresh configId, so it supersedes any promotion still in flight
+// carries a fresh revision marker, so it supersedes any change still in flight
 // rather than racing it, and against a gateway that was never fenced it restores
-// the spec already in force — a no-op in effect, one hot-reload cycle in cost.
+// the spec already in force — a no-op in effect, one extra change cycle in cost.
 //
 // The FSM is deliberately untouched: the fence transition was cancelled, so the
 // machine still sits at its pre-fence state, which is already the truth.
@@ -495,9 +495,9 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 
 	// A definite rejection is not the ambiguous timeout the rest of this path is
 	// written for: CFK explicitly refused the fenced spec, so it never took effect
-	// on any pod. Restoring is still right — the refused spec is live in etcd and
-	// would fence if the operator's objection later clears — but the operator must
-	// hear the definite story and CFK's own reason, not be sent hunting for a
+	// on any gateway instance. Restoring is still right — the refused spec is live
+	// in the cluster and would fence if the objection later cleared — but the user
+	// must hear the definite story and CFK's own reason, not be sent hunting for a
 	// partial application that cannot exist.
 	definiteRejection := gateway.WasRejected(stepFailure)
 	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "restore the initial gateway CR"))
@@ -572,7 +572,7 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 
 // onPauseOffsetSync runs the pause_offset_sync transition: delegates to
 // PauseOffsetSync, which pauses cluster-link consumer offset sync when the
-// operator opted in and passes through otherwise. The transition fires either
+// user opted in and passes through otherwise. The transition fires either
 // way — promotion's path runs through offset_sync_paused unconditionally.
 func (o *MigrationOrchestrator) onPauseOffsetSync(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
@@ -606,7 +606,7 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 // fails, cancel the rollback so the FSM stays at its source state: honest when
 // the apply itself failed, and when the apply landed but readiness never
 // confirmed, the next run's from-zero walk re-applies the fence step (a no-op
-// rollout if the gateway never diverged) before anything downstream trusts it.
+// if the gateway never diverged) before anything downstream trusts it.
 // The sync-config restore is deliberately NOT here — a before_-callback runs
 // ahead of the transition, so handleStepFailure runs it after the transition
 // completes. It stays ordered after readiness confirms: client traffic beats

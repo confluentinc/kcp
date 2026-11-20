@@ -165,9 +165,9 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 //   - a switch failure keeps the fence (decision 25): at the switch the route is still fenced or already
 //     static, and neither can be safely undone. A switch patch that never reached the CR leaves the route
 //     fenced, and a re-run finishes the switch; one that reached the CR but was not confirmed
-//     (ErrSwitchUnconfirmed) leaves the CR static while the pods may still serve the fenced dynamic route. A
-//     re-run's reconcile checks the pods first: it refuses while they don't serve the CR, and finishes once
-//     they do;
+//     (ErrSwitchUnconfirmed) leaves the CR static while the gateway may still serve the fenced dynamic route. A
+//     re-run's reconcile checks the live gateway first: it refuses while it doesn't serve the CR, and finishes once
+//     it does;
 //   - any other failure while kcp's fence is up rolls back: abort_fence when this run's fence has landed, or a
 //     direct unfence when an earlier run's fence was up at the start (FencedAtStart) and this run failed before
 //     its own fence step;
@@ -176,7 +176,7 @@ func (o *D2SOrchestrator) Execute(ctx context.Context, res *migplan.Result, poli
 //     cancelled context its patch fails fast and is reported alongside the fence's own failure.
 //
 // A failed compensation is folded into the returned error, which main logs; it is only slog.Debug'd here so
-// the operator does not see it twice.
+// the user does not see it twice.
 func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
@@ -259,7 +259,7 @@ func (o *D2SOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 // reconcile always allows one; this guards a result that says otherwise.
 const rollbackForbiddenReason = "reconcile did not allow a rollback for this run. Resolve the failure, then re-run"
 
-// rollbackReason names a rollback's cause for the operator.
+// rollbackReason names a rollback's cause for the user.
 func rollbackReason(step WorkflowStep, err error) string {
 	switch {
 	case errors.Is(err, groupoffsets.ErrRogueCommits):
@@ -315,7 +315,7 @@ func stoppedAt(state string, fencedAtStart bool) string {
 
 // stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last knew (err Is
 // gateway.ErrGatewayChanged). kcp makes no further gateway write and commits no offsets: it reports what it
-// observed and where it stopped, and leaves the gateway for the operator to inspect. err is either the step's
+// observed and where it stopped, and leaves the gateway for the user to inspect. err is either the step's
 // own error or a compensation's, in which case it is joined onto stepFailure so both survive.
 func (o *D2SOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
 	var gce *gateway.GenerationChangedError

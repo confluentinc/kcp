@@ -27,7 +27,7 @@ type MigrationConfig struct {
 	// promoting mirror. Empty on a first run (nothing promoted yet).
 	AwaitStopped []string
 
-	// PauseConsumerOffsetSync is the operator's opt-in (manifest
+	// PauseConsumerOffsetSync is the user's opt-in (manifest
 	// spec.staticMigration.consumerOffsetSync.pause, read each run) to pause
 	// cluster-link consumer offset sync for the duration of execute.
 	PauseConsumerOffsetSync bool

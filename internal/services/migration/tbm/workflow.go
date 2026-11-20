@@ -39,7 +39,7 @@ type TBMActions struct {
 	lagPollInterval time.Duration
 
 	// gw applies and confirms every gateway patch, and owns the capability,
-	// expected generation and start-of-run pod bookkeeping those need.
+	// expected generation and start-of-run bookkeeping those need.
 	gw *gateway.Transitioner
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
@@ -258,12 +258,12 @@ func formatLag64(n int64) string {
 }
 
 // Fence runs the fence transition: resolves how gateway transitions will be
-// verified on the live cluster, proves hot-reload actually works if the
-// gateway claims to support it, derives the fence patch by grafting
+// verified on the live cluster, proves the gateway really applies changes if it
+// claims to support that, derives the fence patch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
 // fenceChange), patches it in, and confirms it landed. Like
-// migration.FenceGateway, PatchCR captures the pre-patch pod UIDs on a rolling
-// gateway so the wait covers the replaced pods. A failure leaves the FSM
+// migration.FenceGateway, the wait covers only the instances the patch
+// replaced. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
 // migrun.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
 // client traffic, so the orchestrator removes them (see handleStepFailure).
@@ -574,7 +574,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migrun.MigrationConfig
 // already renders a full switchover rules block ahead of time, because TBM's
 // dynamic routes need a whole-subtree rules replacement, not a single
 // streamingDomain flip on a static route. There is no compensating rollback on
-// failure (PatchCR still captures pod UIDs for the replaced-pod wait) — a
+// failure (the wait still covers only the replaced instances) — a
 // failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {

@@ -46,7 +46,7 @@ func setOffsetSyncBaseline(
 }
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
-// orchestrator.Execute returns an error and the operator opted into
+// orchestrator.Execute returns an error and the user opted into
 // offset-sync pausing (config.PauseConsumerOffsetSync). The pause and restore
 // steps are idempotent applies with nothing to branch on, so the guidance
 // is a single generic reminder gated only on the manifest-declared intent:

@@ -34,7 +34,7 @@ const (
 
 	// EventAbortFence rolls back to initialized when verify_fence detects
 	// unrouted producers; the transition itself unfences the gateway (see
-	// onAbortFence in orchestrator.go). Rolling back to initialized — not
+	// onAbortFence in orchestrator.go). Reverting to initialized — not
 	// lags_ok — means a resumed run re-checks lag for real via wait_for_lags
 	// before re-fencing, true parity with AAO's own EventAbortFence, whose
 	// only difference here is the single source state (TBM has no

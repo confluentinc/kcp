@@ -265,7 +265,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 
 	// A switchover that reached the CR but was not confirmed is past promote,
 	// so the rollback logic below would not roll back past promote either; only
-	// the operator message differs.
+	// the message to the user differs.
 	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
 		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
 		return stepFailure
@@ -341,7 +341,7 @@ const rollbackForbiddenReason = "part of this batch is already promoted, and unf
 
 // removeUnconfirmedFence sets the route's rules to reconcile's rollback target
 // after a fence that reached the cluster but could not be confirmed on every
-// gateway pod. Whether the operator rejected the fenced rules or they are
+// gateway instance. Whether the fenced rules were rejected or are
 // still propagating, they are live in the CR and could hold client traffic,
 // so they are taken out either way. A failed removal is reported with the
 // fence's own failure, since the fence may still be up.
@@ -406,7 +406,7 @@ func stoppedAt(state string, fencedAtStart, mayBePromoted bool) string {
 // stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last
 // knew (err Is gateway.ErrGatewayChanged). kcp makes no further gateway write:
 // it reports what it observed and where it stopped, and leaves the gateway for
-// the operator to inspect. err is either the step's own error or a
+// the user to inspect. err is either the step's own error or a
 // compensation's, in which case it is joined onto stepFailure so both survive.
 func (o *TBMOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
 	var gce *gateway.GenerationChangedError
@@ -493,7 +493,7 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 // onAbortFence runs the abort_fence rollback: it unfences the gateway to
 // restore traffic to its pre-migration state. If unfencing fails, cancel the
 // rollback so the FSM stays at fenced — the next run's from-zero walk
-// re-applies the fence step (a no-op rollout if the gateway never diverged)
+// re-applies the fence step (a no-op if the gateway never diverged)
 // before anything downstream trusts it. Mirrors migration.onAbortFence,
 // minus the reason branch (TBM's abort_fence has only one source state,
 // fenced — every rollback is an unrouted-producer detection) and the

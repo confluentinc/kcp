@@ -112,7 +112,7 @@ type D2SActions struct {
 	deps     Dependencies
 
 	// gw applies and confirms every gateway patch, and owns the capability, expected generation and
-	// start-of-run pod bookkeeping those need.
+	// start-of-run bookkeeping those need.
 	gw *gateway.Transitioner
 
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
@@ -194,7 +194,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migrun.MigrationCon
 }
 
 // Fence runs the fence transition: it sets the route's rules to reconcile's fence artifact (the route's rules
-// plus kcp's wildcard convert fence, topicPatterns ['.*']) and confirms the change on every gateway pod. It is
+// plus kcp's wildcard convert fence, topicPatterns ['.*']) and confirms the change took effect on the gateway. It is
 // applied on every run, as TBM's fence is: when an earlier run's fence is already up the patch sets the same
 // rules, a no-op in effect. Once the patch has reached the cluster every failure is marked
 // migrun.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
@@ -232,7 +232,7 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.Migratio
 }
 
 // Switch runs the switch transition: one whole-route replace with reconcile's converted route (singular
-// streamingDomain bound to the target, no rules tree, so no fence), confirmed on every gateway pod. It is the
+// streamingDomain bound to the target, no rules tree, so no fence), confirmed as in force on the gateway. It is the
 // only point of no return; a failure keeps the fence (see handleStepFailure). Once the patch has reached the
 // cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migrun.ErrFenceUnconfirmed.
 func (a *D2SActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
