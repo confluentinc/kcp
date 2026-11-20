@@ -229,7 +229,7 @@ func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gatewa
 }
 
 // fenceRoutePatch derives the fence transition's RoutePatch from the rendered
-// fenced CR's own route, mirroring FenceGateway's deriveFenceRoutePatch
+// fenced CR's own route, mirroring FenceGateway's fenceChange
 // (Field: "fence") — a single-field edit rather than a full-CR apply.
 func fenceRoutePatch(t *testing.T) gateway.RoutePatch {
 	t.Helper()

@@ -20,8 +20,8 @@ import (
 
 // testInitialCR is a minimal live-read gateway CR with a route named
 // migration-route, so both capability detection's fence/switch CR splice
-// (fenceChange/switchChange) and the write path's RoutePatch
-// derivation (deriveFenceRoutePatch/deriveSwitchRoutePatch) can derive a
+// (fenceChange/switchChange) and the write path
+// derivation (Transition.Change) can derive a
 // fenced/switched result from it in unit tests.
 const testInitialCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
@@ -1103,7 +1103,7 @@ spec:
 func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
 	config := &migrun.MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
 
-	rp, err := deriveSwitchRoutePatch(config)
+	rp, err := switchChange(config).Patch(config.Route)
 	require.NoError(t, err)
 
 	want, err := gateway.FragmentValue([]byte(testSwitchoverYAML), "route")
@@ -1118,7 +1118,7 @@ func TestDeriveSwitchRoutePatch_AppliesTheReconciledRoute(t *testing.T) {
 func TestDeriveUnfenceRoutePatch_AppliesTheReconciledRollbackRoute(t *testing.T) {
 	config := &migrun.MigrationConfig{GatewayYAML: testFencedCaptureCR, Route: "migration-route", RollbackFenceYAML: testRollbackFenceYAML}
 
-	rp, err := deriveUnfenceRoutePatch(config)
+	rp, err := unfenceChange(config).Patch(config.Route)
 	require.NoError(t, err)
 
 	want, err := gateway.FragmentValue([]byte(testRollbackFenceYAML), "route")

@@ -371,7 +371,7 @@ func (h *tbmHarness) ApplySwitchover(t *testing.T, res *migplan.Result) string {
 // artifact's inner value and patch it onto the migration route's `rules`
 // field (the artifact is cumulative — it already preserves prior edits — so a
 // whole-field replace is correct), the same shape as tbm's unexported
-// deriveFenceRoutePatch/deriveSwitchRoutePatch (Field: "rules"), built by hand
+// fenceChange/switchChange (Field: "rules"), built by hand
 // here and so able to drift from them, rather than applying a full CR. Then
 // confirm the configId on every pod and assert no
 // pod rolled.

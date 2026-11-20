@@ -26,10 +26,13 @@ type Target struct {
 	Fence, Switch RouteChange // the run's fence and switch edits to Route
 }
 
-// Transition is one route patch a Transitioner applies and confirms.
+// Transition is one route change a Transitioner applies and confirms. The
+// Transitioner derives the RoutePatch from Change and the target's route, so an
+// FSM names the edit and never the patch type.
 type Transition struct {
 	Step          string // labels errors, spans and reporter output
-	Patch         RoutePatch
+	Label         string // names the transition in a derivation failure: "failed to build <Label> route patch: ..."
+	Change        RouteChange
 	RestoresStart bool   // true only for a patch that puts back the start-of-run route
 	What          string // names the CR in a patch failure: "failed to apply <What>: ..."
 	Applied       string // Reporter.Success message printed once the patch has landed; "" prints none
@@ -200,15 +203,22 @@ func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) er
 	return t.verifier().SmokeTestHotReload(ctx, target.Namespace, target.Name, t.port())
 }
 
-// Apply patches tr onto the target gateway and confirms it landed: capability,
-// patch, operator acceptance, then per-pod or rollout verification.
+// Apply derives tr's patch, applies it onto the target gateway and confirms it
+// landed: patch derivation, capability, patch, operator acceptance, then per-pod
+// or rollout verification.
 func (t *Transitioner) Apply(ctx context.Context, target Target, tr Transition) TransitionResult {
+	// Derive the patch first: a bad artifact must stop before capability
+	// detection or any write.
+	patch, err := tr.Change.Patch(target.Route)
+	if err != nil {
+		return TransitionResult{Err: fmt.Errorf("failed to build %s route patch: %w", tr.Label, err)}
+	}
 	if err := t.EnsureCapability(ctx, target); err != nil {
 		return TransitionResult{Err: fmt.Errorf("failed to resolve gateway capability: %w", err)}
 	}
 	v := t.verifier()
 
-	applied, err := v.PatchCR(ctx, target.Namespace, target.Name, tr.Patch, tr.Step)
+	applied, err := v.PatchCR(ctx, target.Namespace, target.Name, patch, tr.Step)
 	if !t.firstApplyDone && !tr.RestoresStart && !target.StartRouteFenced && applied.PreApplyPodUIDs != nil {
 		t.startPods = applied.PreApplyPodUIDs
 	}

@@ -259,9 +259,9 @@ func formatLag64(n int64) string {
 
 // Fence runs the fence transition: resolves how gateway transitions will be
 // verified on the live cluster, proves hot-reload actually works if the
-// gateway claims to support it, derives the fence RoutePatch by grafting
+// gateway claims to support it, derives the fence patch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
-// deriveFenceRoutePatch), patches it in, and confirms it landed. Like
+// fenceChange), patches it in, and confirms it landed. Like
 // migration.FenceGateway, PatchCR captures the pre-patch pod UIDs on a rolling
 // gateway so the wait covers the replaced pods. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
@@ -278,14 +278,10 @@ func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 		return nil
 	}
 
-	fenceRP, err := deriveFenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build fence route patch: %w", err)
-	}
-
 	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:    "fence",
-		Patch:   fenceRP,
+		Label:   "fence",
+		Change:  fenceChange(config),
 		What:    "fenced gateway CR",
 		Applied: "Fenced gateway CR applied",
 	})
@@ -308,14 +304,10 @@ func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 // Apply resolves the gateway capability first, like Fence: a process that
 // resumes directly at verify_fence has not resolved it yet.
 func (a *TBMActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
-	unfenceRP, err := deriveUnfenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build unfence route patch: %w", err)
-	}
-
 	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:          "unfence",
-		Patch:         unfenceRP,
+		Label:         "unfence",
+		Change:        unfenceChange(config),
 		RestoresStart: true,
 		What:          "cleaned gateway CR",
 		Applied:       "Cleaned gateway CR applied",
@@ -573,8 +565,8 @@ func (a *TBMActions) Promote(ctx context.Context, config *migrun.MigrationConfig
 	}
 }
 
-// Switch runs the switch transition: derives the switch RoutePatch from
-// config.SwitchoverYAML's rules fragment (see deriveSwitchRoutePatch) —
+// Switch runs the switch transition: derives the switch patch from
+// config.SwitchoverYAML's rules fragment (see switchChange) —
 // the migplan engine's own pre-computed artifact, captured at initialize
 // exactly like FenceYAML — patches it onto config.Route's rules subtree,
 // replacing it wholesale, then confirms the transition landed. Unlike
@@ -598,16 +590,12 @@ func (a *TBMActions) Switch(ctx context.Context, config *migrun.MigrationConfig)
 		return nil
 	}
 
-	switchRP, err := deriveSwitchRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build switch route patch: %w", err)
-	}
-
 	// Once the patch has reached the cluster every failure is marked
 	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.
 	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:    "switchover",
-		Patch:   switchRP,
+		Label:   "switch",
+		Change:  switchChange(config),
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
 	})

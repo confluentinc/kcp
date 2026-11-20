@@ -50,7 +50,8 @@ func probeTarget(t *testing.T) Target {
 func fenceTransition() Transition {
 	return Transition{
 		Step:    "fence",
-		Patch:   RoutePatch{RouteName: "r", Field: "fence", Value: 1},
+		Label:   "fence",
+		Change:  RouteChange{Edit: EditRouteFence, Artifact: []byte("fence:\n  blocked: true\n")},
 		What:    "fenced gateway CR",
 		Applied: "Fenced gateway CR applied",
 	}
@@ -59,7 +60,8 @@ func fenceTransition() Transition {
 func unfenceTransition() Transition {
 	return Transition{
 		Step:          "unfence",
-		Patch:         RoutePatch{RouteName: "r", Field: "fence", Value: nil},
+		Label:         "unfence",
+		Change:        RouteChange{Edit: EditRouteFence, Artifact: []byte("fence:\n  blocked: false\n")},
 		RestoresStart: true,
 		What:          "unfenced gateway CR",
 		Applied:       "Unfenced gateway CR applied",
@@ -578,4 +580,45 @@ func TestTransitionerWithConfigPort(t *testing.T) {
 			assert.Equal(t, tt.want, svc.detectPort)
 		})
 	}
+}
+
+func TestTransitionerApply_DerivesThePatchFromTheChange(t *testing.T) {
+	var got RoutePatch
+	svc := &mockService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp RoutePatch, _ string) (string, error) {
+			got = rp
+			return "", nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+	target := probeTarget(t)
+	tr := fenceTransition()
+
+	result := tn.Apply(context.Background(), target, tr)
+
+	require.NoError(t, result.Err)
+	want, err := tr.Change.Patch(target.Route)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Equal(t, target.Route, got.RouteName)
+}
+
+func TestTransitionerApply_ABadArtifactStopsBeforeAnyWrite(t *testing.T) {
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tr := fenceTransition()
+	tr.Label = "switch"
+	tr.Change.Artifact = []byte("not: the-fragment\n")
+
+	result := tn.Apply(context.Background(), probeTarget(t), tr)
+
+	assert.False(t, result.Landed)
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "failed to build switch route patch: ")
+	assert.Contains(t, result.Err.Error(), "no top-level fence key")
+	assert.Empty(t, svc.calls)
+	assert.Empty(t, svc.patchExpected)
+	assert.Equal(t, 0, svc.detects)
 }

@@ -62,7 +62,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	// Default mock implementations. The gateway CR must be a real routed gateway
-	// CR: FenceGateway derives its fence RoutePatch from it (deriveFenceRoutePatch
+	// CR: FenceGateway derives its fence RoutePatch from it (fenceChange
 	// splices FenceYAML onto Route), so a scalar placeholder would fail to parse.
 	GetGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil
@@ -758,7 +758,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, appliedPatches, 2, "the fence apply must be followed by a restoring apply")
-	wantFenceRP, err := deriveFenceRoutePatch(config)
+	wantFenceRP, err := fenceChange(config).Patch(config.Route)
 	require.NoError(t, err)
 	assert.Equal(t, wantFenceRP, appliedPatches[0])
 	assert.Equal(t, "", appliedPatches[1].Field,

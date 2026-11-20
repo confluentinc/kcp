@@ -200,13 +200,10 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migrun.MigrationCon
 // migrun.ErrFenceUnconfirmed: the fenced rules are live and may hold client traffic, so the orchestrator
 // removes them.
 func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) error {
-	fenceRP, err := deriveFenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build fence route patch: %w", err)
-	}
 	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:    "fence",
-		Patch:   fenceRP,
+		Label:   "fence",
+		Change:  fenceChange(config),
 		What:    "fenced gateway CR",
 		Applied: "Fenced gateway CR applied (every topic on the route blocked)",
 	})
@@ -224,13 +221,10 @@ func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 // convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It resolves
 // the gateway capability first, like Fence: a run can reach a rollback without this process having fenced.
 func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
-	unfenceRP, err := deriveUnfenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build unfence route patch: %w", err)
-	}
 	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:          "unfence",
-		Patch:         unfenceRP,
+		Label:         "unfence",
+		Change:        unfenceChange(config),
 		RestoresStart: true,
 		What:          "unfenced gateway CR",
 		Applied:       "Unfenced gateway CR applied",
@@ -242,13 +236,10 @@ func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.Migratio
 // only point of no return; a failure keeps the fence (see handleStepFailure). Once the patch has reached the
 // cluster every failure is marked ErrSwitchUnconfirmed, mirroring Fence's migrun.ErrFenceUnconfirmed.
 func (a *D2SActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
-	switchRP, err := deriveSwitchRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build switch route patch: %w", err)
-	}
 	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:    "switchover",
-		Patch:   switchRP,
+		Label:   "switch",
+		Change:  switchChange(config),
 		What:    "switchover gateway CR",
 		Applied: "Static route applied",
 	})

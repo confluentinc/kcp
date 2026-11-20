@@ -335,20 +335,17 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 		return nil
 	}
 
-	// Derive the fence RoutePatch from config.FenceYAML's fence fragment onto
-	// config.Route; unfence's whole-route replace (deriveUnfenceRoutePatch) is
-	// its exact inverse, restoring the route to its captured state.
-	fenceRP, err := deriveFenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build fence route patch: %w", err)
-	}
+	// The fence is config.FenceYAML's fence fragment set on config.Route;
+	// unfence's whole-route replace (unfenceChange) is its exact inverse,
+	// restoring the route to its captured state.
 
 	// Apply resolves the capability first (once per process), and records the
 	// pods this fence's patch replaces so a rollback unfence does not wait on
 	// them: they carry the pre-fence route the unfence restores.
 	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:    "fence",
-		Patch:   fenceRP,
+		Label:   "fence",
+		Change:  fenceChange(config),
 		What:    "fenced gateway CR",
 		Applied: "Fenced gateway CR applied",
 	})
@@ -373,7 +370,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 // fenceChange is the fence edit: config.FenceYAML's static {fence: {...}}
 // fragment set on config.Route's fence. This FSM only runs for static routes
 // (the command layer sends a dynamic route to the TBM FSM). The write path
-// takes its RoutePatch from it and the capability probe the whole fenced CR,
+// derives its route patch from it and the capability probe the whole fenced CR,
 // so the two can never drift from each other.
 func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteFence, Artifact: []byte(config.FenceYAML)}
@@ -394,18 +391,6 @@ func unfenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRoute, Artifact: []byte(config.RollbackFenceYAML)}
 }
 
-func deriveFenceRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
-	return fenceChange(config).Patch(config.Route)
-}
-
-func deriveSwitchRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
-	return switchChange(config).Patch(config.Route)
-}
-
-func deriveUnfenceRoutePatch(config *migrun.MigrationConfig) (gateway.RoutePatch, error) {
-	return unfenceChange(config).Patch(config.Route)
-}
-
 // unfenceGateway replaces config.Route with reconcile's rollback route
 // (config.RollbackFenceYAML, the start-of-run route with the fence taken out)
 // to restore normal traffic, then waits for the replaced gateway pods to be gone
@@ -417,18 +402,14 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *migrun.Mi
 	// whatever revision the initial CR was captured with, and the verification
 	// below would match against a value the pods already report — passing
 	// instantly while the gateway is still fenced.
-	unfenceRP, err := deriveUnfenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build unfence route patch: %w", err)
-	}
-
 	// Apply resolves the capability first: a rollback whose fence step never
 	// ran in this process has not resolved it yet. It also confirms the
 	// operator accepted the patch (rollback is the worst place to be blind to a
 	// rejected apply) and skips only this run's pre-fence pods.
 	return s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:          "unfence",
-		Patch:         unfenceRP,
+		Label:         "unfence",
+		Change:        unfenceChange(config),
 		RestoresStart: true,
 		What:          "initial gateway CR",
 		Applied:       "Initial gateway CR applied",
@@ -847,9 +828,9 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *migrun.Mig
 	}
 }
 
-// SwitchGateway derives the switch RoutePatch for config.Route (a whole-route
+// SwitchGateway derives the switch patch for config.Route (a whole-route
 // replace of the captured route with the target streamingDomain — see
-// deriveSwitchRoutePatch) — patches it in, confirms the operator accepted the
+// switchChange) — patches it in, confirms the operator accepted the
 // new spec, then waits for the replaced gateway pods to be gone (or the configId
 // to be applied on every pod). The wait uses the
 // same no-deadline-by-default behavior as FenceGateway.
@@ -881,11 +862,6 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.Mig
 		return nil
 	}
 
-	switchRP, err := deriveSwitchRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build switch route patch: %w", err)
-	}
-
 	// Apply resolves the capability first; that is a no-op when FenceGateway
 	// already did in this process, and load-bearing for a resume that jumps
 	// straight to switch in a fresh process.
@@ -893,7 +869,8 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.Mig
 	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.
 	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:    "switchover",
-		Patch:   switchRP,
+		Label:   "switch",
+		Change:  switchChange(config),
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
 	})

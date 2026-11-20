@@ -38,15 +38,15 @@ func TestRouteChangeGoldens_Patches(t *testing.T) {
 	config := routeChangeGoldenConfig(t)
 	for _, tc := range []struct {
 		name   string
-		derive func(*migrun.MigrationConfig) (gateway.RoutePatch, error)
+		change func(*migrun.MigrationConfig) gateway.RouteChange
 		golden string
 	}{
-		{"fence", deriveFenceRoutePatch, "fence_patch.golden"},
-		{"switch", deriveSwitchRoutePatch, "switch_patch.golden"},
-		{"unfence", deriveUnfenceRoutePatch, "unfence_patch.golden"},
+		{"fence", fenceChange, "fence_patch.golden"},
+		{"switch", switchChange, "switch_patch.golden"},
+		{"unfence", unfenceChange, "unfence_patch.golden"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rp, err := tc.derive(config)
+			rp, err := tc.change(config).Patch(config.Route)
 			require.NoError(t, err)
 			var want struct {
 				RouteName string `json:"route_name"`
