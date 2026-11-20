@@ -61,9 +61,16 @@ func TestRouteChangeGoldens_Patches(t *testing.T) {
 	}
 }
 
+// probeCRs builds the capability probe CRs the gateway Transitioner derives
+// from the FSM's target, the same RouteProbe call over the same plain data.
+func probeCRs(a *D2SActions, config *migration.MigrationConfig) (fenced, switched []byte, err error) {
+	tg := a.target(config)
+	return gateway.RouteProbe(tg.GatewayCR, tg.Route, tg.Fence, tg.Switch)
+}
+
 func TestRouteChangeGoldens_ProbeCRs(t *testing.T) {
 	config := routeChangeGoldenConfig(t)
-	fenced, switched, err := (&D2SActions{}).target(config).Probe()
+	fenced, switched, err := probeCRs(&D2SActions{}, config)
 	require.NoError(t, err)
 	assert.Equal(t, routeChangeGolden(t, "fenced_cr.yaml"), string(fenced))
 	assert.Equal(t, routeChangeGolden(t, "switched_cr.yaml"), string(switched))
@@ -72,7 +79,7 @@ func TestRouteChangeGoldens_ProbeCRs(t *testing.T) {
 func TestRouteChangeGoldens_ProbeErrorsKeepWrappers(t *testing.T) {
 	config := routeChangeGoldenConfig(t)
 	config.GatewayYAML = "{{ not yaml"
-	_, _, err := (&D2SActions{}).target(config).Probe()
+	_, _, err := probeCRs(&D2SActions{}, config)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to derive fenced gateway CR: failed to parse gateway CR YAML")
 }

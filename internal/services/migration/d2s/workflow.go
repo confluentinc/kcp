@@ -135,25 +135,17 @@ func NewD2SActions(gatewayService gateway.TransitionClient, deps Dependencies, o
 	return a
 }
 
-// target names the gateway this run drives. Probe derives the fenced and switched CRs the capability detector
-// needs, since it must see the spec.hotReload either one would put in force.
+// target names the gateway this run drives and the fence and switch edits it
+// makes; the gateway package derives whatever verification needs from them.
 func (a *D2SActions) target(config *migration.MigrationConfig) gateway.Target {
 	return gateway.Target{
 		Namespace:        config.K8sNamespace,
 		Name:             config.InitialCrName,
-		ConfigPort:       config.GatewayConfigPort,
 		StartRouteFenced: config.FencedAtStart,
-		Probe: func() ([]byte, []byte, error) {
-			fencedCR, err := fenceChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to derive fenced gateway CR: %w", err)
-			}
-			switchedCR, err := switchChange(config).ApplyTo([]byte(config.GatewayYAML), config.Route)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to derive switched gateway CR: %w", err)
-			}
-			return fencedCR, switchedCR, nil
-		},
+		GatewayCR:        []byte(config.GatewayYAML),
+		Route:            config.Route,
+		Fence:            fenceChange(config),
+		Switch:           switchChange(config),
 	}
 }
 

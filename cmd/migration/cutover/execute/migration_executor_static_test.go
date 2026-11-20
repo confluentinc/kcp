@@ -120,8 +120,8 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 	})
 }
 
-// GatewayConfigPort reaches config.GatewayConfigPort before the capability
-// probe (DetectCapability) runs.
+// gatewayConfigPort reaches the capability probe (DetectCapability) through
+// the gateway.WithConfigPort option the static executor builds its actions with.
 func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *testing.T) {
 	rec := newPortRecordingGateway()
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.StaticMigration.Policies.GatewayConfigPort = 9999 }

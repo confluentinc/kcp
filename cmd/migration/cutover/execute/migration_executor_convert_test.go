@@ -304,6 +304,21 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 	})
 }
 
+// --gateway-config-port, applied through the command's own override path,
+// reaches the convert capability probe (DetectCapability) through the
+// gateway.WithConfigPort option the convert executor builds its actions with.
+func TestExecute_ConvertMode_GatewayConfigPortOverrideReachesConvertCapabilityProbe(t *testing.T) {
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{"--migration-yaml", "x", "--gateway-config-port", "9999"}))
+	override := func(g *manifest.GatewayMigration) { require.NoError(t, applyPolicyOverrides(cmd, g)) }
+	rec := newPortRecordingGateway()
+
+	_, err := runConvertBranchFor(t, convertFixture(t), override, convertDeps(rec, newConvertWorld("orders-app")))
+
+	require.NoError(t, err)
+	assert.Equal(t, 9999, rec.port(), "--gateway-config-port must reach the convert capability probe")
+}
+
 func TestExecute_ConvertMode_AVerifyRefusalRemovesTheFenceAndFails(t *testing.T) {
 	w := newConvertWorld("orders-app")
 	w.facts.TargetCanCommitOffsets = false

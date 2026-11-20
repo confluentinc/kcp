@@ -124,7 +124,7 @@ func TestRouteProbe(t *testing.T) {
 	switched := RouteChange{Edit: EditRoute, Artifact: readGolden(t, "d2s", "switch.yaml")}
 
 	t.Run("builds both CRs with ApplyTo", func(t *testing.T) {
-		f, s, err := RouteProbe(cr, "migration-route", fenced, switched)()
+		f, s, err := RouteProbe(cr, "migration-route", fenced, switched)
 		require.NoError(t, err)
 		wantF, err := fenced.ApplyTo(cr, "migration-route")
 		require.NoError(t, err)
@@ -134,9 +134,15 @@ func TestRouteProbe(t *testing.T) {
 		assert.Equal(t, string(wantS), string(s))
 	})
 
-	t.Run("bad CR returns the error", func(t *testing.T) {
-		_, _, err := RouteProbe([]byte("{{ not yaml"), "migration-route", fenced, switched)()
+	t.Run("bad CR returns the wrapped error", func(t *testing.T) {
+		_, _, err := RouteProbe([]byte("{{ not yaml"), "migration-route", fenced, switched)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse gateway CR YAML")
+		assert.Contains(t, err.Error(), "failed to derive fenced gateway CR: failed to parse gateway CR YAML")
+	})
+
+	t.Run("bad switch returns the wrapped error", func(t *testing.T) {
+		_, _, err := RouteProbe(cr, "migration-route", fenced, RouteChange{Edit: RouteEdit(99)})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to derive switched gateway CR: unknown route edit 99")
 	})
 }

@@ -247,7 +247,6 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	})
 	g, cfg := freshConfig(t, f)
 	policy := g.Spec.StaticMigration.Policies
-	applyCommonPolicy(cfg, policy.CommonPolicies)
 	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 	cfg.ConsumerOffsetSyncDrainDuration = policy.ConsumerOffsetSyncDrainDuration
 
@@ -305,7 +304,6 @@ func TestExecute_PolicyOverrideReachesTheConfig(t *testing.T) {
 	require.Empty(t, g.Spec.ValidatePolicies())
 
 	policy := g.Spec.StaticMigration.Policies
-	applyCommonPolicy(cfg, policy.CommonPolicies)
 	cfg.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 	assert.Equal(t, 99, policy.LagThreshold,
 		"the override replaces the manifest default in the policy both branches read")

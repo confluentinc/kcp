@@ -162,10 +162,10 @@ func (r *recordingClusterLinkService) maxBatch() int {
 }
 
 // portRecordingGateway is stubGateway plus a record of the port passed to
-// DetectCapability — the first place a gateway transition reads
-// config.GatewayConfigPort (see gateway.Transitioner.EnsureCapability). Observing it here
-// proves the override reached config.GatewayConfigPort BEFORE the capability
-// probe ran.
+// DetectCapability — the first place a gateway transition uses the
+// Transitioner's configured /config port (see gateway.WithConfigPort and
+// gateway.Transitioner.EnsureCapability). Observing it here proves the policy
+// reached the Transitioner BEFORE the capability probe ran.
 type portRecordingGateway struct {
 	*gatewaytest.Fake
 	mu       sync.Mutex

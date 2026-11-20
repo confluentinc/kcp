@@ -97,11 +97,8 @@ func TestResolveGatewayCapability(t *testing.T) {
 	})
 
 	t.Run("defaults the config port and preserves an explicit one", func(t *testing.T) {
-		unset := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
-		assert.Equal(t, gateway.DefaultGatewayConfigPort, detectedConfigPort(t, unset))
-
-		explicit := &MigrationConfig{GatewayConfigPort: 19180, GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
-		assert.Equal(t, 19180, detectedConfigPort(t, explicit))
+		assert.Equal(t, gateway.DefaultGatewayConfigPort, detectedConfigPort(t))
+		assert.Equal(t, 19180, detectedConfigPort(t, gateway.WithConfigPort(19180)))
 	})
 
 	t.Run("a detection failure aborts", func(t *testing.T) {
@@ -139,15 +136,14 @@ func TestGatewayConfigPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := &MigrationConfig{GatewayConfigPort: tt.port, GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
-			assert.Equal(t, tt.want, detectedConfigPort(t, config))
+			assert.Equal(t, tt.want, detectedConfigPort(t, gateway.WithConfigPort(tt.port)))
 		})
 	}
 }
 
-// detectedConfigPort resolves the capability for config on a fresh
-// MigrationActions and returns the /config port the detector was handed.
-func detectedConfigPort(t *testing.T, config *MigrationConfig) int {
+// detectedConfigPort resolves the capability on a fresh MigrationActions built
+// with opts and returns the /config port the detector was handed.
+func detectedConfigPort(t *testing.T, opts ...gateway.TransitionerOption) int {
 	t.Helper()
 	port := -1
 	gw := &mockGatewayService{
@@ -156,7 +152,8 @@ func detectedConfigPort(t *testing.T, config *MigrationConfig) int {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewMigrationActions(gw, &mockClusterLinkService{})
+	actions := NewMigrationActions(gw, &mockClusterLinkService{}, opts...)
+	config := &MigrationConfig{GatewayYAML: testInitialCR, Route: "migration-route", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 	require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 	return port
 }

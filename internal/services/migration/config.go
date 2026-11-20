@@ -73,11 +73,6 @@ type MigrationConfig struct {
 	// result — the fence/switch derivation base.
 	GatewayYAML string
 
-	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
-	// on. Configurable because the contract requires it to be; nothing fronts
-	// this port, so kcp dials pod IPs on it directly.
-	GatewayConfigPort int
-
 	// Route is the single spec.route.name this migration fences and
 	// switches, read from the manifest each run. AAO, like TBM, only ever
 	// operates on one route per migration.

@@ -559,8 +559,8 @@ func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t 
 }
 
 // TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability proves
-// the Transitioner's EnsureCapability passes config.GatewayConfigPort — not a
-// hard-coded constant — through to DetectCapability (see
+// the port TBMActions is constructed with (gateway.WithConfigPort) — not a
+// hard-coded constant — reaches DetectCapability (see
 // gateway.Transitioner's port settling).
 // mockGatewayService already supports overriding DetectCapability via its
 // DetectCapabilityFn function field, so no new stub type is needed here.
@@ -572,16 +572,15 @@ func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *test
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}, gateway.WithConfigPort(9999))
 	config := testTBMConfig()
-	config.GatewayConfigPort = 9999
 
 	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
 	assert.Equal(t, 9999, sawPort)
 }
 
-// TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves an unset
-// (zero-value) config.GatewayConfigPort still settles onto
+// TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves a zero
+// gateway.WithConfigPort still settles onto
 // gateway.DefaultGatewayConfigPort before the capability probe, as the AAO
 // path does through the same Transitioner.
 func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
@@ -592,9 +591,8 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{}, gateway.WithConfigPort(0))
 	config := testTBMConfig()
-	config.GatewayConfigPort = 0
 
 	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort, "an unset port reaches the capability probe as the default")

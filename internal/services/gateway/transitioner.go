@@ -10,15 +10,20 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// Target names the gateway a Transitioner drives and what it needs to resolve
-// the gateway's capability.
+// Target names the gateway a Transitioner drives and the route edits the run
+// makes. It is plain data: the Transitioner derives from it whatever its
+// verification needs. Capability detection inspects the fenced and switched
+// CRs (built with RouteProbe, at most once per Transitioner) because applying
+// either is what puts spec.hotReload into force: a detector shown only the
+// live gateway could pick rollout verification for a run that will hot-reload,
+// and then observe nothing.
 type Target struct {
 	Namespace, Name  string
-	ConfigPort       int  // 0 or less selects DefaultGatewayConfigPort
 	StartRouteFenced bool // the start-of-run route already carried kcp's fence
-	// Probe returns the full fenced and switched Gateway CRs for capability detection.
-	// Empty slices mean "this FSM never applies that CR". Called at most once per Transitioner.
-	Probe func() (fenced, switched []byte, err error)
+
+	GatewayCR     []byte      // the whole gateway CR the run started from
+	Route         string      // the route the run fences and switches
+	Fence, Switch RouteChange // the run's fence and switch edits to Route
 }
 
 // Transition is one route patch a Transitioner applies and confirms.
@@ -48,6 +53,7 @@ type Transitioner struct {
 
 	rolloutTimeout   time.Duration
 	hotReloadTimeout time.Duration
+	configPort       int // 0 or less selects DefaultGatewayConfigPort
 
 	capability     Capability
 	resolved       bool
@@ -72,6 +78,13 @@ func WithTimeouts(rollout, hotReload time.Duration) TransitionerOption {
 		t.rolloutTimeout = rollout
 		t.hotReloadTimeout = hotReload
 	}
+}
+
+// WithConfigPort sets the port of the per-pod GET /config endpoint that
+// capability detection and hot-reload verification poll. 0 or less selects
+// DefaultGatewayConfigPort.
+func WithConfigPort(port int) TransitionerOption {
+	return func(t *Transitioner) { t.configPort = port }
 }
 
 // NewTransitioner returns a Transitioner over svc. reporter is a provider, not
@@ -109,12 +122,12 @@ func (t *Transitioner) verifier() *TransitionVerifier {
 	}
 }
 
-// configPort normalizes the target's port: 0 or less selects the default.
-func configPort(target Target) int {
-	if target.ConfigPort <= 0 {
+// port normalizes the configured /config port: 0 or less selects the default.
+func (t *Transitioner) port() int {
+	if t.configPort <= 0 {
 		return DefaultGatewayConfigPort
 	}
-	return target.ConfigPort
+	return t.configPort
 }
 
 // CheckGeneration confirms the Gateway CR's generation is still the one kcp
@@ -163,15 +176,11 @@ func (t *Transitioner) resolveCapability(ctx context.Context, target Target) err
 	if t.resolved {
 		return nil
 	}
-	var fenced, switched []byte
-	if target.Probe != nil {
-		var err error
-		fenced, switched, err = target.Probe()
-		if err != nil {
-			return err
-		}
+	fenced, switched, err := RouteProbe(target.GatewayCR, target.Route, target.Fence, target.Switch)
+	if err != nil {
+		return err
 	}
-	capability, err := t.verifier().ResolveCapability(ctx, target.Namespace, target.Name, configPort(target), fenced, switched)
+	capability, err := t.verifier().ResolveCapability(ctx, target.Namespace, target.Name, t.port(), fenced, switched)
 	if err != nil {
 		return err
 	}
@@ -188,7 +197,7 @@ func (t *Transitioner) resolveCapability(ctx context.Context, target Target) err
 // spec.configId to the LIVE Gateway CR (see TransitionVerifier.SmokeTestHotReload).
 func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) error {
 	t.smokeAttempted = true
-	return t.verifier().SmokeTestHotReload(ctx, target.Namespace, target.Name, configPort(target))
+	return t.verifier().SmokeTestHotReload(ctx, target.Namespace, target.Name, t.port())
 }
 
 // Apply patches tr onto the target gateway and confirms it landed: capability,
@@ -223,7 +232,7 @@ func (t *Transitioner) Apply(ctx context.Context, target Target, tr Transition) 
 		slog.Debug("unfence skips this run's pre-fence pods", "excluded", before-len(applied.PreApplyPodUIDs))
 	}
 
-	if err := v.VerifyTransition(ctx, target.Namespace, target.Name, configPort(target), applied, tr.Step); err != nil {
+	if err := v.VerifyTransition(ctx, target.Namespace, target.Name, t.port(), applied, tr.Step); err != nil {
 		return TransitionResult{Landed: true, Err: err}
 	}
 	return TransitionResult{Landed: true}

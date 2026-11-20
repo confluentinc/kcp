@@ -16,9 +16,7 @@ import (
 
 // mockService implements the full gateway.TransitionClient interface with configurable
 // func fields for the methods PatchCR/PatchConfigIDOnly drive; every other
-// method is a no-op returning zero values, modeled on
-// cmd/migration/cutover/execute/migration_dependencies_test.go's
-// stubGatewayServiceImpl.
+// method is a no-op returning zero values.
 type mockService struct {
 	patchGatewayRouteFn              func(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)
 	patchGatewayConfigIDFn           func(ctx context.Context, namespace, gatewayName, configID string) (string, error)
@@ -44,9 +42,13 @@ type mockService struct {
 	waitPodsCalls        int
 
 	// detectCapabilityFn scripts DetectCapability (nil = zero Capability);
-	// detects counts its invocations.
+	// detects counts its invocations; detectPort, detectFenced and
+	// detectSwitched record the last call's arguments.
 	detectCapabilityFn func() (Capability, error)
 	detects            int
+	detectPort         int
+	detectFenced       []byte
+	detectSwitched     []byte
 
 	// waitConfigIDFn scripts WaitForGatewayConfigID (nil = succeed); waits
 	// records the options of every call.
@@ -61,8 +63,9 @@ func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, e
 	return nil, nil
 }
 
-func (m *mockService) DetectCapability(context.Context, string, string, int, []byte, []byte) (Capability, error) {
+func (m *mockService) DetectCapability(_ context.Context, _, _ string, port int, fenced, switched []byte) (Capability, error) {
 	m.detects++
+	m.detectPort, m.detectFenced, m.detectSwitched = port, fenced, switched
 	if m.detectCapabilityFn != nil {
 		return m.detectCapabilityFn()
 	}

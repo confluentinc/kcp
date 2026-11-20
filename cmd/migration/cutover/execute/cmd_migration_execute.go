@@ -262,14 +262,6 @@ func planModeFor(t manifest.MigrationType) reconcile.PlanMode {
 	}
 }
 
-// applyCommonPolicy copies the policy every migration type carries onto config:
-// the gateway config port the executors' actions read back during execute.
-func applyCommonPolicy(config *migration.MigrationConfig, p manifest.CommonPolicies) {
-	if p.GatewayConfigPort > 0 {
-		config.GatewayConfigPort = p.GatewayConfigPort
-	}
-}
-
 // effectivePolicyLogArgs renders the declared migration's effective policy as
 // slog key/value pairs for the audit log line. The per-type field list lives in
 // manifest's LogArgs methods, so a new field cannot silently drop out of it.

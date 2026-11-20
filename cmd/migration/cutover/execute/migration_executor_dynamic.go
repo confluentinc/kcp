@@ -38,10 +38,9 @@ func runDynamicBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout))
+	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort))
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
-	applyCommonPolicy(config, policy.CommonPolicies)
 	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)

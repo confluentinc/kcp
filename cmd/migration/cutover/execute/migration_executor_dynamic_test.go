@@ -191,9 +191,9 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 // --- --gateway-config-port reaches the dynamic capability probe ---
 
 // TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe
-// confirms end-to-end through the command that --gateway-config-port reaches
-// config.GatewayConfigPort before the dynamic capability probe
-// (DetectCapability) runs.
+// confirms that gatewayConfigPort reaches the dynamic capability probe
+// (DetectCapability) through the gateway.WithConfigPort option the dynamic
+// executor builds its actions with.
 func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *testing.T) {
 	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
@@ -208,6 +208,5 @@ func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *t
 	_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubDeps(rec, nil))
 	require.NoError(t, err)
 	assert.Equal(t, 9999, rec.port(),
-		"--gateway-config-port must reach config.GatewayConfigPort before the dynamic capability probe")
-	assert.Equal(t, 9999, config.GatewayConfigPort)
+		"--gateway-config-port must reach the dynamic capability probe")
 }

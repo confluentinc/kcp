@@ -69,18 +69,16 @@ func (c RouteChange) ApplyTo(crYAML []byte, routeName string) ([]byte, error) {
 	}
 }
 
-// RouteProbe returns a function for Target.Probe: it builds the fenced and the
-// switched CR from crYAML by applying each change to routeName.
-func RouteProbe(crYAML []byte, routeName string, fenced, switched RouteChange) func() (fencedCR, switchedCR []byte, err error) {
-	return func() ([]byte, []byte, error) {
-		f, err := fenced.ApplyTo(crYAML, routeName)
-		if err != nil {
-			return nil, nil, err
-		}
-		s, err := switched.ApplyTo(crYAML, routeName)
-		if err != nil {
-			return nil, nil, err
-		}
-		return f, s, nil
+// RouteProbe builds the fenced and the switched CR capability detection
+// inspects, by applying each change to routeName in crYAML.
+func RouteProbe(crYAML []byte, routeName string, fenced, switched RouteChange) (fencedCR, switchedCR []byte, err error) {
+	f, err := fenced.ApplyTo(crYAML, routeName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive fenced gateway CR: %w", err)
 	}
+	s, err := switched.ApplyTo(crYAML, routeName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive switched gateway CR: %w", err)
+	}
+	return f, s, nil
 }

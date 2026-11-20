@@ -33,11 +33,17 @@ func newEventReporter() (eventReporter, *[]string) {
 	return eventReporter{events: &events}, &events
 }
 
-func probeTarget() Target {
+// probeTarget is a target over the d2s golden CR and route changes, so the
+// Transitioner can build real probe CRs from it.
+func probeTarget(t *testing.T) Target {
+	t.Helper()
 	return Target{
 		Namespace: "ns",
 		Name:      "gw",
-		Probe:     func() ([]byte, []byte, error) { return []byte("fenced"), []byte("switched"), nil },
+		GatewayCR: readGolden(t, "d2s", "cr.yaml"),
+		Route:     "migration-route",
+		Fence:     RouteChange{Edit: EditRouteRules, Artifact: readGolden(t, "d2s", "fence.yaml")},
+		Switch:    RouteChange{Edit: EditRoute, Artifact: readGolden(t, "d2s", "switch.yaml")},
 	}
 }
 
@@ -97,7 +103,7 @@ func TestTransitionerApply_RolloutOrder(t *testing.T) {
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 	assert.Equal(t, []string{"GetGatewayPodUIDs", "PatchGatewayRoute"}, svc.calls)
 	assert.Equal(t, 1, svc.waitPodsCalls)
@@ -119,7 +125,7 @@ func TestTransitionerApply_HotReloadStampsTheConfigIDAndWaitsForIt(t *testing.T)
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
@@ -192,7 +198,7 @@ func TestTransitionerApply_LandedSemantics(t *testing.T) {
 			rec, _ := newEventReporter()
 			tn := NewTransitioner(svc, func() Reporter { return rec })
 
-			result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 			assert.Equal(t, tt.wantLanded, result.Landed)
 			tt.check(t, result.Err)
@@ -210,7 +216,7 @@ func TestTransitionerApply_AppliedMessagePrintsAfterThePatchAndBeforeTheAcceptan
 	}
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
 
@@ -258,12 +264,12 @@ func runFenceFenceUnfence(t *testing.T, target Target) map[types.UID]struct{} {
 }
 
 func TestTransitionerApply_StartSetCapturedOnceAndOnlyItsPodsSkippedOnRestore(t *testing.T) {
-	got := runFenceFenceUnfence(t, probeTarget())
+	got := runFenceFenceUnfence(t, probeTarget(t))
 	assert.Equal(t, uidSet("f1", "f2"), got, "only the start-of-run pod is skipped; a later fence's pod is still waited on")
 }
 
 func TestTransitionerApply_StartRouteFencedKeepsEveryPod(t *testing.T) {
-	target := probeTarget()
+	target := probeTarget(t)
 	target.StartRouteFenced = true
 	got := runFenceFenceUnfence(t, target)
 	assert.Equal(t, uidSet("pre-1", "f1", "f2"), got)
@@ -281,7 +287,7 @@ func TestTransitionerApply_RestoreWithNoEarlierFenceWaitsOnEveryPod(t *testing.T
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
-	result := tn.Apply(context.Background(), probeTarget(), unfenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), unfenceTransition())
 
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
@@ -304,7 +310,7 @@ func TestTransitionerEnsureCapability_ResolvesAndSmokeTestsOnce(t *testing.T) {
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
 	for i := 0; i < 2; i++ {
-		result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+		result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 		require.True(t, result.Landed)
 		require.NoError(t, result.Err)
 	}
@@ -329,10 +335,10 @@ func TestTransitionerResolveCapability_MarksTheSmokeTestAttempted(t *testing.T) 
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
-	require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget()))
+	require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget(t)))
 	require.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
@@ -364,14 +370,14 @@ func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 
-	first := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	assert.False(t, first.Landed)
 	require.Error(t, first.Err)
 	assert.Contains(t, first.Err.Error(), "failed to resolve gateway capability")
 	assert.ErrorIs(t, first.Err, smokeBoom)
 	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
 
-	second := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	second := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	assert.True(t, second.Landed)
 	assert.NoError(t, second.Err)
 	assert.Equal(t, 1, svc.detects)
@@ -380,17 +386,17 @@ func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
 }
 
 func TestTransitionerApply_ProbeErrorStopsBeforeAnyWrite(t *testing.T) {
-	probeBoom := errors.New("probe boom")
 	svc := &mockService{}
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
-	target := probeTarget()
-	target.Probe = func() ([]byte, []byte, error) { return nil, nil, probeBoom }
+	target := probeTarget(t)
+	target.GatewayCR = []byte("{{ not yaml")
 
 	result := tn.Apply(context.Background(), target, fenceTransition())
 
 	assert.False(t, result.Landed)
-	require.ErrorIs(t, result.Err, probeBoom)
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "failed to derive fenced gateway CR")
 	assert.Empty(t, svc.calls)
 	assert.Empty(t, svc.patchExpected)
 	assert.Equal(t, 0, svc.detects)
@@ -405,7 +411,7 @@ func TestTransitionerGeneration(t *testing.T) {
 	tn := NewTransitioner(svc, func() Reporter { return rec })
 	tn.SetExpectedGeneration(7)
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
 
@@ -413,14 +419,14 @@ func TestTransitionerGeneration(t *testing.T) {
 	assert.Equal(t, int64(7), svc.patchExpected[0])
 	assert.Equal(t, int64(8), tn.ExpectedGeneration())
 
-	err := tn.CheckGeneration(context.Background(), probeTarget(), "switch")
+	err := tn.CheckGeneration(context.Background(), probeTarget(t), "switch")
 	var gce *GenerationChangedError
 	require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
 	assert.Equal(t, int64(8), gce.Expected)
 	assert.Equal(t, int64(9), gce.Observed)
 }
 
-func TestTransitionerApply_NormalizesTheConfigPort(t *testing.T) {
+func TestTransitionerApply_WithConfigPortReachesTheVerifyWait(t *testing.T) {
 	tests := []struct {
 		port int
 		want int
@@ -439,11 +445,9 @@ func TestTransitionerApply_NormalizesTheConfigPort(t *testing.T) {
 				},
 			}
 			rec, _ := newEventReporter()
-			tn := NewTransitioner(svc, func() Reporter { return rec })
-			target := probeTarget()
-			target.ConfigPort = tt.port
+			tn := NewTransitioner(svc, func() Reporter { return rec }, WithConfigPort(tt.port))
 
-			result := tn.Apply(context.Background(), target, fenceTransition())
+			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 			require.True(t, result.Landed)
 			require.NoError(t, result.Err)
@@ -464,7 +468,7 @@ func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
 
-	result := tn.Apply(context.Background(), probeTarget(), fenceTransition())
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
@@ -508,6 +512,70 @@ func TestTransitionerCheckObservedGeneration(t *testing.T) {
 			assert.Equal(t, int64(7), gce.Observed)
 			assert.Equal(t, "ns", gce.Namespace)
 			assert.Equal(t, "gw", gce.Gateway)
+		})
+	}
+}
+
+func TestTransitionerBuildsProbeCRsFromTheTarget(t *testing.T) {
+	target := probeTarget(t)
+	wantFenced, wantSwitched, err := RouteProbe(target.GatewayCR, target.Route, target.Fence, target.Switch)
+	require.NoError(t, err)
+	assert.Equal(t, string(readGolden(t, "d2s", "fenced_cr.yaml")), string(wantFenced))
+	assert.Equal(t, string(readGolden(t, "d2s", "switched_cr.yaml")), string(wantSwitched))
+
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.ResolveCapability(context.Background(), target))
+	require.NoError(t, tn.ResolveCapability(context.Background(), target))
+
+	assert.Equal(t, 1, svc.detects, "the probe runs at most once per Transitioner")
+	assert.Equal(t, string(wantFenced), string(svc.detectFenced))
+	assert.Equal(t, string(wantSwitched), string(svc.detectSwitched))
+}
+
+func TestTransitionerProbeErrorsKeepTheirWrappers(t *testing.T) {
+	t.Run("a bad CR fails the fenced derivation", func(t *testing.T) {
+		target := probeTarget(t)
+		target.GatewayCR = []byte("{{ not yaml")
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		err := NewTransitioner(svc, func() Reporter { return rec }).ResolveCapability(context.Background(), target)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to derive fenced gateway CR: failed to parse gateway CR YAML")
+		assert.Equal(t, 0, svc.detects)
+	})
+	t.Run("a bad switch edit fails the switched derivation", func(t *testing.T) {
+		target := probeTarget(t)
+		target.Switch = RouteChange{Edit: RouteEdit(99)}
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		err := NewTransitioner(svc, func() Reporter { return rec }).ResolveCapability(context.Background(), target)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to derive switched gateway CR: unknown route edit 99")
+		assert.Equal(t, 0, svc.detects)
+	})
+}
+
+func TestTransitionerWithConfigPort(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []TransitionerOption
+		want int
+	}{
+		{"unset selects the default", nil, DefaultGatewayConfigPort},
+		{"zero selects the default", []TransitionerOption{WithConfigPort(0)}, DefaultGatewayConfigPort},
+		{"negative selects the default", []TransitionerOption{WithConfigPort(-1)}, DefaultGatewayConfigPort},
+		{"a configured port reaches DetectCapability", []TransitionerOption{WithConfigPort(19180)}, 19180},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockService{}
+			rec, _ := newEventReporter()
+			tn := NewTransitioner(svc, func() Reporter { return rec }, tt.opts...)
+			require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget(t)))
+			assert.Equal(t, tt.want, svc.detectPort)
 		})
 	}
 }
