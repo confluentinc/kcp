@@ -1,0 +1,8 @@
+rules:
+  routing:
+    coordination:
+      group: source
+    default: source
+    conditions:
+      - topics: ["t1.order"]
+        streamingDomain: target

@@ -1,0 +1,6 @@
+route:
+  name: migration-route
+  endpoint: gateway:9595
+  streamingDomain:
+    name: confluent-cloud
+    bootstrapServerId: SASL_PLAIN

@@ -1,0 +1,8 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
