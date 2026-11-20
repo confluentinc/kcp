@@ -1,0 +1,10 @@
+route:
+  name: migration-route
+  endpoint: kafka-gw.example.com:9092
+  streamingDomain:
+    name: target
+    bootstrapServerId: sasl-plain
+  security:
+    cluster:
+      target:
+        auth: passthrough

@@ -152,8 +152,8 @@ func TestEngineRun_CarriesGatewayGeneration(t *testing.T) {
 			if plan.GatewayGeneration != gen {
 				t.Errorf("Plan.GatewayGeneration = %d, want %d", plan.GatewayGeneration, gen)
 			}
-			if got := newResult(plan).GatewayGeneration; got != gen {
-				t.Errorf("Result.GatewayGeneration = %d, want %d", got, gen)
+			if got := newResult(plan).PlanBaseline; got != gen {
+				t.Errorf("Result.PlanBaseline = %d, want %d", got, gen)
 			}
 		})
 	}
@@ -186,7 +186,7 @@ func TestEngineRunHappyPath(t *testing.T) {
 // TestEngineRun_StaticSwitchedButUnobservedCR is the regression test for the
 // Gateway drift bug (design: ~/claude-plans/kcp/2026-10-23-gateway-cr-pod-sync-design.md
 // §8.2). The CR is switched to the target, but its status shows the operator
-// never observed that generation, so the pods may still serve the fence.
+// has not caught up with that change, so the pods may still serve the fence.
 // Reconcile reads the spec alone and would call every topic Unchanged; the pod
 // check's verdict now decides whether that stands.
 func TestEngineRun_StaticSwitchedButUnobservedCR(t *testing.T) {

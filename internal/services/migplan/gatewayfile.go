@@ -91,13 +91,13 @@ func cleanGatewayDoc(doc map[string]any) {
 // resolveModeStructurally infers a route's mode when it carries no explicit
 // mode field: a singular streamingDomain object binding (with a non-empty
 // name — see the CRD-default note below) means static; a non-empty plural
-// streamingDomains array means dynamic. Mirrors gateway.ResolveRouteMode's
-// structural resolution exactly, including its strictness: a route declaring
+// streamingDomains array means dynamic. This is the canonical
+// structural resolution, and it is strict: a route declaring
 // neither or both bindings is an error, not a silent default — the real
 // Gateway CRD enforces mutual exclusivity via a CEL XOR, so this shape only
 // occurs on a hand-edited or malformed CR, which should fail loudly here
 // rather than resolve to "static" and fail more confusingly later.
-func resolveModeStructurally(route map[string]any) (string, error) {
+func resolveModeStructurally(route map[string]any) (reconcile.RouteMode, error) {
 	// CFK's Gateway CRD schema defaults a zero-valued streamingDomain object
 	// (name: "", bootstrapServerId: "") onto EVERY route, including
 	// dynamic-mode ones that only ever set streamingDomains (plural) — a
@@ -112,9 +112,9 @@ func resolveModeStructurally(route map[string]any) (string, error) {
 	case hasSingular && hasPlural:
 		return "", fmt.Errorf("route declares both a singular streamingDomain and a plural streamingDomains binding")
 	case hasPlural:
-		return "dynamic", nil
+		return reconcile.RouteModeDynamic, nil
 	case hasSingular:
-		return "static", nil
+		return reconcile.RouteModeStatic, nil
 	default:
 		return "", fmt.Errorf("route declares neither a streamingDomain nor a streamingDomains binding")
 	}
@@ -154,7 +154,7 @@ func findRoute(doc map[string]any, name string) (*reconcile.RouteConfig, error) 
 		}
 
 		if mode, ok := route["mode"].(string); ok && mode != "" {
-			rc.Mode = mode
+			rc.Mode = reconcile.RouteMode(mode)
 		} else {
 			mode, err := resolveModeStructurally(route)
 			if err != nil {

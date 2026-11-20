@@ -6,7 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,7 +74,7 @@ const (
 // runDynamicBranch directly builds the config and its matching
 // *migplan.Result (dynamicResult) by hand. edit runs last, so a test can vary
 // a single field.
-func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
+func dynamicConfig(t *testing.T, f fixture, edit func(*migrun.MigrationConfig)) *migrun.MigrationConfig {
 	t.Helper()
 	g := loadGateway(t, f.manifestPath)
 	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1")
@@ -90,7 +90,7 @@ func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig
 
 // dynamicResult builds the *migplan.Result matching config exactly — the
 // stand-in for what a live migplan.Reconcile would have returned for it.
-func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
+func dynamicResult(config *migrun.MigrationConfig) *migplan.Result {
 	return &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  config.Topics,
@@ -116,7 +116,7 @@ func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
 // needs real cobra flag parsing, which this seam skips; setting the manifest
 // field directly is equivalent for what these tests observe).
 func runDynamicBranchWithConfig(
-	t *testing.T, f fixture, config *migration.MigrationConfig,
+	t *testing.T, f fixture, config *migrun.MigrationConfig,
 	editGateway func(*manifest.GatewayMigration),
 	deps executorDependencies,
 ) (string, error) {
@@ -163,7 +163,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 
 	t.Run("flag caps the batch", func(t *testing.T) {
 		f := dynamicFixture(t)
-		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
+		config := dynamicConfig(t, f, func(c *migrun.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		// The CLI's --promote-batch-size relies on real cobra flag parsing
 		// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
@@ -179,7 +179,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
 		f := dynamicFixture(t)
-		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
+		config := dynamicConfig(t, f, func(c *migrun.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		_, err := runDynamicBranchWithConfig(t, f, config, nil, stubDeps(nil, rec))
 		require.NoError(t, err)
@@ -191,23 +191,23 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesDynamicActions(t *testing.T)
 // --- --gateway-config-port reaches the dynamic capability probe ---
 
 // TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe
-// confirms end-to-end through the command that --gateway-config-port reaches
-// config.GatewayConfigPort before the dynamic capability probe
-// (DetectCapability) runs.
+// confirms that gatewayConfigPort reaches the dynamic capability probe
+// (DetectCapability) through the gateway.WithConfigPort option the dynamic
+// executor builds its actions with.
 func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *testing.T) {
 	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
 
-	rec := &recordingGatewayService{}
+	rec := newPortRecordingGateway()
 	// The CLI's --gateway-config-port relies on real cobra flag parsing
 	// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for
-	// what this test observes: runDynamicBranch reads GatewayConfigPort straight
-	// from g.Spec.DynamicMigration.Policies.
+	// what this test observes: runDynamicBranch reads the port straight from
+	// g.Spec.DynamicMigration.Policies.GatewayConfigPort and hands it to the
+	// Transitioner through gateway.WithConfigPort.
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DynamicMigration.Policies.GatewayConfigPort = 9999 }
 	_, err := runDynamicBranchWithConfig(t, f, config, editGateway, stubDeps(rec, nil))
 	require.NoError(t, err)
 	assert.Equal(t, 9999, rec.port(),
-		"--gateway-config-port must reach config.GatewayConfigPort before the dynamic capability probe")
-	assert.Equal(t, 9999, config.GatewayConfigPort)
+		"--gateway-config-port must reach the dynamic capability probe")
 }

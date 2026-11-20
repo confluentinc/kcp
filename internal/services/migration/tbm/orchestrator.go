@@ -11,8 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/looplab/fsm"
@@ -94,7 +94,7 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config   *migration.MigrationConfig
+	config   *migrun.MigrationConfig
 	fsm      *fsm.FSM
 	actions  *TBMActions
 	reporter *reporter
@@ -102,13 +102,13 @@ type TBMOrchestrator struct {
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
 func NewTBMOrchestrator(
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	actions *TBMActions,
 ) *TBMOrchestrator {
 	orchestrator := &TBMOrchestrator{
 		config:   config,
 		actions:  actions,
-		reporter: newReporter(),
+		reporter: actions.reporter,
 	}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
@@ -178,6 +178,9 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 	ctx, runSpan := tracing.Start(ctx, tracerName, "migration.run", runAttrs...)
 	defer func() { tracing.End(runSpan, err) }()
 	tracing.Mark(ctx, tracerName, "migration.started", runAttrs...)
+	if err := o.actions.validate(); err != nil {
+		return err
+	}
 
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
@@ -201,7 +204,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			return o.handleStepFailure(ctx, step, stepErr)
 		}
 		if step.Event == EventInitialize {
-			runSpan.SetAttributes(migration.RunAttributes(o.config)...)
+			runSpan.SetAttributes(migrun.RunAttributes(o.config)...)
 		}
 		o.reporter.stepDone()
 
@@ -252,12 +255,20 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	// outside the FSM: the fence transition was cancelled, so the machine never
 	// left lags_ok and there is no edge to travel back along. Only the gateway
 	// needs putting right.
-	if errors.Is(stepErr, migration.ErrFenceUnconfirmed) {
+	if errors.Is(stepErr, migrun.ErrFenceUnconfirmed) {
 		if !o.config.RollbackAllowed {
-			o.reporter.warn("Fence could not be confirmed on every gateway pod — keeping the fence: %s", rollbackForbiddenReason)
+			o.reporter.warn("%s", gateway.FenceKeptWarning(rollbackForbiddenReason))
 			return stepFailure
 		}
 		return o.removeUnconfirmedFence(ctx, stepFailure)
+	}
+
+	// A switchover that reached the CR but was not confirmed is past promote,
+	// so the rollback logic below would not roll back past promote either; only
+	// the message to the user differs.
+	if step.Event == EventSwitch && errors.Is(stepErr, migrun.ErrSwitchUnconfirmed) {
+		o.reporter.warn("%s", gateway.SwitchUnconfirmedWarning("the switchover", "the fenced route"))
+		return stepFailure
 	}
 
 	// Roll back while kcp's fence is up and nothing is promoted yet: this run's
@@ -283,9 +294,9 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 	o.reporter.warn("%s — attempting to remove the fence to restore traffic", reason)
 
-	path := migration.RollbackPathAbortFence
+	path := migrun.RollbackPathAbortFence
 	if !thisRunsFence {
-		path = migration.RollbackPathEarlierRunFence
+		path = migrun.RollbackPathEarlierRunFence
 	}
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback", attribute.String("kcp.rollback.path", path))
 	var rollbackErr error
@@ -330,37 +341,28 @@ const rollbackForbiddenReason = "part of this batch is already promoted, and unf
 
 // removeUnconfirmedFence sets the route's rules to reconcile's rollback target
 // after a fence that reached the cluster but could not be confirmed on every
-// gateway pod. Whether the operator rejected the fenced rules or they are
+// gateway instance. Whether the fenced rules were rejected or are
 // still propagating, they are live in the CR and could hold client traffic,
 // so they are taken out either way. A failed removal is reported with the
 // fence's own failure, since the fence may still be up.
 func (o *TBMOrchestrator) removeUnconfirmedFence(ctx context.Context, stepFailure error) error {
 	ctx, rollback := tracing.Start(ctx, tracerName, "migration.rollback",
-		attribute.String("kcp.rollback.path", migration.RollbackPathUnconfirmedFence))
+		attribute.String("kcp.rollback.path", migrun.RollbackPathUnconfirmedFence))
 	var rollbackErr error
 	defer func() { tracing.End(rollback, rollbackErr) }()
 
-	var rejected *gateway.GatewayRejectedError
-	if errors.As(stepFailure, &rejected) {
-		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; attempting to remove it", rejected.Reason)
-	} else {
-		o.reporter.warn("Fence could not be confirmed on every gateway pod — attempting to remove it")
-	}
+	o.reporter.warn("%s", gateway.UnconfirmedFenceWarning(stepFailure, "remove it"))
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		rollbackErr = err
 		if errors.Is(err, gateway.ErrGatewayChanged) {
-			return o.stopOnGatewayChange(stepFailure, err, unconfirmedFenceStop)
+			return o.stopOnGatewayChange(stepFailure, err, gateway.UnconfirmedFenceStopped)
 		}
 		slog.Error("failed to remove an unconfirmed fence", "error", err)
-		return fmt.Errorf("%w; additionally, removing the fence failed: %w; the gateway may still hold the fenced rules on some pods, so inspect it before re-running", stepFailure, err)
+		return gateway.UnconfirmedFenceNotRestored(stepFailure, err, "removing the fence", "the fenced rules")
 	}
 	o.reporter.Success("Fence removed — traffic restored to pre-fence state")
 	return stepFailure
 }
-
-// unconfirmedFenceStop is where a run stops when the CR moved before the
-// removal of an unconfirmed fence could restore it.
-const unconfirmedFenceStop = "fence applied but not confirmed on every gateway pod"
 
 // stoppedAt says where this run stopped, for a stop on a changed gateway CR.
 // Topics may already be promoted when reconcile forbade a rollback (it does
@@ -404,14 +406,14 @@ func stoppedAt(state string, fencedAtStart, mayBePromoted bool) string {
 // stopOnGatewayChange ends a run whose gateway CR is no longer the one kcp last
 // knew (err Is gateway.ErrGatewayChanged). kcp makes no further gateway write:
 // it reports what it observed and where it stopped, and leaves the gateway for
-// the operator to inspect. err is either the step's own error or a
+// the user to inspect. err is either the step's own error or a
 // compensation's, in which case it is joined onto stepFailure so both survive.
 func (o *TBMOrchestrator) stopOnGatewayChange(stepFailure, err error, stopped string) error {
 	var gce *gateway.GenerationChangedError
 	if errors.As(err, &gce) {
 		o.reporter.warn("%s", gce.Summary(stopped))
+		o.reporter.Remediation("%s", gce.Remediation())
 	}
-	o.reporter.Remediation("Inspect the gateway:\n   %s", gateway.InspectCommands(o.config.K8sNamespace, o.config.InitialCrName))
 	slog.Debug("stopping on a changed gateway CR", "stopped", stopped, "error", err)
 	if errors.Is(stepFailure, err) {
 		return stepFailure
@@ -491,7 +493,7 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 // onAbortFence runs the abort_fence rollback: it unfences the gateway to
 // restore traffic to its pre-migration state. If unfencing fails, cancel the
 // rollback so the FSM stays at fenced — the next run's from-zero walk
-// re-applies the fence step (a no-op rollout if the gateway never diverged)
+// re-applies the fence step (a no-op if the gateway never diverged)
 // before anything downstream trusts it. Mirrors migration.onAbortFence,
 // minus the reason branch (TBM's abort_fence has only one source state,
 // fenced — every rollback is an unrouted-producer detection) and the

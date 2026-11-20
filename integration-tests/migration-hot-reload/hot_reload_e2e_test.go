@@ -160,7 +160,7 @@ func TestCapabilityIsDetected(t *testing.T) {
 }
 
 // TestConfigIDOnlyApplyHotReloads is the contract's core claim, and the exact
-// probe VerifyHotReloadCapability runs before fencing: a change to nothing but
+// probe SmokeTestHotReload runs before fencing: a change to nothing but
 // spec.configId reaches every pod without restarting any of them.
 func TestConfigIDOnlyApplyHotReloads(t *testing.T) {
 	ctx := context.Background()

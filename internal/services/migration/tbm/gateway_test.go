@@ -8,132 +8,16 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
-// mockGatewayService implements gateway.Service using function fields for test
-// control, mirroring migration's own (unexported, package-private)
-// mockGatewayService — this is TBM's own copy: test
-// doubles are kept per-package even where the underlying interface is
-// shared.
-type mockGatewayService struct {
-	getGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
-	detectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
-	waitForConfigIDFn      func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	checkPermissionsFn     func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	patchGatewayRouteFn    func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
-	patchGatewayConfigIDFn func(ctx context.Context, namespace, name, configID string) (string, error)
-	getGatewayGenerationFn func(ctx context.Context, namespace, name string) (int64, error)
-	// patchRouteGenFn, when set, takes precedence over patchGatewayRouteFn and
-	// scripts the full PatchResult (generation included) or a refusal.
-	patchRouteGenFn func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error)
-	// routeExpected records every PatchGatewayRoute call's expectedGeneration.
-	routeExpected            []int64
-	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
-	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
-	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
-}
-
-func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
-	if m.getGatewayYAMLFn != nil {
-		return m.getGatewayYAMLFn(ctx, namespace, name)
-	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
-}
-
-// DetectCapability defaults to VerifyRollout — the mode every pre-hot-reload
-// cluster gets — so tests that do not care about hot-reload keep exercising
-// the rollout path.
-func (m *mockGatewayService) DetectCapability(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error) {
-	if m.detectCapabilityFn != nil {
-		return m.detectCapabilityFn(ctx, namespace, name, port, fenced, switchover)
-	}
-	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error {
-	if m.waitForConfigIDFn != nil {
-		return m.waitForConfigIDFn(ctx, namespace, name, opts)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	if m.checkPermissionsFn != nil {
-		return m.checkPermissionsFn(ctx, verb, resource, group, namespace)
-	}
-	return true, nil
-}
-
-func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error) {
-	m.routeExpected = append(m.routeExpected, expectedGeneration)
-	if m.patchRouteGenFn != nil {
-		return m.patchRouteGenFn(ctx, namespace, name, rp, configID, expectedGeneration)
-	}
-	if m.patchGatewayRouteFn != nil {
-		str, err := m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
-		return gateway.PatchResult{ConfigID: str}, err
-	}
-	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
-}
-
-func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string, _ int64) (gateway.PatchResult, error) {
-	if m.patchGatewayConfigIDFn != nil {
-		str, err := m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
-		return gateway.PatchResult{ConfigID: str}, err
-	}
-	return gateway.PatchResult{}, fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
-}
-
-func (m *mockGatewayService) GetGatewayGeneration(ctx context.Context, namespace, name string) (int64, error) {
-	if m.getGatewayGenerationFn != nil {
-		return m.getGatewayGenerationFn(ctx, namespace, name)
-	}
-	return 0, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
-	if m.waitForGatewayAcceptedFn != nil {
-		return m.waitForGatewayAcceptedFn(ctx, namespace, name, pollInterval, timeout)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
-	if m.getGatewayPodUIDsFn != nil {
-		return m.getGatewayPodUIDsFn(ctx, namespace, name)
-	}
-	// A one-UID default: PatchCR captures the pods of a rolling gateway before
-	// every patch. Tests that care override getGatewayPodUIDsFn.
-	return map[k8stypes.UID]struct{}{"default-pod": {}}, nil
-}
-
-func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
-	if m.getDeploymentGenFn != nil {
-		return m.getDeploymentGenFn(ctx, namespace, name)
-	}
-	return 0, nil
-}
-
-func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
-	if m.waitForGatewayPodsFn != nil {
-		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
-	}
-	return nil
-}
-
-func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
-	if m.waitForGatewayReadyFn != nil {
-		return m.waitForGatewayReadyFn(ctx, namespace, name, baselineGeneration, pollInterval, timeout, onProgress)
-	}
-	return nil
-}
+// mockGatewayService is the shared gateway.TransitionClient fake.
+type mockGatewayService = gatewaytest.Fake
 
 // testGatewayYAML is a minimal dynamic-route gateway CR: one route
 // ("migration-route") bound to two streaming domains via the plural
@@ -167,8 +51,8 @@ spec:
           default: source
 `
 
-func testTBMConfig() *migration.MigrationConfig {
-	return &migration.MigrationConfig{
+func testTBMConfig() *migrun.MigrationConfig {
+	return &migrun.MigrationConfig{
 		MigrationId:       "tbm-1",
 		K8sNamespace:      "confluent",
 		InitialCrName:     "gateway-initial",
@@ -208,13 +92,13 @@ const testRollbackFenceYAML = "rules:\n  routing:\n    coordination:\n      grou
 func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -226,12 +110,12 @@ func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 func TestTBMActions_Fence_PatchesRulesFieldWithFencingBlock(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			gotRP = rp
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -249,22 +133,22 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 	var sawConfigID string
 	var waitedForID string
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			sawConfigID = configID
 			return configID, nil
 		},
-		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		PatchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+		WaitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			waitedForID = opts.ConfigID
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -274,17 +158,17 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 
 func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		PatchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		WaitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out waiting for pods to report the new configId")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -294,11 +178,11 @@ func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testi
 
 func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -314,16 +198,16 @@ func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 // len(config.Topics)==0 guard ("No topics to check").
 func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when there are no topics to fence")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when there are no topics to fence")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil
 	config.FenceYAML = ""
@@ -345,12 +229,12 @@ func TestTBMActions_Fence_PatchesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 		t.Run(fmt.Sprintf("blocked=%v", blocked), func(t *testing.T) {
 			var gotRP gateway.RoutePatch
 			gw := &mockGatewayService{
-				patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+				PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 					gotRP = rp
 					return "", nil
 				},
 			}
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 			config := testTBMConfig()
 			config.FenceYAML = fmt.Sprintf("rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: %v\n", blocked)
 
@@ -371,12 +255,12 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 		// The apply itself must succeed so the rejection surfaces from the
 		// acceptance wait, mirroring migration's own
 		// TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage.
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
-		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -388,13 +272,13 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -406,12 +290,12 @@ func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
 func TestTBMActions_Switch_PatchesRulesFieldWithRoutingConditions(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			gotRP = rp
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -428,22 +312,22 @@ func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *tes
 	var sawConfigID string
 	var waitedForID string
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			sawConfigID = configID
 			return configID, nil
 		},
-		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		PatchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+		WaitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			waitedForID = opts.ConfigID
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -453,17 +337,17 @@ func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *tes
 
 func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		PatchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
-		waitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+		WaitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out waiting for pods to report the new configId")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -473,11 +357,11 @@ func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *test
 
 func TestTBMActions_Switch_ApplyErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
@@ -487,16 +371,16 @@ func TestTBMActions_Switch_ApplyErrorPropagates(t *testing.T) {
 
 func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when there are no topics to switch")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when there are no topics to switch")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil
 	config.FenceYAML = ""
@@ -508,18 +392,46 @@ func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
 
 func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
-		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Switch(context.Background(), config)
 	require.Error(t, err)
 	var rejected *gateway.GatewayRejectedError
 	assert.ErrorAs(t, err, &rejected, "a GatewayRejectedError must be unwrappable by the caller")
+}
+
+// TestTBMSwitch_LandedButUnconfirmedIsMarked: once the switchover patch has
+// reached the CR, a failure confirming it is marked
+// migrun.ErrSwitchUnconfirmed; a patch that never reached the CR is
+// returned unmarked.
+func TestTBMSwitch_LandedButUnconfirmedIsMarked(t *testing.T) {
+	t.Run("acceptance fails after the patch landed", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+			WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
+			},
+		}
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
+	})
+	t.Run("the patch never reached the CR", func(t *testing.T) {
+		gw := &mockGatewayService{
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+				return "", fmt.Errorf("connection refused")
+			},
+		}
+		err := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{}).Switch(context.Background(), testTBMConfig())
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, migrun.ErrSwitchUnconfirmed)
+	})
 }
 
 // TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim proves Switch never
@@ -531,12 +443,12 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 func TestTBMActions_Switch_PatchesSwitchoverYAMLVerbatim(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
 			gotRP = rp
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.SwitchoverYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\", \"t1.shipment\"]\n        streamingDomain: target\n"
 
@@ -555,17 +467,17 @@ func TestTBMActions_Switch_PatchesSwitchoverYAMLVerbatim(t *testing.T) {
 // TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch proves
 // capability resolution happens at most once per process: when Fence runs
 // before Switch in the same TBMActions instance (the normal, same-invocation
-// case), Switch's own call to ensureGatewayCapability must be a no-op.
+// case), Switch's own capability resolution through the Transitioner must be a no-op.
 func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *testing.T) {
 	var detectCalls int
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			detectCalls++
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -581,13 +493,13 @@ func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *test
 func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t *testing.T) {
 	var detectCalls int
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			detectCalls++
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Switch(context.Background(), config))
@@ -598,13 +510,13 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 func TestTBMActions_UnfenceGateway_SetsRulesToTheReconciledRollbackTarget(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+		PatchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -618,11 +530,11 @@ func TestTBMActions_UnfenceGateway_SetsRulesToTheReconciledRollbackTarget(t *tes
 
 func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("the server rejected our request")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -632,12 +544,12 @@ func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) 
 
 func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
-		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "spec.routes[0] references an unknown streamingDomain"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.unfenceGateway(context.Background(), config)
@@ -647,52 +559,48 @@ func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t 
 }
 
 // TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability proves
-// resolveGatewayCapability passes config.GatewayConfigPort — not a hard-coded
-// constant — through to DetectCapability, mirroring
-// migration.ResolveGatewayCapability's own port-settling behavior (see
-// internal/services/migration/workflow.go's ResolveGatewayCapability).
+// the port TBMActions is constructed with (gateway.WithConfigPort) — not a
+// hard-coded constant — reaches DetectCapability (see
+// gateway.Transitioner's port settling).
 // mockGatewayService already supports overriding DetectCapability via its
-// detectCapabilityFn function field, so no new stub type is needed here.
+// DetectCapabilityFn function field, so no new stub type is needed here.
 func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *testing.T) {
 	var sawPort int
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
 			sawPort = port
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gateway.NewTransitionerFactory(gw, gateway.WithConfigPort(9999)), &mockClusterLinkService{})
 	config := testTBMConfig()
-	config.GatewayConfigPort = 9999
 
-	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
+	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
 	assert.Equal(t, 9999, sawPort)
 }
 
-// TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves an unset
-// (zero-value) config.GatewayConfigPort still settles onto
-// gateway.DefaultGatewayConfigPort before the capability probe, exactly like
-// migration.ResolveGatewayCapability.
+// TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves a zero
+// gateway.WithConfigPort still settles onto
+// gateway.DefaultGatewayConfigPort before the capability probe, as the AAO
+// path does through the same Transitioner.
 func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 	var sawPort int
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
 			sawPort = port
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gateway.NewTransitionerFactory(gw, gateway.WithConfigPort(0)), &mockClusterLinkService{})
 	config := testTBMConfig()
-	config.GatewayConfigPort = 0
 
-	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
-	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
-	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
+	require.NoError(t, actions.gw.EnsureCapability(context.Background(), actions.target(config)))
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort, "an unset port reaches the capability probe as the default")
 }
 
 // TestTBMActions_Fence_UnconfirmedFenceIsMarked: once the fence patch has
 // reached the cluster, every later failure leaves the fenced rules there, so
-// Fence marks it migration.ErrFenceUnconfirmed for the orchestrator to remove.
+// Fence marks it migrun.ErrFenceUnconfirmed for the orchestrator to remove.
 // A patch that never reached the cluster is not marked.
 func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 	patchOK := func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil }
@@ -702,39 +610,39 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 		marked bool
 	}{
 		{"an apply failure is not an unconfirmed fence", &mockGatewayService{
-			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 				return "", fmt.Errorf("k8s API unavailable")
 			},
 		}, false},
 		{"an apply that landed but could not be read back is an unconfirmed fence", &mockGatewayService{
-			patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 				return "", fmt.Errorf("%w: stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified)
 			},
 		}, true},
 		{"an acceptance failure is an unconfirmed fence", &mockGatewayService{
-			patchGatewayRouteFn: patchOK,
-			waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			PatchGatewayRouteFn: patchOK,
+			WaitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 				return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 			},
 		}, true},
 		{"a verification failure is an unconfirmed fence", &mockGatewayService{
-			patchGatewayRouteFn: patchOK,
-			waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+			PatchGatewayRouteFn: patchOK,
+			WaitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 				return fmt.Errorf("gateway pods did not converge")
 			},
 		}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), tc.gw, &mockClusterLinkService{})
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(tc.gw), &mockClusterLinkService{})
 
 			err := actions.Fence(context.Background(), testTBMConfig())
 
 			require.Error(t, err)
 			if tc.marked {
-				assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
+				assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed, "the fenced rules reached the cluster, so they must be removed")
 			} else {
-				assert.NotErrorIs(t, err, migration.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
+				assert.NotErrorIs(t, err, migrun.ErrFenceUnconfirmed, "nothing reached the cluster, so there is nothing to remove")
 			}
 		})
 	}
@@ -746,8 +654,8 @@ func TestTBMActions_Fence_UnconfirmedFenceIsMarked(t *testing.T) {
 func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 	var waitCalls int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
-		waitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayPodsFn: func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
 			waitCalls++
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 		}}
@@ -758,12 +666,12 @@ func TestTBMFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 			return nil, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 
 	err := actions.Fence(context.Background(), testTBMConfig())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, migration.ErrFenceUnconfirmed)
+	assert.ErrorIs(t, err, migrun.ErrFenceUnconfirmed)
 	assert.Equal(t, 1, waitCalls, "the fence must have waited for the replaced pods")
 	assert.Zero(t, promoteSideCalls, "nothing promote-side may run after a failed fence")
 }
@@ -780,19 +688,19 @@ func fenceThenUnfenceWaits(t *testing.T, fencedAtStart bool) []map[k8stypes.UID]
 	var captured int
 	var waits []map[k8stypes.UID]struct{}
 	gw := &mockGatewayService{
-		getGatewayPodUIDsFn: func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+		GetGatewayPodUIDsFn: func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			require.Less(t, captured, len(captures), "only the fence and the unfence capture pods")
 			c := captures[captured]
 			captured++
 			return c, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		WaitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			waits = append(waits, initialPodUIDs)
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.FencedAtStart = fencedAtStart
 
@@ -821,4 +729,10 @@ func TestTBMUnfence_FencedAtStartKeepsAllPods(t *testing.T) {
 
 	assert.Equal(t, map[k8stypes.UID]struct{}{"pre-1": {}, "fenced-1": {}}, waits[1],
 		"with the fence up at start every captured pod carries it, so the unfence waits on all of them")
+}
+
+// fakeTransitioner is the transitioner factory over a test gateway client; a
+// nil client yields a Transitioner whose HasClient is false.
+func fakeTransitioner(gw gateway.TransitionClient) gateway.TransitionerFactory {
+	return gateway.NewTransitionerFactory(gw)
 }

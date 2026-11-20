@@ -119,7 +119,7 @@ The gateway applies trial feature limits without an Enterprise licence, and then
 **never starts its config-file watcher** — while CFK renders the new config,
 projects it into every pod and reports `hot-reload-status=Succeeded`. No
 Kubernetes or CFK signal shows the difference; only `GET /config` does. That
-asymmetry is why kcp has `VerifyHotReloadCapability`, and why `setup.sh` greps the
+asymmetry is why kcp has `SmokeTestHotReload`, and why `setup.sh` greps the
 gateway log for the trial-mode warning before declaring itself ready.
 
 `setup.sh` resolves the licence in precedence order: from `GATEWAY_LICENSE_KEY` if

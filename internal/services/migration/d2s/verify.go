@@ -9,11 +9,10 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -22,7 +21,7 @@ import (
 // fence. The refusal itself is printed with the reconcile report renderer, as --dry-run prints it.
 var ErrVerifyRefused = errors.New("the conversion's checks refused after the fence")
 
-// VerifyFence runs after the fence is confirmed on every gateway pod and re-reads every fact:
+// VerifyFence runs after the fence is confirmed as in force on the gateway and re-reads every fact:
 //
 //  1. gather the facts and re-run the route and credential checks; a refusal here comes before
 //     snapshot 1, because a denied probe means the listings may be partial;
@@ -35,7 +34,7 @@ var ErrVerifyRefused = errors.New("the conversion's checks refused after the fen
 //  8. hand the last snapshot (2, or 1 if steps 4-6 were skipped), restricted to G, to sync_offsets.
 //
 // A refusal is returned as ErrVerifyRefused; a read failure is a plain error, never a refusal.
-func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, p Policy) error {
+func (a *D2SActions) VerifyFence(ctx context.Context, config *migrun.MigrationConfig, p Policy) error {
 	a.handoff = nil
 	if p.DetectUnroutedCommitsDuration < 0 {
 		return fmt.Errorf("verify_fence needs a detection window of zero (skip) or above, got %s", p.DetectUnroutedCommitsDuration)
@@ -56,11 +55,13 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migration.Migratio
 		if facts == nil || facts.Link == nil {
 			return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
 		}
-		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
-		// would roll back); it stops the run with no further gateway write.
+		// Confirm the gateway is unchanged since the plan (one more read of it, after the gather). A moved
+		// gateway is not a refusal (that would roll back); it stops the run with no further gateway write.
 		// A nil gateway falls through to CheckPreconditions, which refuses it as a missing route.
-		if facts.Gateway != nil && facts.Gateway.Generation > 0 && a.gatewayGeneration > 0 && facts.Gateway.Generation != a.gatewayGeneration {
-			return &gateway.GenerationChangedError{Namespace: config.K8sNamespace, Gateway: config.InitialCrName, Expected: a.gatewayGeneration, Observed: facts.Gateway.Generation}
+		if facts.Gateway != nil {
+			if err := a.gw.VerifyUnchangedSincePlan(ctx, a.target(config), "verify_fence"); err != nil {
+				return err
+			}
 		}
 		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
 		view = v
@@ -183,7 +184,7 @@ func convertFenceCheck(gw *reconcile.GatewayConfig) reconcile.PreconditionResult
 }
 
 // refuse renders report as --dry-run would and returns ErrVerifyRefused carrying every failed check.
-func (a *D2SActions) refuse(config *migration.MigrationConfig, report reconcile.Report) error {
+func (a *D2SActions) refuse(config *migrun.MigrationConfig, report reconcile.Report) error {
 	migplan.RenderReport(a.deps.Out, report, migplan.RenderView{Route: config.Route, TargetDomain: a.deps.Input.TargetDomain, Conversion: true})
 	var reasons []string
 	for _, pc := range report.Preconditions {

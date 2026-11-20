@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-const convertMode = "convert"
-
 // convertTargetCheckName names the precondition that refuses any other target.
 const convertTargetCheckName = "conversion target is static"
 
@@ -45,23 +43,23 @@ func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	if in.Type != TypeDynamicToStatic {
 		report.Preconditions = []PreconditionResult{fail(convertTargetCheckName, fmt.Sprintf(
 			"the declared type is %q; this strategy runs a dynamic-to-static conversion only", in.Type))}
-		return &Plan{Report: report, Mode: convertMode}
+		return &Plan{Report: report, Mode: ModeConvert}
 	}
 
-	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+	if gw != nil && gw.Route != nil && gw.Route.Mode == RouteModeStatic {
 		if sd, ok := mapField(gw.Route.Raw, "streamingDomain"); ok && stringField(sd, "name") == in.TargetDomain {
 			// A completed conversion is nothing to do only while the static
 			// route blocks nothing: a live fence there is not "done".
 			fenceCheck := routeLevelFenceCheck(gw.Route)
 			report.Preconditions = []PreconditionResult{pass("route is already static on the target domain"), fenceCheck}
 			if !fenceCheck.OK {
-				return &Plan{Report: report, Mode: convertMode}
+				return &Plan{Report: report, Mode: ModeConvert}
 			}
-			return &Plan{Report: report, Mode: convertMode, NothingToDo: true}
+			return &Plan{Report: report, Mode: ModeConvert, NothingToDo: true}
 		}
 		report.Preconditions = []PreconditionResult{fail("route is dynamic", fmt.Sprintf(
 			"route %q is static but not bound to targetStreamingDomain %q; there is nothing to convert", gw.Route.Name, in.TargetDomain))}
-		return &Plan{Report: report, Mode: convertMode}
+		return &Plan{Report: report, Mode: ModeConvert}
 	}
 
 	// From here the route is dynamic (or CheckPreconditions refuses it). A
@@ -69,14 +67,14 @@ func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// previous run left kcp's convert fence on it, that fence keeps blocking
 	// every topic, and the operator must be told so.
 	refused := func() *Plan {
-		if gw != nil && gw.Route != nil && gw.Route.Mode == "dynamic" {
+		if gw != nil && gw.Route != nil && gw.Route.Mode == RouteModeDynamic {
 			if rules, _ := ParseRules(gw.Route.Rules); rules.HasConvertFence() {
 				report.Warnings = append(report.Warnings, fmt.Sprintf(
 					"route %q still carries kcp's conversion fence (rules.fencing topicPatterns ['.*']), so it is blocking every topic on the route; fix the refusal above and re-run (kcp keeps or lifts the fence as the run proceeds), or remove kcp's entry from the route's rules.fencing by hand to restore traffic now",
 					gw.Route.Name))
 			}
 		}
-		return &Plan{Report: report, Mode: convertMode}
+		return &Plan{Report: report, Mode: ModeConvert}
 	}
 
 	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
@@ -188,7 +186,7 @@ func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	}
 
 	report.ConvertToStatic = true
-	return &Plan{Report: report, Mode: convertMode, Artifacts: &Artifacts{
+	return &Plan{Report: report, Mode: ModeConvert, Artifacts: &Artifacts{
 		FenceRules:         fenceBytes,
 		SwitchoverRules:    switchBytes,
 		RollbackFenceRules: rollbackBytes,

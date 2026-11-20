@@ -44,3 +44,20 @@ func TestTracing_PromoteRecordsBatchesAndPolls(t *testing.T) {
 	assert.GreaterOrEqual(t, lagPolls.AsInt64(), int64(1))
 	tracingtest.AssertNoValues(t, spans, "topic-a", "topic-b")
 }
+
+func TestTracing_FenceGateway_HotReloadConfirmsThroughVerifyTransition(t *testing.T) {
+	rec := tracingtest.Install(t)
+	var applied []string
+	gw := hotReloadCapableGateway(&applied)
+	actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
+	config := hotReloadConfig()
+	ctx := context.Background()
+	require.NoError(t, actions.ResolveGatewayCapability(ctx, config))
+	require.NoError(t, actions.FenceGateway(ctx, config))
+
+	spans := tracingtest.Spans(rec)
+	verify := tracingtest.Find(t, spans, "gateway.verify_transition")
+	mech, _ := tracingtest.Attr(verify, "kcp.gateway.mechanism")
+	assert.Equal(t, "config_id", mech.AsString())
+	assert.Contains(t, tracingtest.Names(tracingtest.Children(spans, verify)), "gateway.wait_config_applied")
+}
