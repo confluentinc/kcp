@@ -107,26 +107,6 @@ func (s *MigrationActions) target(config *migrun.MigrationConfig) gateway.Target
 	}
 }
 
-// ResolveGatewayCapability determines how gateway state transitions will be
-// verified on the live cluster and adopts that for this run, without the
-// hot-reload smoke test: a caller that resolves directly owns that test (see
-// gateway.Transitioner.ResolveCapability). Exported for tests only, with no
-// production caller: every gateway patch decides this itself through the
-// Transitioner.
-func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *migrun.MigrationConfig) error {
-	return s.gw.ResolveCapability(ctx, s.target(config))
-}
-
-// SmokeTestHotReload proves the gateway really does apply config revisions,
-// before any traffic-affecting change is made. It writes a fresh spec.configId
-// to the LIVE Gateway CR. See gateway.TransitionVerifier.SmokeTestHotReload's
-// doc comment for why this matters and why patching only spec.configId —
-// touching no other field — makes it safe to call at any point, including a
-// resume. Exported for tests only, with no production caller.
-func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *migrun.MigrationConfig) error {
-	return s.gw.SmokeTestHotReload(ctx, s.target(config))
-}
-
 // SetPromoteBatchSize caps how many mirror topics are promoted per batch during
 // PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
 // topics are promoted at once. When set (>0), each batch is promoted and fully

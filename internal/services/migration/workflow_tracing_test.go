@@ -52,7 +52,7 @@ func TestTracing_FenceGateway_HotReloadConfirmsThroughVerifyTransition(t *testin
 	actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 	config := hotReloadConfig()
 	ctx := context.Background()
-	require.NoError(t, actions.ResolveGatewayCapability(ctx, config))
+	require.NoError(t, actions.gw.ResolveCapability(ctx, actions.target(config)))
 	require.NoError(t, actions.FenceGateway(ctx, config))
 
 	spans := tracingtest.Spans(rec)
