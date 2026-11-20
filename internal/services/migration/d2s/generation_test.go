@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Gateway CR generation checks ---
+// --- The gateway changed under kcp since the plan ---
 
 // changedCR is the refusal a guarded write or check returns once the CR moved.
 func changedCR(expected, observed int64) *gateway.GenerationChangedError {
@@ -22,7 +22,7 @@ func changedCR(expected, observed int64) *gateway.GenerationChangedError {
 }
 
 // scriptedRoutePatches answers the n-th route patch (0-based) with results[n], recording the patches; calls past
-// the script succeed at the expected generation.
+// the script succeed, leaving the CR at the version the patch was guarded on.
 func scriptedRoutePatches(patches *[]gateway.RoutePatch, results ...func(expected int64) (gateway.PatchResult, error)) func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
 	return func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string, expected int64) (gateway.PatchResult, error) {
 		n := len(*patches)
@@ -46,25 +46,27 @@ func refusedAs(observed int64) func(int64) (gateway.PatchResult, error) {
 	}
 }
 
-// generationRun builds a run whose reconcile result carries generation 4, over a world the caller may edit
+// generationRun builds a run whose reconcile result carries plan baseline 4, over a world the caller may edit
 // before executing; the gateway mock is the caller's to script.
 func generationRun(w *world, fencedAtStart bool) (*testRun, *mockGatewayService, *migplan.Result) {
 	gw := &mockGatewayService{}
 	run := newTestRun(gw, w.deps())
 	res := convertResult()
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 	res.FencedAtStart = fencedAtStart
 	return run, gw, res
 }
 
-func TestD2SActions_Initialize_CopiesTheGatewayGeneration(t *testing.T) {
+func TestD2SActions_Initialize_CopiesThePlanBaseline(t *testing.T) {
 	a := gatewayActions(&mockGatewayService{})
 	res := convertResult()
-	res.GatewayGeneration = 9
+	res.PlanBaseline = 9
+	config := &migrun.MigrationConfig{}
 
-	require.NoError(t, a.Initialize(context.Background(), &migrun.MigrationConfig{}, res))
+	require.NoError(t, a.Initialize(context.Background(), config, res))
 
-	assert.Equal(t, int64(9), a.gw.ExpectedGeneration())
+	assert.Equal(t, int64(9), config.PlanBaseline)
+	assert.Equal(t, int64(9), a.target(config).PlanBaseline, "the gateway target carries the plan's baseline")
 }
 
 func TestD2SOrchestrator_Execute_FencePatchIsGuardedOnTheReconcileGeneration(t *testing.T) {
@@ -81,14 +83,20 @@ func TestD2SOrchestrator_Execute_FencePatchIsGuardedOnTheReconcileGeneration(t *
 	assert.Equal(t, int64(4), gw.RouteExpected[0], "the fence patch is guarded on the generation reconcile read")
 }
 
-func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t *testing.T) {
+func TestD2SOrchestrator_Execute_VerifyFenceOnAMovedCR_StopsWithNoWrite(t *testing.T) {
 	w := cleanWorld()
-	w.facts.Gateway.Generation = 7
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
+	gets := 0
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		gets++
+		return 7, nil
+	}
 
 	err := run.execute(context.Background(), res)
+
+	assert.Equal(t, 1, gets, "verify_fence reads the gateway once more after its gather")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, gateway.ErrGatewayChanged)
@@ -101,9 +109,11 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherOnAMovedCR_StopsWithNoWrite(t 
 	assert.Equal(t, StateFenced, run.state())
 }
 
-func TestD2SOrchestrator_Execute_VerifyFenceGatherWithGenerationUnknown_Proceeds(t *testing.T) {
+// verify_fence decides on the live gateway, not on the copy its gather read: a gathered CR at another version
+// does not stop a run whose live gateway is where kcp's fence left it.
+func TestD2SOrchestrator_Execute_VerifyFenceDecidesOnTheLiveGateway_Proceeds(t *testing.T) {
 	w := cleanWorld()
-	w.facts.Gateway.Generation = 0
+	w.facts.Gateway.Generation = 7
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
@@ -116,11 +126,18 @@ func TestD2SOrchestrator_Execute_VerifyFenceGatherWithGenerationUnknown_Proceeds
 
 func TestD2SOrchestrator_Execute_CRMovedBeforeSyncOffsets_StopsWithNoWrite(t *testing.T) {
 	w := cleanWorld()
-	w.facts.Gateway.Generation = 6
 	run, gw, res := generationRun(w, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(6))
-	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 8, nil }
+	// verify_fence's read sees the CR where the fence left it; it moves before sync_offsets' read.
+	live := []int64{6, 8}
+	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) {
+		g := live[0]
+		if len(live) > 1 {
+			live = live[1:]
+		}
+		return g, nil
+	}
 
 	err := run.execute(context.Background(), res)
 

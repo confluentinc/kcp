@@ -55,11 +55,11 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migrun.MigrationCo
 		if facts == nil || facts.Link == nil {
 			return errors.New("gathering the conversion's facts after the fence: the gatherer returned no cluster-link status")
 		}
-		// The gather read the CR, so its generation is the check: no extra GET. A moved CR is not a refusal (that
-		// would roll back); it stops the run with no further gateway write.
+		// Confirm the gateway is unchanged since the plan (one more read of it, after the gather). A moved
+		// gateway is not a refusal (that would roll back); it stops the run with no further gateway write.
 		// A nil gateway falls through to CheckPreconditions, which refuses it as a missing route.
 		if facts.Gateway != nil {
-			if err := a.gw.CheckObservedGeneration(a.target(config), facts.Gateway.Generation); err != nil {
+			if err := a.gw.VerifyUnchangedSincePlan(ctx, a.target(config), "verify_fence"); err != nil {
 				return err
 			}
 		}

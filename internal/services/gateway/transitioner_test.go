@@ -404,24 +404,119 @@ func TestTransitionerApply_ProbeErrorStopsBeforeAnyWrite(t *testing.T) {
 	assert.Equal(t, 0, svc.detects)
 }
 
-func TestTransitionerGeneration(t *testing.T) {
+// baselineTarget is probeTarget with the plan's baseline set.
+func baselineTarget(t *testing.T, baseline int64) Target {
+	t.Helper()
+	target := probeTarget(t)
+	target.PlanBaseline = baseline
+	return target
+}
+
+func TestTransitionerGuardsOnThePlanBaselineThenOnEachWrite(t *testing.T) {
+	svc := &mockService{patchResults: []PatchResult{{Generation: 8}, {Generation: 9}}}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), unfenceTransition()).Err)
+
+	assert.Equal(t, []int64{7, 8}, svc.patchExpected, "the first patch is guarded on the plan, the next on what the first wrote")
+}
+
+func TestTransitionerUnknownPlanBaselineSendsUnguardedPatches(t *testing.T) {
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := NewTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 0), fenceTransition()).Err)
+
+	assert.Equal(t, []int64{0}, svc.patchExpected)
+}
+
+func TestTransitionerSeedsTheBaselineOnceFromTheTarget(t *testing.T) {
+	t.Run("after a write", func(t *testing.T) {
+		svc := &mockService{
+			patchResults:           []PatchResult{{Generation: 8}, {Generation: 9}},
+			getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
+		}
+		rec, _ := newEventReporter()
+		tn := NewTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 3), unfenceTransition()).Err)
+
+		assert.Equal(t, []int64{7, 8}, svc.patchExpected, "a later target's baseline must not undo the advance")
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 3), "switch"),
+			"the check compares with the last write (9), not the later target's baseline")
+	})
+	t.Run("after a check", func(t *testing.T) {
+		svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 5, nil }}
+		rec, _ := newEventReporter()
+		tn := NewTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 5), "promote"))
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
+
+		assert.Equal(t, []int64{5}, svc.patchExpected, "the check seeded the baseline; the patch keeps it")
+	})
+	t.Run("unknown at first", func(t *testing.T) {
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		tn := NewTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 0), "promote"))
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
+
+		assert.Equal(t, []int64{0}, svc.patchExpected, "an unknown baseline is seeded too, and stays unknown")
+		assert.Zero(t, svc.generationGets)
+	})
+}
+
+func TestVerifyUnchangedSincePlan(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseline int64
+		observed int64
+		wantErr  bool
+		wantGets int
+	}{
+		{"equal", 5, 5, false, 1},
+		{"moved", 5, 7, true, 1},
+		{"unknown", 0, 7, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return tt.observed, nil }}
+			tn := NewTransitioner(svc, func() Reporter { return noopReporter{} })
+
+			err := tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, tt.baseline), "promote")
+
+			assert.Equal(t, tt.wantGets, svc.generationGets)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, ErrGatewayChanged)
+			var gce *GenerationChangedError
+			require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
+			assert.Equal(t, GenerationChangedError{Namespace: "ns", Gateway: "gw", Expected: 5, Observed: 7}, *gce)
+		})
+	}
+}
+
+func TestVerifyUnchangedSincePlan_ComparesWithTheLastWrite(t *testing.T) {
 	svc := &mockService{
 		patchResults:           []PatchResult{{Generation: 8}},
 		getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
 	}
 	rec, _ := newEventReporter()
 	tn := NewTransitioner(svc, func() Reporter { return rec })
-	tn.SetExpectedGeneration(7)
 
-	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	result := tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition())
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
 
-	require.NotEmpty(t, svc.patchExpected)
-	assert.Equal(t, int64(7), svc.patchExpected[0])
-	assert.Equal(t, int64(8), tn.ExpectedGeneration())
-
-	err := tn.CheckGeneration(context.Background(), probeTarget(t), "switch")
+	err := tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 7), "switch")
 	var gce *GenerationChangedError
 	require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
 	assert.Equal(t, int64(8), gce.Expected)
@@ -483,39 +578,6 @@ func TestTransitionerHasClient(t *testing.T) {
 	rep := func() Reporter { return &recordingReporter{} }
 	assert.True(t, NewTransitioner(&mockService{}, rep).HasClient())
 	assert.False(t, NewTransitioner(nil, rep).HasClient())
-}
-
-func TestTransitionerCheckObservedGeneration(t *testing.T) {
-	target := Target{Namespace: "ns", Name: "gw"}
-	tests := []struct {
-		name               string
-		expected, observed int64
-		wantErr            bool
-	}{
-		{"expected unknown", 0, 7, false},
-		{"observed unknown", 5, 0, false},
-		{"equal", 5, 5, false},
-		{"moved", 5, 7, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tn := &Transitioner{}
-			tn.SetExpectedGeneration(tc.expected)
-			err := tn.CheckObservedGeneration(target, tc.observed)
-			if !tc.wantErr {
-				assert.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrGatewayChanged)
-			var gce *GenerationChangedError
-			require.True(t, errors.As(err, &gce))
-			assert.Equal(t, int64(5), gce.Expected)
-			assert.Equal(t, int64(7), gce.Observed)
-			assert.Equal(t, "ns", gce.Namespace)
-			assert.Equal(t, "gw", gce.Gateway)
-		})
-	}
 }
 
 func TestTransitionerBuildsProbeCRsFromTheTarget(t *testing.T) {

@@ -473,8 +473,8 @@ func killPointDoneResult() *migplan.Result {
 // newAAOKillPointOrchestrator's identical mechanism (see its doc comment for
 // why this is the simplest fake that both lets the wait return and still
 // proves the step observed an unconverged state before succeeding). Both
-// Fence's and Switch's confirm step share this one mock (the default
-// capability here is VerifyRollout with no configId, so VerifyTransition
+// Fence's and Switch's confirm step share this one mock (the fake's default
+// verification mode here is VerifyRollout with no configId, so VerifyTransition
 // always falls back to WaitForGatewayPods), so a non-empty readyProgress is
 // replayed on every call reaching it, fence's and switch's alike.
 func newTBMKillPointOrchestrator(
@@ -1193,7 +1193,7 @@ func TestTBMOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
 	assert.NotContains(t, s, "attempting to remove the fence")
 }
 
-// --- Gateway CR generation checks ---
+// --- The gateway changed under kcp since the plan ---
 
 // changedCR is the refusal a guarded write or check returns once the CR moved.
 func changedCR(expected, observed int64) *gateway.GenerationChangedError {
@@ -1201,7 +1201,8 @@ func changedCR(expected, observed int64) *gateway.GenerationChangedError {
 }
 
 // scriptedRoutePatches answers the n-th route patch (0-based) with results[n],
-// recording the patches; calls past the script succeed at the expected generation.
+// recording the patches; calls past the script succeed, leaving the CR at the
+// version the patch was guarded on.
 func scriptedRoutePatches(patches *[]gateway.RoutePatch, results ...func(expected int64) (gateway.PatchResult, error)) func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
 	return func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string, expected int64) (gateway.PatchResult, error) {
 		n := len(*patches)
@@ -1226,7 +1227,7 @@ func refusedAs(observed int64) func(int64) (gateway.PatchResult, error) {
 }
 
 // generationRunTBM builds a TBM orchestrator whose gateway mock the caller
-// scripts after construction, with the reconcile result's generation set to 4.
+// scripts after construction, with the reconcile result's plan baseline set to 4.
 func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mockGatewayService, *migplan.Result, *strings.Builder, *strings.Builder) {
 	t.Helper()
 	orch, _ := newTestOrchestrator(t)
@@ -1235,13 +1236,13 @@ func generationRunTBM(t *testing.T, fencedAtStart bool) (*TBMOrchestrator, *mock
 	out, errOut := &strings.Builder{}, &strings.Builder{}
 	orch.reporter = &reporter{out: out, err: errOut}
 	res := realisticReconcileResult()
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 	res.FencedAtStart = fencedAtStart
 	return orch, gw, res, out, errOut
 }
 
 // overduePodRunTBM runs a TBM batch on a rolling gateway whose pod waits
-// numbered in overdueOn fail as a replaced pod stuck terminating past its
+// numbered in overdueOn fail as an old gateway pod stuck terminating past its
 // deadline. It returns the route patches, the promote calls and the wait count.
 func overduePodRunTBM(t *testing.T, overdueOn ...int64) (*TBMOrchestrator, *[]gateway.RoutePatch, *int64, *int64, error) {
 	t.Helper()
@@ -1274,7 +1275,7 @@ func overduePodRunTBM(t *testing.T, overdueOn ...int64) (*TBMOrchestrator, *[]ga
 	return orch, &patches, &promotes, &waits, err
 }
 
-// TestTBMFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// TestTBMFence_OverduePodRollsBackAndNeverPromotes: an old gateway pod stuck
 // terminating past its deadline fails the fence's wait. The fence had already
 // landed, so it is unconfirmed, the fence is removed, and nothing promotes.
 func TestTBMFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
@@ -1329,7 +1330,7 @@ func TestTBMOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T)
 	orch, gw, res, _, _ := generationRunTBM(t, false)
 	var patches []gateway.RoutePatch
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches)
-	// The fence write reports no generation, so the CR is still at 4 at promote.
+	// The fence write reports no new version, so the CR is still at 4 at promote.
 	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{})

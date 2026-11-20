@@ -64,19 +64,19 @@ type Result struct {
 	NothingToDo bool
 
 	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
-	// server-managed metadata (managedFields, resourceVersion, uid,
-	// creationTimestamp, generation, status — see migplan/gatewayfile.go's
-	// cleanGatewayDoc). Set on both success and refusal (the pull precedes the
+	// server-managed metadata and status (managedFields, resourceVersion, uid,
+	// creationTimestamp and the version counter PlanBaseline carries — see
+	// migplan/gatewayfile.go's cleanGatewayDoc). Set on both success and refusal (the pull precedes the
 	// checks). A caller can re-pull the CR just before mutating it and diff
 	// against this directly to detect drift since the plan was computed — once
 	// cleaned, the whole document is stable enough to diff as-is.
 	GatewayYAML string
 
-	// GatewayGeneration is the metadata.generation of the CR GatewayYAML was
-	// pulled from (stripped from GatewayYAML itself by cleanGatewayDoc). Set
-	// on both success and refusal, like GatewayYAML. It is the generation the
-	// run's gateway patches are first conditioned on.
-	GatewayGeneration int64
+	// PlanBaseline is the opaque version of the CR GatewayYAML was pulled from
+	// (reconcile.Plan.GatewayGeneration; cleanGatewayDoc strips it from
+	// GatewayYAML itself), 0 when unknown. Set on both success and refusal, like
+	// GatewayYAML. The run's gateway writes are first conditioned on it.
+	PlanBaseline int64
 
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
 	// uses it). In-code callers can ignore it and use the fields above.
@@ -235,7 +235,7 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 
 func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
-		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, GatewayGeneration: plan.GatewayGeneration,
+		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, PlanBaseline: plan.GatewayGeneration,
 		Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics

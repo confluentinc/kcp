@@ -1713,7 +1713,7 @@ func aaoFullResult() *migplan.Result {
 // wait return and still proves the step observed an unconverged state
 // before succeeding (see the returned readyEvents recorder). Both
 // FenceGateway's and SwitchGateway's confirm step share this one mock
-// (neither this build's default capability nor detection is configured to
+// (neither the fake's default verification mode nor its detection is configured to
 // route either through a different wait mechanism — see
 // gateway.Transitioner.Apply and TransitionVerifier.VerifyTransition), so a
 // non-empty readyProgress is
@@ -2403,7 +2403,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresOffsetSync(t *testing.T) 
 }
 
 // overduePodWaits scripts a rolling gateway's pod waits: the wait numbers in
-// overdueOn fail as a replaced pod stuck terminating past its deadline, every
+// overdueOn fail as an old gateway pod stuck terminating past its deadline, every
 // other wait succeeds.
 func overduePodWaits(calls *int64, overdueOn ...int64) func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 	return func(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
@@ -2417,7 +2417,7 @@ func overduePodWaits(calls *int64, overdueOn ...int64) func(ctx context.Context,
 	}
 }
 
-// TestAAOFence_OverduePodRollsBackAndNeverPromotes: a replaced pod stuck
+// TestAAOFence_OverduePodRollsBackAndNeverPromotes: an old gateway pod stuck
 // terminating past its deadline fails the fence's wait. The fence had already
 // landed, so it is unconfirmed, the route is unfenced, and nothing promotes.
 func TestAAOFence_OverduePodRollsBackAndNeverPromotes(t *testing.T) {
@@ -2504,7 +2504,7 @@ func TestAAOOrchestrator_SwitchUnconfirmedWarnsAndKeepsTheFence(t *testing.T) {
 	assert.NotContains(t, s, "attempting to remove the fence")
 }
 
-// --- Gateway CR generation checks ---
+// --- The gateway changed under kcp since the plan ---
 
 // gatewayMock returns the orchestrator's mock gateway service, for scripting
 // generations after construction.
@@ -2522,7 +2522,8 @@ func changedCR(expected, observed int64) *gateway.GenerationChangedError {
 }
 
 // scriptedRoutePatches answers the n-th route patch (0-based) with results[n],
-// recording the patches; calls past the script succeed at the expected generation.
+// recording the patches; calls past the script succeed, leaving the CR at the
+// version the patch was guarded on.
 func scriptedRoutePatches(patches *[]gateway.RoutePatch, results ...func(expected int64) (gateway.PatchResult, error)) func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
 	return func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string, expected int64) (gateway.PatchResult, error) {
 		n := len(*patches)
@@ -2570,9 +2571,9 @@ func TestOrchestrator_Execute_InitializeCopiesGatewayGeneration(t *testing.T) {
 	orch, config := newHappyPathOrchestrator(t, nil)
 	orch.reporter = &reporter{out: io.Discard, err: io.Discard}
 	res := resultFromConfig(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 	gw := gatewayMock(orch)
-	// The fence write reports no generation, so the CR is still at 4 at promote.
+	// The fence write reports no new version, so the CR is still at 4 at promote.
 	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 4, nil }
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
@@ -2594,7 +2595,7 @@ func TestOrchestrator_Execute_CRMovedBeforePromote_StopsWithNoWrite(t *testing.T
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5))
 	gw.GetGatewayGenerationFn = func(context.Context, string, string) (int64, error) { return 6, nil }
 	res := resultFromConfig(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2656,7 +2657,7 @@ func TestOrchestrator_Execute_CRMovedBetweenPromoteBatches_StopsWithNoWrite(t *t
 		return 6, nil
 	}
 	res := resultFromConfig(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2674,7 +2675,7 @@ func TestOrchestrator_Execute_RefusalAtFenceWrite_StopsWithNoWrite(t *testing.T)
 	var patches []gateway.RoutePatch
 	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2692,7 +2693,7 @@ func TestOrchestrator_Execute_EarlierRunsFence_RefusalAtRollback_StopsWithNoWrit
 	var patches []gateway.RoutePatch
 	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2726,7 +2727,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRUnchanged_CompensatesGated(t *t
 	gw := gatewayMock(orch)
 	gw.PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), patchedTo(6))
 	res := fencedResume(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2742,7 +2743,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_CRMoved_StopsWithNoWrite(t *testi
 	var patches []gateway.RoutePatch
 	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 	res := fencedResume(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2760,7 +2761,7 @@ func TestOrchestrator_Execute_RefusalDuringRollback_StopsWithNoWrite(t *testing.
 	var patches []gateway.RoutePatch
 	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, patchedTo(5), refusedAs(6))
 	res := resultFromConfig(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2779,7 +2780,7 @@ func TestOrchestrator_Execute_RollbackForbidden_RefusalAtFenceWrite_SaysTopicsPr
 	gatewayMock(orch).PatchRouteGenFn = scriptedRoutePatches(&patches, refusedAs(7))
 	res := fencedResume(config)
 	res.RollbackAllowed = false
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 
@@ -2856,7 +2857,7 @@ func TestOrchestrator_Execute_CRMovedBeforePromoteResend_StopsWithNoWrite(t *tes
 		return 6, nil
 	}
 	res := resultFromConfig(config)
-	res.GatewayGeneration = 4
+	res.PlanBaseline = 4
 
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 

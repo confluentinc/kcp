@@ -24,6 +24,11 @@ type Target struct {
 	GatewayCR     []byte      // the whole gateway CR the run started from
 	Route         string      // the route the run fences and switches
 	Fence, Switch RouteChange // the run's fence and switch edits to Route
+
+	// PlanBaseline is the opaque version of the gateway the plan was made
+	// against; 0 means unknown. The Transitioner takes it once, on its first
+	// write or check, and from then on tracks the version its own writes leave.
+	PlanBaseline int64
 }
 
 // Transition is one route change a Transitioner applies and confirms. The
@@ -69,7 +74,11 @@ type Transitioner struct {
 	firstApplyDone bool
 	startPods      map[types.UID]struct{}
 
+	// generation is what every patch is guarded on. It is seeded once from
+	// Target.PlanBaseline (seeded records that) and then advanced by each write;
+	// seeding again would undo those advances.
 	generation int64
+	seeded     bool
 }
 
 // TransitionerOption configures a Transitioner at construction.
@@ -117,11 +126,15 @@ func NewTransitionerFactory(svc TransitionClient, opts ...TransitionerOption) Tr
 // nil receiver is not handled: callers guard a nil Transitioner themselves.
 func (t *Transitioner) HasClient() bool { return t.svc != nil }
 
-// SetExpectedGeneration seeds the Gateway CR generation patches are guarded on.
-func (t *Transitioner) SetExpectedGeneration(g int64) { t.generation = g }
-
-// ExpectedGeneration returns the generation the next patch is guarded on.
-func (t *Transitioner) ExpectedGeneration() int64 { return t.generation }
+// seed takes the expected generation from target.PlanBaseline on the first
+// call that needs it, and never again.
+func (t *Transitioner) seed(target Target) {
+	if t.seeded {
+		return
+	}
+	t.generation = target.PlanBaseline
+	t.seeded = true
+}
 
 // Capability returns the resolved capability (the zero value until resolved).
 func (t *Transitioner) Capability() Capability { return t.capability }
@@ -146,22 +159,14 @@ func (t *Transitioner) port() int {
 	return t.configPort
 }
 
-// CheckGeneration confirms the Gateway CR's generation is still the one kcp
-// expects. See TransitionVerifier.CheckGeneration.
-func (t *Transitioner) CheckGeneration(ctx context.Context, target Target, step string) error {
-	return t.verifier().CheckGeneration(ctx, target.Namespace, target.Name, step)
-}
-
-// CheckObservedGeneration compares a generation the caller already read (for
-// example from facts it gathered) with the one patches are guarded on. It does
-// no I/O, unlike CheckGeneration. It returns nil when the expected generation
-// is unknown (0), when observed is not positive, or when they are equal;
-// otherwise a *GenerationChangedError.
-func (t *Transitioner) CheckObservedGeneration(target Target, observed int64) error {
-	if observed <= 0 || t.generation <= 0 || observed == t.generation {
-		return nil
-	}
-	return &GenerationChangedError{Namespace: target.Namespace, Gateway: target.Name, Expected: t.generation, Observed: observed}
+// VerifyUnchangedSincePlan confirms nobody but kcp changed the gateway since
+// the plan: the live Gateway CR generation must still be the plan's baseline,
+// advanced by this run's own writes. It does one GET and returns a
+// *GenerationChangedError (ErrGatewayChanged) on a difference, and nil without
+// a GET when the baseline is unknown.
+func (t *Transitioner) VerifyUnchangedSincePlan(ctx context.Context, target Target, step string) error {
+	t.seed(target)
+	return t.verifier().checkGeneration(ctx, target.Namespace, target.Name, step)
 }
 
 // EnsureCapability resolves the capability once per process and then, at most
@@ -212,6 +217,7 @@ func (t *Transitioner) resolveCapability(ctx context.Context, target Target) err
 // attempted, so EnsureCapability never runs it again. It writes a fresh
 // spec.configId to the LIVE Gateway CR (see TransitionVerifier.SmokeTestHotReload).
 func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) error {
+	t.seed(target)
 	t.smokeAttempted = true
 	return t.verifier().SmokeTestHotReload(ctx, target.Namespace, target.Name, t.port())
 }
@@ -220,6 +226,7 @@ func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) er
 // landed: patch derivation, capability, patch, operator acceptance, then per-pod
 // or rollout verification.
 func (t *Transitioner) Apply(ctx context.Context, target Target, tr Transition) TransitionResult {
+	t.seed(target)
 	// Derive the patch first: a bad artifact must stop before capability
 	// detection or any write.
 	patch, err := tr.Change.Patch(target.Route)

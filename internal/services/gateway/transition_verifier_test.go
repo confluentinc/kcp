@@ -316,7 +316,7 @@ func TestTransitionVerifier_UnverifiedWriteAdvancesGeneration(t *testing.T) {
 	assert.Equal(t, int64(5), gen)
 }
 
-func TestTransitionVerifier_CheckGeneration(t *testing.T) {
+func TestTransitionVerifier_checkGeneration(t *testing.T) {
 	five, zero := int64(5), int64(0)
 	tests := []struct {
 		name     string
@@ -337,7 +337,7 @@ func TestTransitionVerifier_CheckGeneration(t *testing.T) {
 			}}
 			v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: tt.expected}
 
-			err := v.CheckGeneration(context.Background(), "ns", "gw", "fence")
+			err := v.checkGeneration(context.Background(), "ns", "gw", "fence")
 			assert.Equal(t, tt.wantGets, svc.generationGets)
 			if !tt.wantErr {
 				require.NoError(t, err)

@@ -73,6 +73,12 @@ type MigrationConfig struct {
 	// result — the fence/switch derivation base.
 	GatewayYAML string
 
+	// PlanBaseline is the opaque version of the gateway the reconcile plan was
+	// made against, set each run from the reconcile result; 0 means unknown.
+	// The FSMs hand it to the gateway Transitioner, which stops the run if the
+	// gateway changed under kcp after the plan.
+	PlanBaseline int64
+
 	// Route is the single spec.route.name this migration fences and
 	// switches, read from the manifest each run. AAO, like TBM, only ever
 	// operates on one route per migration.

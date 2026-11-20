@@ -111,8 +111,8 @@ type D2SActions struct {
 	reporter *reporter
 	deps     Dependencies
 
-	// gw applies and confirms every gateway patch, and owns the capability, expected generation and
-	// start-of-run bookkeeping those need.
+	// gw applies and confirms every gateway patch, and owns the bookkeeping that needs, including whether
+	// the gateway changed under kcp since the plan.
 	gw *gateway.Transitioner
 
 	// handoff is verify_fence's last snapshot (2, or 1 when the direct-commit check is skipped),
@@ -146,6 +146,7 @@ func (a *D2SActions) target(config *migrun.MigrationConfig) gateway.Target {
 		Route:            config.Route,
 		Fence:            fenceChange(config),
 		Switch:           switchChange(config),
+		PlanBaseline:     config.PlanBaseline,
 	}
 }
 
@@ -181,7 +182,7 @@ func (a *D2SActions) Initialize(ctx context.Context, config *migrun.MigrationCon
 
 	config.Topics, config.MigrateTopics, config.AwaitStopped = nil, nil, nil
 	config.Route = res.Route
-	a.gw.SetExpectedGeneration(res.GatewayGeneration)
+	config.PlanBaseline = res.PlanBaseline
 	config.GatewayYAML = res.GatewayYAML
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
@@ -218,8 +219,8 @@ func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 }
 
 // unfenceGateway sets the route's rules to reconcile's rollback target (the start-of-run rules without kcp's
-// convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It resolves
-// the gateway capability first, like Fence: a run can reach a rollback without this process having fenced.
+// convert fence) and confirms it. Called by onAbortFence and by handleStepFailure's direct paths. It works
+// whether or not this process fenced, like Fence: a run can reach a rollback without this process having fenced.
 func (a *D2SActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:          "unfence",

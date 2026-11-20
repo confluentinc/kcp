@@ -77,7 +77,7 @@ type TransitionVerifier struct {
 	// Generation is the run's expected Gateway CR metadata.generation, owned by
 	// the caller. Every patch is guarded on it and advances it to the
 	// generation that write produced. nil, or a pointed-to 0, means unknown:
-	// patches are unguarded and CheckGeneration is a no-op.
+	// patches are unguarded and checkGeneration is a no-op.
 	Generation *int64
 }
 
@@ -98,11 +98,11 @@ func (v *TransitionVerifier) recordGeneration(written int64) {
 	}
 }
 
-// CheckGeneration confirms the Gateway CR's metadata.generation is still the
+// checkGeneration confirms the Gateway CR's metadata.generation is still the
 // one kcp expects, with a single GET and no pod probes. It returns a
 // *GenerationChangedError on a mismatch, and nil when the expected generation
 // is unknown.
-func (v *TransitionVerifier) CheckGeneration(ctx context.Context, namespace, crName, step string) error {
+func (v *TransitionVerifier) checkGeneration(ctx context.Context, namespace, crName, step string) error {
 	expected := v.expectedGeneration()
 	if expected == 0 {
 		slog.Debug("generation check skipped: expected generation unknown", "step", step)

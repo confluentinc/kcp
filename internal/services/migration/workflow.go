@@ -30,8 +30,8 @@ import (
 const maxConsecutiveSweepFailures = 3
 
 type MigrationActions struct {
-	// gw applies and confirms every gateway patch, and owns the capability,
-	// expected generation and start-of-run bookkeeping those need.
+	// gw applies and confirms every gateway patch, and owns the bookkeeping
+	// that needs, including whether the gateway changed under kcp since the plan.
 	gw                  *gateway.Transitioner
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
@@ -103,15 +103,16 @@ func (s *MigrationActions) target(config *migrun.MigrationConfig) gateway.Target
 		Route:            config.Route,
 		Fence:            fenceChange(config),
 		Switch:           switchChange(config),
+		PlanBaseline:     config.PlanBaseline,
 	}
 }
 
 // ResolveGatewayCapability determines how gateway state transitions will be
-// verified on the live cluster and adopts it for this run, without the
-// capability smoke test: a caller that resolves directly owns that test (see
+// verified on the live cluster and adopts that for this run, without the
+// hot-reload smoke test: a caller that resolves directly owns that test (see
 // gateway.Transitioner.ResolveCapability). Exported for tests only, with no
-// production caller: every gateway patch resolves the capability itself
-// through the Transitioner.
+// production caller: every gateway patch decides this itself through the
+// Transitioner.
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *migrun.MigrationConfig) error {
 	return s.gw.ResolveCapability(ctx, s.target(config))
 }
@@ -165,14 +166,14 @@ func (s *MigrationActions) Initialize(
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
-	s.gw.SetExpectedGeneration(res.GatewayGeneration)
+	config.PlanBaseline = res.PlanBaseline
 	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
-	// Gateway capability is NOT resolved here: there is no separate advisory
-	// moment to resolve it for anymore (execute is the only command), and
-	// config.FenceYAML/SwitchoverYAML were only just set above in the same
-	// process. The Transitioner resolves it lazily, once, on the first gateway
-	// patch later in this same Execute() call.
+	// How gateway transitions are verified is NOT decided here: there is no
+	// separate advisory moment to decide it for anymore (execute is the only
+	// command), and config.FenceYAML/SwitchoverYAML were only just set above in
+	// the same process. The Transitioner decides lazily, once, on the first
+	// gateway patch later in this same Execute() call.
 
 	slog.Debug("migration initialized successfully")
 	return nil
@@ -306,13 +307,13 @@ func formatLag64(n int64) string {
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the
 // gateway accepted the new spec, then waits until the change has taken effect
-// (the replaced gateway instances are gone, or every instance reports the new
-// revision). The wait runs without a deadline by
+// (every gateway pod serves the fenced route). The wait runs without a
+// deadline by
 // default — the gateway drives convergence. The run's configured timeout caps
 // the wait when set. Ctrl-C does
 // not unwind a wedged wait: kcp installs no signal handler, so it ends the
 // process with the gateway as it is (fenced, if the fence was applied) and a
-// re-run continues from there. Whatever the timeout, an instance that never goes
+// re-run continues from there. Whatever the timeout, a pod that never goes
 // away is reported as an error by the gateway layer, so a lost node cannot wedge
 // the wait.
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
@@ -337,9 +338,9 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 	// unfence's whole-route replace (unfenceChange) is its exact inverse,
 	// restoring the route to its captured state.
 
-	// Apply resolves the capability first (once per process), and records the
-	// instances this fence's patch replaces so a rollback unfence does not wait on
-	// them: they carry the pre-fence route the unfence restores.
+	// Apply also remembers the gateway pods as this fence found them, so a
+	// rollback unfence does not wait on them: they carry the pre-fence route the
+	// unfence restores.
 	res := s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:    "fence",
 		Label:   "fence",
@@ -368,8 +369,8 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 // fenceChange is the fence edit: config.FenceYAML's static {fence: {...}}
 // fragment set on config.Route's fence. This FSM only runs for static routes
 // (the command layer sends a dynamic route to the TBM FSM). The write path
-// derives its route patch from it and the gateway capability check the whole fenced CR,
-// so the two can never drift from each other.
+// derives its route patch from it, and the gateway's choice of how to verify
+// the fence builds the whole fenced CR from it, so the two can never drift from each other.
 func fenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 	return gateway.RouteChange{Edit: gateway.EditRouteFence, Artifact: []byte(config.FenceYAML)}
 }
@@ -396,14 +397,14 @@ func unfenceChange(config *migrun.MigrationConfig) gateway.RouteChange {
 // restored while the gateway is still changing over, and miss failures to take
 // effect entirely.
 func (s *MigrationActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
-	// The rollback patch gets a fresh revision marker too. Without one it would carry
-	// whatever revision the initial CR was captured with, and the verification
-	// below would match against a value the gateway already reports — passing
-	// instantly while the gateway is still fenced.
-	// Apply resolves the capability first: a rollback whose fence step never
-	// ran in this process has not resolved it yet. It also confirms the
-	// gateway accepted the patch (rollback is the worst place to be blind to a
-	// rejected apply) and skips only this run's pre-fence instances.
+	// The rollback is confirmed as a change of its own too. Confirmed against
+	// the marker the start-of-run CR carried, it would match a value the
+	// gateway already reports — passing instantly while the gateway is still
+	// fenced.
+	// Apply works even when the fence step never ran in this process (a
+	// rollback can come first). It also confirms the gateway accepted the
+	// patch (rollback is the worst place to be blind to a rejected apply) and
+	// does not wait on this run's pre-fence pods.
 	return s.gw.Apply(ctx, s.target(config), gateway.Transition{
 		Step:          "unfence",
 		Label:         "unfence",
@@ -774,15 +775,15 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *migrun.Mig
 		// one kcp's own fence left immediately before sending it: every batch,
 		// every retry, and every request PromoteMirrorTopics resends after a
 		// connection-level failure.
-		checkGeneration := func(ctx context.Context) error {
-			return s.gw.CheckGeneration(ctx, s.target(config), "promote")
+		checkUnchanged := func(ctx context.Context) error {
+			return s.gw.VerifyUnchangedSincePlan(ctx, s.target(config), "promote")
 		}
-		if err := checkGeneration(ctx); err != nil {
+		if err := checkUnchanged(ctx); err != nil {
 			return err
 		}
 		batches++
 		s.promoteSubmitted = true
-		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkGeneration))
+		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkUnchanged))
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
@@ -859,8 +860,8 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.Mig
 		return nil
 	}
 
-	// Apply resolves the capability first; that is a no-op when FenceGateway
-	// already did in this process, and load-bearing for a resume that jumps
+	// Apply prepares its verification on first use; that is a no-op when
+	// FenceGateway already ran in this process, and load-bearing for a resume that jumps
 	// straight to switch in a fresh process.
 	// Once the patch has reached the cluster every failure is marked
 	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.

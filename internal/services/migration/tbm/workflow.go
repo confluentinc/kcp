@@ -38,8 +38,8 @@ type TBMActions struct {
 	// migration.MigrationActions.lagPollInterval.
 	lagPollInterval time.Duration
 
-	// gw applies and confirms every gateway patch, and owns the capability,
-	// expected generation and start-of-run bookkeeping those need.
+	// gw applies and confirms every gateway patch, and owns the bookkeeping
+	// that needs, including whether the gateway changed under kcp since the plan.
 	gw *gateway.Transitioner
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
@@ -101,6 +101,7 @@ func (a *TBMActions) target(config *migrun.MigrationConfig) gateway.Target {
 		Route:            config.Route,
 		Fence:            fenceChange(config),
 		Switch:           switchChange(config),
+		PlanBaseline:     config.PlanBaseline,
 	}
 }
 
@@ -136,7 +137,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migrun.MigrationCon
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
-	a.gw.SetExpectedGeneration(res.GatewayGeneration)
+	config.PlanBaseline = res.PlanBaseline
 
 	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
 	return nil
@@ -262,8 +263,8 @@ func formatLag64(n int64) string {
 // claims to support that, derives the fence patch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
 // fenceChange), patches it in, and confirms it landed. Like
-// migration.FenceGateway, the wait covers only the instances the patch
-// replaced. A failure leaves the FSM
+// migration.FenceGateway, the confirmation waits only on the gateway this
+// fence changed. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
 // migrun.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
 // client traffic, so the orchestrator removes them (see handleStepFailure).
@@ -301,8 +302,8 @@ func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 // (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
 // batch taken out). Called only by onAbortFence.
 //
-// Apply resolves the gateway capability first, like Fence: a process that
-// resumes directly at verify_fence has not resolved it yet.
+// It works whether or not this process fenced, like Fence: a process can
+// resume directly at verify_fence.
 func (a *TBMActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
 		Step:          "unfence",
@@ -515,15 +516,15 @@ func (a *TBMActions) Promote(ctx context.Context, config *migrun.MigrationConfig
 		// one kcp's own fence left immediately before sending it: every batch,
 		// every retry, and every request PromoteMirrorTopics resends after a
 		// connection-level failure.
-		checkGeneration := func(ctx context.Context) error {
-			return a.gw.CheckGeneration(ctx, a.target(config), "promote")
+		checkUnchanged := func(ctx context.Context) error {
+			return a.gw.VerifyUnchangedSincePlan(ctx, a.target(config), "promote")
 		}
-		if err := checkGeneration(ctx); err != nil {
+		if err := checkUnchanged(ctx); err != nil {
 			return err
 		}
 		batches++
 		a.promoteSubmitted = true
-		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkGeneration))
+		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkUnchanged))
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
@@ -574,7 +575,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migrun.MigrationConfig
 // already renders a full switchover rules block ahead of time, because TBM's
 // dynamic routes need a whole-subtree rules replacement, not a single
 // streamingDomain flip on a static route. There is no compensating rollback on
-// failure (the wait still covers only the replaced instances) — a
+// failure (the confirmation still waits only on what this switch changed) — a
 // failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
