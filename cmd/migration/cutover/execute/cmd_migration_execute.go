@@ -186,7 +186,15 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	// that observes live state and decides what remains outstanding. Both FSMs
 	// start at uninitialized and apply this run's fresh result idempotently,
 	// and the route's mode comes from it.
-	reconcileResult, err := migplan.Reconcile(cmd.Context(), g)
+	//
+	// One gateway service serves the whole run: the plan read and the
+	// executors (and, for a conversion, its providers) share it, so the
+	// kubeconfig is resolved and the clients are built once.
+	svc, deps, err := shareGatewayService(g, deps)
+	if err != nil {
+		return err
+	}
+	reconcileResult, err := migplan.Reconcile(cmd.Context(), g, migplan.WithGatewayService(svc))
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}

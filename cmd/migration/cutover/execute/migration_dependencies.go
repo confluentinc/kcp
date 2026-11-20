@@ -24,6 +24,9 @@ type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination
 // gatewayServiceFunc builds the gateway.TransitionClient the fence/switch steps use.
 type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.TransitionClient, error)
 
+// k8sServiceFunc builds the concrete gateway service for the manifest.
+type k8sServiceFunc func(g *manifest.GatewayMigration) (*gateway.K8sService, error)
+
 // clusterLinkServiceFunc builds the clusterlink.Service the promote step (and
 // the static branch's offset-sync pause/restore) uses.
 type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Service, error)
@@ -33,12 +36,19 @@ type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Serv
 // manifests point at unreachable placeholder endpoints) can pass stubs;
 // production uses liveExecutorDependencies.
 type executorDependencies struct {
-	offsets     offsetProvidersFunc
-	gateway     gatewayServiceFunc
+	offsets offsetProvidersFunc
+	gateway gatewayServiceFunc
+	// k8s builds the one gateway service a run shares between the plan read and
+	// the apply path (see shareGatewayService). Nil means no sharing: the plan
+	// read and the branches each build their own, as the tests' stubs do.
+	k8s         k8sServiceFunc
 	clusterLink clusterLinkServiceFunc
 	// convert builds a route conversion's services besides the gateway. Only
 	// runConvertBranch calls it.
 	convert convertServicesFunc
+	// convertOver is the shared gateway service handed to convert; set by
+	// shareGatewayService, nil otherwise.
+	convertOver *gateway.K8sService
 }
 
 // liveExecutorDependencies dials the real source and destination Kafka
@@ -46,6 +56,7 @@ type executorDependencies struct {
 var liveExecutorDependencies = executorDependencies{
 	offsets:     buildOffsetProviders,
 	gateway:     buildGatewayService,
+	k8s:         buildK8sService,
 	clusterLink: buildClusterLinkService,
 	convert:     buildConvertServices,
 }
@@ -193,14 +204,38 @@ func newConsumerGroupClientForConn(conn types.KafkaSourceConn) (*client.Consumer
 	return client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
 }
 
-// buildGatewayService opens a real gateway.TransitionClient against the manifest's
+// buildK8sService opens a real gateway.K8sService against the manifest's
 // kubeconfig (see manifest.GatewayMigration.KubeconfigPath for its default).
-func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
+// The clients behind it are built lazily on first use.
+func buildK8sService(g *manifest.GatewayMigration) (*gateway.K8sService, error) {
 	kubeconfig, err := g.KubeconfigPath()
 	if err != nil {
 		return nil, err
 	}
 	return gateway.NewK8sService(kubeconfig), nil
+}
+
+// buildGatewayService is the per-branch fallback used when a run does not
+// share a service (see shareGatewayService).
+func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient, error) {
+	return buildK8sService(g)
+}
+
+// shareGatewayService builds the run's gateway service once, through deps.k8s,
+// and returns it with deps rewired so the executors and the conversion's
+// providers use that same instance; the caller hands svc to migplan too. With
+// no deps.k8s it returns a nil svc and deps unchanged.
+func shareGatewayService(g *manifest.GatewayMigration, deps executorDependencies) (*gateway.K8sService, executorDependencies, error) {
+	if deps.k8s == nil {
+		return nil, deps, nil
+	}
+	svc, err := deps.k8s(g)
+	if err != nil {
+		return nil, deps, fmt.Errorf("failed to build gateway service: %w", err)
+	}
+	deps.gateway = func(*manifest.GatewayMigration) (gateway.TransitionClient, error) { return svc, nil }
+	deps.convertOver = svc
+	return svc, deps, nil
 }
 
 // buildClusterLinkService opens a real clusterlink.Service using the
@@ -224,8 +259,8 @@ func buildClusterLinkService(g *manifest.GatewayMigration) (clusterlink.Service,
 // destination topic listing from those same providers; one consumer-group
 // client per worker on each cluster for the snapshots and the commits; and the
 // high-water-mark sweep over a destination client that never auto-creates a
-// topic.
-func buildConvertServices(g *manifest.GatewayMigration) (convertServices, error) {
+// topic. gw, when non-nil, is the run's shared gateway service.
+func buildConvertServices(g *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error) {
 	if g.Spec.MigrationType() != manifest.MigrationTypeDynamicToStatic {
 		return convertServices{}, fmt.Errorf("spec.dynamicToStaticConversion is not set: this manifest is not a route conversion")
 	}
@@ -241,7 +276,7 @@ func buildConvertServices(g *manifest.GatewayMigration) (convertServices, error)
 	if err != nil {
 		return convertServices{}, err
 	}
-	providers, providersCloser, err := migplan.BuildConvertProviders(g)
+	providers, providersCloser, err := migplan.BuildConvertProviders(g, migplan.WithGatewayService(gw))
 	if err != nil {
 		return convertServices{}, err
 	}

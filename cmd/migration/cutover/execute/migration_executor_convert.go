@@ -21,7 +21,7 @@ type convertServices struct {
 }
 
 // convertServicesFunc builds a conversion's services from the manifest.
-type convertServicesFunc func(g *manifest.GatewayMigration) (convertServices, error)
+type convertServicesFunc func(g *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error)
 
 // Skips buildExecutorServices: a conversion uses neither its offset providers nor the link client.
 func runConvertBranch(
@@ -43,7 +43,7 @@ func runConvertBranch(
 		tracing.End(buildSpan, err)
 		return fmt.Errorf("failed to build gateway service: %w", err)
 	}
-	svc, err := deps.convert(g)
+	svc, err := deps.convert(g, deps.convertOver)
 	tracing.End(buildSpan, err)
 	if err != nil {
 		return fmt.Errorf("failed to build route-conversion services: %w", err)

@@ -715,9 +715,9 @@ func countingDeps(base executorDependencies, b *serviceBuilds) executorDependenc
 		},
 	}
 	if base.convert != nil {
-		counted.convert = func(g *manifest.GatewayMigration) (convertServices, error) {
+		counted.convert = func(g *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error) {
 			b.convert++
-			return base.convert(g)
+			return base.convert(g, gw)
 		}
 	}
 	return counted
@@ -945,4 +945,35 @@ func TestEffectivePolicyLogArgs_NamesTheType(t *testing.T) {
 	assert.Equal(t, "DYNAMIC", kv["migration_type"])
 	assert.Contains(t, kv, "promote_batch_size")
 	assert.NotContains(t, kv, "offset_sync_concurrency", "a dynamic migration's audit line carries only its own policies")
+}
+
+// One run builds the gateway service once: the plan read (migplan) and the
+// executors' dependencies, including a conversion's providers, share it.
+func TestExecute_BuildsOneGatewayServicePerRun(t *testing.T) {
+	g := loadGateway(t, newFixture(t, nil).manifestPath)
+	builds := 0
+	var built *gateway.K8sService
+	deps := stubDeps(nil, nil)
+	deps.k8s = func(*manifest.GatewayMigration) (*gateway.K8sService, error) {
+		builds++
+		built = gateway.NewK8sService("")
+		return built, nil
+	}
+	var convertGW *gateway.K8sService
+	deps.convert = func(_ *manifest.GatewayMigration, gw *gateway.K8sService) (convertServices, error) {
+		convertGW = gw
+		return convertServices{}, nil
+	}
+
+	svc, shared, err := shareGatewayService(g, deps)
+	require.NoError(t, err)
+	got, err := shared.gateway(g)
+	require.NoError(t, err)
+	_, err = shared.convert(g, shared.convertOver)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, builds, "the service is built once per run")
+	assert.Same(t, built, svc, "migplan is handed the built service")
+	assert.Same(t, built, got, "the executors' gateway is that same service")
+	assert.Same(t, built, convertGW, "a conversion's providers get it too")
 }

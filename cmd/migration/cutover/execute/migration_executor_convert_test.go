@@ -122,7 +122,7 @@ func (w *convertWorld) GetMany(context.Context, []string) (map[string]map[int32]
 }
 
 // services is executorDependencies.convert over this world.
-func (w *convertWorld) services(g *manifest.GatewayMigration) (convertServices, error) {
+func (w *convertWorld) services(g *manifest.GatewayMigration, _ *gateway.K8sService) (convertServices, error) {
 	in, err := migplan.BuildReconcileInput(g)
 	if err != nil {
 		return convertServices{}, err
@@ -318,7 +318,7 @@ func TestExecute_ConvertMode_AVerifyRefusalRemovesTheFenceAndFails(t *testing.T)
 func TestBuildConvertServices_RefusesATopicMigrationManifest(t *testing.T) {
 	g := loadGateway(t, newFixture(t, nil).manifestPath)
 
-	_, err := buildConvertServices(g)
+	_, err := buildConvertServices(g, nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a route conversion")
@@ -329,7 +329,7 @@ func TestBuildConvertServices_RefusesATopicMigrationManifest(t *testing.T) {
 // worded as that, not as a cluster connection failure.
 func TestExecute_ConvertMode_AServicesBuildFailureNamesTheConversionServices(t *testing.T) {
 	deps := stubDeps(&patchRecordingGateway{}, nil)
-	deps.convert = func(*manifest.GatewayMigration) (convertServices, error) {
+	deps.convert = func(*manifest.GatewayMigration, *gateway.K8sService) (convertServices, error) {
 		return convertServices{}, errors.New("boom")
 	}
 

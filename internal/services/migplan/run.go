@@ -99,6 +99,7 @@ type Result struct {
 type reconcileOptions struct {
 	gateway GatewayConfigSource    // nil ⇒ pull the live CR from spec.gateway
 	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
+	svc     *gateway.K8sService    // nil ⇒ built from the manifest's kubeconfig, once per call
 	out     io.Writer              // nil ⇒ os.Stdout
 }
 
@@ -117,6 +118,14 @@ func WithGatewaySource(s GatewayConfigSource) Option {
 // a live cluster; production builds a real K8s-backed checker.
 func WithSecretExistenceChecker(s SecretExistenceChecker) Option {
 	return func(o *reconcileOptions) { o.secrets = s }
+}
+
+// WithGatewayService hands Reconcile (and BuildConvertProviders) a gateway
+// service the caller already built, so one run shares a single service between
+// the plan read and the apply path. Nil, or no option, builds one from the
+// manifest's kubeconfig, as before.
+func WithGatewayService(svc *gateway.K8sService) Option {
+	return func(o *reconcileOptions) { o.svc = svc }
 }
 
 // WithOutput redirects the plan report (default os.Stdout), so a caller can
@@ -165,7 +174,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	// through identical wiring (decision 22). Only the gateway source stays
 	// injectable here, for testing.
 	if in.Type == reconcile.TypeDynamicToStatic {
-		p, closer, err := buildConvertProviders(g, o.gateway, true)
+		p, closer, err := buildConvertProviders(g, o.gateway, true, o.svc)
 		if err != nil {
 			return nil, err
 		}
@@ -180,9 +189,12 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	gw := o.gateway
 	secrets := o.secrets
 	if gw == nil || secrets == nil {
-		svc, err := buildGatewayService(g)
-		if err != nil {
-			return nil, err
+		svc := o.svc
+		if svc == nil {
+			var err error
+			if svc, err = buildGatewayService(g); err != nil {
+				return nil, err
+			}
 		}
 		if gw == nil {
 			gw = gatewaySourceOver(svc, g, in.Route, true)
@@ -517,14 +529,21 @@ func BuildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 // consumer-group lister on each cluster. The returned io.Closer closes every
 // client it opened; the caller owns it. On an error nothing is left open and
 // the closer is nil.
-func BuildConvertProviders(g *manifest.GatewayMigration) (ConvertProviders, io.Closer, error) {
-	return buildConvertProviders(g, nil, false)
+// WithGatewayService is the only option it reads: it supplies the gateway
+// service the live CR pull runs over.
+func BuildConvertProviders(g *manifest.GatewayMigration, opts ...Option) (ConvertProviders, io.Closer, error) {
+	o := reconcileOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return buildConvertProviders(g, nil, false, o.svc)
 }
 
 // buildConvertProviders is BuildConvertProviders with an optional gateway
 // source: nil builds the live CR pull, anything else is used as is (Reconcile's
 // test seam, WithGatewaySource). podCheck adds the pod check to the live pull.
-func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource, podCheck bool) (ConvertProviders, io.Closer, error) {
+// svc, when non-nil, is the service the live pull runs over; nil builds one.
+func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource, podCheck bool, svc *gateway.K8sService) (ConvertProviders, io.Closer, error) {
 	var opened closers
 	fail := func(err error) (ConvertProviders, io.Closer, error) {
 		_ = opened.Close()
@@ -532,9 +551,13 @@ func buildConvertProviders(g *manifest.GatewayMigration, gw GatewayConfigSource,
 	}
 
 	if gw == nil {
-		var err error
-		if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name, podCheck); err != nil {
-			return fail(err)
+		if svc != nil {
+			gw = gatewaySourceOver(svc, g, g.Spec.DeclaredRoute().Name, podCheck)
+		} else {
+			var err error
+			if gw, err = buildGatewaySource(g, g.Spec.DeclaredRoute().Name, podCheck); err != nil {
+				return fail(err)
+			}
 		}
 	}
 	link, err := buildLinkStatusProvider(g)
