@@ -1768,30 +1768,6 @@ func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
 }
 
 // ===========================================================================
-// Helper tests
-// ===========================================================================
-
-func TestFormatLag64(t *testing.T) {
-	tests := []struct {
-		input    int64
-		expected string
-	}{
-		{0, "0"},
-		{999, "999"},
-		{1000, "1,000"},
-		{21655, "21,655"},
-		{1000000, "1,000,000"},
-	}
-
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("%d", tc.input), func(t *testing.T) {
-			got := formatLag64(tc.input)
-			assert.Equal(t, tc.expected, got, "formatLag64(%d)", tc.input)
-		})
-	}
-}
-
-// ===========================================================================
 // Sweep-failure tolerance tests (maxConsecutiveSweepFailures)
 // ===========================================================================
 

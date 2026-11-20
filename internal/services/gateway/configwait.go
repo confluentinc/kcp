@@ -103,7 +103,7 @@ type ConfigWaitOptions struct {
 	// means no deadline, matching --rollout-timeout's default: the operator
 	// drives a rollout to completion. Ctrl-C ends kcp with the gateway as it is
 	// (fenced, if the fence was applied) and a re-run continues from there. A
-	// replaced pod overdue past its deletion deadline by replacedPodOverdueMargin
+	// replaced pod overdue past its deletion deadline by ReplacedPodOverdueMargin
 	// fails the wait whatever this timeout.
 	RollTimeout time.Duration
 

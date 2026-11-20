@@ -261,7 +261,7 @@ func (s *MigrationActions) CheckLags(
 				color.YellowString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.YellowString(formatLag64(topicTotalLags[topic]))))
+				color.YellowString(offset.FormatLag64(topicTotalLags[topic]))))
 		}
 		s.reporter.blank()
 
@@ -278,11 +278,6 @@ func (s *MigrationActions) CheckLags(
 // pays the slower of the two sweeps rather than their sum.
 func (s *MigrationActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
 	return offset.FetchSourceAndDestinationOffsets(ctx, s.sourceOffset, s.destinationOffset, topics)
-}
-
-// formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655")
-func formatLag64(n int64) string {
-	return gateway.FormatLag64(n)
 }
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the

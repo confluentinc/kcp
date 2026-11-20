@@ -32,8 +32,8 @@ func TestOverduePod(t *testing.T) {
 		wantPod     string
 		wantOverdue time.Duration
 	}{
-		{"past margin", []corev1.Pod{mk("gw-0", ago(replacedPodOverdueMargin+30*time.Second), corev1.PodRunning)}, includeAll, "gw-0", 30 * time.Second},
-		{"within margin", []corev1.Pod{mk("gw-0", ago(replacedPodOverdueMargin-time.Second), corev1.PodRunning)}, includeAll, "", 0},
+		{"past margin", []corev1.Pod{mk("gw-0", ago(ReplacedPodOverdueMargin+30*time.Second), corev1.PodRunning)}, includeAll, "gw-0", 30 * time.Second},
+		{"within margin", []corev1.Pod{mk("gw-0", ago(ReplacedPodOverdueMargin-time.Second), corev1.PodRunning)}, includeAll, "", 0},
 		{"deadline in future", []corev1.Pod{mk("gw-0", ago(-time.Hour), corev1.PodRunning)}, includeAll, "", 0},
 		{"terminal phase", []corev1.Pod{mk("gw-0", ago(time.Hour), corev1.PodFailed)}, includeAll, "", 0},
 		{"not included", []corev1.Pod{mk("gw-0", ago(time.Hour), corev1.PodRunning)}, includeNone, "", 0},
@@ -41,7 +41,7 @@ func TestOverduePod(t *testing.T) {
 		{"first by name", []corev1.Pod{
 			mk("gw-b", ago(time.Hour), corev1.PodRunning),
 			mk("gw-a", ago(time.Hour), corev1.PodRunning),
-		}, includeAll, "gw-a", time.Hour - replacedPodOverdueMargin},
+		}, includeAll, "gw-a", time.Hour - ReplacedPodOverdueMargin},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

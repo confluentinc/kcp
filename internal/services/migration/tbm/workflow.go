@@ -234,7 +234,7 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migrun.MigrationCo
 				color.YellowString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.YellowString(formatLag64(topicTotalLags[topic]))))
+				color.YellowString(offset.FormatLag64(topicTotalLags[topic]))))
 		}
 		a.reporter.blank()
 
@@ -251,11 +251,6 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migrun.MigrationCo
 // pays the slower of the two sweeps rather than their sum.
 func (a *TBMActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
 	return offset.FetchSourceAndDestinationOffsets(ctx, a.sourceOffset, a.destinationOffset, topics)
-}
-
-// formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655").
-func formatLag64(n int64) string {
-	return gateway.FormatLag64(n)
 }
 
 // Fence runs the fence transition: resolves how gateway transitions will be

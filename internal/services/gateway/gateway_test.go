@@ -881,13 +881,13 @@ func TestWaitForGatewayPods_ParentCancelIsNotReportedAsTimeout(t *testing.T) {
 	assert.NotContains(t, err.Error(), "timed out")
 }
 
-// shortenOverdueMargin lowers replacedPodOverdueMargin for the test and
+// shortenOverdueMargin lowers ReplacedPodOverdueMargin for the test and
 // restores it on cleanup.
 func shortenOverdueMargin(t *testing.T, d time.Duration) {
 	t.Helper()
-	original := replacedPodOverdueMargin
-	replacedPodOverdueMargin = d
-	t.Cleanup(func() { replacedPodOverdueMargin = original })
+	original := ReplacedPodOverdueMargin
+	ReplacedPodOverdueMargin = d
+	t.Cleanup(func() { ReplacedPodOverdueMargin = original })
 }
 
 // TestWaitForGatewayPods_OverdueOldPodFailsWithoutDeadline: a captured pod still
