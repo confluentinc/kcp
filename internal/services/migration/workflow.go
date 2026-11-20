@@ -138,12 +138,6 @@ func (s *MigrationActions) SmokeTestHotReload(ctx context.Context, config *Migra
 	return s.gw.SmokeTestHotReload(ctx, s.target(config))
 }
 
-// gatewayHotReloadTimeout returns the configId verification deadline, never
-// unbounded: a hot-reload moves no Kubernetes signal to wait on.
-func (s *MigrationActions) gatewayHotReloadTimeout() time.Duration {
-	return s.gw.HotReloadTimeout()
-}
-
 // SetPromoteBatchSize caps how many mirror topics are promoted per batch during
 // PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
 // topics are promoted at once. When set (>0), each batch is promoted and fully

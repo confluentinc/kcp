@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/stretchr/testify/assert"
@@ -124,26 +123,6 @@ func TestResolveGatewayCapability(t *testing.T) {
 		// capability, kcp must behave exactly as it did before hot-reload support.
 		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
 		assert.False(t, actions.gw.Capability().InjectsConfigID())
-	})
-}
-
-func TestGatewayHotReloadTimeout(t *testing.T) {
-	t.Run("defaults rather than running unbounded", func(t *testing.T) {
-		// Deliberately unlike --rollout-timeout: a hot-reload moves no Kubernetes
-		// signal, so an unbounded wait on a gateway whose config watcher never
-		// started would hang with nothing to show.
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-		assert.Equal(t, gateway.DefaultHotReloadTimeout, actions.gatewayHotReloadTimeout())
-	})
-
-	t.Run("honours an explicit value", func(t *testing.T) {
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{}, gateway.WithTimeouts(0, 30*time.Second))
-		assert.Equal(t, 30*time.Second, actions.gatewayHotReloadTimeout())
-	})
-
-	t.Run("treats a negative value as unset", func(t *testing.T) {
-		actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{}, gateway.WithTimeouts(0, -1*time.Second))
-		assert.Equal(t, gateway.DefaultHotReloadTimeout, actions.gatewayHotReloadTimeout())
 	})
 }
 

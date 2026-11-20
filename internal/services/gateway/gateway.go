@@ -76,17 +76,6 @@ type PodRolloutProgress struct {
 	OldPodNames []string
 }
 
-// GatewayReadinessProgress reports the current state of a gateway readiness wait.
-// The gate (whether the wait returns) comes from the underlying apps/v1
-// Deployment's rollout status; pod counts come from Deployment.status.readyReplicas.
-type GatewayReadinessProgress struct {
-	InitialPodCount int
-	PodsReady       int
-	Elapsed         time.Duration
-	RolloutDetected bool
-	Ready           bool
-}
-
 // K8sService implements gateway operations using Kubernetes clients. Its
 // clients are built lazily on first use and then reused for the life of the
 // service. Construct it with NewK8sService or NewK8sServiceWithClients.
@@ -489,8 +478,8 @@ func isFatalGatewayConditionReason(reason string) bool {
 // This is the guard that makes a downstream "no rollout observed" trustworthy.
 // Applying a CR bumps the Gateway's metadata.generation; until the operator
 // reconciles it (and, for a real spec change, writes the Deployment)
-// observedGeneration lags. Without this wait, the Deployment-based waits
-// (WaitForGatewayReady, WaitForGatewayPods) see a perfectly healthy Deployment
+// observedGeneration lags. Without this wait, the Deployment-based wait
+// (WaitForGatewayPods) see a perfectly healthy Deployment
 // still running the *previous* generation's pods, and conclude "no restart
 // required" — reporting success for a switchover or fence that never happened.
 // The generation baseline those waits compare against cannot close this on its
@@ -956,110 +945,6 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
-}
-
-// WaitForGatewayReady polls the underlying apps/v1 Deployment's rollout status
-// until the Deployment reports a complete rollout, or until ctx is cancelled.
-// When timeout > 0, a hard deadline is applied via context; a timeout of 0
-// means no deadline.
-//
-// The wait runs in two phases:
-//  1. Observation: watch the backing Deployment's metadata.generation for a bump
-//     past baselineGeneration. A bump proves the operator rewrote the pod
-//     template, so pods are being replaced. If none appears within the
-//     confirmation window there is no pod rollout to wait on — onProgress is
-//     invoked once with RolloutDetected=false and the wait returns nil.
-//  2. Convergence: polls until the Deployment reports rollout complete
-//     (observedGeneration >= generation, updatedReplicas == replicas,
-//     availableReplicas == replicas, replicas > 0), calling onProgress on
-//     every poll tick with monotonically increasing Elapsed.
-//
-// baselineGeneration is the Deployment's metadata.generation captured before the
-// apply, via GetGatewayDeploymentGeneration. Phase 1 asks a different question
-// than it used to: not "does the Deployment look unsettled right now", which a
-// fast roll can pass through unnoticed and which cannot separate a healthy
-// Deployment from one the operator has not written yet, but "did the operator
-// rewrite the pod template". Comparing generations answers that even when the
-// roll starts and finishes between two polls.
-//
-// It only waits for the Deployment rollout and must NOT be used to verify a
-// gateway transition: it returns while replaced pods still serve. Use
-// WaitForGatewayPods or the configId wait instead.
-func (s *K8sService) WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error {
-	clientset, err := s.Clientset()
-	if err != nil {
-		return err
-	}
-	return waitForGatewayReady(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval, timeout, onProgress)
-}
-
-// waitForGatewayReady is the inner orchestration used by WaitForGatewayReady.
-// Split from the method so unit tests can inject a fake clientset.
-func waitForGatewayReady(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) (err error) {
-	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_ready")
-	defer func() { tracing.End(span, err) }()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-
-	// Phase 1: establish the mechanism. This also resolves the Deployment, so a
-	// missing or ambiguous one fails here rather than being discovered later.
-	mechanism, dep, err := observeRolloutMechanism(ctx, clientset, namespace, gatewayName, baselineGeneration, pollInterval)
-	if err != nil {
-		return err
-	}
-	slog.Debug("resolved gateway deployment", "namespace", namespace, "gateway", gatewayName, "deployment", dep.Name, "mechanism", mechanism)
-
-	initialReplicas := dep.Status.Replicas
-	start := time.Now()
-
-	if mechanism == MechanismNoRollObserved {
-		slog.Debug("no pod rollout observed; nothing to converge on", "gateway", gatewayName)
-		if onProgress != nil {
-			onProgress(GatewayReadinessProgress{
-				InitialPodCount: int(initialReplicas),
-				PodsReady:       int(initialReplicas),
-				Elapsed:         time.Since(start),
-				RolloutDetected: false,
-				Ready:           true,
-			})
-		}
-		return nil
-	}
-
-	// Phase 2: convergence — poll until Deployment rollout is complete.
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		dep, err = resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
-		if err != nil {
-			return err
-		}
-		ready := deploymentRolloutComplete(dep)
-		if onProgress != nil {
-			onProgress(GatewayReadinessProgress{
-				InitialPodCount: int(initialReplicas),
-				PodsReady:       int(dep.Status.ReadyReplicas),
-				Elapsed:         time.Since(start),
-				RolloutDetected: true,
-				Ready:           ready,
-			})
-		}
-		if ready {
-			slog.Debug("gateway deployment rollout complete", "gateway", gatewayName, "elapsed", time.Since(start))
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pollInterval):
-		}
-	}
 }
 
 // resolveGatewayDeployment finds the Deployment backing a Gateway CR.

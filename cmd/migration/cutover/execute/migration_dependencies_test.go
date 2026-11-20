@@ -109,10 +109,6 @@ func (stubGatewayServiceImpl) WaitForGatewayPods(context.Context, string, string
 	return nil
 }
 
-func (stubGatewayServiceImpl) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
-	return nil
-}
-
 // stubClusterLinkServiceImpl implements clusterlink.Service, reporting every
 // requested topic as already STOPPED and accepting every promote, so the
 // promote transition walks without reaching a real cluster-link REST endpoint.

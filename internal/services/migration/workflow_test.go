@@ -19,7 +19,7 @@ import (
 
 // testInitialCR is a minimal live-read gateway CR with a route named
 // migration-route, so both capability detection's fence/switch CR splice
-// (deriveFencedCRYAML/deriveSwitchedCRYAML) and the write path's RoutePatch
+// (fenceChange/switchChange) and the write path's RoutePatch
 // derivation (deriveFenceRoutePatch/deriveSwitchRoutePatch) can derive a
 // fenced/switched result from it in unit tests.
 const testInitialCR = `apiVersion: platform.confluent.io/v1beta1
@@ -791,7 +791,6 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 	podUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
 	var waitPodsCalls int
 	var passedUIDs map[k8stypes.UID]struct{}
-	waitReadyCalled := false
 	acceptedCalled := false
 	gw := &mockGatewayService{
 		// With detection disabled the workflow makes no pod capture of its own;
@@ -813,10 +812,6 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 		PatchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
-		WaitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
-			waitReadyCalled = true
-			return nil
-		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
@@ -830,7 +825,6 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 	assert.Equal(t, 1, uidCaptures, "with detection disabled, only PatchCR captures the pod UIDs")
 	assert.Equal(t, 1, waitPodsCalls, "the verifier must wait for the replaced pods to be gone")
 	assert.Equal(t, podUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
-	assert.False(t, waitReadyCalled, "the readiness-only wait must not be used on the rollout path")
 	assert.True(t, acceptedCalled, "the acceptance wait must run even with detection disabled")
 }
 
@@ -864,7 +858,6 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 
 func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(t *testing.T) {
 	var callOrder []string
-	waitReadyCalled := false
 	oldUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
 	var passedUIDs map[k8stypes.UID]struct{}
 	gw := &mockGatewayService{
@@ -888,10 +881,6 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(
 			}
 			return nil
 		},
-		WaitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
-			waitReadyCalled = true
-			return nil
-		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
@@ -905,7 +894,6 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForReplacedPodsViaVerifier(
 	// The single getUIDs is PatchCR's capture: the workflow makes none of its own.
 	assert.Equal(t, []string{"getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
 		"detection on behaves exactly like detection off: capture once in PatchCR, apply, wait for operator reconcile, then wait for pod rollout")
-	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
 	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
 }
 

@@ -94,12 +94,6 @@ func (t *Transitioner) SetExpectedGeneration(g int64) { t.generation = g }
 // ExpectedGeneration returns the generation the next patch is guarded on.
 func (t *Transitioner) ExpectedGeneration() int64 { return t.generation }
 
-// HotReloadTimeout returns the hot-reload verification budget in force: the one
-// set, or DefaultHotReloadTimeout when it is unset or negative.
-func (t *Transitioner) HotReloadTimeout() time.Duration {
-	return t.verifier().HotReloadTimeoutOrDefault()
-}
-
 // Capability returns the resolved capability (the zero value until resolved).
 func (t *Transitioner) Capability() Capability { return t.capability }
 

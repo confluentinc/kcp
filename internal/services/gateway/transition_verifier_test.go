@@ -39,10 +39,9 @@ type mockService struct {
 	calls               []string
 
 	// waitForGatewayPodsFn scripts WaitForGatewayPods (nil = succeed);
-	// waitPodsCalls and waitReadyCalls count invocations of the two rollout waits.
+	// waitPodsCalls counts invocations of the pod rollout wait.
 	waitForGatewayPodsFn func(initial map[types.UID]struct{}, baseline int64, poll, timeout time.Duration) error
 	waitPodsCalls        int
-	waitReadyCalls       int
 
 	// detectCapabilityFn scripts DetectCapability (nil = zero Capability);
 	// detects counts its invocations.
@@ -144,11 +143,6 @@ func (m *mockService) WaitForGatewayPods(_ context.Context, _, _ string, initial
 	if m.waitForGatewayPodsFn != nil {
 		return m.waitForGatewayPodsFn(initial, baseline, poll, timeout)
 	}
-	return nil
-}
-
-func (m *mockService) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(GatewayReadinessProgress)) error {
-	m.waitReadyCalls++
 	return nil
 }
 
@@ -369,7 +363,6 @@ func TestVerifyTransition_RolloutWaitsForReplacedPods(t *testing.T) {
 	require.NoError(t, v.VerifyTransition(context.Background(), "ns", "gw", 9180, applied, "fence"))
 
 	assert.Equal(t, 1, svc.waitPodsCalls)
-	assert.Equal(t, 0, svc.waitReadyCalls, "the rollout branch must not fall back to the readiness-only wait")
 	assert.Equal(t, applied.PreApplyPodUIDs, gotInitial)
 	assert.Equal(t, int64(12), gotBaseline)
 	assert.Equal(t, 5*time.Second, gotPoll)

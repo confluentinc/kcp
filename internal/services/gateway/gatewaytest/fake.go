@@ -32,7 +32,6 @@ type Fake struct {
 	GetGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	GetDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
 	WaitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	WaitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *Fake) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -122,13 +121,6 @@ func (m *Fake) GetGatewayDeploymentGeneration(ctx context.Context, namespace, na
 func (m *Fake) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 	if m.WaitForGatewayPodsFn != nil {
 		return m.WaitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
-	}
-	return nil
-}
-
-func (m *Fake) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
-	if m.WaitForGatewayReadyFn != nil {
-		return m.WaitForGatewayReadyFn(ctx, namespace, name, baselineGeneration, pollInterval, timeout, onProgress)
 	}
 	return nil
 }
