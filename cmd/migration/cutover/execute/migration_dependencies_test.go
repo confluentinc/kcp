@@ -7,15 +7,14 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -25,7 +24,7 @@ import (
 // branches' tests drive their runs through it.
 func stubDeps(gw gateway.TransitionClient, cl clusterlink.Service) executorDependencies {
 	if gw == nil {
-		gw = stubGatewayServiceImpl{}
+		gw = stubGateway()
 	}
 	if cl == nil {
 		cl = stubClusterLinkServiceImpl{}
@@ -57,56 +56,22 @@ func stubOffsetProviders(*manifest.GatewayMigration) (offset.Provider, offset.Pr
 	return zeroLagOffsetProvider{}, zeroLagOffsetProvider{}, func() error { return nil }, nil
 }
 
-// stubGatewayServiceImpl implements gateway.TransitionClient with always-succeeding
-// no-op behavior (VerifyRollout, so no configId is injected), so the fence and
-// switch transitions walk without reaching a real Kubernetes cluster. The
-// engine's own gateway behavior is exercised in internal/services/gateway and
-// internal/services/migration/tbm, not duplicated here.
-type stubGatewayServiceImpl struct{}
-
-func (stubGatewayServiceImpl) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
-	return nil, fmt.Errorf("stubGatewayServiceImpl.GetGatewayYAML not implemented")
-}
-
-func (stubGatewayServiceImpl) DetectCapability(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
-	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
-}
-
-func (stubGatewayServiceImpl) WaitForGatewayConfigID(context.Context, string, string, gateway.ConfigWaitOptions) error {
-	return nil
-}
-
-func (stubGatewayServiceImpl) CheckPermissions(context.Context, string, string, string, string) (bool, error) {
-	return true, nil
-}
-
-func (stubGatewayServiceImpl) PatchGatewayRoute(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
-	return gateway.PatchResult{}, nil
-}
-
-func (stubGatewayServiceImpl) PatchGatewayConfigID(context.Context, string, string, string, int64) (gateway.PatchResult, error) {
-	return gateway.PatchResult{}, nil
-}
-
-func (stubGatewayServiceImpl) GetGatewayGeneration(context.Context, string, string) (int64, error) {
-	return 0, nil
-}
-
-func (stubGatewayServiceImpl) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {
-	return nil
-}
-
-func (stubGatewayServiceImpl) GetGatewayPodUIDs(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
-	// One UID: PatchCR captures the pods of a rolling gateway before every patch.
-	return map[k8stypes.UID]struct{}{"stub-pod": {}}, nil
-}
-
-func (stubGatewayServiceImpl) GetGatewayDeploymentGeneration(context.Context, string, string) (int64, error) {
-	return 0, nil
-}
-
-func (stubGatewayServiceImpl) WaitForGatewayPods(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
-	return nil
+// stubGateway is a gatewaytest.Fake configured with always-succeeding no-op
+// behavior (VerifyRollout by the Fake's default, so no configId is injected), so
+// the fence and switch transitions walk without reaching a real Kubernetes
+// cluster. The Fake's patch methods error when unconfigured, so the patch
+// functions are set to succeed. The engine's own gateway behavior is exercised
+// in internal/services/gateway and internal/services/migration/tbm, not
+// duplicated here.
+func stubGateway() *gatewaytest.Fake {
+	return &gatewaytest.Fake{
+		PatchRouteGenFn: func(context.Context, string, string, gateway.RoutePatch, string, int64) (gateway.PatchResult, error) {
+			return gateway.PatchResult{}, nil
+		},
+		PatchGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
+			return "", nil
+		},
+	}
 }
 
 // stubClusterLinkServiceImpl implements clusterlink.Service, reporting every
@@ -196,25 +161,29 @@ func (r *recordingClusterLinkService) maxBatch() int {
 	return max
 }
 
-// recordingGatewayService is stubGatewayServiceImpl plus a record of the port
-// passed to DetectCapability — the first place a gateway transition reads
+// portRecordingGateway is stubGateway plus a record of the port passed to
+// DetectCapability — the first place a gateway transition reads
 // config.GatewayConfigPort (see gateway.Transitioner.EnsureCapability). Observing it here
 // proves the override reached config.GatewayConfigPort BEFORE the capability
 // probe ran.
-type recordingGatewayService struct {
-	stubGatewayServiceImpl
+type portRecordingGateway struct {
+	*gatewaytest.Fake
 	mu       sync.Mutex
 	seenPort int
 }
 
-func (r *recordingGatewayService) DetectCapability(_ context.Context, _ string, _ string, port int, _ []byte, _ []byte) (gateway.Capability, error) {
-	r.mu.Lock()
-	r.seenPort = port
-	r.mu.Unlock()
-	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+func newPortRecordingGateway() *portRecordingGateway {
+	r := &portRecordingGateway{Fake: stubGateway()}
+	r.DetectCapabilityFn = func(_ context.Context, _ string, _ string, port int, _ []byte, _ []byte) (gateway.Capability, error) {
+		r.mu.Lock()
+		r.seenPort = port
+		r.mu.Unlock()
+		return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+	}
+	return r
 }
 
-func (r *recordingGatewayService) port() int {
+func (r *portRecordingGateway) port() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.seenPort

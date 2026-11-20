@@ -13,6 +13,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -155,18 +156,22 @@ func (w *convertWorld) services(g *manifest.GatewayMigration, _ *gateway.K8sServ
 	}, nil
 }
 
-// patchRecordingGateway is stubGatewayServiceImpl recording each route patch's Field.
+// patchRecordingGateway is stubGateway recording each route patch's Field.
 type patchRecordingGateway struct {
-	stubGatewayServiceImpl
+	*gatewaytest.Fake
 	mu     sync.Mutex
 	fields []string
 }
 
-func (r *patchRecordingGateway) PatchGatewayRoute(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string, _ int64) (gateway.PatchResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.fields = append(r.fields, rp.Field)
-	return gateway.PatchResult{}, nil
+func newPatchRecordingGateway() *patchRecordingGateway {
+	r := &patchRecordingGateway{Fake: stubGateway()}
+	r.PatchRouteGenFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string, _ int64) (gateway.PatchResult, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.fields = append(r.fields, rp.Field)
+		return gateway.PatchResult{}, nil
+	}
+	return r
 }
 
 func (r *patchRecordingGateway) patched() []string {
@@ -207,7 +212,7 @@ func TestConvertFixture_IsAConversionManifest(t *testing.T) {
 
 func TestExecute_ConvertMode_RunsToCompletionOnStubbedServices(t *testing.T) {
 	w := newConvertWorld("orders-app")
-	gw := &patchRecordingGateway{}
+	gw := newPatchRecordingGateway()
 
 	out, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(gw, w))
 
@@ -253,7 +258,7 @@ func TestExecute_ConvertMode_ADisabledCommitsWindowSkipsTheCheckEndToEnd(t *test
 			require.NoError(t, err)
 			assert.Equal(t, tc.written, strings.Contains(string(raw), window), "the manifest's window must match the case")
 			w := newConvertWorld("orders-app")
-			gw := &patchRecordingGateway{}
+			gw := newPatchRecordingGateway()
 			var out string
 
 			console := captureStdout(t, func() {
@@ -282,7 +287,7 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 			g.Spec.DynamicToStaticConversion.Policies.OffsetSyncConcurrency = 3
 		}
 
-		_, err := runConvertBranchFor(t, convertFixture(t), edit, convertDeps(&patchRecordingGateway{}, w))
+		_, err := runConvertBranchFor(t, convertFixture(t), edit, convertDeps(newPatchRecordingGateway(), w))
 
 		require.NoError(t, err)
 		assert.Equal(t, []time.Duration{45 * time.Second}, w.waits, "detectUnroutedCommitsDuration is the wait between the snapshots")
@@ -291,7 +296,7 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 	t.Run("built-in defaults", func(t *testing.T) {
 		w := newConvertWorld(groups...)
 
-		_, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(&patchRecordingGateway{}, w))
+		_, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(newPatchRecordingGateway(), w))
 
 		require.NoError(t, err)
 		assert.Empty(t, w.waits, "an unset detectUnroutedCommitsDuration skips the check")
@@ -302,7 +307,7 @@ func TestExecute_ConvertMode_PoliciesReachTheStateMachine(t *testing.T) {
 func TestExecute_ConvertMode_AVerifyRefusalRemovesTheFenceAndFails(t *testing.T) {
 	w := newConvertWorld("orders-app")
 	w.facts.TargetCanCommitOffsets = false
-	gw := &patchRecordingGateway{}
+	gw := newPatchRecordingGateway()
 
 	out, err := runConvertBranchFor(t, convertFixture(t), nil, convertDeps(gw, w))
 
@@ -328,7 +333,7 @@ func TestBuildConvertServices_RefusesATopicMigrationManifest(t *testing.T) {
 // services is more than a connection (the reconcile input, the gather, the fetchers), so its failure is
 // worded as that, not as a cluster connection failure.
 func TestExecute_ConvertMode_AServicesBuildFailureNamesTheConversionServices(t *testing.T) {
-	deps := stubDeps(&patchRecordingGateway{}, nil)
+	deps := stubDeps(newPatchRecordingGateway(), nil)
 	deps.convert = func(*manifest.GatewayMigration, *gateway.K8sService) (convertServices, error) {
 		return convertServices{}, errors.New("boom")
 	}

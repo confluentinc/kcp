@@ -198,7 +198,7 @@ func TestExecute_DynamicMode_GatewayConfigPortReachesDynamicCapabilityProbe(t *t
 	f := dynamicFixture(t)
 	config := dynamicConfig(t, f, nil)
 
-	rec := &recordingGatewayService{}
+	rec := newPortRecordingGateway()
 	// The CLI's --gateway-config-port relies on real cobra flag parsing
 	// (applyPolicyOverrides), which runDynamicBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for

@@ -812,7 +812,7 @@ func TestExecutePlan_ConversionRunsTheConvertBranch(t *testing.T) {
 	var builds serviceBuilds
 	w := newConvertWorld("orders-app")
 
-	out, err := runExecutePlan(t, convertFixture(t), convertPlanResult(), countingDeps(convertDeps(&patchRecordingGateway{}, w), &builds))
+	out, err := runExecutePlan(t, convertFixture(t), convertPlanResult(), countingDeps(convertDeps(newPatchRecordingGateway(), w), &builds))
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Route conversion completed: msk-prod-to-cc-batch-1")
