@@ -201,18 +201,22 @@ kcp records only clients that make a request while TRACE is on. About an hour us
 
 ## 5. Run the scan
 
-To scan from S3, point `--s3-uri` at the folder of logs for the period you want:
+Always pass `--logs` to choose where kcp reads the logs: `s3` or `cloudwatch`. Each source accepts only its own flags, and kcp rejects flags that belong to the other source.
+
+To scan from S3, set `--logs s3` and point `--s3-uri` at the folder of logs for the period you want:
 
 ```bash
 kcp scan client-inventory \
+    --logs s3 \
     --s3-uri s3://<bucket>/<prefix>AWSLogs/<account_id>/KafkaBrokerLogs/<region>/<cluster_name>-<cluster_uuid>-<n>/<yyyy-mm-dd-hh>/ \
     --state-file kcp-state.json
 ```
 
-To scan from CloudWatch Logs, give the log group, the Region, the cluster name, and a time window:
+To scan from CloudWatch Logs, set `--logs cloudwatch` and give the log group, the Region, the cluster name, and a time window:
 
 ```bash
 kcp scan client-inventory \
+    --logs cloudwatch \
     --log-group-name <log_group_name> \
     --region <region> \
     --cluster-name <cluster_name> \

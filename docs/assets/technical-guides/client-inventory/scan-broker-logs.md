@@ -2,14 +2,15 @@
 
 `kcp scan client-inventory` reads Amazon Managed Streaming for Apache Kafka® (Amazon MSK) broker request logs from either Amazon S3 or Amazon CloudWatch Logs, and records the clients it finds in `kcp-state.json`. This page describes how to scan each source, the time-window rules, the permissions, and how to fix a scan that finds nothing.
 
-Both sources feed the same parser, so the same log lines produce the same clients. Only the place the logs are read from differs. Choose exactly one source for each run.
+Both sources feed the same parser, so the same log lines produce the same clients. Only the place the logs are read from differs. Choose exactly one source for each run with the required `--logs` flag.
 
 The scan sees only what the brokers logged. To deliver broker logs and turn on TRACE logging first, follow [Discover Clients on an MSK Cluster](discover-clients.md).
 
 ## Choose a source
 
-| | S3 (`--s3-uri`) | CloudWatch Logs (`--log-group-name`) |
+| | S3 (`--logs s3`) | CloudWatch Logs (`--logs cloudwatch`) |
 |---|---|---|
+| Required flags | `--s3-uri` | `--log-group-name`, `--region`, `--cluster-name` |
 | Region and cluster name | Derived from the S3 URI | Given with `--region` and `--cluster-name` |
 | Time window | All log files under the prefix you give | `--start-time` and `--end-time` (default: the last 24 hours) |
 | Completeness at TRACE | Complete | Best effort, see the note below |
@@ -20,10 +21,16 @@ The scan sees only what the brokers logged. To deliver broker logs and turn on T
 !!! warning "CloudWatch completeness at TRACE"
     AWS recommends S3 or Firehose for DEBUG and TRACE broker logging, and cautions that CloudWatch Logs "may continuously deliver a sample of logs." Because client discovery relies on TRACE request logs, discovery through CloudWatch is best effort and can miss clients that were active in the window. Use S3 for complete or historical discovery. Use CloudWatch for quick, recent checks.
 
+Each source accepts only its own flags. If you pass a flag that belongs to the other source, kcp stops with an error that names the flag, instead of ignoring it. For example, `--logs s3` rejects `--region`, `--cluster-name`, `--start-time`, `--end-time` and `--log-group-name`, and `--logs cloudwatch` rejects `--s3-uri`.
+
+!!! note "Environment variables count as flags"
+    kcp also reads each flag from an environment variable named after it in uppercase, such as `REGION` or `START_TIME`. A stray variable like that triggers the same error for the S3 source. Unset it, or pass the flag explicitly.
+
 ## Scan from S3
 
 ```bash
 kcp scan client-inventory \
+    --logs s3 \
     --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
     --state-file kcp-state.json
 ```
@@ -60,6 +67,7 @@ The S3 source needs this IAM policy:
 
 ```bash
 kcp scan client-inventory \
+    --logs cloudwatch \
     --log-group-name /aws/msk/my-cluster/broker-logs \
     --region us-east-1 \
     --cluster-name msk-cluster \
@@ -83,6 +91,7 @@ A CloudWatch log group name doesn't encode the Region or the cluster name the wa
 
 ```bash
 kcp scan client-inventory \
+    --logs cloudwatch \
     --log-group-name /aws/msk/my-cluster/broker-logs \
     --region us-east-1 \
     --cluster-name msk-cluster \
@@ -127,7 +136,8 @@ The CloudWatch source needs this IAM policy:
 | What you see | Likely cause and fix |
 |---|---|
 | `No clients discovered; leaving state unchanged` | The scanned logs contain no TRACE request lines. Check that TRACE was on during the window (a broker restart resets it), that log delivery was enabled before then, and that your window or S3 prefix covers that time. |
-| An `ERROR failed to extract API requests` line, then `No clients discovered` | Reading the logs failed, for example because of permissions, a window outside retention, or a wrong path. The run still ends with the "no clients" message, so read the ERROR line for the cause. |
+| `N of M log chunks failed to read: ...` and a non-zero exit code | Reading the logs failed, for example because of permissions, a window outside retention, a wrong log group, a wrong Region, or a wrong path. The message ends with the cause. Clients found in the chunks that did read are still saved, so fix the cause and run again. |
+| `--logs is required`, or `--<flag> is only valid with --logs ...` | Pass `--logs s3` or `--logs cloudwatch`, and remove the flags that belong to the other source. |
 | `invalid S3 URI format` | The URI must contain `AWSLogs/<account_id>/KafkaBrokerLogs/<region>/<cluster_name>-<cluster_uuid>-<n>/`. Copy the path from `aws s3 ls`. |
 | `insights returned the maximum 10000 rows` | The window has too many distinct clients for one query. Narrow `--start-time` and `--end-time`. |
 | An error that the query's end date is before the log group's creation or exceeds its retention | The window is outside the log group's retention period. Use a more recent window, or scan the S3 copy. |
