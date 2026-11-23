@@ -3,6 +3,7 @@ package client_inventory
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -14,7 +15,13 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	sourceS3         = "s3"
+	sourceCloudWatch = "cloudwatch"
+)
+
 var (
+	logs         string
 	s3Uri        string
 	stateFile    string
 	logGroupName string
@@ -26,7 +33,7 @@ var (
 
 func clientInventoryIAMAnnotation() string {
 	return iampolicy.RenderStatements(
-		"Grant the statement matching your chosen broker-log source (`--s3-uri` or `--log-group-name`).",
+		"Grant the statement matching your chosen broker-log source (`--logs s3` or `--logs cloudwatch`).",
 		[]iampolicy.Statement{
 			{
 				Sid:     "BrokerLogsFromS3",
@@ -57,9 +64,9 @@ func NewScanClientInventoryCmd() *cobra.Command {
 		Short: "Scan the broker logs for client activity",
 		Long: `Scan MSK broker logs to identify clients using the cluster, from either Amazon S3 or Amazon CloudWatch Logs.
 
-Choose exactly one source:
-  --s3-uri          read broker log files from an S3 prefix (region and cluster name are derived from the URI).
-  --log-group-name  read broker logs from a CloudWatch Logs log group (requires --region and --cluster-name).
+Choose the source with the required --logs flag (s3 or cloudwatch). Each source accepts only its own flags, and kcp rejects flags that belong to the other source:
+  --logs s3          requires --s3-uri (region and cluster name are derived from the URI).
+  --logs cloudwatch  requires --log-group-name, --region and --cluster-name, and accepts --start-time and --end-time.
 
 Prerequisites:
 
@@ -73,11 +80,13 @@ The CloudWatch source runs a CloudWatch Logs Insights query that filters and rem
 kcp keys each client by ` + "`clientID|topic|role|auth|principal`" + `, for example ` + "`stock-levels-producer|stock-levels|Producer|IAM|arn:aws:sts::...`" + `. A later run appends only the clients that don't already match an existing key.`,
 		Example: `  # From S3
   kcp scan client-inventory \
+      --logs s3 \
       --s3-uri s3://my-cluster-logs/AWSLogs/000123456789/KafkaBrokerLogs/us-east-1/msk-cluster-xxxx-5/2025-08-13-14/ \
       --state-file kcp-state.json
 
   # From CloudWatch Logs (defaults to the last 24h)
   kcp scan client-inventory \
+      --logs cloudwatch \
       --log-group-name /aws/msk/my-cluster/broker-logs \
       --region us-east-1 \
       --cluster-name msk-cluster \
@@ -94,6 +103,7 @@ kcp keys each client by ` + "`clientID|topic|role|auth|principal`" + `, for exam
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the client inventory reports will be written to.")
+	requiredFlags.StringVar(&logs, "logs", "", "Where to read broker logs from: s3 or cloudwatch. Each source accepts only its own flags and rejects the other source's flags.")
 
 	s3SourceFlags := pflag.NewFlagSet("s3-source", pflag.ExitOnError)
 	s3SourceFlags.SortFlags = false
@@ -115,7 +125,7 @@ kcp keys each client by ` + "`clientID|topic|role|auth|principal`" + `, for exam
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, s3SourceFlags, cloudWatchSourceFlags}
-		groupNames := []string{"Required Flags", "S3 Source Flags", "CloudWatch Source Flags"}
+		groupNames := []string{"Required Flags", "S3 Source Flags (--logs s3)", "CloudWatch Source Flags (--logs cloudwatch)"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -124,15 +134,16 @@ kcp keys each client by ` + "`clientID|topic|role|auth|principal`" + `, for exam
 			}
 		}
 
-		fmt.Println("Provide exactly one of --s3-uri or --log-group-name.")
+		fmt.Println("Choose --logs s3 or --logs cloudwatch. Each source accepts only its own flags.")
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})
 
 	_ = clientInventoryCmd.MarkFlagRequired("state-file")
-	clientInventoryCmd.MarkFlagsOneRequired("s3-uri", "log-group-name")
-	clientInventoryCmd.MarkFlagsMutuallyExclusive("s3-uri", "log-group-name")
+	_ = clientInventoryCmd.MarkFlagRequired("logs")
+	// Per-source flag rules live in parseClientInventoryFlags, so the error messages stay
+	// specific and the rules are unit tested in one place.
 
 	return clientInventoryCmd
 }
@@ -147,6 +158,7 @@ func preRunScanClientInventory(cmd *cobra.Command, args []string) error {
 
 func runScanClientInventory(cmd *cobra.Command, args []string) error {
 	opts, useCloudWatch, err := parseClientInventoryFlags(rawFlags{
+		logs:         logs,
 		s3Uri:        s3Uri,
 		logGroupName: logGroupName,
 		region:       region,
@@ -200,6 +212,7 @@ func runScanClientInventory(cmd *cobra.Command, args []string) error {
 // rawFlags holds the raw string flag values so parsing/validation can be unit
 // tested without constructing a Cobra command.
 type rawFlags struct {
+	logs         string
 	s3Uri        string
 	logGroupName string
 	region       string
@@ -209,12 +222,65 @@ type rawFlags struct {
 	stateFile    string
 }
 
+// cloudWatchOnlyFlag is a flag that only the CloudWatch source accepts.
+type cloudWatchOnlyFlag struct {
+	name  string
+	value string
+}
+
+// resolveSource validates --logs and rejects every flag that belongs to the other source.
+func resolveSource(in rawFlags) (string, error) {
+	chosen := strings.ToLower(strings.TrimSpace(in.logs))
+	switch chosen {
+	case "":
+		return "", fmt.Errorf("--logs is required: use --logs s3 with --s3-uri, or --logs cloudwatch with --log-group-name")
+	case sourceS3, sourceCloudWatch:
+	default:
+		return "", fmt.Errorf("invalid --logs %q (want %q or %q; if you did not pass --logs, unset the LOGS environment variable)", in.logs, sourceS3, sourceCloudWatch)
+	}
+
+	switch chosen {
+	case sourceS3:
+		if in.logGroupName != "" {
+			return "", fmt.Errorf("--log-group-name is only valid with --logs cloudwatch")
+		}
+		for _, f := range []cloudWatchOnlyFlag{
+			{"--region", in.region},
+			{"--cluster-name", in.clusterName},
+			{"--start-time", in.startTime},
+			{"--end-time", in.endTime},
+		} {
+			if f.value != "" {
+				// The env var name is in the message because kcp reads flags from the environment too.
+				envName := strings.ToUpper(strings.ReplaceAll(strings.TrimPrefix(f.name, "--"), "-", "_"))
+				return "", fmt.Errorf("%s is only valid with --logs cloudwatch; the S3 source derives it from --s3-uri (remove the flag, or unset the %s environment variable if it is set)", f.name, envName)
+			}
+		}
+		if in.s3Uri == "" {
+			return "", fmt.Errorf("--s3-uri is required when --logs is s3")
+		}
+	case sourceCloudWatch:
+		if in.s3Uri != "" {
+			return "", fmt.Errorf("--s3-uri is only valid with --logs s3")
+		}
+		if in.logGroupName == "" {
+			return "", fmt.Errorf("--log-group-name is required when --logs is cloudwatch")
+		}
+	}
+	return chosen, nil
+}
+
 // parseClientInventoryFlags validates the flags and builds the scanner options,
-// returning whether the CloudWatch source was selected. Cobra enforces that
-// exactly one of --s3-uri / --log-group-name is set; this function derives the
-// per-mode values and validates CloudWatch's region/cluster/time inputs.
+// returning whether the CloudWatch source was selected. resolveSource validates
+// --logs and rejects the other source's flags; this function then derives the
+// per-source values and validates CloudWatch's region/cluster/time inputs.
 func parseClientInventoryFlags(in rawFlags) (*ClientInventoryScannerOpts, bool, error) {
-	if in.logGroupName != "" {
+	chosen, err := resolveSource(in)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if chosen == sourceCloudWatch {
 		if in.region == "" {
 			return nil, false, fmt.Errorf("--region is required when using --log-group-name")
 		}
@@ -256,10 +322,6 @@ func parseClientInventoryFlags(in rawFlags) (*ClientInventoryScannerOpts, bool, 
 	}
 
 	// S3 mode: derive region and cluster name from the URI, as before.
-	if in.s3Uri == "" {
-		return nil, false, fmt.Errorf("exactly one of --s3-uri or --log-group-name is required")
-	}
-
 	regionFromUri, err := utils.ExtractRegionFromS3Uri(in.s3Uri)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to extract region from S3 URI: %w", err)

@@ -3,6 +3,7 @@ package client_inventory
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -83,14 +84,27 @@ func (cis *ClientInventoryScanner) Run() error {
 		return nil
 	}
 
-	discoveredClients := cis.handleLogFiles(ctx, chunks)
+	discoveredClients, chunkErrs := cis.handleLogFiles(ctx, chunks)
+
+	// A chunk that could not be read is a failed scan, not an empty one. Without this a wrong
+	// region, a missing log group or a window outside retention would look like a cluster
+	// with no clients.
+	var failure error
+	if len(chunkErrs) > 0 {
+		failure = fmt.Errorf("%d of %d log chunks failed to read: %w", len(chunkErrs), len(chunks), errors.Join(chunkErrs...))
+	}
 
 	if len(discoveredClients) == 0 {
+		if failure != nil {
+			return failure
+		}
 		fmt.Printf("  No clients discovered; leaving state unchanged\n")
 		slog.Info("no clients discovered; skipping state update")
 		return nil
 	}
 
+	// Clients from the chunks that did read are still saved (the upsert only adds), then the
+	// run reports the failure so the exit code is non-zero.
 	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
 		return fmt.Errorf("failed to upsert discovered clients: %w", err)
 	}
@@ -100,16 +114,20 @@ func (cis *ClientInventoryScanner) Run() error {
 	}
 
 	slog.Info("client inventory scan complete", "region", cis.opts.Region, "cluster", cis.opts.ClusterName, "discovered_clients", len(discoveredClients))
-	return nil
+	return failure
 }
 
-func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, chunks []LogChunk) []types.DiscoveredClient {
+// handleLogFiles reads every chunk and returns the de-duplicated clients plus one error per chunk
+// that could not be read. A failing chunk does not stop the others.
+func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, chunks []LogChunk) ([]types.DiscoveredClient, []error) {
 	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
+	var chunkErrs []error
 
 	for _, chunk := range chunks {
 		requestsMetadata, err := cis.handleLogFile(ctx, chunk)
 		if err != nil {
 			slog.Error("failed to extract API requests", "file", chunk.ID, "error", err)
+			chunkErrs = append(chunkErrs, fmt.Errorf("%s: %w", chunk.ID, err))
 			continue
 		}
 
@@ -149,7 +167,7 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, chunks []
 		discoveredClients = append(discoveredClients, discoveredClient)
 	}
 
-	return discoveredClients
+	return discoveredClients, chunkErrs
 }
 
 func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, chunk LogChunk) ([]RequestMetadata, error) {
