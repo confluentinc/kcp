@@ -12,8 +12,9 @@ import (
 
 // reporter owns all user-facing terminal output for the migration flow so the
 // orchestrator, workflow and offset-sync steps don't scatter raw
-// fmt.Printf/Fprintf/color calls. It centralises the emoji, indentation and
-// colour conventions and the destination streams (stdout for progress, stderr
+// fmt.Printf/Fprintf/color calls. It centralises the indentation, colour and
+// plain-text status-token conventions ([OK], [FAIL], [WARN]; no emoji) and the
+// destination streams (stdout for progress, stderr
 // for soft-fail remediation notes), giving migration output a single owner and
 // a single point to redirect or silence.
 type reporter struct {

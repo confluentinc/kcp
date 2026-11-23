@@ -1,0 +1,38 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gateway-initial
+  namespace: confluent
+spec:
+  routes:
+  - endpoint: kafka-gw.example.com:9092
+    name: migration-route
+    rules:
+      fencing:
+      - blocked: true
+        topicPatterns:
+        - .*
+      routing:
+        conditions:
+        - streamingDomain: target
+          topics:
+          - orders
+        coordination:
+          group: source
+        default: source
+    security:
+      cluster:
+        target:
+          auth: passthrough
+    streamingDomains:
+    - bootstrapServerId: sasl-scram
+      name: source
+    - bootstrapServerId: sasl-plain
+      name: target
+  streamingDomains:
+  - kafkaCluster:
+      name: source-cluster
+    name: source
+  - kafkaCluster:
+      name: target-cluster
+    name: target

@@ -84,7 +84,7 @@ For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs
 
 ### Internal services
 
-Business logic in `internal/services/` organized by domain (AWS services, Kafka, schema registry, HCL/Terraform, cluster link, gateway, persistence, report, markdown, migration, migplan, offset). Each subdirectory is self-explanatory — see Migration execution below for how `migration`, `migration/tbm`, and `migplan` relate.
+Business logic in `internal/services/` organized by domain (AWS services, Kafka, schema registry, HCL/Terraform, cluster link, gateway, persistence, report, markdown, migration, migplan, offset). Each subdirectory is self-explanatory — see Migration execution below for how `migration`, `migration/tbm`, `migration/d2s`, and `migplan` relate.
 
 ### Frontend
 
@@ -107,31 +107,67 @@ Types 1–4 support both MSK and Apache Kafka; Type 4 is MSK-only.
 `kcp migration cutover execute` runs the full cutover as one finite state machine per
 migration. Every run reconciles live from the manifest and the cluster and
 continues from wherever the live world already is; `--dry-run` runs only the
-feasibility check and exits. The bound route resolves each run, from the live
-gateway CR, to one of two strategies — named **AAO** and **TBM** in the FSM
-packages (comments, package/test names; `cmd/migration/cutover/execute` calls them
-static and dynamic), and tied 1:1 to the Gateway CRD's own route mode
-(`RouteConfig.Mode`, returned as `migplan.Result.Mode`):
+feasibility check and exits. There are three FSMs, one per migration type
+declared in the manifest. `executePlan` in
+`cmd/migration/cutover/execute/cmd_migration_execute.go` dispatches on the
+declared type (`g.Spec.MigrationType()`):
 
-- **AAO** (All-At-Once, `mode: static`) — all topics cut over together.
+- **AAO** (All-At-Once, `staticMigration`) — all topics cut over together.
   `internal/services/migration`.
-- **TBM** (Topic-Based Migration, `mode: dynamic`) — topics cut over
+- **TBM** (Topic-Based Migration, `dynamicMigration`) — topics cut over
   incrementally, promoting mirror topics at zero lag.
   `internal/services/migration/tbm`.
+- **d2s** (`dynamicToStaticConversion`) — converts a dynamic route to a static
+  one, ending with the route static on its target.
+  `internal/services/migration/d2s`.
 
-A static route can only run AAO; a dynamic route only TBM — the mode isn't
-just a label, it's what migplan/reconcile dispatches on.
+`migplan.Result.Mode` (`static`, `dynamic`, `convert`; typed
+`reconcile.PlanMode`) is a cross-check against the declared type
+(`planModeFor`); a mismatch is an internal error, it does not choose the
+strategy.
 
-Both call `internal/services/migplan` on every run — a live I/O layer
+All three call `internal/services/migplan` on every run — a live I/O layer
 handing plain data to a pure core (`migplan/reconcile`) that decides
 feasibility and produces the fence/switchover artifacts. A refusal is data
 (`Result.Refused`), not an error.
 
-`migration` and `migration/tbm` are separate FSM implementations by design
-(no orchestration code shared), but DO share lower-level mechanics — gateway
-CR apply/verify (`gateway.TransitionVerifier`) and offset sweeps
-(`internal/services/offset`) — so don't assume near-identical logic there is
-accidental duplication before checking.
+The FSMs share no sequencing or orchestration code, by design. They share the
+mechanics of confirming a gateway change (`gateway.Transitioner`, built on
+`gateway.TransitionVerifier`), offset sweeps (`internal/services/offset`) and
+the run types in `internal/services/migration/migrun`. Don't assume
+near-identical logic across FSMs is accidental duplication before checking.
+
+**Layering rule.** This applies to every change: a new FSM, an edit to an
+existing FSM, and an edit to the shared layers (`gateway`, `migrun`, `migplan`).
+An FSM owns its sequence, the intent of each patch, its rollback targets, which
+failures it marks, and its own narrative. It never names a CR field, patch
+type, pod, probe CR, the `/config` port or kubectl. To change the gateway it
+builds a `gateway.Target` (plain data) and calls
+`Transitioner.Apply(ctx, target, gateway.Transition{Change: <RouteChange>, ...})`;
+the gateway package derives the patch, decides hot-reload vs rolling, applies
+and confirms. The FSM constructor takes a `gateway.TransitionerFactory`, built
+in `cmd/migration`. Follow the patterns in the existing FSMs for precedent
+rather than inventing a new structure. If a change seems to need gateway
+knowledge inside an FSM, or FSM sequencing inside the gateway package, move the
+knowledge across the boundary instead of leaking it.
+
+Contract between the layers (binding on both sides; preserve it when editing
+either):
+- `TransitionResult.Landed` says whether the patch reached the cluster; FSMs
+  decide rollback from it (an unconfirmed patch may still be live). Set
+  `Transition.RestoresStart` only on the patch that puts the start-of-run route back.
+- FSMs call `Transitioner.VerifyUnchangedSincePlan` before any promote or other
+  point of no return.
+- Failures map through sentinels: `errors.Is(err, gateway.ErrGatewayChanged)`
+  stops with no gateway write or rollback; `migrun.ErrFenceUnconfirmed` rolls
+  back (if the plan allows); `migrun.ErrSwitchUnconfirmed` warns, with no rollback.
+  Changing what a sentinel means, or which errors match it, changes every FSM.
+- Fence/switch failure wording lives in `gateway/failure_text.go`; FSMs reuse
+  it rather than writing pod or operator text.
+- A change to a shared layer must keep every FSM's behaviour, or change all
+  three deliberately. The route patches, probe CRs and failure texts are pinned
+  by golden and exact-text tests: a diff in them is a behaviour change to
+  review, not a golden to regenerate.
 
 ## Implementation patterns
 

@@ -1,0 +1,3 @@
+fence:
+  scope: ALL
+  errorCode: BROKER_NOT_AVAILABLE

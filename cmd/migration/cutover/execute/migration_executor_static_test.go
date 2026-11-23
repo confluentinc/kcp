@@ -17,6 +17,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/gateway/gatewaytest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 )
 
@@ -119,10 +120,10 @@ func TestExecute_StaticMode_PromoteBatchSizeReachesStaticActions(t *testing.T) {
 	})
 }
 
-// GatewayConfigPort reaches config.GatewayConfigPort before the capability
-// probe (DetectCapability) runs.
+// gatewayConfigPort reaches the capability probe (DetectCapability) through
+// the gateway.WithConfigPort option the static executor builds its actions with.
 func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *testing.T) {
-	rec := &recordingGatewayService{}
+	rec := newPortRecordingGateway()
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.StaticMigration.Policies.GatewayConfigPort = 9999 }
 	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, stubDeps(rec, nil)))
 	assert.Equal(t, 9999, rec.port(), "gatewayConfigPort must reach the static capability probe")
@@ -131,22 +132,26 @@ func TestExecute_StaticMode_GatewayConfigPortReachesStaticCapabilityProbe(t *tes
 // readinessRecordingGateway records the timeout passed to each
 // WaitForGatewayPods call — where the rollout timeout surfaces.
 type readinessRecordingGateway struct {
-	recordingGatewayService
+	*gatewaytest.Fake
 	mu       sync.Mutex
 	timeouts []time.Duration
 }
 
-func (r *readinessRecordingGateway) WaitForGatewayPods(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
-	r.mu.Lock()
-	r.timeouts = append(r.timeouts, timeout)
-	r.mu.Unlock()
-	return nil
+func newReadinessRecordingGateway() *readinessRecordingGateway {
+	r := &readinessRecordingGateway{Fake: stubGateway()}
+	r.WaitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, timeout time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		r.mu.Lock()
+		r.timeouts = append(r.timeouts, timeout)
+		r.mu.Unlock()
+		return nil
+	}
+	return r
 }
 
-// RolloutTimeout reaches MigrationActions.SetRolloutTimeout: every gateway
+// RolloutTimeout reaches MigrationActions through gateway.WithTimeouts: every gateway
 // readiness wait (fence and switch) is bounded by it.
 func TestExecute_StaticMode_RolloutTimeoutReachesGatewayWaits(t *testing.T) {
-	rec := &readinessRecordingGateway{}
+	rec := newReadinessRecordingGateway()
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.StaticMigration.Policies.RolloutTimeout = 7 * time.Minute }
 	require.NoError(t, runStaticBranchWithConfig(t, newFixture(t, nil), []string{"t1.order"}, editGateway, stubDeps(rec, nil)))
 

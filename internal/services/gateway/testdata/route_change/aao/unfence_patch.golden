@@ -1,0 +1,8 @@
+{
+  "field": "",
+  "route_name": "migration-route",
+  "value": {
+    "endpoint": "gateway:9595",
+    "name": "migration-route"
+  }
+}

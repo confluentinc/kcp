@@ -1,0 +1,11 @@
+rules:
+  routing:
+    coordination:
+      group: source
+    default: source
+    conditions:
+      - topics: ["orders"]
+        streamingDomain: target
+  fencing:
+    - topicPatterns: [".*"]
+      blocked: true

@@ -174,5 +174,5 @@ type Plan struct {
 	// cannot). Convert: FenceRules and RollbackFenceRules are whole rules:
 	// blocks; SwitchoverRules is a whole {route: …} — the route converted to
 	// static. Never "apply this as the whole CR."
-	Mode string
+	Mode PlanMode
 }

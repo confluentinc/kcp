@@ -56,7 +56,7 @@ rules:
   # the gateway pods; kcp itself only reads them.
   verbs: ["get", "list", "delete"]
 - apiGroups: [""]
-  # proxy is how ensureGatewayCapability reaches each gateway pod's /config
+  # proxy is how the Transitioner's capability resolution reaches each gateway pod's /config
   # endpoint through the API server when the gateway has no REST endpoint of
   # its own (PR #437, "Gateway config proxy transport") — get on pods alone
   # does not cover this subresource.
