@@ -3,6 +3,7 @@ package client_inventory
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// maxLogLineBytes bounds a single broker log line; CloudWatch caps events at 1 MiB.
+const maxLogLineBytes = 16 * 1024 * 1024
 
 var (
 	// lines that match this pattern will be parsed by kafka trace line parser
@@ -22,10 +26,15 @@ type ClientInventoryScannerOpts struct {
 	Region      string
 	ClusterName string
 	StateFile   string
+
+	// CloudWatch-mode fields (empty/zero in S3 mode).
+	LogGroupName string
+	StartTime    time.Time
+	EndTime      time.Time
 }
 
 type ClientInventoryScanner struct {
-	s3Service            S3Service
+	source               LogSource
 	kafkaTraceLineParser *KafkaApiTraceLineParser
 	state                types.State
 	opts                 ClientInventoryScannerOpts
@@ -48,9 +57,9 @@ type RequestMetadata struct {
 	Timestamp    time.Time
 }
 
-func NewClientInventoryScanner(s3Service S3Service, state types.State, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
+func NewClientInventoryScanner(source LogSource, state types.State, opts ClientInventoryScannerOpts) (*ClientInventoryScanner, error) {
 	return &ClientInventoryScanner{
-		s3Service:            s3Service,
+		source:               source,
 		kafkaTraceLineParser: &KafkaApiTraceLineParser{},
 		state:                state,
 		opts:                 opts,
@@ -58,30 +67,44 @@ func NewClientInventoryScanner(s3Service S3Service, state types.State, opts Clie
 }
 
 func (cis *ClientInventoryScanner) Run() error {
-	fmt.Printf("Starting client inventory scan for %s\n", cis.opts.S3Uri)
-	slog.Info("scanning client inventory", "s3_uri", cis.opts.S3Uri, "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
+	fmt.Printf("Starting client inventory scan for %s\n", cis.source.Name())
+	slog.Info("scanning client inventory", "source", cis.source.Name(), "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
 
 	ctx := context.Background()
 
-	bucket, prefix, err := cis.s3Service.ParseS3URI(cis.opts.S3Uri)
+	chunks, err := cis.source.ListChunks(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to parse S3 URI: %w", err)
+		return fmt.Errorf("failed to list log chunks: %w", err)
 	}
+	slog.Info("found log files", "count", len(chunks))
 
-	logFiles, err := cis.s3Service.ListLogFiles(ctx, bucket, prefix)
-	if err != nil {
-		return fmt.Errorf("failed to list log files: %w", err)
-	}
-	slog.Info("found log files", "count", len(logFiles))
-
-	if len(logFiles) == 0 {
+	if len(chunks) == 0 {
 		fmt.Printf("  No log files found to process\n")
 		slog.Info("no log files found; skipping")
 		return nil
 	}
 
-	discoveredClients := cis.handleLogFiles(ctx, bucket, logFiles)
+	discoveredClients, chunkErrs := cis.handleLogFiles(ctx, chunks)
 
+	// A chunk that could not be read is a failed scan, not an empty one. Without this a wrong
+	// region, a missing log group or a window outside retention would look like a cluster
+	// with no clients.
+	var failure error
+	if len(chunkErrs) > 0 {
+		failure = fmt.Errorf("%d of %d log chunks failed to read: %w", len(chunkErrs), len(chunks), errors.Join(chunkErrs...))
+	}
+
+	if len(discoveredClients) == 0 {
+		if failure != nil {
+			return failure
+		}
+		fmt.Printf("  No clients discovered; leaving state unchanged\n")
+		slog.Info("no clients discovered; skipping state update")
+		return nil
+	}
+
+	// Clients from the chunks that did read are still saved (the upsert only adds), then the
+	// run reports the failure so the exit code is non-zero.
 	if err := cis.state.UpsertDiscoveredClients(cis.opts.Region, cis.opts.ClusterName, discoveredClients); err != nil {
 		return fmt.Errorf("failed to upsert discovered clients: %w", err)
 	}
@@ -91,21 +114,25 @@ func (cis *ClientInventoryScanner) Run() error {
 	}
 
 	slog.Info("client inventory scan complete", "region", cis.opts.Region, "cluster", cis.opts.ClusterName, "discovered_clients", len(discoveredClients))
-	return nil
+	return failure
 }
 
-func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket string, logFiles []string) []types.DiscoveredClient {
+// handleLogFiles reads every chunk and returns the de-duplicated clients plus one error per chunk
+// that could not be read. A failing chunk does not stop the others.
+func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, chunks []LogChunk) ([]types.DiscoveredClient, []error) {
 	requestMetadataByCompositeKey := make(map[string]*RequestMetadata)
+	var chunkErrs []error
 
-	for _, file := range logFiles {
-		requestsMetadata, err := cis.handleLogFile(ctx, bucket, file)
+	for _, chunk := range chunks {
+		requestsMetadata, err := cis.handleLogFile(ctx, chunk)
 		if err != nil {
-			slog.Error("failed to extract API requests", "file", file, "error", err)
+			slog.Error("failed to extract API requests", "file", chunk.ID, "error", err)
+			chunkErrs = append(chunkErrs, fmt.Errorf("%s: %w", chunk.ID, err))
 			continue
 		}
 
-		fmt.Printf("  Parsed log file %s: found %d matching log lines\n", file, len(requestsMetadata))
-		slog.Debug("parsed log file", "file", file, "matching_lines", len(requestsMetadata))
+		fmt.Printf("  Parsed log file %s: found %d matching log lines\n", chunk.ID, len(requestsMetadata))
+		slog.Debug("parsed log file", "file", chunk.ID, "matching_lines", len(requestsMetadata))
 
 		for _, metadata := range requestsMetadata {
 			// we cannot guarantee that the client id is unique as it may not be set on clients
@@ -140,17 +167,20 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket st
 		discoveredClients = append(discoveredClients, discoveredClient)
 	}
 
-	return discoveredClients
+	return discoveredClients, chunkErrs
 }
 
-func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, key string) ([]RequestMetadata, error) {
-	content, err := cis.s3Service.DownloadAndDecompressLogFile(ctx, bucket, key)
+func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, chunk LogChunk) ([]RequestMetadata, error) {
+	content, err := cis.source.ReadChunk(ctx, chunk)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download and decompress file: %w", err)
+		return nil, fmt.Errorf("failed to read log chunk: %w", err)
 	}
 
 	var requestsMetadata []RequestMetadata
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	// MSK truncates very large TRACE response lines at exactly 64 KiB, which with the
+	// trailing newline overruns bufio's default token limit and would abort the whole chunk.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
 	lineNumber := 0
 
 	for scanner.Scan() {
@@ -158,7 +188,7 @@ func (cis *ClientInventoryScanner) handleLogFile(ctx context.Context, bucket, ke
 
 		switch {
 		case KafkaApiTracePattern.MatchString(line):
-			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, key)
+			metadata, err := cis.kafkaTraceLineParser.Parse(line, lineNumber, chunk.ID)
 			if err != nil {
 				// slog.Debug("failed to parse Kafka API line", "line", line, "error", err)
 				continue

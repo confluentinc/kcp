@@ -3,3 +3,4 @@ nav:
   - migrations
   - consumer-groups
   - transactions
+  - client-inventory
