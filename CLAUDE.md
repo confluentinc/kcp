@@ -131,17 +131,43 @@ handing plain data to a pure core (`migplan/reconcile`) that decides
 feasibility and produces the fence/switchover artifacts. A refusal is data
 (`Result.Refused`), not an error.
 
-The FSMs share no sequencing or orchestration code, by design. They do share
-the mechanics of applying and confirming a gateway patch
-(`gateway.Transitioner`, built on `gateway.TransitionVerifier`), offset
-sweeps (`internal/services/offset`), and the run types in
-`internal/services/migration/migrun` (run config, the unconfirmed-fence and
-unconfirmed-switch sentinels, rollback path constants). Each FSM owns its
-sequencing, the intent of each patch (which `gateway.RouteChange` to apply),
-its rollback targets and which failures it marks, and hands the Transitioner
-plain data — never naming a CR field, the hot-reload port, the probe CRs or the
-verification mechanism; kubectl text stays inside the `gateway` package. Don't
-assume near-identical logic there is accidental duplication before checking.
+The FSMs share no sequencing or orchestration code, by design. They share the
+mechanics of confirming a gateway change (`gateway.Transitioner`, built on
+`gateway.TransitionVerifier`), offset sweeps (`internal/services/offset`) and
+the run types in `internal/services/migration/migrun`. Don't assume
+near-identical logic across FSMs is accidental duplication before checking.
+
+**Layering rule.** This applies to every change: a new FSM, an edit to an
+existing FSM, and an edit to the shared layers (`gateway`, `migrun`, `migplan`).
+An FSM owns its sequence, the intent of each patch, its rollback targets, which
+failures it marks, and its own narrative. It never names a CR field, patch
+type, pod, probe CR, the `/config` port or kubectl. To change the gateway it
+builds a `gateway.Target` (plain data) and calls
+`Transitioner.Apply(ctx, target, gateway.Transition{Change: <RouteChange>, ...})`;
+the gateway package derives the patch, decides hot-reload vs rolling, applies
+and confirms. The FSM constructor takes a `gateway.TransitionerFactory`, built
+in `cmd/migration`. Follow the patterns in the existing FSMs for precedent
+rather than inventing a new structure. If a change seems to need gateway
+knowledge inside an FSM, or FSM sequencing inside the gateway package, move the
+knowledge across the boundary instead of leaking it.
+
+Contract between the layers (binding on both sides; preserve it when editing
+either):
+- `TransitionResult.Landed` says whether the patch reached the cluster; FSMs
+  decide rollback from it (an unconfirmed patch may still be live). Set
+  `Transition.RestoresStart` only on the patch that puts the start-of-run route back.
+- FSMs call `Transitioner.VerifyUnchangedSincePlan` before any promote or other
+  point of no return.
+- Failures map through sentinels: `errors.Is(err, gateway.ErrGatewayChanged)`
+  stops with no gateway write or rollback; `migrun.ErrFenceUnconfirmed` rolls
+  back (if the plan allows); `migrun.ErrSwitchUnconfirmed` warns, with no rollback.
+  Changing what a sentinel means, or which errors match it, changes every FSM.
+- Fence/switch failure wording lives in `gateway/failure_text.go`; FSMs reuse
+  it rather than writing pod or operator text.
+- A change to a shared layer must keep every FSM's behaviour, or change all
+  three deliberately. The route patches, probe CRs and failure texts are pinned
+  by golden and exact-text tests: a diff in them is a behaviour change to
+  review, not a golden to regenerate.
 
 ## Implementation patterns
 
