@@ -7,6 +7,8 @@ paths:
 
 # Code Comments
 
+**Principle:** comments, test names and comments, and docs state what the code does **now**. Never describe the migration away from an old design: no "there is no state file", "no registration/init step", "no longer", "used to", "previously", "renamed from X", "was removed", "any more", "back when init and execute were separate". Write "every run reconciles live from the manifest and the cluster", not "there is no state file: every run reconciles live". History belongs in commit messages and PR descriptions, not in the code.
+
 - Default to writing **zero comments**. Code must be self-documenting.
 - Aim for one short line, and only if the **WHY** is entirely non-obvious. Go beyond one line only when the WHY genuinely can't fit, and then keep it to a few lines. Never write multi-paragraph docstrings.
 - **Forbidden:** Never write comments that explain **WHAT** the code does, reference past implementations, or leak your conversational chain of thought. If a fact behind a history comment still matters, state it as current behaviour.
