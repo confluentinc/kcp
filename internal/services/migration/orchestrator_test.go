@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"io"
 	"os"
 	"slices"
@@ -18,6 +17,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/looplab/fsm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +26,6 @@ import (
 
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
-	GetGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	PatchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
 	WaitForGatewayPodsFn     func(ctx context.Context, namespace, name string, _ map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	WaitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
@@ -61,12 +60,7 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 		RollbackAllowed:     true,
 	}
 
-	// Default mock implementations. The gateway CR must be a real routed gateway
-	// CR: FenceGateway builds its fence patch from it (fenceChange
-	// splices FenceYAML onto Route), so a scalar placeholder would fail to parse.
-	GetGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
-		return []byte(testInitialCR), nil
-	}
+	// Default mock implementations.
 	PatchGatewayRouteFn := func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 		return configID, nil
 	}
@@ -101,9 +95,6 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	// Apply overrides if provided
 	if len(overrides) > 0 {
 		o := overrides[0]
-		if o.GetGatewayYAMLFn != nil {
-			GetGatewayYAMLFn = o.GetGatewayYAMLFn
-		}
 		if o.PatchGatewayRouteFn != nil {
 			PatchGatewayRouteFn = o.PatchGatewayRouteFn
 		}
@@ -119,7 +110,6 @@ func newHappyPathOrchestrator(t *testing.T, topics []string, overrides ...orches
 	}
 
 	gw := &mockGatewayService{
-		GetGatewayYAMLFn: GetGatewayYAMLFn,
 		// checkRedundantAuthStagedFn left unset: the mock's default passes validation.
 		PatchGatewayRouteFn: PatchGatewayRouteFn,
 		GetGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
@@ -1715,7 +1705,7 @@ func aaoFullResult() *migplan.Result {
 // FenceGateway's and SwitchGateway's confirm step share this one mock
 // (neither the fake's default verification mode nor its detection is configured to
 // route either through a different wait mechanism — see
-// gateway.Transitioner.Apply and TransitionVerifier.VerifyTransition), so a
+// gateway.Transitioner.Apply and its VerifyTransition step), so a
 // non-empty readyProgress is
 // replayed on every call reaching it, fence's and switch's alike.
 func newAAOKillPointOrchestrator(
@@ -1758,9 +1748,6 @@ func newAAOKillPointOrchestrator(
 	}
 
 	gw := &mockGatewayService{
-		GetGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-			return []byte(testInitialCR), nil
-		},
 		PatchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 			atomic.AddInt64(&patches, 1)
 			return configID, nil
@@ -2905,4 +2892,10 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 			assert.Empty(t, out.String(), "no step header or step output may be printed")
 		})
 	}
+}
+
+func TestMigrationActions_NilTransitionerFactoryIsReportedByValidate(t *testing.T) {
+	actions := NewMigrationActions(nil, &mockClusterLinkService{})
+
+	require.EqualError(t, actions.validate(), "the migration is missing dependencies: GatewayService")
 }

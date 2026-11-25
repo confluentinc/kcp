@@ -119,8 +119,9 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	if secretCheckSkipped != "" {
 		plan.Report.Warnings = append(plan.Report.Warnings, secretCheckSkipped)
 	}
-	// Carry the gateway CR the plan was computed against, so a caller can re-pull
-	// it before mutating and diff for drift.
+	// Carry the CR the plan was computed against. The run's gateway patches are
+	// probed against it (gateway.Target.GatewayCR); drift since the plan is
+	// guarded by the generation below (PlanBaseline), not by diffing this YAML.
 	plan.GatewayYAML = gw.RawYAML
 	plan.GatewayGeneration = gw.Generation
 	return plan, nil

@@ -1,5 +1,6 @@
-// Package providers holds the live implementations of the migplan provider
-// interfaces, wrapping existing KCP clients and, for the prototype, static files.
+// This file holds the file-backed implementation of the gateway provider
+// interface; gatewaylive.go holds the live one.
+
 package migplan
 
 import (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/client"
@@ -204,6 +205,15 @@ func newConsumerGroupClientForConn(conn types.KafkaSourceConn) (*client.Consumer
 	return client.NewConsumerGroupClient(conn.BootstrapServers, region, authOpt)
 }
 
+// newGatewayTransitioner is the one place a run's gateway policy (rollout and
+// hot-reload timeouts, the /config port) becomes the factory the FSM actions
+// build their Transitioner from.
+func newGatewayTransitioner(client gateway.TransitionClient, rolloutTimeout, hotReloadTimeout time.Duration, configPort int) gateway.TransitionerFactory {
+	return gateway.NewTransitionerFactory(client,
+		gateway.WithTimeouts(rolloutTimeout, hotReloadTimeout),
+		gateway.WithConfigPort(configPort))
+}
+
 // buildK8sService opens a real gateway.K8sService against the manifest's
 // kubeconfig (see manifest.GatewayMigration.KubeconfigPath for its default).
 // The clients behind it are built lazily on first use.
@@ -226,21 +236,21 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.TransitionClient
 // and returns it with deps rewired so the executors and the conversion's
 // providers use that same instance; the caller hands svc to migplan too. With
 // no deps.k8s, or when the service cannot be built (for example an unresolvable
-// kubeconfig path), it returns a nil svc and deps unchanged.
-func shareGatewayService(g *manifest.GatewayMigration, deps executorDependencies) (*gateway.K8sService, executorDependencies, error) {
+// kubeconfig path), it returns a nil svc and deps unchanged. It never fails the
+// run: with nothing shared, the plan read and each branch build their own
+// service and surface the same error at their own stage, as they did before
+// sharing.
+func shareGatewayService(g *manifest.GatewayMigration, deps executorDependencies) (*gateway.K8sService, executorDependencies) {
 	if deps.k8s == nil {
-		return nil, deps, nil
+		return nil, deps
 	}
 	svc, err := deps.k8s(g)
 	if err != nil {
-		// Not this function's failure to report: with nothing shared, the plan
-		// read and each branch build their own service and surface the same
-		// error at their own stage, as they did before sharing.
-		return nil, deps, nil
+		return nil, deps
 	}
 	deps.gateway = func(*manifest.GatewayMigration) (gateway.TransitionClient, error) { return svc, nil }
 	deps.convertOver = svc
-	return svc, deps, nil
+	return svc, deps
 }
 
 // buildClusterLinkService opens a real clusterlink.Service using the

@@ -66,10 +66,10 @@ type Result struct {
 	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
 	// server-managed metadata and status (managedFields, resourceVersion, uid,
 	// creationTimestamp and the version counter PlanBaseline carries — see
-	// migplan/gatewayfile.go's cleanGatewayDoc). Set on both success and refusal (the pull precedes the
-	// checks). A caller can re-pull the CR just before mutating it and diff
-	// against this directly to detect drift since the plan was computed — once
-	// cleaned, the whole document is stable enough to diff as-is.
+	// migplan/gatewayfile.go's cleanGatewayDoc). Set on both success and refusal
+	// (the pull precedes the checks). It is the CR the run started from, handed
+	// to the gateway layer as the base for its capability probe. Drift since the
+	// plan was computed is guarded by PlanBaseline, not by diffing this document.
 	GatewayYAML string
 
 	// PlanBaseline is the opaque version of the CR GatewayYAML was pulled from

@@ -103,7 +103,7 @@ func TestTransitionerApply_RolloutOrder(t *testing.T) {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
@@ -125,7 +125,7 @@ func TestTransitionerApply_HotReloadStampsTheConfigIDAndWaitsForIt(t *testing.T)
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
+	tn := newTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
 
 	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
@@ -198,7 +198,7 @@ func TestTransitionerApply_LandedSemantics(t *testing.T) {
 				},
 			}
 			rec, _ := newEventReporter()
-			tn := NewTransitioner(svc, func() Reporter { return rec })
+			tn := newTransitioner(svc, func() Reporter { return rec })
 
 			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
@@ -216,7 +216,7 @@ func TestTransitionerApply_AppliedMessagePrintsAfterThePatchAndBeforeTheAcceptan
 			return nil
 		},
 	}
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	require.True(t, result.Landed)
@@ -250,7 +250,7 @@ func runFenceFenceUnfence(t *testing.T, target Target) map[types.UID]struct{} {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	fence1 := fenceTransition()
 	fence1.Step = "fence-1"
@@ -298,7 +298,7 @@ func TestTransitionerApply_FailedFirstCaptureDoesNotLoseALaterFencesStartSet(t *
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	require.False(t, first.Landed)
@@ -322,7 +322,7 @@ func TestTransitionerApply_RestoreWithNoEarlierFenceWaitsOnEveryPod(t *testing.T
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	result := tn.Apply(context.Background(), probeTarget(t), unfenceTransition())
 
@@ -344,7 +344,7 @@ func TestTransitionerEnsureCapability_ResolvesAndSmokeTestsOnce(t *testing.T) {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	for i := 0; i < 2; i++ {
 		result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
@@ -357,7 +357,7 @@ func TestTransitionerEnsureCapability_ResolvesAndSmokeTestsOnce(t *testing.T) {
 	assert.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
 }
 
-func TestTransitionerResolveCapability_MarksTheSmokeTestAttempted(t *testing.T) {
+func TestTransitionerResolveCapabilitySkippingSmokeTest_MarksTheSmokeTestAttempted(t *testing.T) {
 	configIDPatches := 0
 	svc := &mockService{
 		detectCapabilityFn: perPodCapability,
@@ -370,9 +370,9 @@ func TestTransitionerResolveCapability_MarksTheSmokeTestAttempted(t *testing.T) 
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
-	require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget(t)))
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), probeTarget(t)))
 	require.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
 
 	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
@@ -380,7 +380,7 @@ func TestTransitionerResolveCapability_MarksTheSmokeTestAttempted(t *testing.T) 
 	require.True(t, result.Landed)
 	require.NoError(t, result.Err)
 	assert.Equal(t, 1, svc.detects)
-	assert.Equal(t, 0, configIDPatches, "a direct ResolveCapability owns the smoke test, so Apply must not run it")
+	assert.Equal(t, 0, configIDPatches, "a direct ResolveCapabilitySkippingSmokeTest owns the smoke test, so Apply must not run it")
 }
 
 func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
@@ -405,7 +405,7 @@ func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 	assert.False(t, first.Landed)
@@ -425,7 +425,7 @@ func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
 func TestTransitionerApply_ProbeErrorStopsBeforeAnyWrite(t *testing.T) {
 	svc := &mockService{}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 	target := probeTarget(t)
 	target.GatewayCR = []byte("{{ not yaml")
 
@@ -450,7 +450,7 @@ func baselineTarget(t *testing.T, baseline int64) Target {
 func TestTransitionerGuardsOnThePlanBaselineThenOnEachWrite(t *testing.T) {
 	svc := &mockService{patchResults: []PatchResult{{Generation: 8}, {Generation: 9}}}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
 	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), unfenceTransition()).Err)
@@ -461,7 +461,7 @@ func TestTransitionerGuardsOnThePlanBaselineThenOnEachWrite(t *testing.T) {
 func TestTransitionerUnknownPlanBaselineSendsUnguardedPatches(t *testing.T) {
 	svc := &mockService{}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 0), fenceTransition()).Err)
 
@@ -475,7 +475,7 @@ func TestTransitionerSeedsTheBaselineOnceFromTheTarget(t *testing.T) {
 			getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
 		}
 		rec, _ := newEventReporter()
-		tn := NewTransitioner(svc, func() Reporter { return rec })
+		tn := newTransitioner(svc, func() Reporter { return rec })
 
 		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
 		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 3), unfenceTransition()).Err)
@@ -487,7 +487,7 @@ func TestTransitionerSeedsTheBaselineOnceFromTheTarget(t *testing.T) {
 	t.Run("after a check", func(t *testing.T) {
 		svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 5, nil }}
 		rec, _ := newEventReporter()
-		tn := NewTransitioner(svc, func() Reporter { return rec })
+		tn := newTransitioner(svc, func() Reporter { return rec })
 
 		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 5), "promote"))
 		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
@@ -497,7 +497,7 @@ func TestTransitionerSeedsTheBaselineOnceFromTheTarget(t *testing.T) {
 	t.Run("unknown at first", func(t *testing.T) {
 		svc := &mockService{}
 		rec, _ := newEventReporter()
-		tn := NewTransitioner(svc, func() Reporter { return rec })
+		tn := newTransitioner(svc, func() Reporter { return rec })
 
 		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 0), "promote"))
 		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
@@ -522,7 +522,7 @@ func TestVerifyUnchangedSincePlan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return tt.observed, nil }}
-			tn := NewTransitioner(svc, func() Reporter { return noopReporter{} })
+			tn := newTransitioner(svc, func() Reporter { return noopReporter{} })
 
 			err := tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, tt.baseline), "promote")
 
@@ -553,7 +553,7 @@ func TestVerifyObservedUnchangedSincePlan(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &mockService{}
-			tn := NewTransitioner(svc, func() Reporter { return noopReporter{} })
+			tn := newTransitioner(svc, func() Reporter { return noopReporter{} })
 
 			err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, tc.baseline), tc.observed)
 
@@ -575,7 +575,7 @@ func TestVerifyObservedUnchangedSincePlan(t *testing.T) {
 // moved gateway would compare against 0 and pass silently.
 func TestVerifyObservedUnchangedSincePlan_SeedsTheBaselineFromTheTarget(t *testing.T) {
 	t.Run("first call seeds", func(t *testing.T) {
-		tn := NewTransitioner(&mockService{}, func() Reporter { return noopReporter{} })
+		tn := newTransitioner(&mockService{}, func() Reporter { return noopReporter{} })
 
 		err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 4), 7)
 
@@ -584,7 +584,7 @@ func TestVerifyObservedUnchangedSincePlan_SeedsTheBaselineFromTheTarget(t *testi
 	t.Run("seeds once, keeping a write's advance", func(t *testing.T) {
 		svc := &mockService{patchResults: []PatchResult{{Generation: 8}}}
 		rec, _ := newEventReporter()
-		tn := NewTransitioner(svc, func() Reporter { return rec })
+		tn := newTransitioner(svc, func() Reporter { return rec })
 
 		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
 
@@ -600,7 +600,7 @@ func TestVerifyUnchangedSincePlan_ComparesWithTheLastWrite(t *testing.T) {
 		getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
 	result := tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition())
 	require.True(t, result.Landed)
@@ -632,7 +632,7 @@ func TestTransitionerApply_WithConfigPortReachesTheVerifyWait(t *testing.T) {
 				},
 			}
 			rec, _ := newEventReporter()
-			tn := NewTransitioner(svc, func() Reporter { return rec }, WithConfigPort(tt.port))
+			tn := newTransitioner(svc, func() Reporter { return rec }, WithConfigPort(tt.port))
 
 			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
@@ -653,7 +653,7 @@ func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
+	tn := newTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
 
 	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
 
@@ -666,8 +666,8 @@ func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
 
 func TestTransitionerHasClient(t *testing.T) {
 	rep := func() Reporter { return &recordingReporter{} }
-	assert.True(t, NewTransitioner(&mockService{}, rep).HasClient())
-	assert.False(t, NewTransitioner(nil, rep).HasClient())
+	assert.True(t, newTransitioner(&mockService{}, rep).HasClient())
+	assert.False(t, newTransitioner(nil, rep).HasClient())
 }
 
 func TestTransitionerBuildsProbeCRsFromTheTarget(t *testing.T) {
@@ -679,10 +679,10 @@ func TestTransitionerBuildsProbeCRsFromTheTarget(t *testing.T) {
 
 	svc := &mockService{}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 
-	require.NoError(t, tn.ResolveCapability(context.Background(), target))
-	require.NoError(t, tn.ResolveCapability(context.Background(), target))
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), target))
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), target))
 
 	assert.Equal(t, 1, svc.detects, "the probe runs at most once per Transitioner")
 	assert.Equal(t, string(wantFenced), string(svc.detectFenced))
@@ -695,7 +695,7 @@ func TestTransitionerProbeErrorsKeepTheirWrappers(t *testing.T) {
 		target.GatewayCR = []byte("{{ not yaml")
 		svc := &mockService{}
 		rec, _ := newEventReporter()
-		err := NewTransitioner(svc, func() Reporter { return rec }).ResolveCapability(context.Background(), target)
+		err := newTransitioner(svc, func() Reporter { return rec }).ResolveCapabilitySkippingSmokeTest(context.Background(), target)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to derive fenced gateway CR: failed to parse gateway CR YAML")
 		assert.Equal(t, 0, svc.detects)
@@ -705,7 +705,7 @@ func TestTransitionerProbeErrorsKeepTheirWrappers(t *testing.T) {
 		target.Switch = RouteChange{Edit: RouteEdit(99)}
 		svc := &mockService{}
 		rec, _ := newEventReporter()
-		err := NewTransitioner(svc, func() Reporter { return rec }).ResolveCapability(context.Background(), target)
+		err := newTransitioner(svc, func() Reporter { return rec }).ResolveCapabilitySkippingSmokeTest(context.Background(), target)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to derive switched gateway CR: unknown route edit 99")
 		assert.Equal(t, 0, svc.detects)
@@ -727,8 +727,8 @@ func TestTransitionerWithConfigPort(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &mockService{}
 			rec, _ := newEventReporter()
-			tn := NewTransitioner(svc, func() Reporter { return rec }, tt.opts...)
-			require.NoError(t, tn.ResolveCapability(context.Background(), probeTarget(t)))
+			tn := newTransitioner(svc, func() Reporter { return rec }, tt.opts...)
+			require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), probeTarget(t)))
 			assert.Equal(t, tt.want, svc.detectPort)
 		})
 	}
@@ -743,7 +743,7 @@ func TestTransitionerApply_DerivesThePatchFromTheChange(t *testing.T) {
 		},
 	}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 	target := probeTarget(t)
 	tr := fenceTransition()
 
@@ -759,7 +759,7 @@ func TestTransitionerApply_DerivesThePatchFromTheChange(t *testing.T) {
 func TestTransitionerApply_ABadArtifactStopsBeforeAnyWrite(t *testing.T) {
 	svc := &mockService{}
 	rec, _ := newEventReporter()
-	tn := NewTransitioner(svc, func() Reporter { return rec })
+	tn := newTransitioner(svc, func() Reporter { return rec })
 	tr := fenceTransition()
 	tr.Label = "switch"
 	tr.Change.Artifact = []byte("not: the-fragment\n")
@@ -796,4 +796,21 @@ func TestNewTransitionerFactory_NilClientHasNoClient(t *testing.T) {
 	tn := NewTransitionerFactory(nil, WithConfigPort(19180))(func() Reporter { return &recordingReporter{} })
 	assert.False(t, tn.HasClient())
 	assert.Equal(t, 19180, tn.configPort)
+}
+
+func TestTransitionResult_ErrMarkedWith(t *testing.T) {
+	sentinel := errors.New("unconfirmed")
+	boom := errors.New("boom")
+
+	assert.NoError(t, TransitionResult{Landed: true}.ErrMarkedWith(sentinel), "no error stays no error")
+	assert.NoError(t, TransitionResult{}.ErrMarkedWith(sentinel))
+
+	notLanded := TransitionResult{Err: boom}.ErrMarkedWith(sentinel)
+	assert.Same(t, boom, notLanded, "a patch that never reached the cluster is returned unmarked")
+	assert.NotErrorIs(t, notLanded, sentinel)
+
+	landed := TransitionResult{Landed: true, Err: boom}.ErrMarkedWith(sentinel)
+	assert.ErrorIs(t, landed, sentinel)
+	assert.ErrorIs(t, landed, boom)
+	assert.EqualError(t, landed, "unconfirmed: boom")
 }

@@ -133,7 +133,7 @@ feasibility and produces the fence/switchover artifacts. A refusal is data
 
 The FSMs share no sequencing or orchestration code, by design. They share the
 mechanics of confirming a gateway change (`gateway.Transitioner`, built on
-`gateway.TransitionVerifier`), offset sweeps (`internal/services/offset`) and
+an internal verifier), offset sweeps (`internal/services/offset`) and
 the run types in `internal/services/migration/migrun`. Don't assume
 near-identical logic across FSMs is accidental duplication before checking.
 

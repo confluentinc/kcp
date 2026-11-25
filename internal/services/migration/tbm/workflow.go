@@ -70,7 +70,9 @@ func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayTrans
 		promotePollInterval: 5 * time.Second,
 	}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	if gatewayTransitioner != nil {
+		a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	}
 	return a
 }
 
@@ -282,11 +284,8 @@ func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 		Applied: "Fenced gateway CR applied",
 	})
 	// The fenced rules are live in the cluster once the patch has landed.
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrFenceUnconfirmed); err != nil {
+		return err
 	}
 
 	a.reporter.Success("Gateway fenced and ready")
@@ -597,11 +596,8 @@ func (a *TBMActions) Switch(ctx context.Context, config *migrun.MigrationConfig)
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
 	})
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrSwitchUnconfirmed); err != nil {
+		return err
 	}
 
 	a.reporter.Success("Gateway switchover complete")

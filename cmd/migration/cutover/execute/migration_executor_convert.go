@@ -53,7 +53,7 @@ func runConvertBranch(
 		svc.deps.Out = cmd.OutOrStdout()
 	}
 
-	actions := d2s.NewD2SActions(gateway.NewTransitionerFactory(gatewayService, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort)), svc.deps)
+	actions := d2s.NewD2SActions(newGatewayTransitioner(gatewayService, policy.RolloutTimeout, policy.HotReloadTimeout, policy.GatewayConfigPort), svc.deps)
 
 	orchestrator := d2s.NewD2SOrchestrator(config, actions)
 	if err := orchestrator.Execute(ctx, reconcileResult, d2s.Policy{

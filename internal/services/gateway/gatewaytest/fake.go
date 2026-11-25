@@ -16,10 +16,8 @@ import (
 // error texts keep their historical "mockGatewayService" prefix. Not safe for
 // concurrent use: RouteExpected is appended unlocked.
 type Fake struct {
-	GetGatewayYAMLFn       func(ctx context.Context, namespace, name string) ([]byte, error)
 	DetectCapabilityFn     func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
 	WaitForConfigIDFn      func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	CheckPermissionsFn     func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	PatchGatewayRouteFn    func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
 	PatchGatewayConfigIDFn func(ctx context.Context, namespace, name, configID string) (string, error)
 	GetGatewayGenerationFn func(ctx context.Context, namespace, name string) (int64, error)
@@ -32,13 +30,6 @@ type Fake struct {
 	GetGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	GetDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
 	WaitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-}
-
-func (m *Fake) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
-	if m.GetGatewayYAMLFn != nil {
-		return m.GetGatewayYAMLFn(ctx, namespace, name)
-	}
-	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
 }
 
 // DetectCapability defaults to VerifyRollout — the mode every pre-hot-reload
@@ -56,13 +47,6 @@ func (m *Fake) WaitForGatewayConfigID(ctx context.Context, namespace, name strin
 		return m.WaitForConfigIDFn(ctx, namespace, name, opts)
 	}
 	return nil
-}
-
-func (m *Fake) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
-	if m.CheckPermissionsFn != nil {
-		return m.CheckPermissionsFn(ctx, verb, resource, group, namespace)
-	}
-	return true, nil
 }
 
 func (m *Fake) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string, expectedGeneration int64) (gateway.PatchResult, error) {

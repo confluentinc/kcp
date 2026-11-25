@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/migrun"
@@ -41,7 +40,7 @@ func runStaticBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := migration.NewMigrationActionsWithOffsets(gateway.NewTransitionerFactory(svc.gateway, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort)), svc.clusterLink, svc.sourceOffset, svc.destinationOffset)
+	actions := migration.NewMigrationActionsWithOffsets(newGatewayTransitioner(svc.gateway, policy.RolloutTimeout, policy.HotReloadTimeout, policy.GatewayConfigPort), svc.clusterLink, svc.sourceOffset, svc.destinationOffset)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
 	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration

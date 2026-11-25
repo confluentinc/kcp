@@ -1649,3 +1649,9 @@ func TestOrchestrator_Execute_MissingServicesFailsBeforeAnyStep(t *testing.T) {
 		})
 	}
 }
+
+func TestTBMActions_NilTransitionerFactoryIsReportedByValidate(t *testing.T) {
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), nil, &mockClusterLinkService{})
+
+	require.EqualError(t, actions.validate(), "the migration is missing dependencies: GatewayService")
+}

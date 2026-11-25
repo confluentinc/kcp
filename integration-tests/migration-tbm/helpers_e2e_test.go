@@ -312,7 +312,7 @@ func startRogueProducer(t *testing.T, ctx context.Context, brokers, topic string
 // and the cluster-link REST promotion) so the batch loop (tbm_e2e_test.go) and
 // halt assertions (tbm_halt_e2e_test.go) control the timing of each step. It
 // builds the fence and switch route patches by hand, so it can drift from
-// tbm's unexported derive* functions.
+// tbm's unexported fenceChange/switchChange.
 type tbmHarness struct {
 	e   *env
 	ctx context.Context

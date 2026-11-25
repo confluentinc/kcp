@@ -64,7 +64,7 @@ var gatewayRollConfirmationWindow = 10 * time.Second
 // decided to replace the pods" that holds even when the roll starts and
 // finishes between two polls.
 func (s *K8sService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error) {
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return 0, err
 	}

@@ -131,7 +131,9 @@ func NewD2SActions(gatewayTransitioner gateway.TransitionerFactory, deps Depende
 	}
 	a := &D2SActions{reporter: newReporter(), deps: deps}
 	// The reporter is read at call time: tests replace a.reporter after construction.
-	a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	if gatewayTransitioner != nil {
+		a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	}
 	return a
 }
 
@@ -208,11 +210,8 @@ func (a *D2SActions) Fence(ctx context.Context, config *migrun.MigrationConfig) 
 		What:    "fenced gateway CR",
 		Applied: "Fenced gateway CR applied (every topic on the route blocked)",
 	})
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrFenceUnconfirmed); err != nil {
+		return err
 	}
 	a.reporter.Success("Gateway fenced and ready")
 	return nil
@@ -244,11 +243,8 @@ func (a *D2SActions) Switch(ctx context.Context, config *migrun.MigrationConfig)
 		What:    "switchover gateway CR",
 		Applied: "Static route applied",
 	})
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrSwitchUnconfirmed); err != nil {
+		return err
 	}
 	a.reporter.Success("Gateway switchover complete — the route is static on its target domain")
 	return nil

@@ -113,7 +113,7 @@ type ConfigWaitOptions struct {
 // WaitForGatewayConfigID blocks until every Ready gateway pod reports
 // opts.ConfigID, or fails.
 func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error {
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return err
 	}

@@ -27,16 +27,16 @@ func TestStrategyForCapability(t *testing.T) {
 }
 
 func TestStrategyForApplied(t *testing.T) {
-	assert.Equal(t, "config_id", strategyForApplied(ApplyResult{ConfigID: "id-1"}).name())
-	assert.Equal(t, "rollout", strategyForApplied(ApplyResult{}).name())
+	assert.Equal(t, "config_id", strategyForApplied(applyResult{ConfigID: "id-1"}).name())
+	assert.Equal(t, "rollout", strategyForApplied(applyResult{}).name())
 }
 
 func TestVerifyTransition_DispatchesOnTheAppliedConfigIDNotTheCapability(t *testing.T) {
 	ctx := context.Background()
 	svc := &mockService{}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{},
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{},
 		Capability: Capability{Mode: VerifyPerPodConfigID}}
-	applied := ApplyResult{PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}} // no ConfigID
+	applied := applyResult{PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}} // no ConfigID
 	require.NoError(t, v.VerifyTransition(ctx, "ns", "gw", 9180, applied, "fence"))
 	assert.Equal(t, 1, svc.waitPodsCalls, "no configId applied: the replaced-pod wait runs even on a hot-reload capability")
 }

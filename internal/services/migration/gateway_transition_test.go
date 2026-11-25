@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -75,7 +75,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 
 		require.Len(t, applied, 1)
@@ -101,7 +101,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 
 		require.Len(t, applied, 1)
@@ -127,7 +127,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		config.DetectUnroutedProducersDuration = 30 * time.Second
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 	})
 
@@ -149,7 +149,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
 		config.DetectUnroutedProducersDuration = 30 * time.Second
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 
 		assert.True(t, podsCalled, "a rolling gateway waits for the replaced pods even when detecting unrouted producers")
@@ -164,7 +164,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -187,7 +187,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -208,7 +208,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -227,7 +227,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -243,7 +243,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -266,7 +266,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.FenceGateway(context.Background(), config)
 		require.Error(t, err)
@@ -279,7 +279,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 	})
@@ -298,7 +298,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.SwitchGateway(context.Background(), config))
 
 		require.Len(t, applied, 1)
@@ -313,7 +313,7 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.FenceGateway(context.Background(), config))
 		require.NoError(t, actions.SwitchGateway(context.Background(), config))
 
@@ -330,10 +330,6 @@ func TestSmokeTestHotReload(t *testing.T) {
 		// path, so it can never leave a later apply with something to prune.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.GetGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
-			t.Fatal("must not read the live CR — the check no longer re-applies it")
-			return nil, nil
-		}
 		gw.PatchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("must not apply a full CR — only PatchGatewayConfigID")
 			return "", nil
@@ -346,7 +342,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.gw.SmokeTestHotReload(context.Background(), actions.target(config)))
 
 		require.Len(t, appliedConfigIDs, 1)
@@ -371,7 +367,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 		require.NoError(t, actions.gw.SmokeTestHotReload(context.Background(), actions.target(config)))
 	})
 
@@ -386,7 +382,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 
 		actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
 		config := hotReloadConfig()
-		require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+		require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 		err := actions.gw.SmokeTestHotReload(context.Background(), actions.target(config))
 		require.Error(t, err)
@@ -411,7 +407,7 @@ func TestSmokeTestHotReload(t *testing.T) {
 		stderr := captureStderr(t, func() {
 			stdout = captureStdout(t, func() {
 				actions := NewMigrationActions(fakeTransitioner(gw), &mockClusterLinkService{})
-				resolveErr = actions.gw.ResolveCapability(context.Background(), actions.target(config))
+				resolveErr = actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config))
 				verifyErr = actions.gw.SmokeTestHotReload(context.Background(), actions.target(config))
 			})
 		})
@@ -452,7 +448,7 @@ func TestAAOFence_WaitTimeoutIsFenceUnconfirmed(t *testing.T) {
 
 	actions := NewMigrationActions(fakeTransitioner(gw), cl)
 	config := hotReloadConfig()
-	require.NoError(t, actions.gw.ResolveCapability(context.Background(), actions.target(config)))
+	require.NoError(t, actions.gw.ResolveCapabilitySkippingSmokeTest(context.Background(), actions.target(config)))
 
 	err := actions.FenceGateway(context.Background(), config)
 

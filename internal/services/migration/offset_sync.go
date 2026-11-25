@@ -3,11 +3,11 @@ package migration
 import (
 	"context"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 )
 
 const offsetSyncEnableKey = "consumer.offset.sync.enable"

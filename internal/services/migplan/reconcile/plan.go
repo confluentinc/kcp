@@ -157,7 +157,9 @@ type Plan struct {
 	// cleaned of server-managed metadata by the provider layer (see
 	// migplan/gatewayfile.go's cleanGatewayDoc). Set even on a refusal (the
 	// pull precedes the checks) and empty only if the source did not carry
-	// it. It exists for a later drift diff, not for the plan itself.
+	// it. It is the CR the run started from, used as the base for the gateway's
+	// capability probe. It is not used for the plan itself, and drift since the
+	// plan is guarded by GatewayGeneration, not by diffing this document.
 	GatewayYAML string
 
 	// GatewayGeneration is the metadata.generation of the CR GatewayYAML was

@@ -413,3 +413,9 @@ func TestD2SOrchestrator_Execute_ASyncRefusalRollsBackFromFenceVerified(t *testi
 	assert.Len(t, rec.patches, 2, "the fence, then the rollback")
 	assert.Empty(t, w.dst.commits)
 }
+
+func TestD2SActions_NilTransitionerFactoryIsReportedByValidate(t *testing.T) {
+	actions := NewD2SActions(nil, cleanWorld().deps())
+
+	require.EqualError(t, actions.validate(), "the route conversion is missing dependencies: GatewayService")
+}

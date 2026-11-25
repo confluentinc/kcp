@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
@@ -38,7 +37,7 @@ func runDynamicBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, gateway.NewTransitionerFactory(svc.gateway, gateway.WithTimeouts(policy.RolloutTimeout, policy.HotReloadTimeout), gateway.WithConfigPort(policy.GatewayConfigPort)), svc.clusterLink)
+	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, newGatewayTransitioner(svc.gateway, policy.RolloutTimeout, policy.HotReloadTimeout, policy.GatewayConfigPort), svc.clusterLink)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
 	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration

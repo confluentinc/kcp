@@ -3,7 +3,6 @@ package migration
 import (
 	"context"
 	"errors"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

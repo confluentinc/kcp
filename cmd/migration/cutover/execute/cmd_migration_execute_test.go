@@ -964,8 +964,7 @@ func TestExecute_BuildsOneGatewayServicePerRun(t *testing.T) {
 		return convertServices{}, nil
 	}
 
-	svc, shared, err := shareGatewayService(g, deps)
-	require.NoError(t, err)
+	svc, shared := shareGatewayService(g, deps)
 	got, err := shared.gateway(g)
 	require.NoError(t, err)
 	_, err = shared.convert(g, shared.convertOver)
@@ -1002,9 +1001,8 @@ func TestShareGatewayService_ABuildFailureSharesNothing(t *testing.T) {
 	deps := stubDeps(nil, nil)
 	deps.k8s = func(*manifest.GatewayMigration) (*gateway.K8sService, error) { return nil, errors.New("boom") }
 
-	svc, shared, err := shareGatewayService(g, deps)
+	svc, shared := shareGatewayService(g, deps)
 
-	require.NoError(t, err)
 	assert.Nil(t, svc)
 	assert.Nil(t, shared.convertOver)
 }

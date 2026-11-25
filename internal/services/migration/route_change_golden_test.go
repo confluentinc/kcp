@@ -2,12 +2,12 @@ package migration
 
 import (
 	"encoding/json"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

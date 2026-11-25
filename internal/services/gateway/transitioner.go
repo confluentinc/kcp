@@ -50,8 +50,24 @@ type TransitionResult struct {
 	Err    error
 }
 
+// ErrMarkedWith returns r.Err for an FSM to propagate: nil when there is no
+// error, r.Err unchanged when the patch never reached the cluster (there is
+// nothing to undo), and r.Err wrapped with sentinel once it landed, so the
+// orchestrator can recognise a change that is live but unconfirmed. The
+// sentinel stays in the FSM's own vocabulary (migrun); this package only
+// attaches it.
+func (r TransitionResult) ErrMarkedWith(sentinel error) error {
+	if r.Err == nil {
+		return nil
+	}
+	if r.Landed {
+		return fmt.Errorf("%w: %w", sentinel, r.Err)
+	}
+	return r.Err
+}
+
 // Transitioner applies a gateway route patch and confirms it landed in one
-// call, on top of TransitionVerifier. It owns the per-process state every FSM
+// call, on top of transitionVerifier. It owns the per-process state every FSM
 // needs around that: the capability (resolved once, smoke-tested at most once),
 // the run's expected Gateway CR generation, and the start-of-run pod set an
 // unfence must not wait on. It is not safe for concurrent use: one FSM run, one goroutine.
@@ -101,9 +117,9 @@ func WithConfigPort(port int) TransitionerOption {
 	return func(t *Transitioner) { t.configPort = port }
 }
 
-// NewTransitioner returns a Transitioner over svc. reporter is a provider, not
+// newTransitioner returns a Transitioner over svc. reporter is a provider, not
 // a value, so a caller that replaces its reporter after construction is honored.
-func NewTransitioner(svc TransitionClient, reporter func() Reporter, opts ...TransitionerOption) *Transitioner {
+func newTransitioner(svc TransitionClient, reporter func() Reporter, opts ...TransitionerOption) *Transitioner {
 	t := &Transitioner{svc: svc, reporter: reporter}
 	for _, opt := range opts {
 		opt(t)
@@ -120,7 +136,7 @@ type TransitionerFactory func(reporter func() Reporter) *Transitioner
 // opts. A nil svc yields Transitioners whose HasClient reports false.
 func NewTransitionerFactory(svc TransitionClient, opts ...TransitionerOption) TransitionerFactory {
 	return func(reporter func() Reporter) *Transitioner {
-		return NewTransitioner(svc, reporter, opts...)
+		return newTransitioner(svc, reporter, opts...)
 	}
 }
 
@@ -139,11 +155,12 @@ func (t *Transitioner) seed(target Target) {
 }
 
 // Capability returns the resolved capability (the zero value until resolved).
+// It is a test seam: FSMs do not branch on it, Apply does.
 func (t *Transitioner) Capability() Capability { return t.capability }
 
 // verifier builds the shared apply/wait/verify mechanism for one call.
-func (t *Transitioner) verifier() *TransitionVerifier {
-	return &TransitionVerifier{
+func (t *Transitioner) verifier() *transitionVerifier {
+	return &transitionVerifier{
 		Client:           t.svc,
 		Reporter:         t.reporter(),
 		Capability:       t.capability,
@@ -196,12 +213,15 @@ func (t *Transitioner) EnsureCapability(ctx context.Context, target Target) erro
 	return t.SmokeTestHotReload(ctx, target)
 }
 
-// ResolveCapability resolves the gateway capability without the hot-reload
-// smoke test, and marks the smoke test as attempted: a caller that resolves
-// directly owns the smoke test (it runs SmokeTestHotReload itself, or skips it),
-// as AAO's tests do, so a later Apply or EnsureCapability never runs it. The
-// resolve itself is a no-op once resolved.
-func (t *Transitioner) ResolveCapability(ctx context.Context, target Target) error {
+// ResolveCapabilitySkippingSmokeTest is a test seam: it resolves the gateway
+// capability without the hot-reload smoke test, and marks the smoke test as
+// attempted, so a later Apply or EnsureCapability never runs it. The smoke test
+// is the check that catches a gateway without hot-reload before kcp fences, so
+// production code must not call this; it resolves through Apply or
+// EnsureCapability. A caller that resolves this way owns the smoke test (it runs
+// SmokeTestHotReload itself, or skips it), as AAO's tests do. The resolve itself
+// is a no-op once resolved.
+func (t *Transitioner) ResolveCapabilitySkippingSmokeTest(ctx context.Context, target Target) error {
 	t.smokeAttempted = true
 	return t.resolveCapability(ctx, target)
 }
@@ -230,7 +250,7 @@ func (t *Transitioner) resolveCapability(ctx context.Context, target Target) err
 
 // SmokeTestHotReload runs the hot-reload smoke test and records it as
 // attempted, so EnsureCapability never runs it again. It writes a fresh
-// spec.configId to the LIVE Gateway CR (see TransitionVerifier.SmokeTestHotReload).
+// spec.configId to the LIVE Gateway CR (see transitionVerifier.SmokeTestHotReload).
 func (t *Transitioner) SmokeTestHotReload(ctx context.Context, target Target) error {
 	t.seed(target)
 	t.smokeAttempted = true
@@ -273,7 +293,7 @@ func (t *Transitioner) Apply(ctx context.Context, target Target, tr Transition) 
 
 	if tr.RestoresStart {
 		before := len(applied.PreApplyPodUIDs)
-		applied.PreApplyPodUIDs = ExcludePods(applied.PreApplyPodUIDs, t.startPods)
+		applied.PreApplyPodUIDs = excludePods(applied.PreApplyPodUIDs, t.startPods)
 		slog.Debug("unfence skips this run's pre-fence pods", "excluded", before-len(applied.PreApplyPodUIDs))
 	}
 

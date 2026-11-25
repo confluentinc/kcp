@@ -78,7 +78,7 @@ type PodRolloutProgress struct {
 
 // K8sService implements gateway operations using Kubernetes clients. Its
 // clients are built lazily on first use and then reused for the life of the
-// service. Construct it with NewK8sService or NewK8sServiceWithClients.
+// service. Construct it with NewK8sService or newK8sServiceWithClients.
 type K8sService struct {
 	// clients is shared by pointer so a copy of the service reuses the same
 	// clients and never copies a sync.Once.
@@ -114,9 +114,9 @@ func NewK8sService(kubeConfigPath string) *K8sService {
 	}}
 }
 
-// NewK8sServiceWithClients creates a gateway service over already built
+// newK8sServiceWithClients creates a gateway service over already built
 // clients; no kubeconfig is read.
-func NewK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kubernetes.Interface) *K8sService {
+func newK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kubernetes.Interface) *K8sService {
 	c := &k8sClients{dynamic: dynamicClient, clientset: clientset}
 	c.configOnce.Do(func() {})
 	c.dynamicOnce.Do(func() {})
@@ -130,9 +130,9 @@ func NewK8sServiceWithClients(dynamicClient dynamic.Interface, clientset kuberne
 	return &K8sService{clients: c}
 }
 
-// Clientset returns the service's typed Kubernetes client, building it on
+// clientset returns the service's typed Kubernetes client, building it on
 // first use.
-func (s *K8sService) Clientset() (kubernetes.Interface, error) {
+func (s *K8sService) clientset() (kubernetes.Interface, error) {
 	return s.clients.getClientset()
 }
 
@@ -696,7 +696,7 @@ func conditionPredatesGeneration(condition map[string]any, generation int64, wai
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
 func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return nil, err
 	}
@@ -739,7 +739,7 @@ func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayNa
 func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) (err error) {
 	ctx, span := tracing.Start(ctx, tracerName, "gateway.wait_pods")
 	defer func() { tracing.End(span, err) }()
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return err
 	}

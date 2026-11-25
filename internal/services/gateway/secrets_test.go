@@ -19,7 +19,7 @@ func TestSecretChecker_MissingSecrets_AllPresent(t *testing.T) {
 	clientset := newFakeClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "cc-sasl-secret", Namespace: "confluent"}},
 	)
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, clientset), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, clientset), "confluent")
 
 	missing, skipReason, err := checker.MissingSecrets(context.Background(), []string{"cc-sasl-secret"})
 	if err != nil {
@@ -37,7 +37,7 @@ func TestSecretChecker_MissingSecrets_SomeAbsent(t *testing.T) {
 	clientset := newFakeClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "present-secret", Namespace: "confluent"}},
 	)
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, clientset), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, clientset), "confluent")
 
 	missing, skipReason, err := checker.MissingSecrets(context.Background(), []string{"present-secret", "absent-secret"})
 	if err != nil {
@@ -52,7 +52,7 @@ func TestSecretChecker_MissingSecrets_SomeAbsent(t *testing.T) {
 }
 
 func TestSecretChecker_MissingSecrets_EmptyInput(t *testing.T) {
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, newFakeClientset()), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, newFakeClientset()), "confluent")
 	missing, skipReason, err := checker.MissingSecrets(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("MissingSecrets: %v", err)
@@ -78,7 +78,7 @@ func TestSecretChecker_MissingSecrets_PermissionDeniedIsSkippedNotFailed(t *test
 			corev1.Resource("secrets"), "plain-jaas",
 			fmt.Errorf("User \"system:serviceaccount:confluent:kcp-runner\" cannot get resource \"secrets\""))
 	})
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, clientset), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, clientset), "confluent")
 
 	missing, skipReason, err := checker.MissingSecrets(context.Background(), []string{"plain-jaas"})
 	if err != nil {
@@ -99,7 +99,7 @@ func TestSecretChecker_MissingSecrets_UnexpectedErrorIsWrapped(t *testing.T) {
 	clientset.(*kubernetesfake.Clientset).PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, fmt.Errorf("boom")
 	})
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, clientset), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, clientset), "confluent")
 
 	missing, skipReason, err := checker.MissingSecrets(context.Background(), []string{"s1"})
 
@@ -115,7 +115,7 @@ func TestSecretChecker_MissingSecrets_PermissionDeniedMessage(t *testing.T) {
 	clientset.(*kubernetesfake.Clientset).PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewUnauthorized("nope")
 	})
-	checker := NewSecretChecker(NewK8sServiceWithClients(nil, clientset), "confluent")
+	checker := NewSecretChecker(newK8sServiceWithClients(nil, clientset), "confluent")
 
 	_, skipReason, err := checker.MissingSecrets(context.Background(), []string{"a", "b"})
 
@@ -135,21 +135,21 @@ func TestSecretChecker_MissingSecrets_BadKubeconfigIsAnErrorAtCallTime(t *testin
 }
 
 func TestK8sServiceWithClients_NilDynamicFailsClearly(t *testing.T) {
-	svc := NewK8sServiceWithClients(nil, newFakeClientset())
+	svc := newK8sServiceWithClients(nil, newFakeClientset())
 
 	_, err := svc.GetGatewayGeneration(context.Background(), "ns", "gw")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "without a dynamic client")
-	cs, err := svc.Clientset()
+	cs, err := svc.clientset()
 	require.NoError(t, err, "a nil dynamic client must not break the typed path")
 	assert.NotNil(t, cs)
 }
 
 func TestK8sServiceWithClients_NilClientsetFailsClearly(t *testing.T) {
-	svc := NewK8sServiceWithClients(newFakeDynamicClient(), nil)
+	svc := newK8sServiceWithClients(newFakeDynamicClient(), nil)
 
-	_, err := svc.Clientset()
+	_, err := svc.clientset()
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "without a clientset")

@@ -44,7 +44,7 @@ func (s *K8sService) CheckPodSync(ctx context.Context, namespace, gatewayName st
 		return PodSync{}, err
 	}
 
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return PodSync{}, err
 	}

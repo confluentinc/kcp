@@ -64,7 +64,7 @@ func TestReplaceRouteRulesObj_ReplacesNamedRouteRules(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
 
 	rulesYAML := []byte("rules:\n  routing:\n    default: msk\n  fencing:\n    - topics: [\"t1.order\"]\n")
-	patched, err := ReplaceRouteRulesObj(obj, "migration-route", rulesYAML)
+	patched, err := replaceRouteRulesObj(obj, "migration-route", rulesYAML)
 	require.NoError(t, err)
 
 	rules := routeRules(t, patched, "migration-route")
@@ -81,7 +81,7 @@ func TestReplaceRouteRulesObj_ErrorsWhenRouteNotFound(t *testing.T) {
 	var obj map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
 
-	_, err := ReplaceRouteRulesObj(obj, "does-not-exist", []byte("rules:\n  routing: {}\n"))
+	_, err := replaceRouteRulesObj(obj, "does-not-exist", []byte("rules:\n  routing: {}\n"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does-not-exist")
 }
@@ -90,7 +90,7 @@ func TestReplaceRouteRulesObj_ErrorsOnMissingRulesKey(t *testing.T) {
 	var obj map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
 
-	_, err := ReplaceRouteRulesObj(obj, "migration-route", []byte("notRules:\n  foo: bar\n"))
+	_, err := replaceRouteRulesObj(obj, "migration-route", []byte("notRules:\n  foo: bar\n"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rules")
 }
@@ -102,12 +102,12 @@ func TestReplaceRouteRulesObj_ReplacesWholeSubtreeNotMerge(t *testing.T) {
 	var obj map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
 
-	first, err := ReplaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n    stale: keep-me\n"))
+	first, err := replaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n    stale: keep-me\n"))
 	require.NoError(t, err)
 
 	var firstObj map[string]any
 	require.NoError(t, yaml.Unmarshal(first, &firstObj))
-	second, err := ReplaceRouteRulesObj(firstObj, "migration-route", []byte("rules:\n  routing:\n    default: cc\n"))
+	second, err := replaceRouteRulesObj(firstObj, "migration-route", []byte("rules:\n  routing:\n    default: cc\n"))
 	require.NoError(t, err)
 
 	rules := routeRules(t, second, "migration-route")
@@ -122,7 +122,7 @@ func TestReplaceRouteRulesObj_OnlyNamedRouteChanges(t *testing.T) {
 	var obj map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
 
-	patched, err := ReplaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
+	patched, err := replaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
 	require.NoError(t, err)
 
 	assert.NotNil(t, routeRules(t, patched, "migration-route"))
@@ -130,7 +130,7 @@ func TestReplaceRouteRulesObj_OnlyNamedRouteChanges(t *testing.T) {
 }
 
 // duplicateNameRouteCR has two spec.routes entries sharing the same name,
-// distinguished only by endpoint — a malformed shape ReplaceRouteRulesObj
+// distinguished only by endpoint — a malformed shape replaceRouteRulesObj
 // must still handle deterministically (see
 // TestReplaceRouteRulesObj_OnlyFirstDuplicateNamedRouteChanges).
 const duplicateNameRouteCR = `apiVersion: platform.confluent.io/v1beta1
@@ -183,7 +183,7 @@ func TestReplaceRouteRulesObj_OnlyFirstDuplicateNamedRouteChanges(t *testing.T) 
 	var obj map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(duplicateNameRouteCR), &obj))
 
-	patched, err := ReplaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
+	patched, err := replaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
 	require.NoError(t, err)
 
 	assert.NotNil(t, routeRulesByEndpoint(t, patched, "migration-route", "gateway:9595"),

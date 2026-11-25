@@ -29,13 +29,13 @@ func TestK8sService_InjectedClientsServeWithoutKubeconfig(t *testing.T) {
 	dyn := newFakeDynamicClient(gw)
 	typed := newFakeClientset()
 
-	svc := NewK8sServiceWithClients(dyn, typed)
+	svc := newK8sServiceWithClients(dyn, typed)
 
 	gen, err := svc.GetGatewayGeneration(context.Background(), "ns", "gw")
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), gen)
 
-	cs, err := svc.Clientset()
+	cs, err := svc.clientset()
 	require.NoError(t, err)
 	assert.Same(t, typed, cs)
 }
@@ -62,7 +62,7 @@ func TestK8sService_BadKubeconfigErrorIsStable(t *testing.T) {
 	assert.Equal(t, 1, builds)
 
 	// The typed client shares the one config build.
-	_, err3 := svc.Clientset()
+	_, err3 := svc.clientset()
 	require.Error(t, err3)
 	assert.Contains(t, err3.Error(), "failed to build config: ")
 	assert.Equal(t, 1, builds)
@@ -84,7 +84,7 @@ func TestK8sService_ConcurrentFirstUse(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			got[i], errs[i] = svc.Clientset()
+			got[i], errs[i] = svc.clientset()
 		}(i)
 	}
 	wg.Wait()

@@ -59,11 +59,11 @@ func (c RouteChange) ApplyTo(crYAML []byte, routeName string) ([]byte, error) {
 	}
 	switch c.Edit {
 	case EditRouteFence:
-		return ReplaceRouteFenceObj(base, routeName, c.Artifact)
+		return replaceRouteFenceObj(base, routeName, c.Artifact)
 	case EditRouteRules:
-		return ReplaceRouteRulesObj(base, routeName, c.Artifact)
+		return replaceRouteRulesObj(base, routeName, c.Artifact)
 	case EditRoute:
-		return ReplaceRouteObj(base, routeName, c.Artifact)
+		return replaceRouteObj(base, routeName, c.Artifact)
 	default:
 		return nil, fmt.Errorf("unknown route edit %d", c.Edit)
 	}

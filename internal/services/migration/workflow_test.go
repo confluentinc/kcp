@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -115,11 +115,7 @@ func TestWorkflow_Initialize_RefusedResult(t *testing.T) {
 // field of the reconcile result onto the run's config, which starts empty, so
 // a missing copy leaves that field empty and fails here.
 func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
-	gw := &mockGatewayService{
-		GetGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-			return []byte(testInitialCR), nil
-		},
-	}
+	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
@@ -795,7 +791,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_WaitsForReplacedPodsViaVerifier
 	acceptedCalled := false
 	gw := &mockGatewayService{
 		// With detection disabled the workflow makes no pod capture of its own;
-		// the only capture is the shared TransitionVerifier.PatchCR one, which
+		// the only capture is the shared PatchCR one inside Transitioner.Apply, which
 		// is what VerifyTransition then waits on.
 		GetGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
 			uidCaptures++

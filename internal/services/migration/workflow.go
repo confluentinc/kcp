@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"log/slog"
 	"sort"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
@@ -60,7 +60,9 @@ func NewMigrationActions(
 		reporter:            newReporter(),
 	}
 	// The reporter is read at call time: tests replace s.reporter after construction.
-	s.gw = gatewayTransitioner(func() gateway.Reporter { return s.reporter })
+	if gatewayTransitioner != nil {
+		s.gw = gatewayTransitioner(func() gateway.Reporter { return s.reporter })
+	}
 	return s
 }
 
@@ -149,11 +151,9 @@ func (s *MigrationActions) Initialize(
 	config.PlanBaseline = res.PlanBaseline
 	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.PromoteTopics))
 
-	// How gateway transitions are verified is NOT decided here: there is no
-	// separate advisory moment to decide it for anymore (execute is the only
-	// command), and config.FenceYAML/SwitchoverYAML were only just set above in
-	// the same process. The Transitioner decides lazily, once, on the first
-	// gateway patch later in this same Execute() call.
+	// How gateway transitions are verified is not decided here. The Transitioner
+	// decides lazily, once, on the first gateway patch later in this same
+	// Execute() call, from the fence and switchover artifacts set above.
 
 	slog.Debug("migration initialized successfully")
 	return nil
@@ -282,15 +282,13 @@ func (s *MigrationActions) fetchSourceAndDestinationOffsets(ctx context.Context,
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the
 // gateway accepted the new spec, then waits until the change has taken effect
-// (every gateway pod serves the fenced route). The wait runs without a
-// deadline by
-// default — the gateway drives convergence. The run's configured timeout caps
-// the wait when set. Ctrl-C does
-// not unwind a wedged wait: kcp installs no signal handler, so it ends the
-// process with the gateway as it is (fenced, if the fence was applied) and a
-// re-run continues from there. Whatever the timeout, a pod that never goes
-// away is reported as an error by the gateway layer, so a lost node cannot wedge
-// the wait.
+// (every gateway pod serves the fenced route). The wait runs without a deadline
+// by default, because the gateway drives convergence; the run's configured
+// timeout caps it when set. Ctrl-C does not unwind a wedged wait: kcp installs
+// no signal handler, so it ends the process with the gateway as it is (fenced,
+// if the fence was applied) and a re-run continues from there. Whatever the
+// timeout, a pod that never goes away is reported as an error by the gateway
+// layer, so a lost node cannot wedge the wait.
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
@@ -329,11 +327,8 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *migrun.Migr
 	// the orchestrator remove the fence rather than exiting with the
 	// gateway in a state kcp created and did not resolve. A patch that never
 	// reached the cluster is deliberately outside the mark: nothing to undo.
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrFenceUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrFenceUnconfirmed); err != nil {
+		return err
 	}
 
 	slog.Debug("gateway fenced and ready")
@@ -817,7 +812,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *migrun.Mig
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the gateway refused — the failure mode described on
-// gateway.TransitionVerifier.WaitForAccepted, hit on 2026-07-27 while setting up the live-cluster
+// gateway.Transitioner's acceptance wait, hit on 2026-07-27 while setting up the live-cluster
 // e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
@@ -848,11 +843,8 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *migrun.Mig
 		What:    "switchover gateway CR",
 		Applied: "Switchover gateway CR applied",
 	})
-	if res.Landed && res.Err != nil {
-		return fmt.Errorf("%w: %w", migrun.ErrSwitchUnconfirmed, res.Err)
-	}
-	if res.Err != nil {
-		return res.Err
+	if err := res.ErrMarkedWith(migrun.ErrSwitchUnconfirmed); err != nil {
+		return err
 	}
 
 	slog.Debug("gateway switchover complete")

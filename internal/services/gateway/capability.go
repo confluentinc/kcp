@@ -183,7 +183,7 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 		return Capability{}, err
 	}
 
-	clientset, err := s.Clientset()
+	clientset, err := s.clientset()
 	if err != nil {
 		return Capability{}, err
 	}

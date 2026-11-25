@@ -59,10 +59,6 @@ type mockService struct {
 	waitAcceptedFn func() error
 }
 
-func (m *mockService) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
-	return nil, nil
-}
-
 func (m *mockService) DetectCapability(_ context.Context, _, _ string, port int, fenced, switched []byte) (Capability, error) {
 	m.detects++
 	m.detectPort, m.detectFenced, m.detectSwitched = port, fenced, switched
@@ -78,10 +74,6 @@ func (m *mockService) WaitForGatewayConfigID(_ context.Context, _, _ string, opt
 		return m.waitConfigIDFn(opts)
 	}
 	return nil
-}
-
-func (m *mockService) CheckPermissions(context.Context, string, string, string, string) (bool, error) {
-	return true, nil
 }
 
 func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string, expectedGeneration int64) (PatchResult, error) {
@@ -167,7 +159,7 @@ func TestPatchCR_GatesConfigID(t *testing.T) {
 		},
 		getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) { return 7, nil },
 	}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.NoError(t, err)
@@ -189,7 +181,7 @@ func TestPatchCR_GatesConfigID(t *testing.T) {
 func TestPatchCR_CapturesPodUIDsWhenRolling(t *testing.T) {
 	want := map[types.UID]struct{}{"uid-a": {}, "uid-b": {}}
 	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return want, nil }}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.NoError(t, err)
@@ -201,7 +193,7 @@ func TestPatchCR_DoesNotCaptureWhenConfigIDInjected(t *testing.T) {
 	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
 		return map[types.UID]struct{}{"uid-a": {}}, nil
 	}}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
 
 	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.NoError(t, err)
@@ -211,7 +203,7 @@ func TestPatchCR_DoesNotCaptureWhenConfigIDInjected(t *testing.T) {
 
 func TestPatchCR_CaptureFailureAbortsBeforePatch(t *testing.T) {
 	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return nil, errors.New("list pods: boom") }}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.Error(t, err)
@@ -223,7 +215,7 @@ func TestPatchCR_BaselineReadFailureAbortsBeforePatchWhenRolling(t *testing.T) {
 	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
 		return 0, errors.New("get deployment: boom")
 	}}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.Error(t, err)
@@ -236,7 +228,7 @@ func TestPatchCR_BaselineReadFailureStillPatchesWhenConfigIDInjected(t *testing.
 	svc := &mockService{getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) {
 		return 0, errors.New("get deployment: boom")
 	}}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
 
 	res, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{RouteName: "r", Field: "fence", Value: 1}, "fence")
 	require.NoError(t, err)
@@ -255,7 +247,7 @@ func TestPatchConfigIDOnly(t *testing.T) {
 	}
 	// Mode is irrelevant here — PatchConfigIDOnly always injects a configId,
 	// unlike PatchCR which gates on Capability.InjectsConfigID.
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	res, err := v.PatchConfigIDOnly(context.Background(), "ns", "gw", "hot-reload check")
 	require.NoError(t, err)
@@ -276,7 +268,7 @@ func TestSmokeTestHotReload_WritesOnlyTheConfigID(t *testing.T) {
 			return configID, nil
 		},
 	}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
 
 	require.NoError(t, v.SmokeTestHotReload(context.Background(), "ns", "gw", 9180))
 
@@ -290,7 +282,7 @@ func TestSmokeTestHotReload_WritesOnlyTheConfigID(t *testing.T) {
 func TestTransitionVerifier_GenerationFollowsOwnWrites(t *testing.T) {
 	svc := &mockService{patchResults: []PatchResult{{Generation: 5}, {Generation: 6}, {Generation: 6}}}
 	gen := int64(4)
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: &gen}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: &gen}
 
 	_, err := v.PatchConfigIDOnly(context.Background(), "ns", "gw", "smoke test")
 	require.NoError(t, err)
@@ -309,7 +301,7 @@ func TestTransitionVerifier_UnverifiedWriteAdvancesGeneration(t *testing.T) {
 		patchErr:     fmt.Errorf("could not confirm: %w", ErrApplyUnverified),
 	}
 	gen := int64(4)
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: &gen}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: &gen}
 
 	_, err := v.PatchCR(context.Background(), "ns", "gw", RoutePatch{}, "fence")
 	require.ErrorIs(t, err, ErrApplyUnverified)
@@ -335,7 +327,7 @@ func TestTransitionVerifier_checkGeneration(t *testing.T) {
 			svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) {
 				return tt.observed, nil
 			}}
-			v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: tt.expected}
+			v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Generation: tt.expected}
 
 			err := v.checkGeneration(context.Background(), "ns", "gw", "fence")
 			assert.Equal(t, tt.wantGets, svc.generationGets)
@@ -360,8 +352,8 @@ func TestVerifyTransition_RolloutWaitsForReplacedPods(t *testing.T) {
 		gotInitial, gotBaseline, gotPoll, gotTimeout = initial, baseline, poll, timeout
 		return nil
 	}}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 7 * time.Minute}
-	applied := ApplyResult{BaselineDeploymentGeneration: 12, PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 7 * time.Minute}
+	applied := applyResult{BaselineDeploymentGeneration: 12, PreApplyPodUIDs: map[types.UID]struct{}{"uid-a": {}}}
 
 	require.NoError(t, v.VerifyTransition(context.Background(), "ns", "gw", 9180, applied, "fence"))
 
@@ -375,9 +367,9 @@ func TestVerifyTransition_RolloutWaitsForReplacedPods(t *testing.T) {
 func TestVerifyTransition_RolloutWaitErrorIsWrapped(t *testing.T) {
 	boom := errors.New("boom")
 	svc := &mockService{waitForGatewayPodsFn: func(map[types.UID]struct{}, int64, time.Duration, time.Duration) error { return boom }}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
-	err := v.VerifyTransition(context.Background(), "ns", "gw", 9180, ApplyResult{}, "switchover")
+	err := v.VerifyTransition(context.Background(), "ns", "gw", 9180, applyResult{}, "switchover")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
@@ -405,8 +397,8 @@ func TestVerifyTransition_NoRollReturnsImmediately(t *testing.T) {
 		completeGatewayDeployment(gw, ns, 1),
 	)
 	svc := &realWaitService{cs: cs}
-	v := &TransitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 5 * time.Second}
-	applied := ApplyResult{BaselineDeploymentGeneration: 1, PreApplyPodUIDs: map[types.UID]struct{}{"old-1": {}}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}, RolloutTimeout: 5 * time.Second}
+	applied := applyResult{BaselineDeploymentGeneration: 1, PreApplyPodUIDs: map[types.UID]struct{}{"old-1": {}}}
 
 	start := time.Now()
 	err := v.VerifyTransition(context.Background(), ns, gw, 9180, applied, "fence")
@@ -426,7 +418,7 @@ func (r *recordingReporter) Remediation(string, ...any) {}
 
 func TestPrintPodRolloutProgress_ShowsElapsedAndOldPodNames(t *testing.T) {
 	rep := &recordingReporter{}
-	v := &TransitionVerifier{Reporter: rep}
+	v := &transitionVerifier{Reporter: rep}
 	v.printPodRolloutProgress(PodRolloutProgress{
 		InitialPodCount: 5, NewPodsReady: 1, OldPodsRemaining: 5, RolloutDetected: true,
 		Elapsed: 90 * time.Second, OldPodNames: []string{"a", "b", "c", "d", "e"},
@@ -441,7 +433,7 @@ func TestPrintPodRolloutProgress_ShowsElapsedAndOldPodNames(t *testing.T) {
 
 func TestPrintPodRolloutProgress_FewNamesListedInFull(t *testing.T) {
 	rep := &recordingReporter{}
-	v := &TransitionVerifier{Reporter: rep}
+	v := &transitionVerifier{Reporter: rep}
 	v.printPodRolloutProgress(PodRolloutProgress{
 		InitialPodCount: 2, OldPodsRemaining: 2, RolloutDetected: true, OldPodNames: []string{"a", "b"},
 	})
@@ -452,7 +444,7 @@ func TestPrintPodRolloutProgress_FewNamesListedInFull(t *testing.T) {
 
 func TestPrintConfigWaitProgress_InPlaceShowsTerminating(t *testing.T) {
 	rep := &recordingReporter{}
-	v := &TransitionVerifier{Reporter: rep}
+	v := &transitionVerifier{Reporter: rep}
 	v.printConfigWaitProgress(ConfigWaitProgress{
 		Mechanism: MechanismNoRollObserved, PodsReady: 2, PodsAtWant: 2, PodsTerminating: 1,
 	})
@@ -468,16 +460,16 @@ func TestExcludePods(t *testing.T) {
 	set := map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}
 	exclude := map[types.UID]struct{}{"b": {}}
 
-	got := ExcludePods(set, exclude)
+	got := excludePods(set, exclude)
 
 	assert.Equal(t, map[types.UID]struct{}{"a": {}, "c": {}}, got)
 	assert.Equal(t, map[types.UID]struct{}{"a": {}, "b": {}, "c": {}}, set, "the set must not be mutated")
 	assert.Equal(t, map[types.UID]struct{}{"b": {}}, exclude, "the exclusion must not be mutated")
 
-	assert.Empty(t, ExcludePods(nil, exclude), "nil set gives an empty result")
-	assert.Nil(t, ExcludePods(nil, nil), "nil set stays nil, so a hot-reload capture keeps meaning no pods")
-	assert.Equal(t, set, ExcludePods(set, nil), "nil exclusion keeps every pod")
-	got = ExcludePods(set, nil)
+	assert.Empty(t, excludePods(nil, exclude), "nil set gives an empty result")
+	assert.Nil(t, excludePods(nil, nil), "nil set stays nil, so a hot-reload capture keeps meaning no pods")
+	assert.Equal(t, set, excludePods(set, nil), "nil exclusion keeps every pod")
+	got = excludePods(set, nil)
 	got["d"] = struct{}{}
 	assert.NotContains(t, set, types.UID("d"), "the result is a new map even with nothing excluded")
 }

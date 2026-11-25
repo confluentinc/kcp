@@ -40,7 +40,7 @@ func NewSecretChecker(svc *K8sService, namespace string) *SecretChecker {
 // Only an unexpected API failure — neither NotFound nor a permission
 // denial — is returned as err.
 func (c *SecretChecker) MissingSecrets(ctx context.Context, names []string) (missing []string, skipReason string, err error) {
-	clientset, err := c.svc.Clientset()
+	clientset, err := c.svc.clientset()
 	if err != nil {
 		return nil, "", err
 	}

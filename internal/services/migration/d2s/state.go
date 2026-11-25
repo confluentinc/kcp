@@ -5,7 +5,7 @@
 // like AAO and TBM.
 //
 // The state machine is its own, in tbm's shape. The lower-level mechanics are shared: gateway CR apply and
-// verify (gateway.TransitionVerifier), and the committed-offset engine (groupoffsets). Nothing is persisted:
+// verify (gateway.Transitioner), and the committed-offset engine (groupoffsets). Nothing is persisted:
 // every run starts at uninitialized and re-derives everything from the live world.
 //
 // Not to be confused with internal/services/migration/offset_sync.go, which toggles the cluster link's

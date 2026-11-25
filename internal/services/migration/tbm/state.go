@@ -6,7 +6,7 @@
 // each has its own state machine, since TBM and AAO progress through
 // genuinely different steps.
 // Lower-level mechanics that are byte-for-byte identical between the two —
-// gateway CR apply/wait/verify (gateway.TransitionVerifier), the
+// gateway CR apply/wait/verify (gateway.Transitioner), the
 // source/destination offset sweep and unrouted-producer detection
 // (internal/services/offset) — are shared service modules both packages
 // call, rather than two hand-maintained copies drifting apart.

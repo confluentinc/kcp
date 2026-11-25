@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"log/slog"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/looplab/fsm"
@@ -473,8 +473,8 @@ func (o *MigrationOrchestrator) stopOnGatewayChange(stepFailure, err error, stop
 }
 
 // restoreAfterUnconfirmedFence applies the rollback route (the start-of-run route
-// with kcp's fence removed) after a fence
-// that reached the cluster but was never confirmed as in force on the gateway.
+// with kcp's fence removed) after a fence that reached the cluster but was never
+// confirmed as in force on the gateway.
 //
 // The compensation runs for every unconfirmed fence, not only for one seen to be
 // partially applied, because the two readings a timeout can produce are not

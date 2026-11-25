@@ -10,7 +10,7 @@ import (
 )
 
 // applyPrep is what a strategy gathers immediately before a patch, for the
-// ApplyResult the patch hands back.
+// applyResult the patch hands back.
 type applyPrep struct {
 	configID string
 	podUIDs  map[types.UID]struct{}
@@ -22,8 +22,8 @@ type applyPrep struct {
 // one (verified by its pre-apply pods being replaced).
 type transitionStrategy interface {
 	name() string // "config_id" or "rollout": the kcp.gateway.mechanism span value
-	prepare(ctx context.Context, v *TransitionVerifier, namespace, crName, step string) (applyPrep, error)
-	confirm(ctx context.Context, v *TransitionVerifier, namespace, crName string, port int, applied ApplyResult, step string) error
+	prepare(ctx context.Context, v *transitionVerifier, namespace, crName, step string) (applyPrep, error)
+	confirm(ctx context.Context, v *transitionVerifier, namespace, crName string, port int, applied applyResult, step string) error
 }
 
 // strategyForCapability picks the strategy a patch prepares with, from the
@@ -37,8 +37,8 @@ func strategyForCapability(c Capability) transitionStrategy {
 
 // strategyForApplied picks the strategy a verification confirms with, from the
 // configId the apply actually produced rather than the capability: an
-// ApplyResult without a configId must take the pod wait.
-func strategyForApplied(a ApplyResult) transitionStrategy {
+// applyResult without a configId must take the pod wait.
+func strategyForApplied(a applyResult) transitionStrategy {
 	if a.ConfigID != "" {
 		return hotReloadStrategy{}
 	}
@@ -51,7 +51,7 @@ type hotReloadStrategy struct{}
 
 func (hotReloadStrategy) name() string { return "config_id" }
 
-func (hotReloadStrategy) prepare(ctx context.Context, v *TransitionVerifier, namespace, crName, step string) (applyPrep, error) {
+func (hotReloadStrategy) prepare(ctx context.Context, v *transitionVerifier, namespace, crName, step string) (applyPrep, error) {
 	configID, err := NewConfigID()
 	if err != nil {
 		return applyPrep{}, err
@@ -60,7 +60,7 @@ func (hotReloadStrategy) prepare(ctx context.Context, v *TransitionVerifier, nam
 	return applyPrep{configID: configID, baseline: baseline}, nil
 }
 
-func (hotReloadStrategy) confirm(ctx context.Context, v *TransitionVerifier, namespace, crName string, port int, applied ApplyResult, step string) error {
+func (hotReloadStrategy) confirm(ctx context.Context, v *transitionVerifier, namespace, crName string, port int, applied applyResult, step string) error {
 	return v.WaitForConfigApplied(ctx, namespace, crName, port, applied, step)
 }
 
@@ -70,7 +70,7 @@ type rolloutStrategy struct{}
 
 func (rolloutStrategy) name() string { return "rollout" }
 
-func (rolloutStrategy) prepare(ctx context.Context, v *TransitionVerifier, namespace, crName, step string) (applyPrep, error) {
+func (rolloutStrategy) prepare(ctx context.Context, v *transitionVerifier, namespace, crName, step string) (applyPrep, error) {
 	// A rolling gateway replaces its pods, so record which exist before the
 	// patch. Failing to capture is fatal and happens before anything is written,
 	// so it is deliberately not an ErrApplyUnverified.
@@ -89,7 +89,7 @@ func (rolloutStrategy) prepare(ctx context.Context, v *TransitionVerifier, names
 	return applyPrep{podUIDs: podUIDs, baseline: baseline}, nil
 }
 
-func (rolloutStrategy) confirm(ctx context.Context, v *TransitionVerifier, namespace, crName string, port int, applied ApplyResult, step string) error {
+func (rolloutStrategy) confirm(ctx context.Context, v *transitionVerifier, namespace, crName string, port int, applied applyResult, step string) error {
 	v.Reporter.Detail("Waiting for the replaced gateway pods to be gone...")
 	slog.Debug("waiting for the replaced gateway pods", "step", step, "rolloutTimeout", v.RolloutTimeout,
 		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration, "preApplyPods", len(applied.PreApplyPodUIDs))
