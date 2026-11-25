@@ -14,11 +14,16 @@ import (
 // can stay Terminating indefinitely, so waiting longer cannot help.
 var ErrReplacedPodOverdue = errors.New("replaced gateway pod is overdue")
 
-// replacedPodOverdueMargin is how long past its metadata.deletionTimestamp a
+// ReplacedPodOverdueMargin is how long past its metadata.deletionTimestamp a
 // pod may stay listed before it counts as overdue. For a graceful delete the
 // deletionTimestamp is the request time plus the grace period, so past it the
-// kubelet should already have removed the pod. A var so tests can shorten it.
-var replacedPodOverdueMargin = 60 * time.Second
+// kubelet should already have removed the pod. A constant, so no other package
+// can change it; tests shorten the unexported replacedPodOverdueMargin instead.
+const ReplacedPodOverdueMargin = 60 * time.Second
+
+// replacedPodOverdueMargin is the margin overduePod applies. It starts at
+// ReplacedPodOverdueMargin and exists only as a test seam.
+var replacedPodOverdueMargin = ReplacedPodOverdueMargin
 
 // overduePod returns the first pod (by name) that include accepts, that is not
 // terminal, and whose deletionTimestamp is more than replacedPodOverdueMargin

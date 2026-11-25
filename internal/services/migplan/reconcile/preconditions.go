@@ -45,11 +45,9 @@ type GatewayConfig struct {
 
 	// RawYAML is the whole gateway CR, cleaned of server-managed metadata
 	// (see cleanGatewayDoc in migplan/gatewayfile.go) but otherwise exactly as
-	// pulled. The reconcile core does not read it — it is provenance a caller
-	// can diff against a later re-pull to detect drift before mutating; once
-	// cleaned, the whole document is stable enough to diff directly (the
-	// volatile fields that made a caller carve out just `spec` before are
-	// gone).
+	// pulled. The reconcile core does not read it: it is the CR the run started
+	// from, handed on as the base for the gateway's capability probe. Drift since
+	// the plan is guarded by Generation below, not by diffing this document.
 	RawYAML string
 
 	// RawObj is the same cleaned tree RawYAML re-marshals from, already
@@ -72,8 +70,8 @@ type GatewayConfig struct {
 
 type RouteConfig struct {
 	Name         string
-	Mode         string   // "static" | "dynamic"
-	BoundDomains []string // the route's bound streaming-domain names
+	Mode         RouteMode // "static" | "dynamic"
+	BoundDomains []string  // the route's bound streaming-domain names
 	Rules        map[string]any
 
 	// Raw is the route's own raw map exactly as found in spec.routes[] —
@@ -108,7 +106,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 	}
 	rc := gw.Route
 
-	if rc.Mode == "dynamic" {
+	if rc.Mode == RouteModeDynamic {
 		res = append(res, pass("route is dynamic"))
 	} else {
 		res = append(res, fail("route is dynamic", fmt.Sprintf("%s is declared but route %q is %q; it requires a dynamic (topic-based) route", in.Type.sectionKey(), rc.Name, rc.Mode)))

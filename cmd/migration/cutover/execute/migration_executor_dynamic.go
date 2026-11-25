@@ -5,7 +5,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/spf13/cobra"
@@ -22,7 +22,7 @@ import (
 func runDynamicBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
@@ -37,12 +37,9 @@ func runDynamicBranch(
 	}
 	defer func() { _ = svc.close() }()
 
-	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, svc.gateway, svc.clusterLink)
-	actions.SetRolloutTimeout(policy.RolloutTimeout)
-	actions.SetHotReloadTimeout(policy.HotReloadTimeout)
+	actions := tbm.NewTBMActions(svc.sourceOffset, svc.destinationOffset, newGatewayTransitioner(svc.gateway, policy.RolloutTimeout, policy.HotReloadTimeout, policy.GatewayConfigPort), svc.clusterLink)
 	actions.SetPromoteBatchSize(policy.PromoteBatchSize)
 
-	applyCommonPolicy(config, policy.CommonPolicies)
 	config.DetectUnroutedProducersDuration = policy.DetectUnroutedProducersDuration
 
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)

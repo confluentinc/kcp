@@ -14,7 +14,7 @@ import (
 
 func TestTracing_PatchThenVerify_SpansEachVerifierCall(t *testing.T) {
 	rec := tracingtest.Install(t)
-	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}}
+	v := &transitionVerifier{Client: &mockService{}, Reporter: noopReporter{}}
 
 	applied, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestTracing_PatchCR_CapturePodsSpan(t *testing.T) {
 	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
 		return map[types.UID]struct{}{"uid-a": {}, "uid-b": {}}, nil
 	}}
-	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	_, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "switchover")
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestTracing_PatchCR_CapturePodsSpan(t *testing.T) {
 
 func TestTracing_PatchCR_NoCaptureSpanWhenConfigIDInjected(t *testing.T) {
 	rec := tracingtest.Install(t)
-	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
+	v := &transitionVerifier{Client: &mockService{}, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyPerPodConfigID}}
 
 	_, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestTracing_PatchCR_NoCaptureSpanWhenConfigIDInjected(t *testing.T) {
 func TestTracing_PatchCR_CaptureFailureEndsTheSpanWithTheError(t *testing.T) {
 	rec := tracingtest.Install(t)
 	svc := &mockService{getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return nil, errors.New("list pods: boom") }}
-	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
+	v := &transitionVerifier{Client: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	_, err := v.PatchCR(context.Background(), "confluent", "gw", RoutePatch{RouteName: "r"}, "fence")
 	require.Error(t, err)
@@ -76,7 +76,7 @@ func TestTracing_PatchCR_CaptureFailureEndsTheSpanWithTheError(t *testing.T) {
 
 func TestTracing_ResolveCapability_RecordsTheMode(t *testing.T) {
 	rec := tracingtest.Install(t)
-	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}}
+	v := &transitionVerifier{Client: &mockService{}, Reporter: noopReporter{}}
 	_, err := v.ResolveCapability(context.Background(), "confluent", "gw", 9180, nil, nil)
 	require.NoError(t, err)
 
@@ -85,9 +85,9 @@ func TestTracing_ResolveCapability_RecordsTheMode(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestTracing_VerifyHotReloadCapability_NoSpanWhenNotApplicable(t *testing.T) {
+func TestTracing_SmokeTestHotReload_NoSpanWhenNotApplicable(t *testing.T) {
 	rec := tracingtest.Install(t)
-	v := &TransitionVerifier{Service: &mockService{}, Reporter: noopReporter{}} // zero Capability: no configId injection
-	require.NoError(t, v.VerifyHotReloadCapability(context.Background(), "confluent", "gw", 9180))
+	v := &transitionVerifier{Client: &mockService{}, Reporter: noopReporter{}} // zero Capability: no configId injection
+	require.NoError(t, v.SmokeTestHotReload(context.Background(), "confluent", "gw", 9180))
 	assert.Empty(t, tracingtest.Spans(rec), "a no-op check opens no span")
 }

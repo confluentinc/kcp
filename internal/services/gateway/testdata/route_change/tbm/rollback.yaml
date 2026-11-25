@@ -1,0 +1,5 @@
+rules:
+  routing:
+    coordination:
+      group: source
+    default: source

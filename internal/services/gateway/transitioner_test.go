@@ -1,0 +1,816 @@
+package gateway
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/types"
+)
+
+// eventReporter records every reporter call, in order, into a shared events
+// slice so a test can interleave them with service-side events.
+type eventReporter struct{ events *[]string }
+
+func (r eventReporter) Detail(f string, a ...any) {
+	*r.events = append(*r.events, "detail:"+fmt.Sprintf(f, a...))
+}
+
+func (r eventReporter) Success(f string, a ...any) {
+	*r.events = append(*r.events, "success:"+fmt.Sprintf(f, a...))
+}
+
+func (r eventReporter) Remediation(f string, a ...any) {
+	*r.events = append(*r.events, "remediation:"+fmt.Sprintf(f, a...))
+}
+
+func newEventReporter() (eventReporter, *[]string) {
+	events := []string{}
+	return eventReporter{events: &events}, &events
+}
+
+// probeTarget is a target over the d2s golden CR and route changes, so the
+// Transitioner can build real probe CRs from it.
+func probeTarget(t *testing.T) Target {
+	t.Helper()
+	return Target{
+		Namespace: "ns",
+		Name:      "gw",
+		GatewayCR: readGolden(t, "d2s", "cr.yaml"),
+		Route:     "migration-route",
+		Fence:     RouteChange{Edit: EditRouteRules, Artifact: readGolden(t, "d2s", "fence.yaml")},
+		Switch:    RouteChange{Edit: EditRoute, Artifact: readGolden(t, "d2s", "switch.yaml")},
+	}
+}
+
+func fenceTransition() Transition {
+	return Transition{
+		Step:    "fence",
+		Label:   "fence",
+		Change:  RouteChange{Edit: EditRouteFence, Artifact: []byte("fence:\n  blocked: true\n")},
+		What:    "fenced gateway CR",
+		Applied: "Fenced gateway CR applied",
+	}
+}
+
+func unfenceTransition() Transition {
+	return Transition{
+		Step:          "unfence",
+		Label:         "unfence",
+		Change:        RouteChange{Edit: EditRouteFence, Artifact: []byte("fence:\n  blocked: false\n")},
+		RestoresStart: true,
+		What:          "unfenced gateway CR",
+		Applied:       "Unfenced gateway CR applied",
+	}
+}
+
+func perPodCapability() (Capability, error) {
+	return Capability{Mode: VerifyPerPodConfigID}, nil
+}
+
+// echoConfigID makes a configId patch report back the id it was sent, as the
+// real API server does, so the smoke test sees a stored revision.
+func echoConfigID(_ context.Context, _, _, configID string) (string, error) { return configID, nil }
+
+func uidSet(uids ...string) map[types.UID]struct{} {
+	out := make(map[types.UID]struct{}, len(uids))
+	for _, u := range uids {
+		out[types.UID(u)] = struct{}{}
+	}
+	return out
+}
+
+// scriptedPods returns a GetGatewayPodUIDs hook handing out captures in order.
+func scriptedPods(captures ...map[types.UID]struct{}) func() (map[types.UID]struct{}, error) {
+	i := 0
+	return func() (map[types.UID]struct{}, error) {
+		c := captures[i]
+		i++
+		return c, nil
+	}
+}
+
+func TestTransitionerApply_RolloutOrder(t *testing.T) {
+	svc := &mockService{
+		getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) { return uidSet("a"), nil },
+		waitConfigIDFn: func(ConfigWaitOptions) error {
+			t.Fatal("a rolling gateway must not wait on a configId")
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+	assert.Equal(t, []string{"GetGatewayPodUIDs", "PatchGatewayRoute"}, svc.calls)
+	assert.Equal(t, 1, svc.waitPodsCalls)
+	assert.Empty(t, svc.waits)
+	assert.True(t, result.Landed)
+	assert.NoError(t, result.Err)
+}
+
+func TestTransitionerApply_HotReloadStampsTheConfigIDAndWaitsForIt(t *testing.T) {
+	var routeConfigID string
+	svc := &mockService{
+		detectCapabilityFn:     perPodCapability,
+		patchGatewayConfigIDFn: echoConfigID,
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			routeConfigID = configID
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
+
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	require.Len(t, svc.waits, 2, "the smoke test, then the transition")
+	assert.NotEmpty(t, routeConfigID)
+	assert.Equal(t, routeConfigID, svc.waits[1].ConfigID)
+	assert.Equal(t, DefaultGatewayConfigPort, svc.waits[1].Port)
+	assert.Equal(t, 7*time.Minute, svc.waits[1].RollTimeout)
+	assert.Equal(t, 3*time.Minute, svc.waits[1].HotReloadTimeout)
+	assert.NotContains(t, svc.calls, "GetGatewayPodUIDs")
+}
+
+func TestTransitionerApply_LandedSemantics(t *testing.T) {
+	patchBoom := errors.New("patch boom")
+	acceptedBoom := errors.New("accepted boom")
+	podsBoom := errors.New("pods boom")
+
+	tests := []struct {
+		name       string
+		patchErr   error
+		accepted   error
+		pods       error
+		wantLanded bool
+		check      func(t *testing.T, err error)
+	}{
+		{
+			name: "patch returns a generic error", patchErr: patchBoom, wantLanded: false,
+			check: func(t *testing.T, err error) {
+				require.ErrorIs(t, err, patchBoom)
+				assert.Contains(t, err.Error(), "failed to apply fenced gateway CR: ")
+			},
+		},
+		{
+			name: "patch returns ErrApplyUnverified", patchErr: fmt.Errorf("could not confirm: %w", ErrApplyUnverified), wantLanded: true,
+			check: func(t *testing.T, err error) {
+				require.ErrorIs(t, err, ErrApplyUnverified)
+			},
+		},
+		{
+			name: "WaitForAccepted fails", accepted: acceptedBoom, wantLanded: true,
+			check: func(t *testing.T, err error) {
+				require.ErrorIs(t, err, acceptedBoom)
+				assert.NotContains(t, err.Error(), "failed to apply")
+				assert.NotContains(t, err.Error(), "fenced gateway CR")
+			},
+		},
+		{
+			name: "VerifyTransition fails", pods: podsBoom, wantLanded: true,
+			check: func(t *testing.T, err error) {
+				require.ErrorIs(t, err, podsBoom)
+				assert.NotContains(t, err.Error(), "failed to apply")
+			},
+		},
+		{
+			name: "all succeed", wantLanded: true,
+			check: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockService{
+				patchErr:       tt.patchErr,
+				waitAcceptedFn: func() error { return tt.accepted },
+				waitForGatewayPodsFn: func(map[types.UID]struct{}, int64, time.Duration, time.Duration) error {
+					return tt.pods
+				},
+			}
+			rec, _ := newEventReporter()
+			tn := newTransitioner(svc, func() Reporter { return rec })
+
+			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+			assert.Equal(t, tt.wantLanded, result.Landed)
+			tt.check(t, result.Err)
+		})
+	}
+}
+
+func TestTransitionerApply_AppliedMessagePrintsAfterThePatchAndBeforeTheAcceptanceWait(t *testing.T) {
+	rec, events := newEventReporter()
+	svc := &mockService{
+		waitAcceptedFn: func() error {
+			*events = append(*events, "accepted-wait")
+			return nil
+		},
+	}
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+
+	successAt, waitAt := -1, -1
+	for i, e := range *events {
+		switch e {
+		case "success:Fenced gateway CR applied":
+			successAt = i
+		case "accepted-wait":
+			waitAt = i
+		}
+	}
+	require.NotEqual(t, -1, successAt, "the applied message must be printed: %v", *events)
+	require.NotEqual(t, -1, waitAt, "the acceptance wait must run: %v", *events)
+	assert.Less(t, successAt, waitAt, "the applied message must precede the acceptance wait: %v", *events)
+	assert.Contains(t, svc.calls, "PatchGatewayRoute")
+}
+
+// runFenceFenceUnfence drives two fences and an unfence on a rolling gateway
+// and returns the pod set the unfence waited on.
+func runFenceFenceUnfence(t *testing.T, target Target) map[types.UID]struct{} {
+	t.Helper()
+	var initials []map[types.UID]struct{}
+	svc := &mockService{
+		getGatewayPodUIDsFn: scriptedPods(uidSet("pre-1"), uidSet("pre-1", "f1"), uidSet("pre-1", "f1", "f2")),
+		waitForGatewayPodsFn: func(initial map[types.UID]struct{}, _ int64, _, _ time.Duration) error {
+			initials = append(initials, initial)
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	fence1 := fenceTransition()
+	fence1.Step = "fence-1"
+	fence2 := fenceTransition()
+	fence2.Step = "fence-2"
+	for _, tr := range []Transition{fence1, fence2, unfenceTransition()} {
+		result := tn.Apply(context.Background(), target, tr)
+		require.True(t, result.Landed, tr.Step)
+		require.NoError(t, result.Err, tr.Step)
+	}
+	require.Len(t, initials, 3)
+	return initials[2]
+}
+
+func TestTransitionerApply_StartSetCapturedOnceAndOnlyItsPodsSkippedOnRestore(t *testing.T) {
+	got := runFenceFenceUnfence(t, probeTarget(t))
+	assert.Equal(t, uidSet("f1", "f2"), got, "only the start-of-run pod is skipped; a later fence's pod is still waited on")
+}
+
+func TestTransitionerApply_StartRouteFencedKeepsEveryPod(t *testing.T) {
+	target := probeTarget(t)
+	target.StartRouteFenced = true
+	got := runFenceFenceUnfence(t, target)
+	assert.Equal(t, uidSet("pre-1", "f1", "f2"), got)
+}
+
+func TestTransitionerApply_FailedFirstCaptureDoesNotLoseALaterFencesStartSet(t *testing.T) {
+	calls := 0
+	var initial map[types.UID]struct{}
+	svc := &mockService{
+		getGatewayPodUIDsFn: func() (map[types.UID]struct{}, error) {
+			calls++
+			switch calls {
+			case 1:
+				return nil, errors.New("list pods: boom") // first fence: capture fails, nothing written
+			case 2:
+				return uidSet("pre-1"), nil // retried fence: the start-of-run pod set
+			default:
+				return uidSet("pre-1", "f2"), nil // unfence
+			}
+		},
+		waitForGatewayPodsFn: func(got map[types.UID]struct{}, _ int64, _, _ time.Duration) error {
+			initial = got
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	require.False(t, first.Landed)
+	require.Error(t, first.Err)
+
+	for _, tr := range []Transition{fenceTransition(), unfenceTransition()} {
+		result := tn.Apply(context.Background(), probeTarget(t), tr)
+		require.True(t, result.Landed, tr.Step)
+		require.NoError(t, result.Err, tr.Step)
+	}
+	assert.Equal(t, uidSet("f2"), initial, "the retried fence's start-of-run pod set must be kept")
+}
+
+func TestTransitionerApply_RestoreWithNoEarlierFenceWaitsOnEveryPod(t *testing.T) {
+	var initial map[types.UID]struct{}
+	svc := &mockService{
+		getGatewayPodUIDsFn: scriptedPods(uidSet("a", "b")),
+		waitForGatewayPodsFn: func(got map[types.UID]struct{}, _ int64, _, _ time.Duration) error {
+			initial = got
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	result := tn.Apply(context.Background(), probeTarget(t), unfenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	assert.Equal(t, uidSet("a", "b"), initial)
+}
+
+func TestTransitionerEnsureCapability_ResolvesAndSmokeTestsOnce(t *testing.T) {
+	configIDPatches := 0
+	svc := &mockService{
+		detectCapabilityFn: perPodCapability,
+		patchGatewayConfigIDFn: func(ctx context.Context, ns, gw, configID string) (string, error) {
+			configIDPatches++
+			return echoConfigID(ctx, ns, gw, configID)
+		},
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	for i := 0; i < 2; i++ {
+		result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+		require.True(t, result.Landed)
+		require.NoError(t, result.Err)
+	}
+
+	assert.Equal(t, 1, svc.detects)
+	assert.Equal(t, 1, configIDPatches, "exactly one configId-only patch: the smoke test")
+	assert.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
+}
+
+func TestTransitionerResolveCapabilitySkippingSmokeTest_MarksTheSmokeTestAttempted(t *testing.T) {
+	configIDPatches := 0
+	svc := &mockService{
+		detectCapabilityFn: perPodCapability,
+		patchGatewayConfigIDFn: func(ctx context.Context, ns, gw, configID string) (string, error) {
+			configIDPatches++
+			return echoConfigID(ctx, ns, gw, configID)
+		},
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), probeTarget(t)))
+	require.Equal(t, VerifyPerPodConfigID, tn.Capability().Mode)
+
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	assert.Equal(t, 1, svc.detects)
+	assert.Equal(t, 0, configIDPatches, "a direct ResolveCapabilitySkippingSmokeTest owns the smoke test, so Apply must not run it")
+}
+
+func TestTransitionerApply_AFailedSmokeTestIsNotRetried(t *testing.T) {
+	configIDPatches := 0
+	smokeBoom := errors.New("smoke boom")
+	waitCalls := 0
+	svc := &mockService{
+		detectCapabilityFn: perPodCapability,
+		patchGatewayConfigIDFn: func(ctx context.Context, ns, gw, configID string) (string, error) {
+			configIDPatches++
+			return echoConfigID(ctx, ns, gw, configID)
+		},
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+		waitConfigIDFn: func(ConfigWaitOptions) error {
+			waitCalls++
+			if waitCalls == 1 {
+				return smokeBoom
+			}
+			return nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	first := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	assert.False(t, first.Landed)
+	require.Error(t, first.Err)
+	assert.Contains(t, first.Err.Error(), "failed to resolve gateway capability")
+	assert.ErrorIs(t, first.Err, smokeBoom)
+	assert.NotContains(t, svc.calls, "PatchGatewayRoute")
+
+	second := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+	assert.True(t, second.Landed)
+	assert.NoError(t, second.Err)
+	assert.Equal(t, 1, svc.detects)
+	assert.Equal(t, 1, configIDPatches, "the failed smoke test must not be retried")
+	assert.Contains(t, svc.calls, "PatchGatewayRoute")
+}
+
+func TestTransitionerApply_ProbeErrorStopsBeforeAnyWrite(t *testing.T) {
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+	target := probeTarget(t)
+	target.GatewayCR = []byte("{{ not yaml")
+
+	result := tn.Apply(context.Background(), target, fenceTransition())
+
+	assert.False(t, result.Landed)
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "failed to derive fenced gateway CR")
+	assert.Empty(t, svc.calls)
+	assert.Empty(t, svc.patchExpected)
+	assert.Equal(t, 0, svc.detects)
+}
+
+// baselineTarget is probeTarget with the plan's baseline set.
+func baselineTarget(t *testing.T, baseline int64) Target {
+	t.Helper()
+	target := probeTarget(t)
+	target.PlanBaseline = baseline
+	return target
+}
+
+func TestTransitionerGuardsOnThePlanBaselineThenOnEachWrite(t *testing.T) {
+	svc := &mockService{patchResults: []PatchResult{{Generation: 8}, {Generation: 9}}}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), unfenceTransition()).Err)
+
+	assert.Equal(t, []int64{7, 8}, svc.patchExpected, "the first patch is guarded on the plan, the next on what the first wrote")
+}
+
+func TestTransitionerUnknownPlanBaselineSendsUnguardedPatches(t *testing.T) {
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 0), fenceTransition()).Err)
+
+	assert.Equal(t, []int64{0}, svc.patchExpected)
+}
+
+func TestTransitionerSeedsTheBaselineOnceFromTheTarget(t *testing.T) {
+	t.Run("after a write", func(t *testing.T) {
+		svc := &mockService{
+			patchResults:           []PatchResult{{Generation: 8}, {Generation: 9}},
+			getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
+		}
+		rec, _ := newEventReporter()
+		tn := newTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 3), unfenceTransition()).Err)
+
+		assert.Equal(t, []int64{7, 8}, svc.patchExpected, "a later target's baseline must not undo the advance")
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 3), "switch"),
+			"the check compares with the last write (9), not the later target's baseline")
+	})
+	t.Run("after a check", func(t *testing.T) {
+		svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 5, nil }}
+		rec, _ := newEventReporter()
+		tn := newTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 5), "promote"))
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
+
+		assert.Equal(t, []int64{5}, svc.patchExpected, "the check seeded the baseline; the patch keeps it")
+	})
+	t.Run("unknown at first", func(t *testing.T) {
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		tn := newTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 0), "promote"))
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 9), fenceTransition()).Err)
+
+		assert.Equal(t, []int64{0}, svc.patchExpected, "an unknown baseline is seeded too, and stays unknown")
+		assert.Zero(t, svc.generationGets)
+	})
+}
+
+func TestVerifyUnchangedSincePlan(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseline int64
+		observed int64
+		wantErr  bool
+		wantGets int
+	}{
+		{"equal", 5, 5, false, 1},
+		{"moved", 5, 7, true, 1},
+		{"unknown", 0, 7, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockService{getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return tt.observed, nil }}
+			tn := newTransitioner(svc, func() Reporter { return noopReporter{} })
+
+			err := tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, tt.baseline), "promote")
+
+			assert.Equal(t, tt.wantGets, svc.generationGets)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, ErrGatewayChanged)
+			var gce *GenerationChangedError
+			require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
+			assert.Equal(t, GenerationChangedError{Namespace: "ns", Gateway: "gw", Expected: 5, Observed: 7}, *gce)
+		})
+	}
+}
+
+func TestVerifyObservedUnchangedSincePlan(t *testing.T) {
+	tests := []struct {
+		name               string
+		baseline, observed int64
+		wantErr            bool
+	}{
+		{"baseline unknown", 0, 7, false},
+		{"observed unknown", 5, 0, false},
+		{"equal", 5, 5, false},
+		{"moved", 5, 7, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &mockService{}
+			tn := newTransitioner(svc, func() Reporter { return noopReporter{} })
+
+			err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, tc.baseline), tc.observed)
+
+			assert.Zero(t, svc.generationGets, "the observed version is the check: no read")
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrGatewayChanged)
+			var gce *GenerationChangedError
+			require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
+			assert.Equal(t, GenerationChangedError{Namespace: "ns", Gateway: "gw", Expected: 5, Observed: 7}, *gce)
+		})
+	}
+}
+
+// An unseeded Transitioner holds no baseline; the no-read check must seed it from the target first, or a
+// moved gateway would compare against 0 and pass silently.
+func TestVerifyObservedUnchangedSincePlan_SeedsTheBaselineFromTheTarget(t *testing.T) {
+	t.Run("first call seeds", func(t *testing.T) {
+		tn := newTransitioner(&mockService{}, func() Reporter { return noopReporter{} })
+
+		err := tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 4), 7)
+
+		assert.ErrorIs(t, err, ErrGatewayChanged, "the target's baseline (4) must be seeded before comparing")
+	})
+	t.Run("seeds once, keeping a write's advance", func(t *testing.T) {
+		svc := &mockService{patchResults: []PatchResult{{Generation: 8}}}
+		rec, _ := newEventReporter()
+		tn := newTransitioner(svc, func() Reporter { return rec })
+
+		require.NoError(t, tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition()).Err)
+
+		require.NoError(t, tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 7), 8), "compares with the last write")
+		assert.ErrorIs(t, tn.VerifyObservedUnchangedSincePlan(baselineTarget(t, 7), 7), ErrGatewayChanged,
+			"the target's baseline must not re-seed over the advance")
+	})
+}
+
+func TestVerifyUnchangedSincePlan_ComparesWithTheLastWrite(t *testing.T) {
+	svc := &mockService{
+		patchResults:           []PatchResult{{Generation: 8}},
+		getGatewayGenerationFn: func(context.Context, string, string) (int64, error) { return 9, nil },
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	result := tn.Apply(context.Background(), baselineTarget(t, 7), fenceTransition())
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+
+	err := tn.VerifyUnchangedSincePlan(context.Background(), baselineTarget(t, 7), "switch")
+	var gce *GenerationChangedError
+	require.True(t, errors.As(err, &gce), "want a *GenerationChangedError, got %v", err)
+	assert.Equal(t, int64(8), gce.Expected)
+	assert.Equal(t, int64(9), gce.Observed)
+}
+
+func TestTransitionerApply_WithConfigPortReachesTheVerifyWait(t *testing.T) {
+	tests := []struct {
+		port int
+		want int
+	}{
+		{-1, DefaultGatewayConfigPort},
+		{0, DefaultGatewayConfigPort},
+		{DefaultGatewayConfigPort + 1, DefaultGatewayConfigPort + 1},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("port %d", tt.port), func(t *testing.T) {
+			svc := &mockService{
+				detectCapabilityFn:     perPodCapability,
+				patchGatewayConfigIDFn: echoConfigID,
+				patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+					return configID, nil
+				},
+			}
+			rec, _ := newEventReporter()
+			tn := newTransitioner(svc, func() Reporter { return rec }, WithConfigPort(tt.port))
+
+			result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+			require.True(t, result.Landed)
+			require.NoError(t, result.Err)
+			require.Len(t, svc.waits, 2)
+			assert.Equal(t, tt.want, svc.waits[1].Port)
+		})
+	}
+}
+
+func TestNewTransitioner_WithTimeoutsReachesTheWaits(t *testing.T) {
+	svc := &mockService{
+		detectCapabilityFn:     perPodCapability,
+		patchGatewayConfigIDFn: echoConfigID,
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec }, WithTimeouts(7*time.Minute, 3*time.Minute))
+
+	result := tn.Apply(context.Background(), probeTarget(t), fenceTransition())
+
+	require.True(t, result.Landed)
+	require.NoError(t, result.Err)
+	require.Len(t, svc.waits, 2, "the smoke test, then the transition")
+	assert.Equal(t, 7*time.Minute, svc.waits[1].RollTimeout)
+	assert.Equal(t, 3*time.Minute, svc.waits[1].HotReloadTimeout)
+}
+
+func TestTransitionerHasClient(t *testing.T) {
+	rep := func() Reporter { return &recordingReporter{} }
+	assert.True(t, newTransitioner(&mockService{}, rep).HasClient())
+	assert.False(t, newTransitioner(nil, rep).HasClient())
+}
+
+func TestTransitionerBuildsProbeCRsFromTheTarget(t *testing.T) {
+	target := probeTarget(t)
+	wantFenced, wantSwitched, err := RouteProbe(target.GatewayCR, target.Route, target.Fence, target.Switch)
+	require.NoError(t, err)
+	assert.Equal(t, string(readGolden(t, "d2s", "fenced_cr.yaml")), string(wantFenced))
+	assert.Equal(t, string(readGolden(t, "d2s", "switched_cr.yaml")), string(wantSwitched))
+
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), target))
+	require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), target))
+
+	assert.Equal(t, 1, svc.detects, "the probe runs at most once per Transitioner")
+	assert.Equal(t, string(wantFenced), string(svc.detectFenced))
+	assert.Equal(t, string(wantSwitched), string(svc.detectSwitched))
+}
+
+func TestTransitionerProbeErrorsKeepTheirWrappers(t *testing.T) {
+	t.Run("a bad CR fails the fenced derivation", func(t *testing.T) {
+		target := probeTarget(t)
+		target.GatewayCR = []byte("{{ not yaml")
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		err := newTransitioner(svc, func() Reporter { return rec }).ResolveCapabilitySkippingSmokeTest(context.Background(), target)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to derive fenced gateway CR: failed to parse gateway CR YAML")
+		assert.Equal(t, 0, svc.detects)
+	})
+	t.Run("a bad switch edit fails the switched derivation", func(t *testing.T) {
+		target := probeTarget(t)
+		target.Switch = RouteChange{Edit: RouteEdit(99)}
+		svc := &mockService{}
+		rec, _ := newEventReporter()
+		err := newTransitioner(svc, func() Reporter { return rec }).ResolveCapabilitySkippingSmokeTest(context.Background(), target)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to derive switched gateway CR: unknown route edit 99")
+		assert.Equal(t, 0, svc.detects)
+	})
+}
+
+func TestTransitionerWithConfigPort(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []TransitionerOption
+		want int
+	}{
+		{"unset selects the default", nil, DefaultGatewayConfigPort},
+		{"zero selects the default", []TransitionerOption{WithConfigPort(0)}, DefaultGatewayConfigPort},
+		{"negative selects the default", []TransitionerOption{WithConfigPort(-1)}, DefaultGatewayConfigPort},
+		{"a configured port reaches DetectCapability", []TransitionerOption{WithConfigPort(19180)}, 19180},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &mockService{}
+			rec, _ := newEventReporter()
+			tn := newTransitioner(svc, func() Reporter { return rec }, tt.opts...)
+			require.NoError(t, tn.ResolveCapabilitySkippingSmokeTest(context.Background(), probeTarget(t)))
+			assert.Equal(t, tt.want, svc.detectPort)
+		})
+	}
+}
+
+func TestTransitionerApply_DerivesThePatchFromTheChange(t *testing.T) {
+	var got RoutePatch
+	svc := &mockService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp RoutePatch, _ string) (string, error) {
+			got = rp
+			return "", nil
+		},
+	}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+	target := probeTarget(t)
+	tr := fenceTransition()
+
+	result := tn.Apply(context.Background(), target, tr)
+
+	require.NoError(t, result.Err)
+	want, err := tr.Change.Patch(target.Route)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Equal(t, target.Route, got.RouteName)
+}
+
+func TestTransitionerApply_ABadArtifactStopsBeforeAnyWrite(t *testing.T) {
+	svc := &mockService{}
+	rec, _ := newEventReporter()
+	tn := newTransitioner(svc, func() Reporter { return rec })
+	tr := fenceTransition()
+	tr.Label = "switch"
+	tr.Change.Artifact = []byte("not: the-fragment\n")
+
+	result := tn.Apply(context.Background(), probeTarget(t), tr)
+
+	assert.False(t, result.Landed)
+	require.Error(t, result.Err)
+	assert.Contains(t, result.Err.Error(), "failed to build switch route patch: ")
+	assert.Contains(t, result.Err.Error(), "no top-level fence key")
+	assert.Empty(t, svc.calls)
+	assert.Empty(t, svc.patchExpected)
+	assert.Equal(t, 0, svc.detects)
+}
+
+func TestNewTransitionerFactory_AppliesOptionsAndReporter(t *testing.T) {
+	factory := NewTransitionerFactory(&mockService{}, WithTimeouts(7*time.Minute, 3*time.Minute), WithConfigPort(19180))
+
+	first, second := &recordingReporter{}, &recordingReporter{}
+	current := Reporter(first)
+	tn := factory(func() Reporter { return current })
+
+	require.True(t, tn.HasClient())
+	assert.Equal(t, 7*time.Minute, tn.rolloutTimeout)
+	assert.Equal(t, 3*time.Minute, tn.hotReloadTimeout)
+	assert.Equal(t, 19180, tn.configPort)
+
+	assert.Same(t, first, tn.reporter(), "the provider given at call time is used")
+	current = second
+	assert.Same(t, second, tn.reporter(), "a reporter replaced after construction is honored")
+}
+
+func TestNewTransitionerFactory_NilClientHasNoClient(t *testing.T) {
+	tn := NewTransitionerFactory(nil, WithConfigPort(19180))(func() Reporter { return &recordingReporter{} })
+	assert.False(t, tn.HasClient())
+	assert.Equal(t, 19180, tn.configPort)
+}
+
+func TestTransitionResult_ErrMarkedWith(t *testing.T) {
+	sentinel := errors.New("unconfirmed")
+	boom := errors.New("boom")
+
+	assert.NoError(t, TransitionResult{Landed: true}.ErrMarkedWith(sentinel), "no error stays no error")
+	assert.NoError(t, TransitionResult{}.ErrMarkedWith(sentinel))
+
+	notLanded := TransitionResult{Err: boom}.ErrMarkedWith(sentinel)
+	assert.Same(t, boom, notLanded, "a patch that never reached the cluster is returned unmarked")
+	assert.NotErrorIs(t, notLanded, sentinel)
+
+	landed := TransitionResult{Landed: true, Err: boom}.ErrMarkedWith(sentinel)
+	assert.ErrorIs(t, landed, sentinel)
+	assert.ErrorIs(t, landed, boom)
+	assert.EqualError(t, landed, "unconfirmed: boom")
+}

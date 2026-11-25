@@ -12,8 +12,9 @@ import (
 
 // reporter owns all user-facing terminal output for the migration flow so the
 // orchestrator, workflow and offset-sync steps don't scatter raw
-// fmt.Printf/Fprintf/color calls. It centralises the emoji, indentation and
-// colour conventions and the destination streams (stdout for progress, stderr
+// fmt.Printf/Fprintf/color calls. It centralises the indentation, colour and
+// plain-text status-token conventions ([OK], [FAIL], [WARN]; no emoji) and the
+// destination streams (stdout for progress, stderr
 // for soft-fail remediation notes), giving migration output a single owner and
 // a single point to redirect or silence.
 type reporter struct {
@@ -63,7 +64,7 @@ func (r *reporter) section(msg string) {
 
 // Success prints an indented green-[OK] line. The text may embed its own colour.
 // Exported so this reporter satisfies gateway.Reporter, letting
-// gateway.TransitionVerifier's shared apply/wait/verify logic report through
+// gateway.Transitioner's shared apply/wait/verify logic report through
 // it without this package depending on gateway's own reporter shape.
 func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)

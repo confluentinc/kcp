@@ -1,0 +1,8 @@
+rules:
+  routing:
+    coordination:
+      group: source
+    default: source
+  fencing:
+    - topics: ["t1.order"]
+      blocked: true

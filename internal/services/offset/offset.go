@@ -376,3 +376,19 @@ func ComputeTotalLag(src, dst map[int32]int64) int64 {
 	}
 	return total
 }
+
+// FormatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655").
+func FormatLag64(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
+}

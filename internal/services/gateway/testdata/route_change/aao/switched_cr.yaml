@@ -1,0 +1,11 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+  - endpoint: gateway:9595
+    name: migration-route
+    streamingDomain:
+      bootstrapServerId: SASL_PLAIN
+      name: confluent-cloud

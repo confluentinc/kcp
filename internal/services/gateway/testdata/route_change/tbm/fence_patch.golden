@@ -1,0 +1,20 @@
+{
+  "field": "rules",
+  "route_name": "migration-route",
+  "value": {
+    "fencing": [
+      {
+        "blocked": true,
+        "topics": [
+          "t1.order"
+        ]
+      }
+    ],
+    "routing": {
+      "coordination": {
+        "group": "source"
+      },
+      "default": "source"
+    }
+  }
+}

@@ -11,6 +11,21 @@ import (
 	"github.com/confluentinc/kcp/internal/tracing"
 )
 
+// SecretExistenceChecker reports which of a list of Kubernetes Secret names
+// don't exist in its namespace. Namespace is bound at construction (mirrors
+// GatewayLive/ClusterLinkStatus's shape), not passed per-call — the static
+// route strategy's one live-I/O precondition: does every secret the
+// switchover target's own staged auth block references actually exist. Not
+// a CR-scanning interface — the caller (engine.go) resolves which names to
+// check via reconcile.ResolveStagedSecretNames and passes exactly those.
+//
+// skipReason is non-empty when the check could not run at all (a permission
+// denial, not a missing secret) — see MissingSecrets' own doc comment for
+// why this must never be conflated with err.
+type SecretExistenceChecker interface {
+	MissingSecrets(ctx context.Context, names []string) (missing []string, skipReason string, err error)
+}
+
 // ReconciliationEngine is the I/O layer: it holds the five provider seams,
 // performs the live reads, and hands plain data to the pure core.
 type ReconciliationEngine struct {
@@ -81,7 +96,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 
 	var missingSecrets []string
 	var secretCheckSkipped string
-	if in.Type == reconcile.TypeStatic && gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+	if in.Type == reconcile.TypeStatic && gw != nil && gw.Route != nil && gw.Route.Mode == reconcile.RouteModeStatic {
 		if names := reconcile.ResolveStagedSecretNames(gw, in.TargetDomain); len(names) > 0 {
 			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(ctx, names)
 			if err != nil {
@@ -104,8 +119,9 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	if secretCheckSkipped != "" {
 		plan.Report.Warnings = append(plan.Report.Warnings, secretCheckSkipped)
 	}
-	// Carry the gateway CR the plan was computed against, so a caller can re-pull
-	// it before mutating and diff for drift.
+	// Carry the CR the plan was computed against. The run's gateway patches are
+	// probed against it (gateway.Target.GatewayCR); drift since the plan is
+	// guarded by the generation below (PlanBaseline), not by diffing this YAML.
 	plan.GatewayYAML = gw.RawYAML
 	plan.GatewayGeneration = gw.Generation
 	return plan, nil
