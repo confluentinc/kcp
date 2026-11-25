@@ -26,3 +26,23 @@ func (t MigrationType) sectionKey() string {
 	}
 	return ""
 }
+
+// PlanMode is the strategy a Plan was reconciled under, and what
+// migplan.Result.Mode carries. It is distinct from RouteMode on purpose:
+// "convert" is a plan shape with no route-mode equivalent.
+type PlanMode string
+
+const (
+	ModeStatic  PlanMode = "static"
+	ModeDynamic PlanMode = "dynamic"
+	ModeConvert PlanMode = "convert"
+)
+
+// RouteMode is the Gateway route's own mode (the CR's `mode` field, or the
+// mode inferred from its streaming-domain binding).
+type RouteMode string
+
+const (
+	RouteModeStatic  RouteMode = "static"
+	RouteModeDynamic RouteMode = "dynamic"
+)

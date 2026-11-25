@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -99,11 +101,11 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 	// zero value — meaningful for all of these — is not confused with "unset".
 	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override policies.lagThreshold (staticMigration, dynamicMigration): per-topic replication lag (the sum of that topic's partition lags) tolerated before fencing. Every selected topic must be at or below it; 0 means fully caught up.")
 	cmd.Flags().IntVar(&promoteBatchSizeOverride, "promote-batch-size", 0, "Override policies.promoteBatchSize (staticMigration, dynamicMigration): max mirror topics promoted per batch. 0 promotes all at once.")
-	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Override policies.rolloutTimeout (all migration types): max wait for the operator to report the gateway Ready, and for the replaced gateway pods to be gone, during fence and switchover (e.g. 10m). 0 means no deadline, but a replaced pod stuck more than 60s past its termination deadline still fails the wait.")
+	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, fmt.Sprintf("Override policies.rolloutTimeout (all migration types): max wait for the operator to report the gateway Ready, and for the replaced gateway pods to be gone, during fence and switchover (e.g. 10m). 0 means no deadline, but a replaced pod stuck more than %ds past its termination deadline still fails the wait.", int(gateway.ReplacedPodOverdueMargin/time.Second)))
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override policies.detectUnroutedProducersDuration (staticMigration, dynamicMigration): window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override policies.consumerOffsetSyncDrainDuration (staticMigration only): wait after fencing before disabling the link's consumer offset sync. Has no effect unless consumerOffsetSync.pause is set. 0 means no wait.")
-	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override policies.hotReloadTimeout (all migration types): max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
-	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override policies.gatewayConfigPort (all migration types): port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses the manifest's policies.gatewayConfigPort; 0 means the gateway default (9180).")
+	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, fmt.Sprintf("Override policies.hotReloadTimeout (all migration types): max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in %ds budget rather than waiting forever.", int(gateway.DefaultHotReloadTimeout/time.Second)))
+	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, fmt.Sprintf("Override policies.gatewayConfigPort (all migration types): port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. Unset, uses the manifest's policies.gatewayConfigPort; 0 means the gateway default (%d).", gateway.DefaultGatewayConfigPort))
 	cmd.Flags().DurationVar(&detectUnroutedCommitsDurationOverride, "detect-unrouted-commits-duration", 0, "Override policies.detectUnroutedCommitsDuration (dynamicToStaticConversion only): window between the two committed-offset snapshots taken after fencing a route conversion, to catch a consumer committing to the source directly. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().IntVar(&offsetSyncConcurrencyOverride, "offset-sync-concurrency", 0, "Override policies.offsetSyncConcurrency (dynamicToStaticConversion only): number of workers (each with its own broker connection) reading and writing consumer-group offsets during a route conversion, and reading every source consumer group's committed topics before it (also on --dry-run). 0 uses the built-in 8.")
 
@@ -116,9 +118,9 @@ func newMigrationExecuteCmd(deps executorDependencies) *cobra.Command {
 // GatewayYAML and the rest) are not set here: the FSM's initialize transition
 // copies them in from the reconcile result. The effective policy, including
 // the gateway config port, is applied by the declared type's executor.
-func buildFreshMigrationConfig(g *manifest.GatewayMigration, id string) migration.MigrationConfig {
+func buildFreshMigrationConfig(g *manifest.GatewayMigration, id string) migrun.MigrationConfig {
 	pause, baseline := g.Spec.DeclaredOffsetSync()
-	return migration.MigrationConfig{
+	return migrun.MigrationConfig{
 		MigrationId:                id,
 		K8sNamespace:               g.Spec.Gateway.Namespace,
 		InitialCrName:              g.Spec.Gateway.CrName,
@@ -185,7 +187,12 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	// that observes live state and decides what remains outstanding. Both FSMs
 	// start at uninitialized and apply this run's fresh result idempotently,
 	// and the route's mode comes from it.
-	reconcileResult, err := migplan.Reconcile(cmd.Context(), g)
+	//
+	// One gateway service serves the whole run: the plan read and the
+	// executors (and, for a conversion, its providers) share it, so the
+	// kubeconfig is resolved and the clients are built once.
+	svc, deps := shareGatewayService(g, deps)
+	reconcileResult, err := migplan.Reconcile(cmd.Context(), g, migplan.WithGatewayService(svc))
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
@@ -199,7 +206,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 func executePlan(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
-	config *migration.MigrationConfig,
+	config *migrun.MigrationConfig,
 	reconcileResult *migplan.Result,
 	deps executorDependencies,
 ) error {
@@ -242,22 +249,14 @@ func executePlan(
 }
 
 // planModeFor is the migplan.Result.Mode a plan reconciled for t carries.
-func planModeFor(t manifest.MigrationType) string {
+func planModeFor(t manifest.MigrationType) reconcile.PlanMode {
 	switch t {
 	case manifest.MigrationTypeStatic:
-		return "static"
+		return reconcile.ModeStatic
 	case manifest.MigrationTypeDynamic:
-		return "dynamic"
+		return reconcile.ModeDynamic
 	default:
-		return "convert"
-	}
-}
-
-// applyCommonPolicy copies the policy every migration type carries onto config:
-// the gateway config port the executors' actions read back during execute.
-func applyCommonPolicy(config *migration.MigrationConfig, p manifest.CommonPolicies) {
-	if p.GatewayConfigPort > 0 {
-		config.GatewayConfigPort = p.GatewayConfigPort
+		return reconcile.ModeConvert
 	}
 }
 

@@ -92,7 +92,7 @@ func TestExecute_ConvertMode_TracesUnderTheCommandSpan(t *testing.T) {
 	w := newConvertWorld("orders-app")
 	cmd, root := commandWithRootSpan()
 
-	require.NoError(t, runConvertBranch(cmd, g, &config, convertPlanResult(), convertDeps(&patchRecordingGateway{}, w)))
+	require.NoError(t, runConvertBranch(cmd, g, &config, convertPlanResult(), convertDeps(newPatchRecordingGateway(), w)))
 	root.End()
 
 	spans := tracingtest.Spans(rec)

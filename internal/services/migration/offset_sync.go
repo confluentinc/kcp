@@ -7,6 +7,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/retry"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 )
 
 const offsetSyncEnableKey = "consumer.offset.sync.enable"
@@ -27,7 +28,7 @@ func setOffsetSyncBaseline(
 	ctx context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
-	config *MigrationConfig,
+	config *migrun.MigrationConfig,
 ) (string, error) {
 	want := "true"
 	if config.ConsumerOffsetSyncBaseline == manifest.OffsetSyncBaselineDisabled {
@@ -45,7 +46,7 @@ func setOffsetSyncBaseline(
 }
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
-// orchestrator.Execute returns an error and the operator opted into
+// orchestrator.Execute returns an error and the user opted into
 // offset-sync pausing (config.PauseConsumerOffsetSync). The pause and restore
 // steps are idempotent applies with nothing to branch on, so the guidance
 // is a single generic reminder gated only on the manifest-declared intent:
@@ -54,7 +55,7 @@ func setOffsetSyncBaseline(
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
-func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
+func WarnIfPausedOnExecuteFailure(config *migrun.MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSync {
 		return
 	}
@@ -71,7 +72,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 // restore and rollback so none duplicates the field layout. auth
 // carries whichever REST auth form the manifest resolved — basic, bearer or
 // mtls — not only the api_key/api_secret pair BasicAuth wraps.
-func BuildClusterLinkConfig(config *MigrationConfig, auth clusterlink.Authenticator) clusterlink.Config {
+func BuildClusterLinkConfig(config *migrun.MigrationConfig, auth clusterlink.Authenticator) clusterlink.Config {
 	return clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,

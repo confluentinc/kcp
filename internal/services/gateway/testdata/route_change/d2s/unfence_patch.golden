@@ -1,0 +1,20 @@
+{
+  "field": "rules",
+  "route_name": "migration-route",
+  "value": {
+    "routing": {
+      "conditions": [
+        {
+          "streamingDomain": "target",
+          "topics": [
+            "orders"
+          ]
+        }
+      ],
+      "coordination": {
+        "group": "source"
+      },
+      "default": "source"
+    }
+  }
+}

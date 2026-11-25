@@ -12,13 +12,12 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/fatih/color"
 	"go.opentelemetry.io/otel/attribute"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -39,42 +38,12 @@ type TBMActions struct {
 	// migration.MigrationActions.lagPollInterval.
 	lagPollInterval time.Duration
 
-	gatewayService gateway.Service
-	// gatewayCapability is how gateway transitions are verified for this run.
-	// Zero value (VerifyRollout, no configId) is the safe default — see
-	// migration.MigrationActions.gatewayCapability.
-	gatewayCapability gateway.Capability
-	// capabilityResolved is true once gatewayCapability has actually been
-	// resolved against the live cluster this process — see
-	// ensureGatewayCapability in gateway.go. It starts false in every
-	// process, so the first of Fence or Switch to need the capability
-	// resolves it and neither step ever acts on the unresolved zero value.
-	capabilityResolved bool
-	// rolloutTimeout bounds the replaced-pod waits in Fence, Switch and the
-	// rollback unfence. 0 means no deadline.
-	rolloutTimeout time.Duration
-	// hotReloadTimeout bounds per-pod configId verification. Unlike
-	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
-	// hot-reload moves no Kubernetes signal to wait on.
-	hotReloadTimeout time.Duration
-	// gatewayGeneration is the Gateway CR metadata.generation this run expects:
-	// the one reconcile read, then the one each of kcp's own writes left. It
-	// lives here, not on the verifier, because verifier() builds a fresh one per
-	// call. 0 means unknown, and leaves every patch and check unguarded.
-	gatewayGeneration int64
+	// gw applies and confirms every gateway patch, and owns the bookkeeping
+	// that needs, including whether the gateway changed under kcp since the plan.
+	gw *gateway.Transitioner
 	// promoteSubmitted is set once this run has sent a promote request: from
 	// then on some topics may be promoted, so a stop must not say otherwise.
 	promoteSubmitted bool
-
-	// preFencePodUIDs is the set of gateway pods this run's fence captured
-	// before its patch, on a gateway whose pods roll. Those pods carry the
-	// pre-fence route, which is exactly what the rollback unfence restores, so
-	// the unfence does not wait for them to be gone (a pod stuck terminating
-	// would otherwise wedge the rollback). The pods the fence's roll created
-	// carry the fence and are still waited for. Left nil when the fence was
-	// already up at the start of the run (config.FencedAtStart): every pod
-	// then carries a fence. See design, Addendum A, Proposal 3.
-	preFencePodUIDs map[k8stypes.UID]struct{}
 
 	clusterLinkService clusterlink.Service
 	// promotePollInterval is how often Promote re-sweeps offsets/mirror status.
@@ -91,28 +60,51 @@ type TBMActions struct {
 // command (execute-tbm) that always eventually reaches wait_for_lags, fence
 // and promote, unlike migration's separate init-only path, so there is no
 // legitimate construction path without them.
-func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service, clusterLinkService clusterlink.Service) *TBMActions {
-	return &TBMActions{
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayTransitioner gateway.TransitionerFactory, clusterLinkService clusterlink.Service) *TBMActions {
+	a := &TBMActions{
 		reporter:            newReporter(),
 		sourceOffset:        sourceOffset,
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
-		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		promotePollInterval: 5 * time.Second,
 	}
+	// The reporter is read at call time: tests replace a.reporter after construction.
+	if gatewayTransitioner != nil {
+		a.gw = gatewayTransitioner(func() gateway.Reporter { return a.reporter })
+	}
+	return a
 }
 
-// SetRolloutTimeout sets the deadline applied to the replaced-pod waits.
-// A value of 0 means no deadline.
-func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
-	a.rolloutTimeout = d
+// validate reports the dependencies a migration cannot run without. The
+// offset providers are not checked here: the steps that read them do.
+func (a *TBMActions) validate() error {
+	var missing []string
+	if a.clusterLinkService == nil {
+		missing = append(missing, "ClusterLinkService")
+	}
+	if a.gw == nil || !a.gw.HasClient() {
+		missing = append(missing, "GatewayService")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the migration is missing dependencies: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-// SetHotReloadTimeout sets the deadline for per-pod configId verification.
-// A value of 0 falls back to gateway.DefaultHotReloadTimeout.
-func (a *TBMActions) SetHotReloadTimeout(d time.Duration) {
-	a.hotReloadTimeout = d
+// target names the gateway this run drives and the fence and switch edits it
+// makes; the gateway package derives whatever verification needs from them.
+func (a *TBMActions) target(config *migrun.MigrationConfig) gateway.Target {
+	return gateway.Target{
+		Namespace:        config.K8sNamespace,
+		Name:             config.InitialCrName,
+		StartRouteFenced: config.FencedAtStart,
+		GatewayCR:        []byte(config.GatewayYAML),
+		Route:            config.Route,
+		Fence:            fenceChange(config),
+		Switch:           switchChange(config),
+		PlanBaseline:     config.PlanBaseline,
+	}
 }
 
 // SetPromoteBatchSize caps how many mirror topics Promote submits per batch.
@@ -129,7 +121,10 @@ func (a *TBMActions) SetPromoteBatchSize(n int) {
 // partially mutated. There is no simulated delay here: the expensive work
 // (contacting source/target/gateway/cluster-link) already happened producing
 // res; this step is pure validate-and-copy.
-func (a *TBMActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
+func (a *TBMActions) Initialize(ctx context.Context, config *migrun.MigrationConfig, res *migplan.Result) error {
+	if res == nil {
+		return errors.New("no reconcile result to initialize the migration from")
+	}
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
@@ -144,7 +139,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.MigrateTopics = res.MigrateTopics
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
-	a.gatewayGeneration = res.GatewayGeneration
+	config.PlanBaseline = res.PlanBaseline
 
 	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.PromoteTopics))
 	return nil
@@ -153,7 +148,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 // WaitForLags runs the wait_for_lags transition: polls source and destination
 // offsets for config.Topics until every topic's total lag is at or below
 // lagThreshold. Mirrors migration.MigrationActions.CheckLags.
-func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.MigrationConfig, lagThreshold int64) error {
+func (a *TBMActions) WaitForLags(ctx context.Context, config *migrun.MigrationConfig, lagThreshold int64) error {
 	a.reporter.blank()
 	a.reporter.line(fmt.Sprintf("Checking replication lag across %s (threshold: %s)",
 		color.CyanString("%d topics", len(config.Topics)),
@@ -241,7 +236,7 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 				color.YellowString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.YellowString(formatLag64(topicTotalLags[topic]))))
+				color.YellowString(offset.FormatLag64(topicTotalLags[topic]))))
 		}
 		a.reporter.blank()
 
@@ -260,22 +255,17 @@ func (a *TBMActions) fetchSourceAndDestinationOffsets(ctx context.Context, topic
 	return offset.FetchSourceAndDestinationOffsets(ctx, a.sourceOffset, a.destinationOffset, topics)
 }
 
-// formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655").
-func formatLag64(n int64) string {
-	return gateway.FormatLag64(n)
-}
-
 // Fence runs the fence transition: resolves how gateway transitions will be
-// verified on the live cluster, proves hot-reload actually works if the
-// gateway claims to support it, derives the fence RoutePatch by grafting
+// verified on the live cluster, proves the gateway really applies changes if it
+// claims to support that, derives the fence patch by grafting
 // config.FenceYAML's rules fragment onto config.Route (see
-// deriveFenceRoutePatch), patches it in, and confirms it landed. Like
-// migration.FenceGateway, PatchCR captures the pre-patch pod UIDs on a rolling
-// gateway so the wait covers the replaced pods. A failure leaves the FSM
+// fenceChange), patches it in, and confirms it landed. Like
+// migration.FenceGateway, the confirmation waits only on the gateway this
+// fence changed. A failure leaves the FSM
 // at lags_ok. Once the patch has reached the cluster, every failure is marked
-// migration.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
+// migrun.ErrFenceUnconfirmed: the fenced rules are live, possibly holding
 // client traffic, so the orchestrator removes them (see handleStepFailure).
-func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
+func (a *TBMActions) Fence(ctx context.Context, config *migrun.MigrationConfig) error {
 	// Plan-driven no-op: reconcile emitted no fence artifact, so there is nothing
 	// to fence this run. Keyed on config.FenceYAML, NOT config.Topics: Topics (the
 	// promote set) can be empty while a fence is still owed for an all-promoted
@@ -286,37 +276,16 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 		return nil
 	}
 
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
-	}
-
-	fenceRP, err := deriveFenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build fence route patch: %w", err)
-	}
-
-	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
-	// The fence's captured pods carry the pre-fence route the rollback unfence
-	// restores; recorded even when the patch errs, as long as it captured them.
-	if applied.PreApplyPodUIDs != nil && !config.FencedAtStart {
-		a.preFencePodUIDs = applied.PreApplyPodUIDs
-	}
-	if err != nil {
-		if errors.Is(err, gateway.ErrApplyUnverified) {
-			// The patch persisted; only kcp's read-back of the stored configId
-			// failed, so the fenced rules are live like after any failure below.
-			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", migration.ErrFenceUnconfirmed, err)
-		}
-		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
-	}
-	a.reporter.Success("Fenced gateway CR applied")
-
-	// The fenced rules are live in the cluster from here on.
-	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
-		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
-	}
-	if err := a.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
-		return fmt.Errorf("%w: %w", migration.ErrFenceUnconfirmed, err)
+	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:    "fence",
+		Label:   "fence",
+		Change:  fenceChange(config),
+		What:    "fenced gateway CR",
+		Applied: "Fenced gateway CR applied",
+	})
+	// The fenced rules are live in the cluster once the patch has landed.
+	if err := res.ErrMarkedWith(migrun.ErrFenceUnconfirmed); err != nil {
+		return err
 	}
 
 	a.reporter.Success("Gateway fenced and ready")
@@ -327,36 +296,19 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 // (config.RollbackFenceYAML: the start-of-run rules with kcp's fence for this
 // batch taken out). Called only by onAbortFence.
 //
-// Calls ensureGatewayCapability first, exactly like Fence does: a process
-// that resumes directly at verify_fence (Fence already completed in an
-// earlier process) has never touched a.gatewayCapability in this process, so
-// without this call it would apply and verify the unfence using the
-// unresolved zero-value capability — the exact staleness bug already found
-// and fixed for Switch (see resolveGatewayCapability's own doc comment).
-func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.MigrationConfig) error {
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
-	}
-
-	unfenceRP, err := deriveUnfenceRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build unfence route patch: %w", err)
-	}
-
-	applied, err := a.patchGatewayRoute(ctx, config, unfenceRP, "unfence")
-	if err != nil {
-		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
-	}
-	a.reporter.Success("Cleaned gateway CR applied")
-
-	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
-		return err
-	}
-
-	excluded := len(applied.PreApplyPodUIDs)
-	applied.PreApplyPodUIDs = gateway.ExcludePods(applied.PreApplyPodUIDs, a.preFencePodUIDs)
-	slog.Debug("unfence skips this run's pre-fence pods", "excluded", excluded-len(applied.PreApplyPodUIDs))
-	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
+// It works whether or not this process fenced, like Fence: a rollback can
+// come before this run's own fence step lands, when an earlier, interrupted
+// run's fence was already up at the start (config.FencedAtStart). The FSM
+// itself always starts at uninitialized.
+func (a *TBMActions) unfenceGateway(ctx context.Context, config *migrun.MigrationConfig) error {
+	return a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:          "unfence",
+		Label:         "unfence",
+		Change:        unfenceChange(config),
+		RestoresStart: true,
+		What:          "cleaned gateway CR",
+		Applied:       "Cleaned gateway CR applied",
+	}).Err
 }
 
 // VerifyFence runs the verify_fence transition: verifies the fence held by
@@ -369,7 +321,7 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 // except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
 // rather than a TBMConfig field — TBM threads per-run policy the same way
 // WaitForLags already threads LagThreshold.
-func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
+func (a *TBMActions) VerifyFence(ctx context.Context, config *migrun.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
 	if detectUnroutedProducersDuration <= 0 {
 		slog.Debug("unrouted producer detection disabled, skipping")
 		a.reporter.Detail("Detection disabled (spec.dynamicMigration.policies.detectUnroutedProducersDuration=0) — skipping check")
@@ -399,7 +351,7 @@ func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []strin
 // restAuth is per-run authentication for the cluster-link REST surface — not
 // stored on TBMActions, mirroring how AAO's own PromoteTopics takes it as a
 // parameter rather than construction-time state.
-func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationConfig, restAuth clusterlink.Authenticator) error {
+func (a *TBMActions) Promote(ctx context.Context, config *migrun.MigrationConfig, restAuth clusterlink.Authenticator) error {
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3
@@ -560,15 +512,15 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		// one kcp's own fence left immediately before sending it: every batch,
 		// every retry, and every request PromoteMirrorTopics resends after a
 		// connection-level failure.
-		checkGeneration := func(ctx context.Context) error {
-			return a.verifier().CheckGeneration(ctx, config.K8sNamespace, config.InitialCrName, "promote")
+		checkUnchanged := func(ctx context.Context) error {
+			return a.gw.VerifyUnchangedSincePlan(ctx, a.target(config), "promote")
 		}
-		if err := checkGeneration(ctx); err != nil {
+		if err := checkUnchanged(ctx); err != nil {
 			return err
 		}
 		batches++
 		a.promoteSubmitted = true
-		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkGeneration))
+		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote, clusterlink.CheckBeforeResend(checkUnchanged))
 		if err != nil {
 			return fmt.Errorf("failed to promote mirror topics: %w", err)
 		}
@@ -610,8 +562,8 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 	}
 }
 
-// Switch runs the switch transition: derives the switch RoutePatch from
-// config.SwitchoverYAML's rules fragment (see deriveSwitchRoutePatch) —
+// Switch runs the switch transition: derives the switch patch from
+// config.SwitchoverYAML's rules fragment (see switchChange) —
 // the migplan engine's own pre-computed artifact, captured at initialize
 // exactly like FenceYAML — patches it onto config.Route's rules subtree,
 // replacing it wholesale, then confirms the transition landed. Unlike
@@ -619,10 +571,10 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 // already renders a full switchover rules block ahead of time, because TBM's
 // dynamic routes need a whole-subtree rules replacement, not a single
 // streamingDomain flip on a static route. There is no compensating rollback on
-// failure (PatchCR still captures pod UIDs for the replaced-pod wait) — a
+// failure (the confirmation still waits only on what this switch changed) — a
 // failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
-func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
+func (a *TBMActions) Switch(ctx context.Context, config *migrun.MigrationConfig) error {
 	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
 	// nothing to switch this run. Read the plan (config.SwitchoverYAML), never
 	// the live cluster. Deliberately NOT keyed on config.Topics — see Fence's
@@ -635,25 +587,16 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 		return nil
 	}
 
-	if err := a.ensureGatewayCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to resolve gateway capability: %w", err)
-	}
-
-	switchRP, err := deriveSwitchRoutePatch(config)
-	if err != nil {
-		return fmt.Errorf("failed to build switch route patch: %w", err)
-	}
-
-	applied, err := a.patchGatewayRoute(ctx, config, switchRP, "switchover")
-	if err != nil {
-		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
-	}
-	a.reporter.Success("Switchover gateway CR applied")
-
-	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
-		return err
-	}
-	if err := a.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
+	// Once the patch has reached the cluster every failure is marked
+	// migrun.ErrSwitchUnconfirmed, as d2s's Switch does.
+	res := a.gw.Apply(ctx, a.target(config), gateway.Transition{
+		Step:    "switchover",
+		Label:   "switch",
+		Change:  switchChange(config),
+		What:    "switchover gateway CR",
+		Applied: "Switchover gateway CR applied",
+	})
+	if err := res.ErrMarkedWith(migrun.ErrSwitchUnconfirmed); err != nil {
 		return err
 	}
 

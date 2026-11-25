@@ -1,0 +1,11 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+  - endpoint: gateway:9595
+    fence:
+      errorCode: BROKER_NOT_AVAILABLE
+      scope: ALL
+    name: migration-route

@@ -15,7 +15,7 @@ import (
 
 // syncWith runs SyncOffsets on w as if this run's verify_fence had handed snap over.
 func syncWith(w *world, snap groupoffsets.Snapshot, p Policy) error {
-	a := NewD2SActions(&mockGatewayService{}, w.deps())
+	a := NewD2SActions(fakeTransitioner(&mockGatewayService{}), w.deps())
 	a.reporter = quietReporter()
 	a.handoff = snap
 	return a.SyncOffsets(context.Background(), testConfig(), p)

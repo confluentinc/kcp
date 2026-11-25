@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,7 @@ func TestTracing_Execute_RollbackIsASiblingOfTheFailedStep(t *testing.T) {
 	rollback := tracingtest.Find(t, spans, "migration.rollback")
 	assert.Equal(t, run.SpanContext().SpanID(), rollback.Parent().SpanID())
 	path, _ := tracingtest.Attr(rollback, "kcp.rollback.path")
-	assert.Equal(t, RollbackPathAbortFence, path.AsString())
+	assert.Equal(t, migrun.RollbackPathAbortFence, path.AsString())
 	assert.Equal(t, codes.Unset, rollback.Status().Code, "the rollback itself succeeded")
 	abort := tracingtest.Find(t, spans, "step.abort_fence")
 	assert.Equal(t, rollback.SpanContext().SpanID(), abort.Parent().SpanID())

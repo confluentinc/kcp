@@ -11,7 +11,7 @@ import (
 // metadata-stripped gateway CR; the result is the fenced (or switched) CR that
 // Fence (or, later, Switch) applies.
 //
-// Unlike ReplaceRouteFenceObj (which injects a fence block onto a static
+// Unlike replaceRouteFenceObj (which injects a fence block onto a static
 // route), dynamic routes fence by rules replacement: migplan's reconciliation engine
 // already computes the complete replacement rules subtree — see
 // reconcile.RulesTree.Serialize()'s doc comment — so the caller here only
@@ -27,14 +27,14 @@ func ReplaceRouteRules(baseCRBytes []byte, routeName string, rulesYAML []byte) (
 	if err := yaml.Unmarshal(baseCRBytes, &obj); err != nil {
 		return nil, fmt.Errorf("parsing base gateway CR: %w", err)
 	}
-	return ReplaceRouteRulesObj(obj, routeName, rulesYAML)
+	return replaceRouteRulesObj(obj, routeName, rulesYAML)
 }
 
-// ReplaceRouteRulesObj is ReplaceRouteRules for a base CR the caller has
+// replaceRouteRulesObj is ReplaceRouteRules for a base CR the caller has
 // already parsed into a plain map[string]any, sparing a redundant
 // parse/marshal round trip when the caller already holds the tree. obj is
 // mutated in place with the replaced rules subtree.
-func ReplaceRouteRulesObj(obj map[string]any, routeName string, rulesYAML []byte) ([]byte, error) {
+func replaceRouteRulesObj(obj map[string]any, routeName string, rulesYAML []byte) ([]byte, error) {
 	var patch map[string]any
 	if err := yaml.Unmarshal(rulesYAML, &patch); err != nil {
 		return nil, fmt.Errorf("parsing rules YAML: %w", err)

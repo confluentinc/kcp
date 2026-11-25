@@ -11,8 +11,8 @@ import (
 )
 
 // reporter owns all user-facing terminal output for the TBM flow, mirroring
-// migration.reporter: it centralises the emoji, indentation and colour
-// conventions and the destination streams (stdout for progress, stderr for
+// migration.reporter: it centralises the indentation, colour and plain-text
+// status-token conventions (no emoji) and the destination streams (stdout for progress, stderr for
 // soft-fail remediation notes), giving TBM output a single owner.
 type reporter struct {
 	out io.Writer
@@ -54,7 +54,7 @@ func (r *reporter) section(msg string) {
 }
 
 // Success prints an indented green-[OK] line. Exported so this reporter
-// satisfies gateway.Reporter, letting gateway.TransitionVerifier's shared
+// satisfies gateway.Reporter, letting gateway.Transitioner's shared
 // apply/wait/verify logic report through it without this package depending
 // on migration's own reporter shape.
 func (r *reporter) Success(format string, a ...any) {

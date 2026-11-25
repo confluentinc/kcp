@@ -178,19 +178,14 @@ func (c Capability) InjectsConfigID() bool {
 // the live cluster. port is the port serving GET /config; 0 selects
 // DefaultGatewayConfigPort.
 func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error) {
-	config, err := RESTConfig(s.kubeConfigPath)
+	dynamicClient, err := s.dynamicClient()
 	if err != nil {
-		return Capability{}, fmt.Errorf("failed to build config: %w", err)
+		return Capability{}, err
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(config)
+	clientset, err := s.clientset()
 	if err != nil {
-		return Capability{}, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return Capability{}, fmt.Errorf("failed to create clientset: %w", err)
+		return Capability{}, err
 	}
 
 	pods := clientset.CoreV1().Pods(namespace)

@@ -11,8 +11,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,7 +69,7 @@ func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
 
 func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	cl := &mockClusterLinkService{
 		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -87,7 +87,7 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 			return []clusterlink.MirrorTopic{{MirrorTopicName: "t1.order", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := testTBMConfig()
 	ctx := context.Background()
@@ -108,8 +108,8 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 // copies every plan field of the reconcile result onto the run's config, which
 // starts empty, so a missing copy leaves that field empty and fails here.
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{
 		Route:          "migration-route",
 		PromoteTopics:  []string{"t1.order"},
@@ -140,8 +140,8 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
 	err := actions.Initialize(context.Background(), config, res)
@@ -164,8 +164,8 @@ func TestTBMActions_WaitForLags_ImmediatelyBelowThreshold(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 999}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"topic-1", "topic-2"}}
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1", "topic-2"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err)
@@ -179,8 +179,8 @@ func TestTBMActions_WaitForLags_NoTopics(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{}}
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err)
@@ -195,8 +195,8 @@ func TestTBMActions_WaitForLags_ContextCancelled(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 0}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
@@ -214,8 +214,8 @@ func TestTBMActions_WaitForLags_DestinationAhead(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 200}, nil }, // ahead of source
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "negative lag (destination ahead) should be treated as 0 and pass threshold")
@@ -239,9 +239,9 @@ func TestTBMActions_WaitForLags_ToleratesTransientSweepFailures(t *testing.T) {
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
@@ -262,9 +262,9 @@ func TestTBMActions_WaitForLags_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.Error(t, err)
@@ -297,17 +297,17 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewTBMActions(sourceOffset, destOffset, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
+	config := &migrun.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "four non-consecutive failures must not abort")
 	assert.Equal(t, int32(6), calls.Load())
 }
 
-func promoteTestConfig(topics []string) *migration.MigrationConfig {
-	return &migration.MigrationConfig{
+func promoteTestConfig(topics []string) *migrun.MigrationConfig {
+	return &migrun.MigrationConfig{
 		MigrationId:         "tbm-promote-1",
 		Topics:              topics,
 		ClusterId:           "lkc-123",
@@ -327,7 +327,7 @@ func TestTBMActions_Promote_NoTopics_ReturnsImmediately(t *testing.T) {
 			return nil, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	config := promoteTestConfig(nil)
 
 	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
@@ -356,7 +356,7 @@ func TestTBMActions_Promote_AllAtZeroLag_PromotesAndConfirmsStopped(t *testing.T
 			}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1", "topic-2"})
 
@@ -389,7 +389,7 @@ func TestTBMActions_Promote_WaitsForPendingStoppedUntilStopped(t *testing.T) {
 			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: status}}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1"})
 
@@ -429,7 +429,7 @@ func TestTBMActions_Promote_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.
 			}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"await-me", "migrate-me"})
 	config.AwaitStopped = []string{"await-me"}
@@ -468,7 +468,7 @@ func TestTBMActions_Promote_KillPointAfterAcceptExitsBeforeConfirm(t *testing.T)
 			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: "PENDING_STOPPED"}}, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1"})
 
@@ -530,7 +530,7 @@ func TestTBMActions_Promote_BatchSize_ProcessesSequentially(t *testing.T) {
 			return out, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	actions.SetPromoteBatchSize(batchSize)
 	config := promoteTestConfig(topics)
@@ -556,7 +556,7 @@ func TestTBMActions_Promote_MaxRetriesExceeded_FailsAfterThreeAttempts(t *testin
 			return resp, nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1"})
 
@@ -592,7 +592,7 @@ func TestTBMActions_Promote_ToleratesTransientSweepFailures(t *testing.T) {
 			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
 		},
 	}
-	actions := NewTBMActions(offsetProvider, offsetProvider, &mockGatewayService{}, cl)
+	actions := NewTBMActions(offsetProvider, offsetProvider, fakeTransitioner(&mockGatewayService{}), cl)
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1"})
 
@@ -606,7 +606,7 @@ func TestTBMActions_Promote_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 			return nil, fmt.Errorf("persistent network error")
 		},
 	}
-	actions := NewTBMActions(offsetProvider, offsetProvider, &mockGatewayService{}, &mockClusterLinkService{})
+	actions := NewTBMActions(offsetProvider, offsetProvider, fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
 	actions.promotePollInterval = time.Millisecond
 	config := promoteTestConfig([]string{"topic-1"})
 
@@ -635,8 +635,8 @@ func TestTBMActions_VerifyFence_WatchesAlreadyPromotedTopics(t *testing.T) {
 			return map[int32]int64{0: 300}, nil
 		},
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"active"}, MigrateTopics: []string{"active", "promoted"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{"active"}, MigrateTopics: []string{"active", "promoted"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -651,8 +651,8 @@ func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 			return nil, nil
 		},
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 0)
 	require.NoError(t, err)
@@ -662,8 +662,8 @@ func TestTBMActions_VerifyFence_StableOffsets_Passes(t *testing.T) {
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 	require.NoError(t, err)
@@ -680,8 +680,8 @@ func TestTBMActions_VerifyFence_RisingOffset_ReturnsErrUnroutedProducers(t *test
 			return map[int32]int64{0: 1500}, nil // rose during the window
 		},
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -702,8 +702,8 @@ func TestTBMActions_VerifyFence_PartitionAbsentFromFirstSnapshot_TreatedAsZeroBa
 			return map[int32]int64{0: 5}, nil // created and written to during the window
 		},
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -716,8 +716,8 @@ func TestTBMActions_VerifyFence_FirstSnapshotFetchError_PropagatesWithoutErrUnro
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) { return nil, fmt.Errorf("kafka: connection refused") },
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrateTopics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{MigrateTopics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -730,8 +730,8 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
-	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{Topics: []string{"t1.order"}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -758,16 +758,16 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 // plan's artifact, not the promote set.
 func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when FenceYAML is empty")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when FenceYAML is empty")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.FenceYAML = ""                // artifact empty
 	config.Topics = []string{"t1.order"} // promote set still non-empty
@@ -783,12 +783,12 @@ func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
 func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
 	var applyCalls int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			applyCalls++
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil // no topics left to promote
 
@@ -801,16 +801,16 @@ func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
 // artifact short-circuits Switch even when Topics is non-empty.
 func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
 	gw := &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+		DetectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			t.Fatal("DetectCapability must not be called when SwitchoverYAML is empty")
 			return gateway.Capability{}, nil
 		},
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("PatchGatewayRoute must not be called when SwitchoverYAML is empty")
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.SwitchoverYAML = ""           // artifact empty
 	config.Topics = []string{"t1.order"} // promote set still non-empty
@@ -825,16 +825,26 @@ func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
 func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
 	var applyCalls int
 	gw := &mockGatewayService{
-		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+		PatchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			applyCalls++
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(gw), &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil // no topics left to promote
 
 	err := actions.Switch(context.Background(), config)
 	require.NoError(t, err, "Switch with SwitchoverYAML set + no Topics must still switch")
 	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
+}
+
+func TestTBMActions_InitializeNilResultIsAnError(t *testing.T) {
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), fakeTransitioner(&mockGatewayService{}), &mockClusterLinkService{})
+	config := &migrun.MigrationConfig{}
+
+	err := actions.Initialize(context.Background(), config, nil)
+
+	require.EqualError(t, err, "no reconcile result to initialize the migration from")
+	assert.Empty(t, config.Topics)
 }

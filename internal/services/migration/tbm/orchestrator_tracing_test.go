@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
+	"github.com/confluentinc/kcp/internal/services/migration/migrun"
 	"github.com/confluentinc/kcp/internal/tracing/tracingtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestTracing_TBMExecute_RollbackSpanAfterAFailureWhileFenced(t *testing.T) {
 	spans := tracingtest.Spans(rec)
 	rollback := tracingtest.Find(t, spans, "migration.rollback")
 	path, _ := tracingtest.Attr(rollback, "kcp.rollback.path")
-	assert.Equal(t, migration.RollbackPathAbortFence, path.AsString())
+	assert.Equal(t, migrun.RollbackPathAbortFence, path.AsString())
 	abort := tracingtest.Find(t, spans, "step.abort_fence")
 	assert.Equal(t, rollback.SpanContext().SpanID(), abort.Parent().SpanID())
 	assert.Equal(t, codes.Error, tracingtest.Find(t, spans, "step.verify_fence").Status().Code)
