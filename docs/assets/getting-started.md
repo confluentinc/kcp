@@ -129,7 +129,7 @@ Where a command needs a password, this page writes it as an environment variable
 === "MSK"
 
     ```shell
-    kcp scan clusters --source-type msk \
+    kcp scan clusters --logs-type msk \
         --state-file kcp-state.json \
         --credentials-file msk-credentials.yaml
     ```
@@ -141,7 +141,7 @@ Where a command needs a password, this page writes it as an environment variable
     Topics, ACLs and consumer groups only:
 
     ```shell
-    kcp scan clusters --source-type apache-kafka \
+    kcp scan clusters --logs-type apache-kafka \
         --state-file kcp-state.json \
         --credentials-file apache-kafka-credentials.yaml
     ```
@@ -151,7 +151,7 @@ Where a command needs a password, this page writes it as an environment variable
     Historical metrics from Prometheus (needs a `prometheus` block):
 
     ```shell
-    kcp scan clusters --source-type apache-kafka \
+    kcp scan clusters --logs-type apache-kafka \
         --state-file kcp-state.json \
         --credentials-file apache-kafka-credentials.yaml \
         --metrics prometheus --metrics-range 7d
@@ -160,7 +160,7 @@ Where a command needs a password, this page writes it as an environment variable
     Live metrics polled from each broker's Jolokia endpoint (needs a `jolokia` block):
 
     ```shell
-    kcp scan clusters --source-type apache-kafka \
+    kcp scan clusters --logs-type apache-kafka \
         --state-file kcp-state.json \
         --credentials-file apache-kafka-credentials.yaml \
         --metrics jolokia --metrics-duration 5m --metrics-interval 10s
@@ -174,26 +174,46 @@ Use `--skip-topics`, `--skip-acls` or `--skip-consumer-groups` to leave any of t
 
 === "MSK"
 
-    [`kcp scan client-inventory`](command-reference/scan/client-inventory.md) reads the broker logs in S3 to work out which clients (producers and consumers) are using each cluster. This tells you what has to move at switchover.
+    [`kcp scan client-inventory`](command-reference/scan/client-inventory.md) reads the broker logs in Amazon S3 or Amazon CloudWatch Logs to work out which clients (producers and consumers) are using each cluster. This tells you what has to move at switchover.
 
     It needs, on the source cluster:
 
     - Trace logging on every broker: `kafka.server.KafkaApis=TRACE`.
-    - Broker logs delivered to S3.
+    - Broker logs delivered to S3 or to CloudWatch Logs.
 
-    Point `--s3-uri` at the folder of logs for the period you want to analyse (logs are delivered into one folder per hour):
+    Both are set up on the cluster before the scan. For the steps to deliver the logs, turn TRACE on and off, and choose a source, see [Discover Clients on an MSK Cluster](technical-guides/client-inventory/discover-clients.md).
+
+    Always pass `--logs` to choose where kcp reads the logs: `s3` or `cloudwatch`. Each source accepts only its own flags, and kcp rejects flags that belong to the other source.
+
+    To scan from S3, set `--logs s3` and point `--s3-uri` at the folder of logs for the period you want to analyze. MSK delivers logs into one folder per hour, and a URI that ends at the cluster folder scans every hour under it:
 
     ```shell
     kcp scan client-inventory \
         --state-file kcp-state.json \
+        --logs s3 \
         --s3-uri s3://<bucket>/AWSLogs/<account-id>/KafkaBrokerLogs/<region>/<cluster-name>-<cluster-id>/<yyyy-mm-dd-hh>/
     ```
+
+    To scan from CloudWatch Logs, set `--logs cloudwatch` and give the log group, the Region, and the cluster name. The cluster must already be in the state file from the earlier steps. Without `--start-time` and `--end-time`, kcp scans the last 24 hours, so use a narrower window on a busy cluster:
+
+    ```shell
+    kcp scan client-inventory \
+        --state-file kcp-state.json \
+        --logs cloudwatch \
+        --log-group-name <log-group-name> \
+        --region <region> \
+        --cluster-name <cluster-name> \
+        --start-time <yyyy-mm-ddThh:mm:ssZ> \
+        --end-time <yyyy-mm-ddThh:mm:ssZ>
+    ```
+
+    CloudWatch Logs can deliver only a sample of TRACE logs, so use S3 when you need a complete inventory. For the trade-offs and the required permissions, see [Scan MSK Broker Logs for Clients](technical-guides/client-inventory/scan-broker-logs.md#scan-from-cloudwatch-logs).
 
     Each client is recorded once, keyed by client ID, topic, role, authentication and principal, so you can run this again on another time window and only new clients are added.
 
 === "Apache Kafka"
 
-    Not available for Apache Kafka: the scan reads MSK broker logs from S3.
+    Not available for Apache Kafka: the scan reads MSK broker logs from S3 or CloudWatch Logs.
 
 ### 3.3 Optional: schema registry
 
@@ -251,7 +271,7 @@ Run it once per registry.
         --state-file kcp-state.json \
         --connect-rest-url http://connect.example.com:8083 \
         --cluster-id prod-kafka \
-        --source-type osk \
+        --logs-type osk \
         --use-basic-auth --username connect-admin --password "$connect_password"
     ```
 
