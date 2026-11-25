@@ -4,7 +4,13 @@
 
 # Superpowers brainstorm artifacts
 .superpowers/
-.claude/
+.claude/*
+!.claude/rules/
+!.claude/skills/
+!.claude/bin/
+!.claude/tools/
+!.claude/settings.json
+.claude/tools/commentlint/commentlint
 
 # Local .terraform directories
 **/.terraform/*
@@ -115,3 +121,5 @@ integration-tests/tui/env.sh
 
 # make trivy-binary output
 trivy-scan/
+# Shared Claude Code project settings (Stop hook)
+!.claude/settings.json

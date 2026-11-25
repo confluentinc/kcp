@@ -1,0 +1,4 @@
+#!/bin/bash
+# Build (cached) and run the local comment linter from any directory.
+src="$(git rev-parse --show-toplevel)/.claude/tools/commentlint"
+go build -C "$src" -o "$src/commentlint" . && exec "$src/commentlint" "$@"
