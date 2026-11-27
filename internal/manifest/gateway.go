@@ -334,9 +334,9 @@ func (g *GatewayMigration) validateSourceForSection() []error {
 	confluent := src.Type == SourceConfluentPlatform || src.Type == SourceConfluentCloud
 	const section = SectionReversibleStaticMigration
 
-	switch t := g.Spec.MigrationType(); {
-	case t == "":
-	case t == MigrationTypeReversibleStatic:
+	switch g.Spec.MigrationType() {
+	case "":
+	case MigrationTypeReversibleStatic:
 		if !confluent && src.Type != "" {
 			add("spec.source.type: %s needs a Confluent source (%s or %s), got %q", section, SourceConfluentPlatform, SourceConfluentCloud, src.Type)
 		}
