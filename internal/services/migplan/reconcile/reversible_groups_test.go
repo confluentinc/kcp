@@ -137,3 +137,22 @@ func TestCheckReversibleGroups_InScopeOnlyForSelectedTopics(t *testing.T) {
 	}
 	requireAllOK(t, got.Preconditions)
 }
+
+// Without every commit on the bound side the in-scope groups can't be known,
+// so neither group check on the side being entered may pass.
+func TestCheckReversibleGroups_BoundListingIncompleteFailsEveryGroupCheck(t *testing.T) {
+	const gap = "the source credential cannot describe arbitrary topics"
+	g := &ReversibleGroupFacts{ListingIncomplete: gap, EnteredStates: map[string]string{"g1": "Stable"}}
+	got := flipGroups(t, g, []string{"a"}, []string{"a"})
+	for _, name := range []string{RSGroupScopeCheckName, RSSplitBrainCheckName, RSShareClashCheckName} {
+		requireFailed(t, got.Preconditions, name, gap)
+	}
+}
+
+func TestCheckReversibleGroups_BackOutBoundListingIncompleteRefuses(t *testing.T) {
+	const gap = "the target credential cannot describe arbitrary topics"
+	g := &ReversibleGroupFacts{ListingIncomplete: gap, EnteredStates: map[string]string{"g1": "Stable"}}
+	got := CheckReversibleGroups(reversibleInput("cc"), sidesFor(t, "cc", true), g, groupLink, []string{"a"}, []string{"a"})
+	requireFailed(t, got.Preconditions, RSSplitBrainCheckName, gap)
+	requireFailed(t, got.Preconditions, RSShareClashCheckName, gap)
+}

@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -60,10 +61,8 @@ func CheckReversibleGroups(in ReversibleInput, s Sides, g *ReversibleGroupFacts,
 
 	c.InScope = groupsCommittingOn(selected, g.Committed)
 
-	if g.EnteredListingIncomplete != "" {
-		c.Preconditions = append(c.Preconditions,
-			fail(RSSplitBrainCheckName, g.EnteredListingIncomplete),
-			fail(RSShareClashCheckName, g.EnteredListingIncomplete))
+	if why := enteredChecksGap(g); why != "" {
+		c.Preconditions = append(c.Preconditions, fail(RSSplitBrainCheckName, why), fail(RSShareClashCheckName, why))
 		return c
 	}
 
@@ -87,6 +86,20 @@ func CheckReversibleGroups(in ReversibleInput, s Sides, g *ReversibleGroupFacts,
 		c.Preconditions = append(c.Preconditions, pass(RSShareClashCheckName))
 	}
 	return c
+}
+
+// enteredChecksGap says why the split-brain and share-clash checks can't be
+// decided: an incomplete bound-side listing hides commits, so the in-scope
+// groups are unknown (in a back-out too, where the scope check doesn't run),
+// and an incomplete listing on the side being entered hides their states.
+func enteredChecksGap(g *ReversibleGroupFacts) string {
+	var why []string
+	for _, r := range []string{g.ListingIncomplete, g.EnteredListingIncomplete} {
+		if r != "" && !slices.Contains(why, r) {
+			why = append(why, r)
+		}
+	}
+	return strings.Join(why, "; ")
 }
 
 // groupsCommittingOn returns, sorted, the groups with a commit on any of topics.

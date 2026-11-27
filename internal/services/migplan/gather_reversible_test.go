@@ -200,3 +200,30 @@ func TestRunReversible_AttachesGatewayYAMLAndGeneration(t *testing.T) {
 	assert.Equal(t, "kind: Gateway\n", plan.GatewayYAML)
 	assert.Equal(t, int64(7), plan.GatewayGeneration)
 }
+
+// A back-out whose credential can't describe every topic can't read the
+// commits that decide the in-scope groups, so an active group must not pass.
+func TestRunReversible_BackOutWithTopicGapRefuses(t *testing.T) {
+	healthy := func(remote string, rows map[string]reconcile.MirrorRow) reconcile.LinkCopy {
+		return reconcile.LinkCopy{Found: true, LinkID: "link-1", RemoteClusterID: remote, LinkError: "NO_ERROR",
+			Mode: "BIDIRECTIONAL", OffsetSyncEnabled: true, GroupFilters: starGroupFilter, Rows: rows}
+	}
+	fk := newRevFakes(revGatewayConfig("cp", true))
+	fk.providers.SourceLink = &fakeLinkCopy{c: healthy("tgt-id", map[string]reconcile.MirrorRow{"a": {Status: reconcile.RowActive, Raw: "ACTIVE"}})}
+	fk.providers.TargetLink = &fakeLinkCopy{c: healthy("src-id", map[string]reconcile.MirrorRow{"a": {Status: reconcile.RowStopped, Raw: "STOPPED"}})}
+	fk.sourceGroups.topicsDenied = true
+	fk.sourceGroups.groups = []types.ConsumerGroupListing{{GroupID: "g1", State: "Stable"}}
+
+	plan, err := RunReversible(context.Background(), revInput("cp"), fk.providers)
+	require.NoError(t, err)
+	require.True(t, plan.Report.Refused(), "preconditions: %+v", plan.Report.Preconditions)
+	var splitBrain *reconcile.PreconditionResult
+	for i, p := range plan.Report.Preconditions {
+		if p.Name == reconcile.RSSplitBrainCheckName {
+			splitBrain = &plan.Report.Preconditions[i]
+		}
+	}
+	require.NotNil(t, splitBrain, "the group checks must run: %+v", plan.Report.Preconditions)
+	assert.False(t, splitBrain.OK)
+	assert.Contains(t, splitBrain.Detail, "cannot describe arbitrary topics")
+}

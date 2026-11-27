@@ -90,7 +90,7 @@ func TestPlaceTopics_NormalFlip(t *testing.T) {
 		t.Errorf("verdicts = %v, want %v", verdictsOf(tvs), want)
 	}
 	if !check.OK || check.Name != rsClientsCheckName {
-		t.Errorf("check 30 = %+v", check)
+		t.Errorf("clients check = %+v", check)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestPlaceTopics_ResumeFenced(t *testing.T) {
 	}
 }
 
-func TestPlaceTopics_UnfencedMixFailsCheck30(t *testing.T) {
+func TestPlaceTopics_UnfencedMixFailsClientsCheck(t *testing.T) {
 	f := placedFacts(reversibleGateway("cp", false),
 		map[string]MirrorRow{"b": active},
 		map[string]MirrorRow{"a": active, "b": stopped},
@@ -123,7 +123,7 @@ func TestPlaceTopics_UnfencedMixFailsCheck30(t *testing.T) {
 		}
 	}
 	if check.OK || !strings.Contains(check.Detail, "b") || !strings.Contains(check.Detail, "swapped") || strings.Contains(check.Detail, "a,") {
-		t.Errorf("check 30 = %+v, want a failure naming b only", check)
+		t.Errorf("clients check = %+v, want a failure naming b only", check)
 	}
 }
 
@@ -137,11 +137,11 @@ func TestPlaceTopics_WritableSideUnfencedReversedIsUnchanged(t *testing.T) {
 		t.Errorf("verdicts = %v, want %v", verdictsOf(tvs), want)
 	}
 	if !check.OK {
-		t.Errorf("check 30 = %+v", check)
+		t.Errorf("clients check = %+v", check)
 	}
 }
 
-func TestPlaceTopics_WritableSideUnfencedReversibleFailsCheck30(t *testing.T) {
+func TestPlaceTopics_WritableSideUnfencedReversibleFailsClientsCheck(t *testing.T) {
 	f := neverReversedFacts()
 	f.Gateway = reversibleGateway("cc", false)
 	tvs, check := place(t, reversibleInput("cc"), f, "a", "b")
@@ -149,7 +149,7 @@ func TestPlaceTopics_WritableSideUnfencedReversibleFailsCheck30(t *testing.T) {
 		t.Errorf("verdicts = %v, want %v", verdictsOf(tvs), want)
 	}
 	if check.OK || !strings.Contains(check.Detail, "the target cluster (tgt-id)") {
-		t.Errorf("check 30 = %+v", check)
+		t.Errorf("clients check = %+v", check)
 	}
 }
 
@@ -171,7 +171,7 @@ func TestPlaceTopics_BackOut(t *testing.T) {
 		t.Errorf("verdicts = %v, want %v", verdictsOf(tvs), want)
 	}
 	if !check.OK {
-		t.Errorf("check 30 = %+v", check)
+		t.Errorf("clients check = %+v", check)
 	}
 }
 
@@ -180,7 +180,7 @@ func TestPlaceTopics_SwappedDomainsCaught(t *testing.T) {
 	in.SourceDomain, in.TargetDomain = "cc", "cp"
 	_, check := place(t, in, neverReversedFacts(), "a", "b")
 	if check.OK || !strings.Contains(check.Detail, "swapped") {
-		t.Errorf("swapped domains must fail check 30: %+v", check)
+		t.Errorf("swapped domains must fail the clients check: %+v", check)
 	}
 }
 
