@@ -119,3 +119,14 @@ func TestGatewayRouteConversionExampleIsValid(t *testing.T) {
 	require.Nil(t, g.Spec.DeclaredTopicGroup(), "a conversion selects no topics")
 	require.Equal(t, 30*time.Second, g.Spec.DynamicToStaticConversion.Policies.DetectUnroutedCommitsDuration)
 }
+
+// TestReversibleStaticFixtureIsValid keeps the integration suite's manifest, the
+// only sample of this section, valid.
+func TestReversibleStaticFixtureIsValid(t *testing.T) {
+	data, err := os.ReadFile("../../integration-tests/migplan-reversible/testdata/manifest.yaml")
+	require.NoError(t, err)
+	g, err := ParseGatewayMigration(data)
+	require.NoError(t, err)
+	require.Empty(t, g.Validate())
+	require.Equal(t, MigrationTypeReversibleStatic, g.Spec.MigrationType())
+}

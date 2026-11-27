@@ -90,6 +90,8 @@ run_suite msk-emulator    integration-tests/msk-emulator    integration \
   "bash integration-tests/msk-emulator/setup.sh" "bash integration-tests/msk-emulator/teardown.sh"
 run_suite migplan         integration-tests/migplan         e2e \
   "make test-env-up-migplan" "make test-env-down-migplan"
+run_suite migplan-reversible integration-tests/migplan-reversible e2e \
+  "make test-env-up-migplan-reversible" "make test-env-down-migplan-reversible"
 if [[ "$WITH_MIGRATION" == "1" ]]; then
   run_suite migration integration-tests/migration e2e \
     "bash integration-tests/migration/testdata/setup.sh" "bash integration-tests/migration/testdata/teardown.sh"

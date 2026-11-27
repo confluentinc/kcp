@@ -1,0 +1,45 @@
+# GatewayMigration manifest for the reversibleStaticMigration e2e (the plaintext
+# docker env). Each cluster's REST API reads its own copy of the bidirectional
+# link: linkCredentials the target's, sourceLinkCredentials the source's. The
+# unauthenticated cp-server REST ignores the placeholder basic credentials.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: migplan-reversible-e2e
+spec:
+  source:
+    type: confluent-platform
+    clusterId: 6ub6fPVJRzKjE4i-REkq-A
+    restEndpoint: http://localhost:18190
+    bootstrapServers:
+      - localhost:19192
+    credentials: testdata/source-creds.yaml
+
+  target:
+    type: confluent-platform
+    clusterId: LKsbYRvfTM-TVXKjdjgdxA
+    kafka:
+      bootstrapServers:
+        - localhost:29192
+      restEndpoint: http://localhost:28190
+      clusterCredentials: testdata/dest-kafka-creds.yaml
+
+  clusterLink:
+    name: rev-link
+    linkCredentials: testdata/link-creds.yaml
+    sourceLinkCredentials: testdata/source-link-creds.yaml
+
+  gateway:
+    namespace: confluent
+    cr-name: migplan-reversible-e2e
+
+  reversibleStaticMigration:
+    route:
+      name: migration-route
+      sourceStreamingDomain: cp
+      targetStreamingDomain: cc
+    writableOn: cc
+    topicGroup:
+      - topics:
+          - rev.a
+          - rev.b
