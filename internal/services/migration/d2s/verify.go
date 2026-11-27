@@ -64,7 +64,7 @@ func (a *D2SActions) VerifyFence(ctx context.Context, config *migrun.MigrationCo
 				return err
 			}
 		}
-		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.OffsetSyncEnabled, facts.IDs)
+		routeChecks, v, ok := reconcile.CheckPreconditions(a.deps.Input, facts.Gateway, facts.Link.Facts(), facts.IDs)
 		view = v
 		report.Preconditions = routeChecks
 		if !ok {

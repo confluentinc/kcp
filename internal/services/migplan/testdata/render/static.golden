@@ -6,6 +6,8 @@ Route checks
   [OK] target domain declares exactly one bootstrap server id
   [OK] route carries pre-staged auth for the target domain
   [OK] staged auth secrets exist
+  [OK] cluster link is not bidirectional
+  [OK] cluster link reports no error
   [OK] source cluster matches the cluster link
   [OK] target cluster matches the manifest
 

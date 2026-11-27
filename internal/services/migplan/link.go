@@ -13,6 +13,8 @@ import (
 // offset sync; a dynamic-route migration requires it disabled.
 const offsetSyncEnableConfig = "consumer.offset.sync.enable"
 
+const linkModeConfig = "link.mode"
+
 // linkReader is the narrow slice of clusterlink.Service this provider needs: the
 // link's mirror topics, its live config (consumer.offset.sync.enable), and its
 // describe (for source_cluster_id).
@@ -72,6 +74,8 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*LinkStatus, error)
 		Mirrors:           m,
 		LinkMirrors:       linkMirrors,
 		SourceClusterID:   link.SourceClusterID,
+		Mode:              configs[linkModeConfig],
+		Error:             link.LinkError,
 	}, nil
 }
 

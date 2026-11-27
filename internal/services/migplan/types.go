@@ -41,9 +41,18 @@ type LinkStatusProvider interface {
 // must build them together.
 // SourceClusterID is the link's own source_cluster_id (empty if the destination
 // does not report one — older CP), used to verify the source cluster's identity.
+// Mode is the link's link.mode config and Error its link_error, each "" when
+// not reported.
 type LinkStatus struct {
 	OffsetSyncEnabled bool
 	Mirrors           map[string]reconcile.MirrorState
 	LinkMirrors       []reconcile.LinkMirror
 	SourceClusterID   string
+	Mode              string
+	Error             string
+}
+
+// Facts is the slice of the status the core's link checks read.
+func (s *LinkStatus) Facts() reconcile.LinkFacts {
+	return reconcile.LinkFacts{OffsetSyncEnabled: s.OffsetSyncEnabled, Mode: s.Mode, Error: s.Error}
 }

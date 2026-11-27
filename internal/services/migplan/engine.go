@@ -105,7 +105,7 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 		}
 	}
 
-	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
+	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.Facts(), ids, missingSecrets, secretCheckSkipped)
 	// A permission denial is a skip, not a precondition failure — surfaced as
 	// a warning (never blocking) rather than folded into missingSecrets,
 	// which would otherwise read as "these specific secrets don't exist"
@@ -163,7 +163,7 @@ func (e *ReconciliationEngine) runConvert(ctx context.Context, in reconcile.Reco
 	}
 
 	plan := reconcile.ReconcileConvert(in, facts.Gateway, facts.SourceTopics, facts.TargetTopics, facts.Link.LinkMirrors,
-		facts.Partitions, facts.Link.OffsetSyncEnabled, facts.IDs, facts.GroupFacts(tracked))
+		facts.Partitions, facts.Link.Facts(), facts.IDs, facts.GroupFacts(tracked))
 	plan.GatewayYAML = facts.Gateway.RawYAML
 	plan.GatewayGeneration = facts.Gateway.Generation
 	return plan, nil

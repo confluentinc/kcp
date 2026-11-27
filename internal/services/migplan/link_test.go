@@ -17,6 +17,7 @@ type fakeLinkReader struct {
 	err             error
 	cfgErr          error
 	linkErr         error
+	linkError       string
 }
 
 func (f *fakeLinkReader) ListMirrorTopics(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
@@ -31,7 +32,7 @@ func (f *fakeLinkReader) GetClusterLink(_ context.Context, _ clusterlink.Config)
 	if f.linkErr != nil {
 		return nil, f.linkErr
 	}
-	return &clusterlink.ClusterLink{SourceClusterID: f.sourceClusterID}, nil
+	return &clusterlink.ClusterLink{SourceClusterID: f.sourceClusterID, LinkError: f.linkError}, nil
 }
 
 func TestClusterLinkStatusMapping(t *testing.T) {
@@ -160,5 +161,19 @@ func TestClusterLinkStatusLinkMirrorsKeepBothNamesAndTheRawStatus(t *testing.T) 
 	}
 	if ls.Mirrors["orders"] != reconcile.MirrorBad || ls.Mirrors["payments"] != reconcile.MirrorStopped {
 		t.Errorf("Mirrors = %v: the source-keyed map AAO and TBM read must be unchanged", ls.Mirrors)
+	}
+}
+
+func TestClusterLinkStatus_ReportsModeAndError(t *testing.T) {
+	f := &fakeLinkReader{configs: map[string]string{"link.mode": "BIDIRECTIONAL"}, linkError: "NO_ERROR"}
+	ls, err := NewClusterLinkStatus(f, clusterlink.Config{}).LinkStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ls.Mode != "BIDIRECTIONAL" || ls.Error != "NO_ERROR" {
+		t.Errorf("Mode, Error = %q, %q; want BIDIRECTIONAL, NO_ERROR", ls.Mode, ls.Error)
+	}
+	if got := ls.Facts(); got != (reconcile.LinkFacts{OffsetSyncEnabled: false, Mode: "BIDIRECTIONAL", Error: "NO_ERROR"}) {
+		t.Errorf("Facts() = %+v", got)
 	}
 }

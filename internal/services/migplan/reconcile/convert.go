@@ -27,13 +27,13 @@ const convertTargetCheckName = "conversion target is static"
 // conversion: nothing to do — unless it carries a live route-level fence, which
 // is refused. A static route bound anywhere else is refused.
 func ReconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors []LinkMirror, partitions PartitionCounts, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
+	mirrors []LinkMirror, partitions PartitionCounts, link LinkFacts, ids ClusterIDs, groups GroupFacts) *Plan {
 
-	return applyGatewaySync(reconcileConvert(in, gw, sourceTopics, targetTopics, mirrors, partitions, offsetSyncEnabled, ids, groups), gw)
+	return applyGatewaySync(reconcileConvert(in, gw, sourceTopics, targetTopics, mirrors, partitions, link, ids, groups), gw)
 }
 
 func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors []LinkMirror, partitions PartitionCounts, offsetSyncEnabled bool, ids ClusterIDs, groups GroupFacts) *Plan {
+	mirrors []LinkMirror, partitions PartitionCounts, link LinkFacts, ids ClusterIDs, groups GroupFacts) *Plan {
 
 	report := Report{}
 
@@ -77,7 +77,7 @@ func reconcileConvert(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: ModeConvert}
 	}
 
-	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
+	pcs, view, ok := CheckPreconditions(in, gw, link, ids)
 	report.Preconditions = pcs
 	if !ok {
 		return refused()

@@ -40,14 +40,14 @@ func staticFresh(s GatewaySync) *Plan {
 	gw := staticGateway()
 	gw.Sync = s
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
-	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 }
 
 func dynamicFresh(s GatewaySync) *Plan {
 	gw := dynGateway()
 	gw.Sync = s
 	in := ReconcileInput{Type: TypeDynamic, Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
-	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 }
 
 var freshScenarios = []syncScenario{{"static", staticFresh}, {"dynamic", dynamicFresh}}
@@ -115,7 +115,7 @@ func TestGatewaySyncOutOfSyncRefusesNothingToDo(t *testing.T) {
 	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	gw.Sync = testSync(SyncOutOfSync)
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
-	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, false, ClusterIDs{}, nil, "")
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if !p.Report.Refused() || p.NothingToDo {
 		t.Fatalf("a nothing-to-do plan on out-of-sync pods must be refused, got %+v", p)
 	}
@@ -127,7 +127,7 @@ func TestGatewaySyncOutOfSyncClearsRestore(t *testing.T) {
 		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
 	run := func(s GatewaySync) *Plan {
 		gw.Sync = s
-		return Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, true, ClusterIDs{}, nil, "")
+		return Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, LinkFacts{OffsetSyncEnabled: true}, ClusterIDs{}, nil, "")
 	}
 	if !run(GatewaySync{}).Report.RestoreOffsetSync {
 		t.Fatal("fixture must owe a restore without the verdict")
@@ -160,7 +160,7 @@ func TestGatewaySyncCannotTellFencedAtStartRefuses(t *testing.T) {
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	gw.Sync = testSync(SyncCannotTell)
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
-	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatalf("a fenced-at-start plan must be refused on cannot tell, got %+v", p)
 	}
@@ -186,7 +186,7 @@ func TestGatewaySyncCannotTellUnchangedRefuses(t *testing.T) {
 		},
 	}
 	p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"},
-		map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+		map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if len(p.Report.Unchanged) != 1 {
 		t.Fatalf("fixture must leave one topic Unchanged, got %+v", p.Report)
 	}

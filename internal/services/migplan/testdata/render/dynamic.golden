@@ -7,6 +7,8 @@ Route checks
   [OK] coordination.group pinned on source
   [OK] consumer offset sync disabled on link
   [OK] offset-sync pause not requested
+  [OK] cluster link is not bidirectional
+  [OK] cluster link reports no error
   [OK] source cluster matches the cluster link
   [OK] target cluster matches the manifest
   [OK] gateway routing patterns compile

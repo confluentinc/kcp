@@ -30,7 +30,7 @@ type StaticRouteView struct {
 // missingSecrets is expected to be empty (there was nothing to report), and
 // the "staged auth secrets exist" result records the skip rather than a
 // pass, so the report never claims a verification that never happened.
-func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, secretCheckSkipped string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
+func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, link LinkFacts, missingSecrets []string, secretCheckSkipped string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
 	var res []PreconditionResult
 	var view StaticRouteView
 
@@ -103,6 +103,7 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		res = append(res, pass("staged auth secrets exist"))
 	}
 
+	res = append(res, checkLinkOneWay(link.Mode), checkLinkHealthy(link.Error))
 	res = checkClusterIdentities(res, in, ids)
 
 	ok := true

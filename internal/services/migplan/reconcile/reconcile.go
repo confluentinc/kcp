@@ -10,7 +10,7 @@ const MaxRulesBytes = 512 * 1024
 // reconcileDynamic reconciles a dynamic route. Reconcile dispatches to it or
 // to reconcileStatic by the resolved route mode.
 func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs) *Plan {
+	mirrors map[string]MirrorState, link LinkFacts, ids ClusterIDs) *Plan {
 
 	report := Report{}
 
@@ -18,7 +18,7 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// source and target domains, with coordination pinned to source and offset
 	// sync off, and the clusters we read must be the real source/destination.
 	// A failure here stops the run before any per-topic work.
-	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
+	pcs, view, ok := CheckPreconditions(in, gw, link, ids)
 	report.Preconditions = pcs
 	if !ok {
 		return &Plan{Report: report, Mode: ModeDynamic}
@@ -161,13 +161,13 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 // rules-size guardrail (the fragments are a few dozen bytes, never
 // realistically oversized). It alone decides whether the run owes an
 // offset-sync restore (Report.RestoreOffsetSync), from the manifest's pause
-// opt-in and baseline and the link's live offsetSyncEnabled.
+// opt-in and baseline and the link's live offset sync setting.
 func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
+	mirrors map[string]MirrorState, link LinkFacts, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	report := Report{}
 
-	pcs, view, ok := CheckStaticPreconditions(in, gw, missingSecrets, secretCheckSkipped, ids)
+	pcs, view, ok := CheckStaticPreconditions(in, gw, link, missingSecrets, secretCheckSkipped, ids)
 	report.Preconditions = pcs
 	if !ok {
 		return &Plan{Report: report, Mode: ModeStatic}
@@ -216,7 +216,7 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	// (a cutover is in flight) or an earlier run's pause was never restored
 	// (the link's live offset sync still differs from the baseline).
 	restoreOffsetSync := in.PauseConsumerOffsetSync &&
-		(len(toMigrate) > 0 || offsetSyncEnabled != in.OffsetSyncBaselineEnabled)
+		(len(toMigrate) > 0 || link.OffsetSyncEnabled != in.OffsetSyncBaselineEnabled)
 	if len(toMigrate) == 0 {
 		report.RestoreOffsetSync = restoreOffsetSync
 		return &Plan{Report: report, Mode: ModeStatic, NothingToDo: !restoreOffsetSync}
@@ -257,13 +257,13 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 // (Mode "convert") and the caller must use ReconcileConvert instead. An empty or
 // unrecognized type is refused, never defaulted into a strategy.
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
+	mirrors map[string]MirrorState, link LinkFacts, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	switch in.Type {
 	case TypeStatic:
-		return applyGatewaySync(reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids, missingSecrets, secretCheckSkipped), gw)
+		return applyGatewaySync(reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, link, ids, missingSecrets, secretCheckSkipped), gw)
 	case TypeDynamic:
-		return applyGatewaySync(reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids), gw)
+		return applyGatewaySync(reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, link, ids), gw)
 	case TypeDynamicToStatic:
 		return &Plan{Mode: ModeConvert, Report: Report{Preconditions: []PreconditionResult{fail(
 			"conversion reconciled by ReconcileConvert",
