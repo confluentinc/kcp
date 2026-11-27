@@ -89,14 +89,16 @@ func GenerateGateway() ([]byte, error) {
 	static := spec.Properties[manifest.SectionStaticMigration]
 	dynamic := spec.Properties[manifest.SectionDynamicMigration]
 	conv := spec.Properties[manifest.SectionDynamicToStaticConversion]
+	rev := spec.Properties[manifest.SectionReversibleStaticMigration]
 
-	source.Properties["type"].Enum = []any{manifest.SourceMSK, manifest.SourceApacheKafka}
+	source.Properties["type"].Enum = []any{manifest.SourceMSK, manifest.SourceApacheKafka, manifest.SourceConfluentPlatform, manifest.SourceConfluentCloud}
 	target.Properties["type"].Enum = []any{manifest.TargetConfluentCloud, manifest.TargetConfluentPlatform}
 
 	kafka := target.Properties["kafka"]
 	stringCredential(source.Properties["credentials"])
 	stringCredential(kafka.Properties["clusterCredentials"])
 	stringCredential(clusterLink.Properties["linkCredentials"])
+	stringCredential(clusterLink.Properties["sourceLinkCredentials"])
 	// The reflected schema requires only restEndpoint (the one field without
 	// omitempty), but Validate() also requires bootstrapServers and
 	// clusterCredentials. Patch the schema to match so an editor/CI lint cannot
@@ -106,30 +108,35 @@ func GenerateGateway() ([]byte, error) {
 	// gateway requires namespace and cr-name; kubeconfig is optional.
 	gateway.Required = []string{"namespace", "cr-name"}
 
-	// The migration type is the section present: exactly one of the three.
+	// The migration type is the section present: exactly one of them.
 	spec.OneOf = []*jsonschema.Schema{
 		{Required: []string{manifest.SectionStaticMigration}},
 		{Required: []string{manifest.SectionDynamicMigration}},
 		{Required: []string{manifest.SectionDynamicToStaticConversion}},
+		{Required: []string{manifest.SectionReversibleStaticMigration}},
 	}
 
 	// Pointer fields reflect as nullable; a section is an object (absent, not
-	// null, is how the other two are "not declared").
-	for _, sec := range []*jsonschema.Schema{static, dynamic, conv} {
+	// null, is how the others are "not declared").
+	for _, sec := range []*jsonschema.Schema{static, dynamic, conv, rev} {
 		sec.Type = "object"
 		sec.Types = nil
-		route := sec.Properties["route"]
-		route.Required = []string{"name", "targetStreamingDomain"}
 	}
+	for _, sec := range []*jsonschema.Schema{static, dynamic, conv} {
+		sec.Properties["route"].Required = []string{"name", "targetStreamingDomain"}
+	}
+	revRoute := rev.Properties["route"]
+	revRoute.Required = []string{"name", "sourceStreamingDomain", "targetStreamingDomain"}
 	static.Required = []string{"route", "topicGroup"}
 	dynamic.Required = []string{"route", "topicGroup"}
 	conv.Required = []string{"route"}
+	rev.Required = []string{"route", "writableOn", "topicGroup"}
 
 	// The item's required set is empty by reflection (both fields are
 	// omitempty); the "at least one of topics/topicPatterns" rule is not
 	// expressible on the struct, so hand-patch it as an anyOf on the item.
 	var tgItems []*jsonschema.Schema
-	for _, sec := range []*jsonschema.Schema{static, dynamic} {
+	for _, sec := range []*jsonschema.Schema{static, dynamic, rev} {
 		item := sec.Properties["topicGroup"].Items
 		item.AnyOf = []*jsonschema.Schema{
 			{Required: []string{"topics"}},
@@ -148,11 +155,12 @@ func GenerateGateway() ([]byte, error) {
 	staticPolicy := static.Properties["policies"]
 	dynamicPolicy := dynamic.Properties["policies"]
 	convPolicy := conv.Properties["policies"]
+	revPolicy := rev.Properties["policies"]
 	staticPolicy.Required = []string{"lagThreshold"}
 	dynamicPolicy.Required = []string{"lagThreshold"}
 
 	// Durations parse as "10m", not as an integer count.
-	for _, policy := range []*jsonschema.Schema{staticPolicy, dynamicPolicy, convPolicy} {
+	for _, policy := range []*jsonschema.Schema{staticPolicy, dynamicPolicy, convPolicy, revPolicy} {
 		for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout", "detectUnroutedCommitsDuration"} {
 			p, ok := policy.Properties[k]
 			if !ok {
@@ -167,7 +175,9 @@ func GenerateGateway() ([]byte, error) {
 	}
 
 	d := map[*jsonschema.Schema]string{
-		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
+		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only. confluent-platform and confluent-cloud are for reversibleStaticMigration only.",
+		source.Properties["clusterId"]:        "Source cluster ID, checked against the cluster kcp reads over the Kafka protocol and against the target copy of the cluster link. Required for reversibleStaticMigration, and refused with any other section.",
+		source.Properties["restEndpoint"]:     "REST endpoint of the source cluster, used to read the source copy of a bidirectional cluster link. Required for reversibleStaticMigration, and refused with any other section.",
 		source.Properties["bootstrapServers"]: "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092).",
 		source.Properties["credentials"]:      "Path to the source cluster credentials file. Exactly one authentication block must be present in that file.",
 
@@ -178,17 +188,25 @@ func GenerateGateway() ([]byte, error) {
 		kafka.Properties["restEndpoint"]:       "REST endpoint of the destination cluster.",
 		kafka.Properties["clusterCredentials"]: "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
 
-		clusterLink.Properties["name"]:             "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
-		clusterLink.Properties["bootstrapServers"]: "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
-		clusterLink.Properties["linkCredentials"]:  "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
+		clusterLink.Properties["name"]:                  "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["bootstrapServers"]:      "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
+		clusterLink.Properties["sourceLinkCredentials"]: "Path to the REST credentials file (api_key/api_secret, basic, bearer, or mtls) for the source cluster's Admin REST API, which reads the source copy of a bidirectional cluster link. Required for reversibleStaticMigration, and refused with any other section; it is never derived from another field.",
+		clusterLink.Properties["linkCredentials"]:       "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 		gateway.Properties["cr-name"]:    "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster on every run — this is an object name, not a file path.",
 
-		static:  "Declares a static (all-at-once) migration: every selected topic cuts over together across a static route. The live route must be static. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
-		dynamic: "Declares a dynamic (topic-based) migration: topics cut over incrementally across a dynamic route, promoting mirror topics at zero lag. The live route must be dynamic. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
-		conv:    "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
+		static:                       "Declares a static (all-at-once) migration: every selected topic cuts over together across a static route. The live route must be static. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
+		dynamic:                      "Declares a dynamic (topic-based) migration: topics cut over incrementally across a dynamic route, promoting mirror topics at zero lag. The live route must be dynamic. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
+		rev:                          "Declares a reversible static migration: topics and their clients move across a static route by reversing each mirror on a bidirectional cluster link instead of promoting it, so every topic stays mirrored back and the move can be undone. The live route must be static, and the cluster link must be bidirectional with consumer offset sync on and the single * LOCAL_MIRROR group filter on both copies. Not yet executable: kcp migration cutover execute --dry-run prints the plan. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
+		rev.Properties["writableOn"]: "The streaming domain (route.sourceStreamingDomain or route.targetStreamingDomain) whose cluster the selected topics must be writable on, and the route bound to, when the run ends. Set it to the other domain to flip back.",
+		revRoute:                     "Names the static route on the live Gateway CR to move, and the streaming domain of each cluster.",
+		revRoute.Properties["name"]:  "The spec.routes[].name of the static route to fence and switch. Must exist in the initial CR, and carry no fence other than kcp's own.",
+		revRoute.Properties["sourceStreamingDomain"]: "Name of the streaming domain, declared in the initial CR's spec.streamingDomains, whose cluster is spec.source. The route must carry pre-staged auth for it.",
+		revRoute.Properties["targetStreamingDomain"]: "Name of the streaming domain, declared in the initial CR's spec.streamingDomains, whose cluster is spec.target. The route must carry pre-staged auth for it.",
+		rev.Properties["topicGroup"]:                 "The topic selection that moves on this route. Exactly one entry today. It must cover every mirror topic on the cluster link, on either cluster, or the run is refused.",
+		conv:                                         "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
 	}
 	for _, sec := range []*jsonschema.Schema{static, dynamic, conv} {
 		route := sec.Properties["route"]
@@ -208,7 +226,7 @@ func GenerateGateway() ([]byte, error) {
 	d[cos.Properties["pause"]] = "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover."
 	d[cos.Properties["baseline"]] = "The state of the cluster link's consumer.offset.sync.enable BEFORE this migration started (\"enabled\" or \"disabled\"). Required when pause is set; kcp restores sync to this value after the migration completes or fails."
 
-	for _, sec := range []*jsonschema.Schema{static, dynamic, conv} {
+	for _, sec := range []*jsonschema.Schema{static, dynamic, conv, rev} {
 		policy := sec.Properties["policies"]
 		d[policy] = "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag."
 		set := func(name, text string) {
