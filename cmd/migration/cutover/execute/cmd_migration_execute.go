@@ -39,6 +39,10 @@ var (
 	offsetSyncConcurrencyOverride           int
 )
 
+// errReversibleNotExecutable refuses a real run of the one type that reconciles
+// and dry-runs but has no state machine yet.
+var errReversibleNotExecutable = errors.New("reversibleStaticMigration can't be executed yet: its state machine isn't built; run with --dry-run to see the plan")
+
 const executeLong = `Execute a migration: run the cutover described by a migration manifest.
 
 Every run reads the manifest and the live state of the gateway and the cluster
@@ -152,6 +156,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	if errs := g.Spec.ValidatePolicies(); len(errs) > 0 {
 		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
+	if !dryRun && g.Spec.MigrationType() == manifest.MigrationTypeReversibleStatic {
+		return errReversibleNotExecutable
+	}
 
 	// --dry-run stops here: the reconcile step is self-contained (it opens its
 	// own live Gateway CR + source/target/cluster-link reads directly from the
@@ -163,11 +170,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 		if err != nil {
 			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 		}
-		if res.Refused {
-			return fmt.Errorf("dry-run: reconcile plan refused (see reasons above)")
-		}
-		cmd.Printf("dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
-		return nil
+		return reportDryRun(cmd, g, res)
 	}
 
 	// metadata.name identifies the migration and is its migration_id label.
@@ -199,6 +202,34 @@ func runMigrationExecute(cmd *cobra.Command, args []string, deps executorDepende
 	return executePlan(cmd, g, &config, reconcileResult, deps)
 }
 
+// reportDryRun ends a --dry-run: a refused plan is an error, then the plan's
+// mode is cross-checked against the declared type exactly as a real run does,
+// so a mismatch shows under --dry-run too.
+func reportDryRun(cmd *cobra.Command, g *manifest.GatewayMigration, res *migplan.Result) error {
+	if res.Refused {
+		return fmt.Errorf("dry-run: reconcile plan refused (see reasons above)")
+	}
+	if err := checkPlanMode(g.Spec.MigrationType(), res); err != nil {
+		return err
+	}
+	cmd.Printf("dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
+	return nil
+}
+
+// checkPlanMode errors unless the plan's mode is the one the declared type
+// produces: reconcile labels its artifacts by shape, the declared type chose
+// the strategy, and a disagreement would have the run misread its artifacts.
+func checkPlanMode(t manifest.MigrationType, res *migplan.Result) error {
+	want := planModeFor(t)
+	if want == "" {
+		return fmt.Errorf("internal error: no plan mode for migration type %q", t)
+	}
+	if res.Mode != want {
+		return fmt.Errorf("internal error: the reconcile plan's mode %q does not match the declared %s (expected %q)", res.Mode, t.SectionKey(), want)
+	}
+	return nil
+}
+
 // executePlan acts on this run's reconcile result and makes no decision of its
 // own about feasibility: it refuses what reconcile refused, runs nothing when
 // reconcile found nothing to do, and otherwise hands the result to the state
@@ -218,10 +249,13 @@ func executePlan(
 	if t == "" {
 		return manifest.NoSectionDeclaredError()
 	}
-	// reconcile labels its artifacts by shape; the declared type chose the
-	// strategy. They must agree, or the run's artifacts would be misread.
-	if want := planModeFor(t); reconcileResult.Mode != want {
-		return fmt.Errorf("internal error: the reconcile plan's mode %q does not match the declared %s (expected %q)", reconcileResult.Mode, t.SectionKey(), want)
+	if err := checkPlanMode(t, reconcileResult); err != nil {
+		return err
+	}
+	// Refused before the nothing-to-do branch, so this type never reports a
+	// completed migration.
+	if t == manifest.MigrationTypeReversibleStatic {
+		return errReversibleNotExecutable
 	}
 
 	// Nothing to do: every topic is already migrated and no offset-sync
@@ -243,21 +277,27 @@ func executePlan(
 		return runDynamicBranch(cmd, g, config, reconcileResult, deps)
 	case manifest.MigrationTypeDynamicToStatic:
 		return runConvertBranch(cmd, g, config, reconcileResult, deps)
-	default: // manifest.MigrationTypeStatic
+	case manifest.MigrationTypeStatic:
 		return runStaticBranch(cmd, g, config, reconcileResult, deps)
+	default:
+		return fmt.Errorf("internal error: no state machine for migration type %q", t)
 	}
 }
 
-// planModeFor is the migplan.Result.Mode a plan reconciled for t carries.
+// planModeFor is the migplan.Result.Mode a plan reconciled for t carries; ""
+// for a type it doesn't know.
 func planModeFor(t manifest.MigrationType) reconcile.PlanMode {
 	switch t {
 	case manifest.MigrationTypeStatic:
 		return reconcile.ModeStatic
 	case manifest.MigrationTypeDynamic:
 		return reconcile.ModeDynamic
-	default:
+	case manifest.MigrationTypeDynamicToStatic:
 		return reconcile.ModeConvert
+	case manifest.MigrationTypeReversibleStatic:
+		return reconcile.ModeReversibleStatic
 	}
+	return ""
 }
 
 // effectivePolicyLogArgs renders the declared migration's effective policy as
@@ -301,8 +341,8 @@ var policyFlagTypes = map[string][]manifest.MigrationType{
 	"rollout-timeout":                     {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic},
 	"detect-unrouted-producers-duration":  {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic},
 	"consumer-offset-sync-drain-duration": {manifest.MigrationTypeStatic},
-	"hot-reload-timeout":                  {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic},
-	"gateway-config-port":                 {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic},
+	"hot-reload-timeout":                  {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic, manifest.MigrationTypeReversibleStatic},
+	"gateway-config-port":                 {manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic, manifest.MigrationTypeReversibleStatic},
 	"detect-unrouted-commits-duration":    {manifest.MigrationTypeDynamicToStatic},
 	"offset-sync-concurrency":             {manifest.MigrationTypeDynamicToStatic},
 }
@@ -393,6 +433,10 @@ func applyPolicyOverrides(cmd *cobra.Command, g *manifest.GatewayMigration) erro
 			p.OffsetSyncConcurrency = offsetSyncConcurrencyOverride
 		}
 		overrideCommon(cmd, &p.CommonPolicies)
+	case manifest.MigrationTypeReversibleStatic:
+		overrideCommon(cmd, &g.Spec.ReversibleStaticMigration.Policies.CommonPolicies)
+	default:
+		return fmt.Errorf("internal error: no policy overrides for migration type %q", t)
 	}
 	return nil
 }
