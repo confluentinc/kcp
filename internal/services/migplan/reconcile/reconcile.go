@@ -271,7 +271,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	default:
 		return &Plan{Report: Report{Preconditions: []PreconditionResult{fail(
 			"migration type declared",
-			fmt.Sprintf("migration type %q is not recognized; declare exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion", in.Type))}}}
+			fmt.Sprintf("migration type %q is not recognized; declare exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion, reversibleStaticMigration", in.Type))}}}
 	}
 }
 

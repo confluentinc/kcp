@@ -216,7 +216,7 @@ func executePlan(
 
 	t := g.Spec.MigrationType()
 	if t == "" {
-		return fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+		return manifest.NoSectionDeclaredError()
 	}
 	// reconcile labels its artifacts by shape; the declared type chose the
 	// strategy. They must agree, or the run's artifacts would be misread.
@@ -341,7 +341,7 @@ func checkPolicyFlagsApply(cmd *cobra.Command, t manifest.MigrationType) error {
 func applyPolicyOverrides(cmd *cobra.Command, g *manifest.GatewayMigration) error {
 	t := g.Spec.MigrationType()
 	if t == "" {
-		return fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+		return manifest.NoSectionDeclaredError()
 	}
 	if err := checkPolicyFlagsApply(cmd, t); err != nil {
 		return err

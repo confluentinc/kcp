@@ -335,7 +335,7 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration, svc *gateway.K8sS
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
 	t := g.Spec.MigrationType()
 	if t == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+		return reconcile.ReconcileInput{}, manifest.NoSectionDeclaredError()
 	}
 	section := "spec." + t.SectionKey()
 	r := g.Spec.DeclaredRoute()

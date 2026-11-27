@@ -33,6 +33,12 @@
                 "apache-kafka"
               ]
             },
+            "clusterId": {
+              "type": "string"
+            },
+            "restEndpoint": {
+              "type": "string"
+            },
             "bootstrapServers": {
               "type": [
                 "null",
@@ -130,6 +136,18 @@
             "linkCredentials": {
               "type": "string",
               "description": "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg."
+            },
+            "sourceLinkCredentials": {
+              "type": "object",
+              "properties": {
+                "Path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "Path"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -467,6 +485,85 @@
           "description": "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
           "required": [
             "route"
+          ],
+          "additionalProperties": false
+        },
+        "reversibleStaticMigration": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "sourceStreamingDomain": {
+                  "type": "string"
+                },
+                "targetStreamingDomain": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "sourceStreamingDomain",
+                "targetStreamingDomain"
+              ],
+              "additionalProperties": false
+            },
+            "writableOn": {
+              "type": "string"
+            },
+            "topicGroup": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "topics": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "topicPatterns": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "policies": {
+              "type": "object",
+              "properties": {
+                "hotReloadTimeout": {
+                  "type": "integer"
+                },
+                "gatewayConfigPort": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "route",
+            "writableOn",
+            "topicGroup"
           ],
           "additionalProperties": false
         }
