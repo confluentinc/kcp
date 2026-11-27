@@ -264,7 +264,20 @@ func CheckLinkScope(in LinkScopeInput) LinkScope {
 // refuses, even alongside link topics; a group with no commits is not tracked.
 // It returns the sorted in-scope groups, or nil on a refusal.
 func checkGroupScope(link map[string]struct{}, committed map[string][]string) (PreconditionResult, []string) {
-	var inScope, offending []string
+	offending, inScope := offLinkCommits(link, committed)
+	if len(offending) > 0 {
+		return fail(GroupScopeCheckName, fmt.Sprintf(
+			"consumer group(s) %s have committed offsets on topics that are not on the cluster link; after the switch those topics are not reachable on the destination, or the group belongs to a client outside this route. For each: migrate the topic (add it to the link and run a topic-based migration batch); or, if the commits are stale, delete the group's offsets on those topics (kafka-consumer-groups --delete-offsets) or delete the group; or, if a live app outside this route owns the group, stop or move it, then delete the group",
+			joinCapped(offending, 20))), nil
+	}
+	return pass(GroupScopeCheckName), inScope
+}
+
+// offLinkCommits splits the groups with commits: offending lists each group
+// with any commit outside link as "group (topics outside)", and inScope the
+// groups whose commits are all on link. Both are sorted; a group with no
+// commits is in neither.
+func offLinkCommits(link map[string]struct{}, committed map[string][]string) (offending, inScope []string) {
 	for g, topics := range committed {
 		if len(topics) == 0 {
 			continue
@@ -282,14 +295,9 @@ func checkGroupScope(link map[string]struct{}, committed map[string][]string) (P
 		}
 		inScope = append(inScope, g)
 	}
-	if len(offending) > 0 {
-		sort.Strings(offending)
-		return fail(GroupScopeCheckName, fmt.Sprintf(
-			"consumer group(s) %s have committed offsets on topics that are not on the cluster link; after the switch those topics are not reachable on the destination, or the group belongs to a client outside this route. For each: migrate the topic (add it to the link and run a topic-based migration batch); or, if the commits are stale, delete the group's offsets on those topics (kafka-consumer-groups --delete-offsets) or delete the group; or, if a live app outside this route owns the group, stop or move it, then delete the group",
-			joinCapped(offending, 20))), nil
-	}
+	sort.Strings(offending)
 	sort.Strings(inScope)
-	return pass(GroupScopeCheckName), inScope
+	return offending, inScope
 }
 
 // untrackedOffLinkWarning lists source topics that are not on the link and that
@@ -299,27 +307,7 @@ func checkGroupScope(link map[string]struct{}, committed map[string][]string) (P
 // with '_' (the usual internal-topic convention) go in a separate clause so the
 // ordinary topics stand out.
 func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, committed map[string][]string) string {
-	tracked := map[string]struct{}{}
-	for _, topics := range committed {
-		for _, t := range topics {
-			tracked[t] = struct{}{}
-		}
-	}
-	var ordinary, internal []string
-	for _, t := range sourceTopics {
-		_, onLink := link[t]
-		_, isTracked := tracked[t]
-		if onLink || isTracked {
-			continue
-		}
-		if strings.HasPrefix(t, "_") {
-			internal = append(internal, t)
-		} else {
-			ordinary = append(ordinary, t)
-		}
-	}
-	sort.Strings(ordinary)
-	sort.Strings(internal)
+	ordinary, internal := offLinkTopics(sourceTopics, link, committed)
 	const consequence = "no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them"
 	switch {
 	case len(ordinary) == 0 && len(internal) == 0:
@@ -333,4 +321,31 @@ func untrackedOffLinkWarning(sourceTopics []string, link map[string]struct{}, co
 		return fmt.Sprintf("topic(s) %s are not on the cluster link and %s. Also not on the link, and probably internal (name starts with '_'): %s",
 			joinCapped(ordinary, 20), consequence, joinCapped(internal, 20))
 	}
+}
+
+// offLinkTopics returns, sorted, the topics that are not on link and that no
+// group commits on, with names starting with '_' (the usual internal-topic
+// convention) in internal.
+func offLinkTopics(topics []string, link map[string]struct{}, committed map[string][]string) (ordinary, internal []string) {
+	tracked := map[string]struct{}{}
+	for _, ts := range committed {
+		for _, t := range ts {
+			tracked[t] = struct{}{}
+		}
+	}
+	for _, t := range topics {
+		_, onLink := link[t]
+		_, isTracked := tracked[t]
+		if onLink || isTracked {
+			continue
+		}
+		if strings.HasPrefix(t, "_") {
+			internal = append(internal, t)
+		} else {
+			ordinary = append(ordinary, t)
+		}
+	}
+	sort.Strings(ordinary)
+	sort.Strings(internal)
+	return ordinary, internal
 }
