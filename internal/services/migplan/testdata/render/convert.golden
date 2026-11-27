@@ -1,0 +1,30 @@
+Conversion plan · route "migration-route" → static on cc
+
+Route checks
+  [OK] route is dynamic
+  [OK] route binds exactly two domains
+  [OK] target domain is bound
+  [OK] coordination.group pinned on source
+  [OK] consumer offset sync disabled on link
+  [OK] offset-sync pause not requested
+  [OK] source cluster matches the cluster link
+  [OK] target cluster matches the manifest
+  [OK] gateway routing patterns compile
+  [OK] target binding carries a bootstrap server id
+  [OK] route carries auth for the target domain
+  [OK] route has no fence kcp didn't write
+  [OK] route has no route-level fence
+  [OK] source credential can list every consumer group
+  [OK] destination credential can list every consumer group
+  [OK] source credential can describe every topic
+  [OK] destination credential can describe every topic
+  [OK] destination credential can write consumer-group offsets
+  [OK] the cluster link has promoted topics
+  [OK] every source consumer group commits only on cluster-link topics
+  [OK] no in-scope consumer group is active on the destination
+  [OK] no in-scope consumer group is a share group on the destination
+
+Link topics · 1
+  = orders  promoted
+
+Plan: route to static, 1 link topic  (plan ready)

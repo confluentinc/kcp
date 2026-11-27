@@ -472,3 +472,31 @@ func TestCheckLinkScope_ManyOffendingGroupsAreCapped(t *testing.T) {
 		t.Errorf("detail = %q, want 20 groups named and \"and 5 more\"", pc.Detail)
 	}
 }
+
+func TestCheckGroupScope_PinnedText(t *testing.T) {
+	res, _ := checkGroupScope(map[string]struct{}{"t1": {}}, map[string][]string{"g1": {"t1", "x"}, "g2": {"t1"}})
+	want := "consumer group(s) g1 (x) have committed offsets on topics that are not on the cluster link; after the switch those topics are not reachable on the destination, or the group belongs to a client outside this route. For each: migrate the topic (add it to the link and run a topic-based migration batch); or, if the commits are stale, delete the group's offsets on those topics (kafka-consumer-groups --delete-offsets) or delete the group; or, if a live app outside this route owns the group, stop or move it, then delete the group"
+	if res.OK || res.Detail != want {
+		t.Errorf("result = %+v\nwant fail with detail\n%q", res, want)
+	}
+}
+
+func TestUntrackedOffLinkWarning_PinnedText(t *testing.T) {
+	const consequence = "no source consumer group has committed offsets on them, so they are not checked; after the switch the route sends their traffic to the destination — migrate them first if anything on this route still reads or writes them"
+	link := map[string]struct{}{"t1": {}}
+	for _, tc := range []struct {
+		name   string
+		topics []string
+		want   string
+	}{
+		{"ordinary only", []string{"t1", "orders"}, "topic(s) orders are not on the cluster link and " + consequence},
+		{"internal only", []string{"t1", "_x"}, "topic(s) _x are not on the cluster link and are probably internal (name starts with '_'); " + consequence},
+		{"both", []string{"t1", "orders", "_x"}, "topic(s) orders are not on the cluster link and " + consequence + ". Also not on the link, and probably internal (name starts with '_'): _x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := untrackedOffLinkWarning(tc.topics, link, nil); got != tc.want {
+				t.Errorf("got\n%q\nwant\n%q", got, tc.want)
+			}
+		})
+	}
+}

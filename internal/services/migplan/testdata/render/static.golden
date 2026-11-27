@@ -1,0 +1,15 @@
+Migration plan · route "migration-route" → cc
+
+Route checks
+  [OK] route is static
+  [OK] route has no fence kcp didn't write
+  [OK] target domain declares exactly one bootstrap server id
+  [OK] route carries pre-staged auth for the target domain
+  [OK] staged auth secrets exist
+  [OK] source cluster matches the cluster link
+  [OK] target cluster matches the manifest
+
+Topics · 1 requested
+  + orders  ready
+
+Plan: 1 to migrate, 0 unchanged  (plan ready)

@@ -185,3 +185,38 @@ func TestResolveStagedSecretNames(t *testing.T) {
 		t.Fatalf("names for an undeclared/unstaged domain = %v, want nil", got)
 	}
 }
+
+func TestCheckStaticPreconditions_StagedAuthPinnedText(t *testing.T) {
+	const name = "route carries pre-staged auth for the target domain"
+	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
+	staged := func(gw *GatewayConfig) map[string]any {
+		return gw.Route.Raw["security"].(map[string]any)["cluster"].(map[string]any)["cc"].(map[string]any)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(gw *GatewayConfig)
+		want   string
+	}{
+		{"no block", func(gw *GatewayConfig) { delete(gw.Route.Raw, "security") },
+			`route "migration-route" has no pre-staged security.cluster.cc block — the redundant auth this switch depends on is not configured`},
+		{"no secretStore", func(gw *GatewayConfig) { delete(staged(gw), "secretStore") },
+			`route "migration-route"'s security.cluster.cc has no secretStore`},
+		{"no authentication", func(gw *GatewayConfig) { delete(staged(gw), "authentication") },
+			`route "migration-route"'s security.cluster.cc has no authentication block`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw := staticGateway()
+			tc.mutate(gw)
+			res, _, _ := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
+			var got *PreconditionResult
+			for i := range res {
+				if res[i].Name == name {
+					got = &res[i]
+				}
+			}
+			if got == nil || got.OK || got.Detail != tc.want {
+				t.Errorf("check %q = %+v\nwant fail with detail\n%q", name, got, tc.want)
+			}
+		})
+	}
+}
