@@ -962,3 +962,22 @@ func TestListClusterLinks_FiltersEmptyNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"real-link", "another"}, links, "empty-named UNMANAGED_SOURCE entries must be filtered")
 }
+
+// A copy of a bidirectional link reports remote_cluster_id and a null
+// source_cluster_id, on CP and CC alike.
+func TestGetClusterLink_DecodesBidirectionalFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"link_name":"bidi","link_id":"7f83ea82-756a-4a59-8654-f287c8c639e2","cluster_id":"LKsb","source_cluster_id":null,"destination_cluster_id":null,"remote_cluster_id":"6ub6","link_state":"ACTIVE","link_error":"NO_ERROR"}`))
+	}))
+	defer server.Close()
+
+	link, err := NewConfluentCloudService(server.Client()).GetClusterLink(context.Background(),
+		Config{RestEndpoint: server.URL, ClusterID: "LKsb", LinkName: "bidi", APIKey: "k", APISecret: "s"})
+	require.NoError(t, err)
+	assert.Equal(t, "6ub6", link.RemoteClusterID)
+	assert.Empty(t, link.SourceClusterID)
+	assert.Empty(t, link.DestinationClusterID)
+	assert.Equal(t, "NO_ERROR", link.LinkError)
+	assert.Equal(t, "7f83ea82-756a-4a59-8654-f287c8c639e2", link.LinkID)
+}

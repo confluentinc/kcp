@@ -137,8 +137,6 @@ type listingGaps struct {
 // and the credential gaps into the plain data ReconcileConvert reads.
 func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string, gaps listingGaps) reconcile.GroupFacts {
 	f := reconcile.GroupFacts{
-		TargetStates:            make(map[string]string, len(target)),
-		TargetTypes:             make(map[string]string, len(target)),
 		TrackedTopics:           tracked,
 		SourceListingIncomplete: gaps.sourceGroups,
 		TargetListingIncomplete: gaps.targetGroups,
@@ -146,9 +144,17 @@ func groupFacts(target []types.ConsumerGroupListing, tracked map[string][]string
 		TargetTopicsIncomplete:  gaps.targetTopics,
 		TargetCommitDenied:      gaps.targetCommit,
 	}
-	for _, l := range target {
-		f.TargetStates[l.GroupID] = l.State
-		f.TargetTypes[l.GroupID] = l.Type
-	}
+	f.TargetStates, f.TargetTypes = listingStates(target)
 	return f
+}
+
+// listingStates maps each listed group to its state and its type.
+func listingStates(l []types.ConsumerGroupListing) (states, groupTypes map[string]string) {
+	states = make(map[string]string, len(l))
+	groupTypes = make(map[string]string, len(l))
+	for _, g := range l {
+		states[g.GroupID] = g.State
+		groupTypes[g.GroupID] = g.Type
+	}
+	return states, groupTypes
 }

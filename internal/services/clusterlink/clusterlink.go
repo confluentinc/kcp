@@ -65,6 +65,10 @@ type ClusterLink struct {
 	SourceClusterID string `json:"source_cluster_id"`
 	LinkState       string `json:"link_state"`
 	LinkError       string `json:"link_error,omitempty"`
+	// RemoteClusterID is the other cluster of a bidirectional link, whose two
+	// copies report a null source_cluster_id and destination_cluster_id.
+	RemoteClusterID      string `json:"remote_cluster_id,omitempty"`
+	DestinationClusterID string `json:"destination_cluster_id,omitempty"`
 }
 
 type MirrorLag struct {
@@ -92,6 +96,11 @@ const (
 	// promote request is accepted but before it reaches STOPPED. Distinct from a
 	// genuine failure: the promotion is in flight and will settle to STOPPED.
 	MirrorStatusPendingStopped = "PENDING_STOPPED"
+	// MirrorStatusPendingSynchronize and MirrorStatusPendingMirror are the
+	// transient statuses of a reverse-and-start on a bidirectional link: the
+	// copy being made writable synchronizes, the other starts mirroring.
+	MirrorStatusPendingSynchronize = "PENDING_SYNCHRONIZE"
+	MirrorStatusPendingMirror      = "PENDING_MIRROR"
 )
 
 // Config holds cluster link configuration
