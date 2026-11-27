@@ -14,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/groupoffsets"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/tracing"
 	"github.com/confluentinc/kcp/internal/types"
 	"go.opentelemetry.io/otel/attribute"
@@ -90,7 +91,13 @@ type Result struct {
 	// documents for static; whole rules: blocks for the fence and rollback and
 	// a whole {route: …} (the route converted to static) for the switchover
 	// under convert. Each applies to the named route, never as the whole CR.
+	// reversible-static artifacts have the static shapes.
 	Mode reconcile.PlanMode
+
+	// Reversal is a reversible static plan's sides, the copy of the link to
+	// reverse on, its topic lists and its in-scope groups; nil for every other
+	// mode and on a refusal.
+	Reversal *reconcile.Reversal
 }
 
 // reconcileOptions holds the dependencies Reconcile builds by default but lets
@@ -164,6 +171,14 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		opt(&o)
 	}
 
+	switch g.Spec.MigrationType() {
+	case manifest.MigrationTypeReversibleStatic:
+		return runReversibleAndRender(ctx, g, o)
+	case manifest.MigrationTypeStatic, manifest.MigrationTypeDynamic, manifest.MigrationTypeDynamicToStatic:
+	default:
+		return nil, manifest.NoSectionDeclaredError()
+	}
+
 	in, err := buildReconcileInput(g)
 	if err != nil {
 		return nil, err
@@ -228,7 +243,45 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 		Route:        g.Spec.DeclaredRoute().Name,
 		TargetDomain: g.Spec.DeclaredRoute().TargetStreamingDomain,
 		ArtifactNote: "plan ready",
-		Conversion:   in.Type == reconcile.TypeDynamicToStatic,
+		Mode:         res.Mode,
+	})
+	return res, nil
+}
+
+// runReversibleAndRender is Reconcile for a reversible static migration: its
+// own input and providers, both copies of the link, and its own report header.
+func runReversibleAndRender(ctx context.Context, g *manifest.GatewayMigration, o reconcileOptions) (*Result, error) {
+	in, err := buildReversibleInput(g)
+	if err != nil {
+		return nil, err
+	}
+	gw, secrets, err := wireGatewayAndSecrets(g, o, in.Route)
+	if err != nil {
+		return nil, err
+	}
+	p, closer, err := buildReversibleProviders(g, gw, secrets)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = closer.Close() }()
+
+	plan, err := RunReversible(ctx, in, p)
+	if err != nil {
+		return nil, err
+	}
+	res := newResult(plan)
+	res.Route = in.Route
+
+	out := o.out
+	if out == nil {
+		out = os.Stdout
+	}
+	RenderReport(out, res.Report, RenderView{
+		Route:        in.Route,
+		TargetDomain: in.WritableOn,
+		ArtifactNote: "plan ready",
+		Mode:         res.Mode,
+		Reversal:     res.Reversal,
 	})
 	return res, nil
 }
@@ -236,7 +289,7 @@ func runAndRender(ctx context.Context, engine *ReconciliationEngine, in reconcil
 func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), RestoreOffsetSync: plan.Report.RestoreOffsetSync,
 		NothingToDo: plan.NothingToDo, GatewayYAML: plan.GatewayYAML, PlanBaseline: plan.GatewayGeneration,
-		Report: plan.Report, Mode: plan.Mode}
+		Report: plan.Report, Mode: plan.Mode, Reversal: plan.Reversal}
 	if plan.Artifacts != nil {
 		r.PromoteTopics = plan.Artifacts.PromoteTopics
 		r.AwaitStopped = plan.Artifacts.AwaitStopped
@@ -335,7 +388,10 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration, svc *gateway.K8sS
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
 	t := g.Spec.MigrationType()
 	if t == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec: exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+		return reconcile.ReconcileInput{}, manifest.NoSectionDeclaredError()
+	}
+	if t == manifest.MigrationTypeReversibleStatic {
+		return reconcile.ReconcileInput{}, fmt.Errorf("internal error: %s is reconciled through its own input", manifest.SectionReversibleStaticMigration)
 	}
 	section := "spec." + t.SectionKey()
 	r := g.Spec.DeclaredRoute()
@@ -363,6 +419,8 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		in.Type = reconcile.TypeStatic
 	case manifest.MigrationTypeDynamic:
 		in.Type = reconcile.TypeDynamic
+	default:
+		return reconcile.ReconcileInput{}, fmt.Errorf("internal error: no reconcile input for migration type %q", t)
 	}
 
 	tgs := g.Spec.DeclaredTopicGroup()
@@ -380,6 +438,133 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		return reconcile.ReconcileInput{}, fmt.Errorf("%s.topicGroup[0]: at least one of topics / topicPatterns is required", section)
 	}
 	return in, nil
+}
+
+// buildReversibleInput maps spec.reversibleStaticMigration, the source and
+// target cluster pins and the link name onto the core's input.
+func buildReversibleInput(g *manifest.GatewayMigration) (reconcile.ReversibleInput, error) {
+	m := g.Spec.ReversibleStaticMigration
+	if m == nil || g.Spec.MigrationType() != manifest.MigrationTypeReversibleStatic {
+		return reconcile.ReversibleInput{}, fmt.Errorf("internal error: the manifest does not declare %s", manifest.SectionReversibleStaticMigration)
+	}
+	section := "spec." + manifest.SectionReversibleStaticMigration
+	if len(m.TopicGroup) != 1 {
+		return reconcile.ReversibleInput{}, fmt.Errorf("%s.topicGroup: exactly one entry is required, got %d", section, len(m.TopicGroup))
+	}
+	in := reconcile.ReversibleInput{
+		Route:           m.Route.Name,
+		LinkName:        g.Spec.ClusterLink.Name,
+		SourceDomain:    m.Route.SourceStreamingDomain,
+		TargetDomain:    m.Route.TargetStreamingDomain,
+		WritableOn:      m.WritableOn,
+		SourceClusterID: g.Spec.Source.ClusterID,
+		TargetClusterID: g.Spec.Target.ClusterID,
+	}
+	if tg := m.TopicGroup[0]; tg.Topics != nil {
+		in.Topics = *tg.Topics
+	}
+	if tg := m.TopicGroup[0]; tg.TopicPatterns != nil {
+		in.TopicPatterns = *tg.TopicPatterns
+	}
+	if len(in.Topics) == 0 && len(in.TopicPatterns) == 0 {
+		return reconcile.ReversibleInput{}, fmt.Errorf("%s.topicGroup[0]: at least one of topics / topicPatterns is required", section)
+	}
+	return in, nil
+}
+
+// buildReversibleProviders builds a reversible migration's live reads from the
+// manifest: both copies of the link first (REST only, so a bad credential
+// fails before any broker is dialled), then a topic lister and a group lister
+// on each cluster. The returned io.Closer closes every client it opened; on
+// an error nothing is left open.
+func buildReversibleProviders(g *manifest.GatewayMigration, gw GatewayConfigSource, secrets SecretExistenceChecker) (ReversibleProviders, io.Closer, error) {
+	var opened closers
+	fail := func(err error) (ReversibleProviders, io.Closer, error) {
+		_ = opened.Close()
+		return ReversibleProviders{}, nil, err
+	}
+	srcLink, tgtLink, err := buildReversibleLinkCopies(g)
+	if err != nil {
+		return fail(err)
+	}
+	src, c, err := buildSourceTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, c)
+	tgt, c, err := buildTargetTopicLister(g)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, c)
+	srcConn, err := sourceConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	srcGroups, c, err := buildGroupLister(srcConn, manifest.DefaultOffsetSyncConcurrency)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, c)
+	tgtConn, err := targetConn(g)
+	if err != nil {
+		return fail(err)
+	}
+	tgtGroups, c, err := buildGroupLister(tgtConn, manifest.DefaultOffsetSyncConcurrency)
+	if err != nil {
+		return fail(err)
+	}
+	opened = append(opened, c)
+	return ReversibleProviders{
+		Gateway:      gw,
+		Source:       src,
+		Target:       tgt,
+		SourceLink:   srcLink,
+		TargetLink:   tgtLink,
+		Secrets:      secrets,
+		SourceGroups: srcGroups,
+		TargetGroups: tgtGroups,
+	}, opened, nil
+}
+
+// buildReversibleLinkCopies builds the reader of each copy of the link: the
+// source copy over the source's REST endpoint with sourceLinkCredentials, the
+// target copy over the target's with linkCredentials.
+func buildReversibleLinkCopies(g *manifest.GatewayMigration) (source, target LinkCopyProvider, err error) {
+	if g.Spec.Target.Kafka == nil {
+		return nil, nil, fmt.Errorf("spec.target.kafka: required")
+	}
+	srcCreds, err := g.SourceRestCredentials()
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving source REST credentials: %w", err)
+	}
+	if source, err = buildLinkCopy(g.Spec.Source.RestEndpoint, g.Spec.Source.ClusterID, g.Spec.ClusterLink.Name, srcCreds); err != nil {
+		return nil, nil, fmt.Errorf("building source REST client: %w", err)
+	}
+	tgtCreds, err := g.RestCredentials()
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving destination REST credentials: %w", err)
+	}
+	if target, err = buildLinkCopy(g.Spec.Target.Kafka.RestEndpoint, g.Spec.Target.ClusterID, g.Spec.ClusterLink.Name, tgtCreds); err != nil {
+		return nil, nil, fmt.Errorf("building destination REST client: %w", err)
+	}
+	return source, target, nil
+}
+
+// buildLinkCopy is buildLinkStatusProvider for one copy of a bidirectional
+// link: its own REST service and HTTP client, since TLS trust is per service.
+func buildLinkCopy(endpoint, clusterID, linkName string, creds *targets.Credentials) (LinkCopyProvider, error) {
+	httpClient, err := creds.HTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	return NewClusterLinkCopy(clusterlink.NewConfluentCloudService(httpClient), clusterlink.Config{
+		RestEndpoint: endpoint,
+		ClusterID:    clusterID,
+		LinkName:     linkName,
+		Auth:         creds.Authenticator(),
+		Topics:       []string{},
+	}), nil
 }
 
 // buildLinkStatusProvider mirrors lagcheck.buildLagCheckConfig: the destination

@@ -37,7 +37,7 @@ func TestMigrationType_DeclaredSection(t *testing.T) {
 func TestMigrationType_NoSectionRejected(t *testing.T) {
 	g := parseGateway(t, gatewayDocBase)
 	assert.Equal(t, MigrationType(""), g.Spec.MigrationType())
-	requireErrContains(t, g.Validate(), "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion is required")
+	requireErrContains(t, g.Validate(), "exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion, reversibleStaticMigration is required")
 	requireErrContains(t, g.Validate(), "found: none")
 }
 
@@ -226,9 +226,10 @@ func TestGatewaySpec_ValidatePoliciesUsesTheDeclaredSection(t *testing.T) {
 // appear as a snake_case key.
 func TestPolicyLogArgs_CoverEveryField(t *testing.T) {
 	for name, v := range map[string]any{
-		"static":  StaticPolicies{},
-		"dynamic": DynamicPolicies{},
-		"d2s":     DynamicToStaticPolicies{},
+		"static":     StaticPolicies{},
+		"dynamic":    DynamicPolicies{},
+		"d2s":        DynamicToStaticPolicies{},
+		"reversible": ReversibleStaticPolicies{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var args []any
@@ -238,6 +239,8 @@ func TestPolicyLogArgs_CoverEveryField(t *testing.T) {
 			case DynamicPolicies:
 				args = p.LogArgs()
 			case DynamicToStaticPolicies:
+				args = p.LogArgs()
+			case ReversibleStaticPolicies:
 				args = p.LogArgs()
 			}
 			keys := map[string]bool{}
@@ -308,14 +311,15 @@ func TestParse_LegacyShapeGetsATargetedHint(t *testing.T) {
 func TestDeclaredCommonPolicies(t *testing.T) {
 	const policies = "    policies:\n      hotReloadTimeout: 45s\n      gatewayConfigPort: 9181\n"
 	want := CommonPolicies{HotReloadTimeout: 45 * time.Second, GatewayConfigPort: 9181}
-	cases := []struct{ name, block string }{
-		{"static", staticMigrationBlock},
-		{"dynamic", dynamicMigrationBlock},
-		{"conversion", conversionBlock},
+	cases := []struct{ name, doc string }{
+		{"static", gatewayDocBase + staticMigrationBlock},
+		{"dynamic", gatewayDocBase + dynamicMigrationBlock},
+		{"conversion", gatewayDocBase + conversionBlock},
+		{"reversible", validReversibleDoc},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			g := parseGateway(t, gatewayDocBase+c.block+policies)
+			g := parseGateway(t, c.doc+policies)
 			require.Empty(t, g.Validate())
 			assert.Equal(t, want, g.Spec.DeclaredCommonPolicies())
 		})

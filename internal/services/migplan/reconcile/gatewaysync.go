@@ -70,6 +70,7 @@ func stripToRefusal(plan *Plan) {
 	plan.NothingToDo = false
 	plan.Report.RestoreOffsetSync = false
 	plan.Report.ConvertToStatic = false
+	plan.Reversal = nil
 }
 
 // gatewayStepsAlreadyDone lists the gateway-side steps the plan counts as
@@ -80,6 +81,14 @@ func gatewayStepsAlreadyDone(plan *Plan) []string {
 	var done []string
 	if plan.Artifacts != nil && plan.Artifacts.FencedAtStart {
 		done = append(done, "the fence")
+	}
+	if plan.Mode == ModeReversibleStatic {
+		// A reversed topic was reversed behind an earlier fence, and an
+		// unchanged one is behind an earlier switch.
+		if n := len(plan.Report.SwitchOnly) + len(plan.Report.AwaitStopped) + len(plan.Report.Unchanged); n > 0 {
+			done = append(done, fmt.Sprintf("%d topic(s) already writable on the writable side", n))
+		}
+		return done
 	}
 	convert := plan.Mode == ModeConvert
 	if n := len(plan.Report.Unchanged); n > 0 {

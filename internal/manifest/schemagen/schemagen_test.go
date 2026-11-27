@@ -115,16 +115,17 @@ func TestGenerateGateway_TopLevelProperties(t *testing.T) {
 func TestGenerateGateway_Enums(t *testing.T) {
 	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
 	srcType := props(t, spec["source"].(map[string]any))["type"].(map[string]any)
-	require.Equal(t, []any{"msk", "apache-kafka"}, srcType["enum"],
-		"the gateway migration reads from MSK or Apache Kafka only")
+	require.Equal(t, []any{"msk", "apache-kafka", "confluent-platform", "confluent-cloud"}, srcType["enum"],
+		"the Confluent source types exist for reversibleStaticMigration")
 	tgtType := props(t, spec["target"].(map[string]any))["type"].(map[string]any)
 	require.Equal(t, []any{"confluent-cloud", "confluent-platform"}, tgtType["enum"])
 }
 
-func sections(t *testing.T) (spec, static, dynamic, conv map[string]any) {
+func sections(t *testing.T) (spec, static, dynamic, conv, rev map[string]any) {
 	t.Helper()
 	spec = props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
-	return spec, spec["staticMigration"].(map[string]any), spec["dynamicMigration"].(map[string]any), spec["dynamicToStaticConversion"].(map[string]any)
+	return spec, spec["staticMigration"].(map[string]any), spec["dynamicMigration"].(map[string]any), spec["dynamicToStaticConversion"].(map[string]any),
+		spec["reversibleStaticMigration"].(map[string]any)
 }
 
 func requiredOf(schema map[string]any) []any {
@@ -135,13 +136,13 @@ func requiredOf(schema map[string]any) []any {
 func TestGenerateGateway_SpecDeclaresExactlyOneSection(t *testing.T) {
 	p := props(t, gatewayMap(t))["spec"].(map[string]any)
 	oneOf, ok := p["oneOf"].([]any)
-	require.True(t, ok, "spec must carry a oneOf: exactly one of the three migration sections")
-	require.Len(t, oneOf, 3)
+	require.True(t, ok, "spec must carry a oneOf: exactly one of the migration sections")
+	require.Len(t, oneOf, 4)
 	var got []string
 	for _, b := range oneOf {
 		got = append(got, b.(map[string]any)["required"].([]any)[0].(string))
 	}
-	require.ElementsMatch(t, []string{"staticMigration", "dynamicMigration", "dynamicToStaticConversion"}, got)
+	require.ElementsMatch(t, []string{"staticMigration", "dynamicMigration", "dynamicToStaticConversion", "reversibleStaticMigration"}, got)
 	spec := props(t, p)
 	for _, k := range []string{"route", "defaultPolicies"} {
 		require.NotContains(t, spec, k, "spec.%s is retired — see the three migration sections", k)
@@ -152,7 +153,7 @@ func TestGenerateGateway_SpecDeclaresExactlyOneSection(t *testing.T) {
 }
 
 func TestGenerateGateway_SectionsAreObjectsWithTheirOwnFields(t *testing.T) {
-	_, static, dynamic, conv := sections(t)
+	_, static, dynamic, conv, rev := sections(t)
 	for name, sec := range map[string]map[string]any{"static": static, "dynamic": dynamic, "conv": conv} {
 		require.Equal(t, "object", sec["type"], "%s must be a plain object, not nullable", name)
 		route := props(t, sec)["route"].(map[string]any)
@@ -167,8 +168,15 @@ func TestGenerateGateway_SectionsAreObjectsWithTheirOwnFields(t *testing.T) {
 	require.Contains(t, props(t, static), "consumerOffsetSync")
 	require.NotContains(t, props(t, dynamic), "consumerOffsetSync")
 
+	require.Equal(t, "object", rev["type"], "reversibleStaticMigration must be a plain object, not nullable")
+	require.NotEmpty(t, rev["description"])
+	require.ElementsMatch(t, []any{"route", "writableOn", "topicGroup"}, requiredOf(rev))
+	revRoute := props(t, rev)["route"].(map[string]any)
+	require.ElementsMatch(t, []any{"name", "sourceStreamingDomain", "targetStreamingDomain"}, requiredOf(revRoute))
+	require.NotContains(t, props(t, rev), "consumerOffsetSync")
+
 	// At least one of topics/topicPatterns (not expressible on the struct).
-	for _, sec := range []map[string]any{static, dynamic} {
+	for _, sec := range []map[string]any{static, dynamic, rev} {
 		item := props(t, sec)["topicGroup"].(map[string]any)["items"].(map[string]any)
 		anyOf, ok := item["anyOf"].([]any)
 		require.True(t, ok)
@@ -177,7 +185,7 @@ func TestGenerateGateway_SectionsAreObjectsWithTheirOwnFields(t *testing.T) {
 }
 
 func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
-	_, static, _, _ := sections(t)
+	_, static, _, _, _ := sections(t)
 	cos := props(t, props(t, static)["consumerOffsetSync"].(map[string]any))
 	require.Equal(t, []any{"enabled", "disabled"}, cos["baseline"].(map[string]any)["enum"])
 }
@@ -185,13 +193,14 @@ func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
 // Review Focus: every policies block carries its section's fields — including the
 // inlined common fields, which the reflector must promote.
 func TestGenerateGateway_PoliciesPerSection(t *testing.T) {
-	_, static, dynamic, conv := sections(t)
+	_, static, dynamic, conv, rev := sections(t)
 	want := map[string][]string{
 		"static":  {"lagThreshold", "promoteBatchSize", "rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout", "gatewayConfigPort"},
 		"dynamic": {"lagThreshold", "promoteBatchSize", "rolloutTimeout", "detectUnroutedProducersDuration", "hotReloadTimeout", "gatewayConfigPort"},
 		"conv":    {"rolloutTimeout", "detectUnroutedCommitsDuration", "offsetSyncConcurrency", "hotReloadTimeout", "gatewayConfigPort"},
+		"rev":     {"hotReloadTimeout", "gatewayConfigPort"},
 	}
-	for name, sec := range map[string]map[string]any{"static": static, "dynamic": dynamic, "conv": conv} {
+	for name, sec := range map[string]map[string]any{"static": static, "dynamic": dynamic, "conv": conv, "rev": rev} {
 		policy := props(t, props(t, sec)["policies"].(map[string]any))
 		var got []string
 		for k := range policy {
@@ -204,6 +213,7 @@ func TestGenerateGateway_PoliciesPerSection(t *testing.T) {
 	}
 	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(props(t, static)["policies"].(map[string]any)))
 	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(props(t, dynamic)["policies"].(map[string]any)))
+	require.Empty(t, requiredOf(props(t, rev)["policies"].(map[string]any)))
 }
 
 // jsonschema-go reflects time.Duration as an integer, but goccy parses "10m";
@@ -212,7 +222,7 @@ func TestGenerateGateway_PoliciesPerSection(t *testing.T) {
 // inlined common fields) so a newly added Duration field that GenerateGateway
 // forgets to patch fails here.
 func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
-	_, static, dynamic, conv := sections(t)
+	_, static, dynamic, conv, rev := sections(t)
 	durationType := reflect.TypeOf(time.Duration(0))
 	check := func(name string, sec map[string]any, v any) {
 		policy := props(t, props(t, sec)["policies"].(map[string]any))
@@ -242,6 +252,7 @@ func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
 	check("static", static, manifest.StaticPolicies{})
 	check("dynamic", dynamic, manifest.DynamicPolicies{})
 	check("conv", conv, manifest.DynamicToStaticPolicies{})
+	check("reversible", rev, manifest.ReversibleStaticPolicies{})
 	require.Equal(t, "integer", props(t, props(t, static)["policies"].(map[string]any))["lagThreshold"].(map[string]any)["type"])
 }
 
@@ -272,6 +283,7 @@ func TestGenerateGateway_CredentialsAreStrings(t *testing.T) {
 		src["credentials"].(map[string]any),
 		kafka["clusterCredentials"].(map[string]any),
 		link["linkCredentials"].(map[string]any),
+		link["sourceLinkCredentials"].(map[string]any),
 	} {
 		require.Equal(t, "string", f["type"])
 		require.NotContains(t, f, "oneOf")
@@ -279,6 +291,18 @@ func TestGenerateGateway_CredentialsAreStrings(t *testing.T) {
 	}
 
 	require.NotContains(t, doc, "$defs", "no field accepts an inline object, so there are no credential $defs")
+}
+
+func TestGenerateGateway_SourceConfluentFields(t *testing.T) {
+	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
+	source := spec["source"].(map[string]any)
+	src := props(t, source)
+	for _, k := range []string{"clusterId", "restEndpoint"} {
+		f, ok := src[k].(map[string]any)
+		require.True(t, ok, "spec.source.%s is missing", k)
+		require.NotEmpty(t, f["description"], "spec.source.%s needs a description", k)
+	}
+	require.ElementsMatch(t, []any{"type", "bootstrapServers", "credentials"}, requiredOf(source))
 }
 
 // TestGenerateGateway_NoOneOfAnywhere — with inline credentials removed, no
@@ -325,7 +349,7 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 }
 
 func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
-	spec, static, dynamic, _ := sections(t)
+	spec, static, dynamic, _, _ := sections(t)
 	policy := props(t, props(t, static)["policies"].(map[string]any))
 	require.Contains(t, policy["detectUnroutedProducersDuration"].(map[string]any)["description"], "minimum 10s")
 	require.Contains(t, policy["promoteBatchSize"].(map[string]any)["description"], "0")

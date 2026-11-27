@@ -18,10 +18,15 @@ type RenderView struct {
 	TargetDomain string
 	Verbose      bool
 	ArtifactNote string // shown in the success footer, e.g. "artifacts → ./out"
-	// Conversion renders a route conversion (spec.dynamicToStaticConversion): its topics are the cluster
-	// link's, each promoted one reads "promoted", and the footer counts link topics instead of
-	// topics to migrate.
-	Conversion bool
+	// Mode is the plan's mode. A conversion (ModeConvert) lists the cluster
+	// link's topics, each promoted one reads "promoted", and the footer counts
+	// link topics instead of topics to migrate. A reversible static plan
+	// (ModeReversibleStatic) heads the report with the move and the copy of the
+	// link it reverses on, from Reversal.
+	Mode reconcile.PlanMode
+	// Reversal is a reversible static plan's sides and topic lists; nil on a
+	// refusal, when the header names TargetDomain as where the route ends up.
+	Reversal *reconcile.Reversal
 }
 
 // RenderReport writes the topic-centric plan to w: a header, the route checks
@@ -39,11 +44,16 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	yellow := color.New(color.FgYellow)
 	faint := color.New(color.Faint)
 	bold := color.New(color.Bold)
+	conversion := v.Mode == reconcile.ModeConvert
+	reversible := v.Mode == reconcile.ModeReversibleStatic
 
 	if v.Route != "" {
-		if v.Conversion {
+		switch {
+		case conversion:
 			_, _ = fmt.Fprintln(w, bold.Sprintf("Conversion plan · route %q → static on %s", v.Route, v.TargetDomain))
-		} else {
+		case reversible:
+			renderReversibleHeader(w, bold, v)
+		default:
 			_, _ = fmt.Fprintln(w, bold.Sprintf("Migration plan · route %q → %s", v.Route, v.TargetDomain))
 		}
 		_, _ = fmt.Fprintln(w)
@@ -87,7 +97,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	// Topics — blocked first (what Omar must fix), then ready, then unchanged.
 	total := len(r.FailFast) + len(r.Migratable) + len(r.SwitchOnly) + len(r.AwaitStopped) + len(r.Unchanged)
 	switch {
-	case !v.Conversion:
+	case !conversion:
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintf(w, "Topics · %d requested\n", total)
 	case total > 0:
@@ -96,8 +106,13 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 	// A conversion's settled topics are promoted mirrors already routed to the target.
 	unchangedWord := "unchanged"
-	if v.Conversion {
+	if conversion {
 		unchangedWord = "promoted"
+	}
+	// A reversible plan's in-flight topics are mid-reversal; nothing is promoted.
+	awaitWord := "awaiting promotion"
+	if reversible {
+		awaitWord = "awaiting reversal"
 	}
 
 	width := 0
@@ -135,7 +150,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 		renderTopic("→", green, "switch (resume)", tv, false)
 	}
 	for _, tv := range r.AwaitStopped {
-		renderTopic("~", yellow, "awaiting promotion", tv, false)
+		renderTopic("~", yellow, awaitWord, tv, false)
 	}
 	for _, tv := range r.Unchanged {
 		renderTopic("=", faint, unchangedWord, tv, false)
@@ -149,7 +164,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	// Footer — Terraform-style counts, blocked shown only when there are any.
 	nMig, nBlk, nUnch := len(r.Migratable), len(r.FailFast), len(r.Unchanged)
 	var parts []string
-	if v.Conversion {
+	if conversion {
 		parts = conversionFooterParts(r, total)
 	} else {
 		parts = append(parts, fmt.Sprintf("%d to migrate", nMig))
@@ -160,7 +175,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 			parts = append(parts, fmt.Sprintf("%d to switch", n))
 		}
 		if n := len(r.AwaitStopped); n > 0 {
-			parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
+			parts = append(parts, fmt.Sprintf("%d %s", n, awaitWord))
 		}
 		parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
 		if r.RestoreOffsetSync {
@@ -186,6 +201,28 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "Plan: %s  %s\n", strings.Join(parts, ", "), outcome)
+}
+
+// renderReversibleHeader names the route and the move (from the side it is
+// bound to, to the writable side), the copy of the link a reversal runs on when
+// there is one, and a back-out.
+func renderReversibleHeader(w io.Writer, bold *color.Color, v RenderView) {
+	r := v.Reversal
+	if r == nil {
+		_, _ = fmt.Fprintln(w, bold.Sprintf("Reversible migration plan · route %q → %s", v.Route, v.TargetDomain))
+		return
+	}
+	bound := r.Sides.MirrorDomain
+	if r.Sides.Bound == r.Sides.Writable {
+		bound = r.Sides.WritableDomain
+	}
+	_, _ = fmt.Fprintln(w, bold.Sprintf("Reversible migration plan · route %q: %s → %s", v.Route, bound, r.Sides.WritableDomain))
+	if len(r.Reverse)+len(r.AwaitStopped) > 0 {
+		_, _ = fmt.Fprintf(w, "Reversal runs on the %s copy of the link (%s)\n", r.ReverseOn, r.Sides.WritableDomain)
+	}
+	if r.Sides.BackOut {
+		_, _ = fmt.Fprintf(w, "Back-out: the route stays on %s; the switch only removes kcp's fence\n", r.Sides.WritableDomain)
+	}
 }
 
 // renderEvidence prints what a check observed, one line each, under it.

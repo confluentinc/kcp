@@ -852,6 +852,12 @@ func gatewayOf(t *testing.T, mt manifest.MigrationType) *manifest.GatewayMigrati
 		g.Spec.DynamicMigration = &manifest.DynamicMigration{Route: route, TopicGroup: tg}
 	case manifest.MigrationTypeDynamicToStatic:
 		g.Spec.DynamicToStaticConversion = &manifest.DynamicToStaticConversion{Route: route}
+	case manifest.MigrationTypeReversibleStatic:
+		g.Spec.ReversibleStaticMigration = &manifest.ReversibleStaticMigration{
+			Route:      manifest.ReversibleRouteRef{Name: "migration-route", SourceStreamingDomain: "cp", TargetStreamingDomain: "cc"},
+			WritableOn: "cc",
+			TopicGroup: tg,
+		}
 	}
 	return g
 }
@@ -1005,4 +1011,157 @@ func TestShareGatewayService_ABuildFailureSharesNothing(t *testing.T) {
 
 	assert.Nil(t, svc)
 	assert.Nil(t, shared.convertOver)
+}
+
+// reversibleManifest is a valid reversibleStaticMigration manifest.
+func reversibleManifest(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cred := func(name, body string) string { return testsupport.WriteCredFile(t, dir, name, "", body) }
+	doc := `apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: cp-to-cc
+spec:
+  source:
+    type: confluent-platform
+    clusterId: src-cluster
+    restEndpoint: http://localhost:18190
+    bootstrapServers:
+      - localhost:19192
+    credentials: ` + cred("source.yaml", "unauthenticated_plaintext:\n  use: true\n") + `
+  target:
+    type: confluent-platform
+    clusterId: tgt-cluster
+    kafka:
+      bootstrapServers:
+        - localhost:29192
+      restEndpoint: http://localhost:28190
+      clusterCredentials: ` + cred("dest.yaml", "unauthenticated_plaintext:\n  use: true\n") + `
+  clusterLink:
+    name: rev-link
+    linkCredentials: ` + cred("link.yaml", defaultLinkCred) + `
+    sourceLinkCredentials: ` + cred("source-link.yaml", defaultLinkCred) + `
+  gateway:
+    namespace: confluent
+    cr-name: gateway-initial
+  reversibleStaticMigration:
+    route:
+      name: migration-route
+      sourceStreamingDomain: cp
+      targetStreamingDomain: cc
+    writableOn: cc
+    topicGroup:
+      - topics: [rev.a]
+`
+	p := filepath.Join(dir, "reversible.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(doc), 0o600))
+	return p
+}
+
+// fatalDeps fails the test if any dependency is built: nothing may be dialled.
+func fatalDeps(t *testing.T) executorDependencies {
+	return executorDependencies{
+		offsets: func(*manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
+			t.Fatal("offset providers built")
+			return nil, nil, nil, nil
+		},
+		gateway: func(*manifest.GatewayMigration) (gateway.TransitionClient, error) {
+			t.Fatal("gateway service built")
+			return nil, nil
+		},
+		k8s: func(*manifest.GatewayMigration) (*gateway.K8sService, error) {
+			t.Fatal("k8s service built")
+			return nil, nil
+		},
+		clusterLink: func(*manifest.GatewayMigration) (clusterlink.Service, error) {
+			t.Fatal("cluster-link service built")
+			return nil, nil
+		},
+		convert: func(*manifest.GatewayMigration, *gateway.K8sService) (convertServices, error) {
+			t.Fatal("convert services built")
+			return convertServices{}, nil
+		},
+	}
+}
+
+func TestExecute_ReversibleStaticRefusedWithoutDryRun(t *testing.T) {
+	cmd := newMigrationExecuteCmd(fatalDeps(t))
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--migration-yaml", reversibleManifest(t)})
+	err := cmd.Execute()
+	require.ErrorIs(t, err, errReversibleNotExecutable)
+	assert.NotContains(t, out.String(), "Migration completed")
+}
+
+func TestExecutePlan_ReversibleStaticRefused(t *testing.T) {
+	for _, nothingToDo := range []bool{false, true} {
+		var out strings.Builder
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		res := &migplan.Result{Mode: reconcile.ModeReversibleStatic, NothingToDo: nothingToDo}
+		err := executePlan(cmd, gatewayOf(t, manifest.MigrationTypeReversibleStatic), &migrun.MigrationConfig{}, res, fatalDeps(t))
+		require.ErrorIs(t, err, errReversibleNotExecutable, "nothingToDo=%v", nothingToDo)
+		assert.NotContains(t, out.String(), "completed", "nothingToDo=%v", nothingToDo)
+	}
+}
+
+func TestPlanModeFor_EveryTypeExplicit(t *testing.T) {
+	for typ, want := range map[manifest.MigrationType]reconcile.PlanMode{
+		manifest.MigrationTypeStatic:           reconcile.ModeStatic,
+		manifest.MigrationTypeDynamic:          reconcile.ModeDynamic,
+		manifest.MigrationTypeDynamicToStatic:  reconcile.ModeConvert,
+		manifest.MigrationTypeReversibleStatic: reconcile.ModeReversibleStatic,
+		"X":                                    "",
+	} {
+		assert.Equal(t, want, planModeFor(typ), "type %q", typ)
+	}
+}
+
+func TestReportDryRun_ModeMismatchErrors(t *testing.T) {
+	err := reportDryRun(&cobra.Command{}, gatewayOf(t, manifest.MigrationTypeDynamic), &migplan.Result{Mode: reconcile.ModeStatic})
+	require.ErrorContains(t, err, "internal error: the reconcile plan's mode \"static\" does not match the declared dynamicMigration")
+}
+
+func TestReportDryRun_RefusedErrorsBeforeModeCheck(t *testing.T) {
+	err := reportDryRun(&cobra.Command{}, gatewayOf(t, manifest.MigrationTypeDynamic), &migplan.Result{Refused: true, Mode: reconcile.ModeStatic})
+	require.ErrorContains(t, err, "dry-run: reconcile plan refused")
+}
+
+func TestReportDryRun_OK(t *testing.T) {
+	var out strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	g := gatewayOf(t, manifest.MigrationTypeReversibleStatic)
+	g.Metadata.Name = "cp-to-cc"
+	require.NoError(t, reportDryRun(cmd, g, &migplan.Result{Mode: reconcile.ModeReversibleStatic}))
+	assert.Contains(t, out.String(), "dry-run complete: reconcile plan produced for cp-to-cc")
+}
+
+func TestApplyPolicyOverrides_ReversibleStaticTakesOnlyCommonFlags(t *testing.T) {
+	cmd := newExecuteCmd(t)
+	require.NoError(t, cmd.Flags().Set("hot-reload-timeout", "45s"))
+	require.NoError(t, cmd.Flags().Set("gateway-config-port", "9181"))
+	g := gatewayOf(t, manifest.MigrationTypeReversibleStatic)
+	require.NoError(t, applyPolicyOverrides(cmd, g))
+	assert.Equal(t, manifest.CommonPolicies{HotReloadTimeout: 45 * time.Second, GatewayConfigPort: 9181}, g.Spec.ReversibleStaticMigration.Policies.CommonPolicies)
+
+	for flag, val := range map[string]string{
+		"lag-threshold":                       "1",
+		"promote-batch-size":                  "1",
+		"rollout-timeout":                     "10m",
+		"detect-unrouted-producers-duration":  "30s",
+		"consumer-offset-sync-drain-duration": "5s",
+		"detect-unrouted-commits-duration":    "30s",
+		"offset-sync-concurrency":             "4",
+	} {
+		t.Run(flag, func(t *testing.T) {
+			cmd := newExecuteCmd(t)
+			require.NoError(t, cmd.Flags().Set(flag, val))
+			err := applyPolicyOverrides(cmd, gatewayOf(t, manifest.MigrationTypeReversibleStatic))
+			require.ErrorContains(t, err, "--"+flag+" does not apply to a reversibleStaticMigration")
+		})
+	}
 }

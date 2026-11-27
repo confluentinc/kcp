@@ -89,26 +89,7 @@ const GroupSplitBrainCheckName = "no in-scope consumer group is active on the de
 // unrecognised one — counts as active, so an unreadable state can't let a
 // split-brain through.
 func CheckGroupSplitBrain(groups []string, targetStates map[string]string) (PreconditionResult, []string) {
-	var active, idle []string
-	anyUnknown := false
-	for _, g := range groups {
-		state, onTarget := targetStates[g]
-		if !onTarget {
-			continue
-		}
-		switch strings.ToLower(state) {
-		case "empty":
-			idle = append(idle, g)
-		case "dead":
-		case "":
-			anyUnknown = true
-			active = append(active, g+" (state unknown; treated as active)")
-		default:
-			active = append(active, fmt.Sprintf("%s (%s)", g, state))
-		}
-	}
-	sort.Strings(active)
-	sort.Strings(idle)
+	active, idle, anyUnknown := splitByState(groups, targetStates)
 
 	var warnings []string
 	if len(idle) > 0 {
@@ -129,6 +110,32 @@ func CheckGroupSplitBrain(groups []string, targetStates map[string]string) (Prec
 	return pass(GroupSplitBrainCheckName), warnings
 }
 
+// splitByState sorts groups by their state on the other cluster, ignoring
+// groups absent from states and Dead ones. active lists each as "group
+// (state)"; an empty or unrecognised state counts as active, so an unreadable
+// state can't pass, and sets unknown.
+func splitByState(groups []string, states map[string]string) (active, idle []string, unknown bool) {
+	for _, g := range groups {
+		state, present := states[g]
+		if !present {
+			continue
+		}
+		switch strings.ToLower(state) {
+		case "empty":
+			idle = append(idle, g)
+		case "dead":
+		case "":
+			unknown = true
+			active = append(active, g+" (state unknown; treated as active)")
+		default:
+			active = append(active, fmt.Sprintf("%s (%s)", g, state))
+		}
+	}
+	sort.Strings(active)
+	sort.Strings(idle)
+	return active, idle, unknown
+}
+
 // GroupShareClashCheckName names the precondition CheckGroupShareClash returns.
 const GroupShareClashCheckName = "no in-scope consumer group is a share group on the destination"
 
@@ -142,17 +149,24 @@ const GroupShareClashCheckName = "no in-scope consumer group is a share group on
 // predates share groups, is not a share group. Groups only on the destination
 // are ignored.
 func CheckGroupShareClash(groups []string, targetTypes map[string]string) PreconditionResult {
-	var clash []string
-	for _, g := range groups {
-		if strings.EqualFold(targetTypes[g], "share") {
-			clash = append(clash, g)
-		}
-	}
+	clash := shareGroupsAmong(groups, targetTypes)
 	if len(clash) == 0 {
 		return pass(GroupShareClashCheckName)
 	}
-	sort.Strings(clash)
 	return fail(GroupShareClashCheckName, fmt.Sprintf(
 		"consumer group(s) %s exist on the source and as share groups on the destination; a share group does not accept a consumer group's committed offsets, so the conversion could not carry them — delete the destination share group(s) (kafka-share-groups --delete) or stop using these names for them",
 		strings.Join(clash, ", ")))
+}
+
+// shareGroupsAmong returns, sorted, the groups that groupTypes says are share
+// groups.
+func shareGroupsAmong(groups []string, groupTypes map[string]string) []string {
+	var share []string
+	for _, g := range groups {
+		if strings.EqualFold(groupTypes[g], "share") {
+			share = append(share, g)
+		}
+	}
+	sort.Strings(share)
+	return share
 }

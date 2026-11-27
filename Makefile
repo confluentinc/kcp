@@ -106,7 +106,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-retries test-retries-setup test-retries-run test-retries-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-msk-emulator test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-idempotent-fsm test-idempotent-fsm-setup test-idempotent-fsm-run test-idempotent-fsm-teardown test-route-conversion test-route-conversion-setup test-route-conversion-run test-route-conversion-teardown test-retries test-retries-setup test-retries-run test-retries-teardown otel-up otel-down test-tracing test-tracing-setup test-tracing-run test-tracing-teardown test-osk-scan test-msk-emulator test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan test-env-up-migplan-reversible test-env-down-migplan-reversible test-migplan-reversible
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -328,6 +328,17 @@ test-migplan: build-frontend ## Run the migplan reconciliation-engine E2E tests 
 	$(MAKE) test-env-up-migplan
 	go test -tags e2e -v -count=1 ./integration-tests/migplan/... ; \
 	  status=$$? ; $(MAKE) test-env-down-migplan ; exit $$status
+
+test-env-up-migplan-reversible: ## Start the reversibleStaticMigration reconcile test env (two cp-server clusters + a bidirectional cluster link)
+	bash integration-tests/migplan-reversible/setup.sh
+
+test-env-down-migplan-reversible: ## Stop the reversibleStaticMigration reconcile test env
+	bash integration-tests/migplan-reversible/teardown.sh
+
+test-migplan-reversible: build-frontend ## Run the reversibleStaticMigration reconcile E2E tests (live clusters + both copies of a bidirectional link; no gateway)
+	$(MAKE) test-env-up-migplan-reversible
+	go test -tags e2e -v -count=1 ./integration-tests/migplan-reversible/... ; \
+	  status=$$? ; $(MAKE) test-env-down-migplan-reversible ; exit $$status
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)

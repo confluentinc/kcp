@@ -193,13 +193,6 @@ func TestGateway_AcceptsIAMOnMSKSource(t *testing.T) {
 	require.Empty(t, errs)
 }
 
-// TestGateway_SourceTypeConfluentPlatformIsNotOffered — the gateway migration
-// reads from MSK or Apache Kafka only; the page lists exactly those two.
-func TestGateway_SourceTypeConfluentPlatformIsNotOffered(t *testing.T) {
-	g := parseGateway(t, withField(t, "    type: msk", "    type: confluent-platform"))
-	requireErrContains(t, g.Validate(), "spec.source.type")
-}
-
 func TestGateway_RequiresSourceBootstrapServers(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"    bootstrapServers:\n      - b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096",
@@ -885,4 +878,131 @@ func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
+}
+
+// reversibleDocBase is gatewayDocBase with a Confluent source carrying its
+// cluster ID and REST endpoint, and the source copy's link credentials; append
+// reversibleBlock to make it valid.
+var reversibleDocBase = strings.NewReplacer(
+	"    type: msk\n", "    type: confluent-platform\n    clusterId: src-cluster\n    restEndpoint: http://localhost:18090\n",
+	"    linkCredentials: ./link-creds.yaml\n", "    linkCredentials: ./link-creds.yaml\n    sourceLinkCredentials: ./source-link-creds.yaml\n",
+).Replace(gatewayDocBase)
+
+const reversibleBlock = `  reversibleStaticMigration:
+    route:
+      name: migration-route
+      sourceStreamingDomain: cp
+      targetStreamingDomain: cc
+    writableOn: cc
+    topicGroup:
+      - topics:
+          - t1
+`
+
+var validReversibleDoc = reversibleDocBase + reversibleBlock
+
+func reversibleWith(t *testing.T, old, new string) *GatewayMigration {
+	t.Helper()
+	require.Contains(t, validReversibleDoc, old, "fixture drift: %q not in the reversible doc", old)
+	return parseGateway(t, strings.Replace(validReversibleDoc, old, new, 1))
+}
+
+func TestReversibleStatic_ValidManifestValidates(t *testing.T) {
+	g := parseGateway(t, validReversibleDoc)
+	require.Empty(t, g.Validate())
+	assert.Equal(t, MigrationTypeReversibleStatic, g.Spec.MigrationType())
+	assert.Equal(t, "reversibleStaticMigration", g.Spec.MigrationType().SectionKey())
+}
+
+func TestReversibleStatic_RequiresConfluentSource(t *testing.T) {
+	g := reversibleWith(t, "    type: confluent-platform\n", "    type: msk\n")
+	requireErrContains(t, g.Validate(), `spec.source.type: reversibleStaticMigration needs a Confluent source (confluent-platform or confluent-cloud), got "msk"`)
+}
+
+func TestReversibleStatic_RequiresSourceFields(t *testing.T) {
+	for _, tc := range []struct{ old, want string }{
+		{"    clusterId: src-cluster\n", "spec.source.clusterId: required for reversibleStaticMigration"},
+		{"    restEndpoint: http://localhost:18090\n", "spec.source.restEndpoint: required for reversibleStaticMigration"},
+		{"    sourceLinkCredentials: ./source-link-creds.yaml\n", "spec.clusterLink.sourceLinkCredentials: required for reversibleStaticMigration"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			requireErrContains(t, reversibleWith(t, tc.old, "").Validate(), tc.want)
+		})
+	}
+}
+
+func TestGateway_ConfluentSourceOnlyWithReversibleStatic(t *testing.T) {
+	for _, typ := range []string{"confluent-platform", "confluent-cloud"} {
+		t.Run(typ, func(t *testing.T) {
+			g := parseGateway(t, withField(t, "    type: msk", "    type: "+typ))
+			requireErrContains(t, g.Validate(), `spec.source.type: "`+typ+`" is only supported with reversibleStaticMigration`)
+		})
+	}
+}
+
+func TestGateway_SourceFieldsOnlyWithReversibleStatic(t *testing.T) {
+	for _, tc := range []struct{ old, new, want string }{
+		{"    type: msk\n", "    type: msk\n    clusterId: src-cluster\n", "spec.source.clusterId: only used by reversibleStaticMigration"},
+		{"    type: msk\n", "    type: msk\n    restEndpoint: http://localhost:18090\n", "spec.source.restEndpoint: only used by reversibleStaticMigration"},
+		{"    linkCredentials: ./link-creds.yaml\n", "    linkCredentials: ./link-creds.yaml\n    sourceLinkCredentials: ./source-link-creds.yaml\n", "spec.clusterLink.sourceLinkCredentials: only used by reversibleStaticMigration"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			requireErrContains(t, parseGateway(t, withField(t, tc.old, tc.new)).Validate(), tc.want)
+		})
+	}
+}
+
+func TestReversibleStatic_WritableOnMustNameADomain(t *testing.T) {
+	requireErrContains(t, reversibleWith(t, "    writableOn: cc\n", "    writableOn: \"\"\n").Validate(),
+		"spec.reversibleStaticMigration.writableOn: must not be empty")
+	requireErrContains(t, reversibleWith(t, "    writableOn: cc\n", "    writableOn: x\n").Validate(),
+		`spec.reversibleStaticMigration.writableOn: "x" is neither route.sourceStreamingDomain ("cp") nor route.targetStreamingDomain ("cc")`)
+}
+
+func TestReversibleStatic_RouteFields(t *testing.T) {
+	for _, tc := range []struct{ old, field string }{
+		{"      name: migration-route\n", "name"},
+		{"      sourceStreamingDomain: cp\n", "sourceStreamingDomain"},
+		{"      targetStreamingDomain: cc\n", "targetStreamingDomain"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			requireErrContains(t, reversibleWith(t, tc.old, "").Validate(),
+				"spec.reversibleStaticMigration.route."+tc.field+": must not be empty")
+		})
+	}
+	requireErrContains(t, reversibleWith(t, "      sourceStreamingDomain: cp\n", "      sourceStreamingDomain: cc\n").Validate(),
+		`spec.reversibleStaticMigration.route: sourceStreamingDomain and targetStreamingDomain must differ (both "cc")`)
+}
+
+func TestReversibleStatic_RejectsStaticOnlyFields(t *testing.T) {
+	for name, extra := range map[string]string{
+		"consumerOffsetSync":    "    consumerOffsetSync:\n      pause: true\n      baseline: enabled\n",
+		"policies.lagThreshold": "    policies:\n      lagThreshold: 10\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseGatewayMigration([]byte(validReversibleDoc + extra))
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestReversibleStatic_DeclaredHelpers(t *testing.T) {
+	g := parseGateway(t, validReversibleDoc+"    policies:\n      hotReloadTimeout: 45s\n      gatewayConfigPort: 9181\n")
+	require.Empty(t, g.Validate())
+	assert.Equal(t, RouteRef{Name: "migration-route", TargetStreamingDomain: "cc"}, g.Spec.DeclaredRoute())
+	assert.Equal(t, []TopicGroupEntry{{Topics: &[]string{"t1"}}}, g.Spec.DeclaredTopicGroup())
+	assert.Equal(t, CommonPolicies{HotReloadTimeout: 45 * time.Second, GatewayConfigPort: 9181}, g.Spec.DeclaredCommonPolicies())
+	pause, baseline := g.Spec.DeclaredOffsetSync()
+	assert.False(t, pause)
+	assert.Empty(t, baseline)
+}
+
+func TestReversibleStatic_SourceRestCredentialsResolve(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "source-link.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("api_key: SRC_KEY\napi_secret: SRC_SECRET\n"), 0600))
+	g := parseGateway(t, strings.Replace(validReversibleDoc, "sourceLinkCredentials: ./source-link-creds.yaml", "sourceLinkCredentials: "+p, 1))
+	rest, err := g.SourceRestCredentials()
+	require.NoError(t, err)
+	assert.Equal(t, "SRC_KEY", rest.APIKey)
+	assert.Equal(t, "SRC_SECRET", rest.APISecret)
 }

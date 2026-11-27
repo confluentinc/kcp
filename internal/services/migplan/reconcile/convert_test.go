@@ -54,7 +54,7 @@ func convergedPartitions() PartitionCounts {
 }
 
 func reconcileConverged(gw *GatewayConfig, groups GroupFacts) *Plan {
-	return ReconcileConvert(convertInput(), gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, groups)
+	return ReconcileConvert(convertInput(), gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{}, ClusterIDs{}, groups)
 }
 
 func convertPrecondition(t *testing.T, r Report, name string) PreconditionResult {
@@ -389,7 +389,7 @@ func TestReconcileConvert_StaticElsewhereIsRefused(t *testing.T) {
 }
 
 func TestReconcile_RefusesAConversionInput(t *testing.T) {
-	p := Reconcile(convertInput(), dynGateway(), nil, nil, nil, false, ClusterIDs{}, nil, "")
+	p := Reconcile(convertInput(), dynGateway(), nil, nil, nil, LinkFacts{}, ClusterIDs{}, nil, "")
 
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("Reconcile must refuse an input with ConvertTo set, never plan it as a topic migration")
@@ -404,7 +404,7 @@ func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
 			in := convertInput()
 			in.Type = to
 
-			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{})
+			p := ReconcileConvert(in, convertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{}, ClusterIDs{}, GroupFacts{})
 
 			if !p.Report.Refused() || p.Artifacts != nil || p.NothingToDo {
 				t.Fatalf("Type %q must refuse, got %+v", to, p)
@@ -421,7 +421,7 @@ func TestReconcileConvert_RefusesANonStaticTarget(t *testing.T) {
 	gw.Route.Raw["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	in := convertInput()
 	in.Type = TypeDynamic
-	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
+	if p := ReconcileConvert(in, gw, convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{}, ClusterIDs{}, GroupFacts{}); !p.Report.Refused() || p.NothingToDo {
 		t.Fatalf("Type dynamic on a static route must refuse, got %+v", p)
 	}
 }
@@ -512,7 +512,7 @@ func TestReconcileConvert_RefusesALinkTopicThatIsNotPromoted(t *testing.T) {
 	mirrors := linkMirrors()
 	mirrors[0].State, mirrors[0].Status = MirrorActive, "ACTIVE"
 
-	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), LinkFacts{}, ClusterIDs{}, trackedGroups())
 
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("an unpromoted link topic must refuse the conversion")
@@ -532,7 +532,7 @@ func TestReconcileConvert_RefusesAGroupCommittingOutsideTheLink(t *testing.T) {
 	groups := trackedGroups()
 	groups.TrackedTopics["refunds-app"] = []string{"refunds"}
 
-	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, groups)
+	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{}, ClusterIDs{}, groups)
 
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("a group committing outside the link must refuse the conversion")
@@ -545,7 +545,7 @@ func TestReconcileConvert_RefusesAGroupCommittingOutsideTheLink(t *testing.T) {
 func TestReconcileConvert_UntrackedTopicOffTheLinkWarnsOnly(t *testing.T) {
 	topics := append([]string{"_schemas"}, convergedTopics...)
 
-	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+	p := ReconcileConvert(convertInput(), convertGateway(), topics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{}, ClusterIDs{}, trackedGroups())
 
 	if p.Report.Refused() || p.Artifacts == nil {
 		t.Fatalf("an untracked topic off the link must not refuse, got %+v", p.Report)
@@ -561,7 +561,7 @@ func TestReconcileConvert_VisibilityRefusalStopsBeforeTheLinkChecks(t *testing.T
 	groups := trackedGroups()
 	groups.SourceTopicsIncomplete = "the source credential cannot describe arbitrary topics"
 
-	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, groups)
+	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), LinkFacts{}, ClusterIDs{}, groups)
 
 	if !p.Report.Refused() {
 		t.Fatal("a denied visibility probe must refuse")
@@ -651,7 +651,7 @@ func leftFencedWarnings(r Report) []string {
 func TestReconcileConvert_ARefusalOnARouteKcpLeftFencedSaysSo(t *testing.T) {
 	cases := map[string]func() *Plan{
 		"route checks (CheckPreconditions)": func() *Plan {
-			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), true, ClusterIDs{}, trackedGroups())
+			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(), LinkFacts{OffsetSyncEnabled: true}, ClusterIDs{}, trackedGroups())
 		},
 		"route checks (conversion's own)": func() *Plan {
 			gw := fencedConvertGateway()
@@ -666,7 +666,7 @@ func TestReconcileConvert_ARefusalOnARouteKcpLeftFencedSaysSo(t *testing.T) {
 		"link scope": func() *Plan {
 			mirrors := linkMirrors()
 			mirrors[0].State, mirrors[0].Status = MirrorActive, "ACTIVE"
-			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), false, ClusterIDs{}, trackedGroups())
+			return ReconcileConvert(convertInput(), fencedConvertGateway(), convergedTopics, convergedTopics, mirrors, convergedPartitions(), LinkFacts{}, ClusterIDs{}, trackedGroups())
 		},
 	}
 	for name, run := range cases {
@@ -715,11 +715,19 @@ func TestReconcileConvert_APassOnARouteKcpFencedHasNoFenceWarning(t *testing.T) 
 // A non-conversion declared type is refused before anything else.
 func TestReconcileConvert_NonConversionTypeIsRefused(t *testing.T) {
 	plan := ReconcileConvert(ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"},
-		dynGateway(), nil, nil, nil, PartitionCounts{}, false, ClusterIDs{}, GroupFacts{})
+		dynGateway(), nil, nil, nil, PartitionCounts{}, LinkFacts{}, ClusterIDs{}, GroupFacts{})
 	if !plan.Report.Refused() {
 		t.Fatal("a non-conversion type must be refused")
 	}
 	if got := plan.Report.Preconditions[0].Name; got != convertTargetCheckName {
 		t.Fatalf("first precondition = %q, want %q", got, convertTargetCheckName)
+	}
+}
+
+func TestReconcileConvert_RefusesBidirectionalLink(t *testing.T) {
+	p := ReconcileConvert(convertInput(), convertGateway(), convergedTopics, convergedTopics, linkMirrors(), convergedPartitions(),
+		LinkFacts{Mode: "BIDIRECTIONAL"}, ClusterIDs{}, trackedGroups())
+	if !p.Report.Refused() || !hasFailedCheck(p.Report.Preconditions, LinkOneWayCheckName) {
+		t.Fatalf("want refused on %q, got %+v", LinkOneWayCheckName, p.Report.Preconditions)
 	}
 }

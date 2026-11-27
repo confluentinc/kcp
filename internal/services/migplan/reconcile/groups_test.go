@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -151,5 +152,25 @@ func TestConvertCredentialChecks_EachReasonRefusesItsOwnCheck(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCheckGroupSplitBrain_PinnedText(t *testing.T) {
+	res, warnings := CheckGroupSplitBrain([]string{"g1", "g2", "g3"}, map[string]string{"g1": "Stable", "g2": "Empty", "g3": ""})
+	wantDetail := "consumer group(s) g1 (Stable), g3 (state unknown; treated as active) exist on the source and are active, or of unreadable state, on the destination; after the switch the source members would join the same group — stop the destination members first"
+	if res.Detail != wantDetail {
+		t.Errorf("detail =\n%q\nwant\n%q", res.Detail, wantDetail)
+	}
+	wantWarnings := []string{"consumer group(s) g2 exist on the destination with committed offsets but no members; the conversion will overwrite their offsets with the source's — check nothing consumed on the destination under these names"}
+	if !reflect.DeepEqual(warnings, wantWarnings) {
+		t.Errorf("warnings =\n%q\nwant\n%q", warnings, wantWarnings)
+	}
+}
+
+func TestCheckGroupShareClash_PinnedText(t *testing.T) {
+	res := CheckGroupShareClash([]string{"g1", "g2"}, map[string]string{"g1": "share", "g2": "consumer"})
+	want := "consumer group(s) g1 exist on the source and as share groups on the destination; a share group does not accept a consumer group's committed offsets, so the conversion could not carry them — delete the destination share group(s) (kafka-share-groups --delete) or stop using these names for them"
+	if res.Detail != want {
+		t.Errorf("detail =\n%q\nwant\n%q", res.Detail, want)
 	}
 }

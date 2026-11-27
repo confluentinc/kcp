@@ -6,19 +6,21 @@ import (
 	"time"
 )
 
-// MigrationType is the migration an operator declared, by which of the three
+// MigrationType is the migration an operator declared, by which of the
 // mutually exclusive spec sections the manifest carries. The values match the
 // section names, and the static/dynamic vocabulary of the Gateway CRD's route
 // modes. Mapping to the state-machine packages: STATIC is AAO
 // (internal/services/migration), DYNAMIC is TBM
 // (internal/services/migration/tbm), DYNAMIC_TO_STATIC is d2s
-// (internal/services/migration/d2s).
+// (internal/services/migration/d2s). REVERSIBLE_STATIC has no state machine
+// yet: it reconciles and dry-runs only.
 type MigrationType string
 
 const (
-	MigrationTypeStatic          MigrationType = "STATIC"
-	MigrationTypeDynamic         MigrationType = "DYNAMIC"
-	MigrationTypeDynamicToStatic MigrationType = "DYNAMIC_TO_STATIC"
+	MigrationTypeStatic           MigrationType = "STATIC"
+	MigrationTypeDynamic          MigrationType = "DYNAMIC"
+	MigrationTypeDynamicToStatic  MigrationType = "DYNAMIC_TO_STATIC"
+	MigrationTypeReversibleStatic MigrationType = "REVERSIBLE_STATIC"
 )
 
 // The spec section keys, one per migration type.
@@ -26,9 +28,18 @@ const (
 	SectionStaticMigration           = "staticMigration"
 	SectionDynamicMigration          = "dynamicMigration"
 	SectionDynamicToStaticConversion = "dynamicToStaticConversion"
+	SectionReversibleStaticMigration = "reversibleStaticMigration"
 )
 
-var sectionKeys = []string{SectionStaticMigration, SectionDynamicMigration, SectionDynamicToStaticConversion}
+// sectionKeys is in canonical order; a new section goes last, so messages that
+// list the older sections keep their prefix.
+var sectionKeys = []string{SectionStaticMigration, SectionDynamicMigration, SectionDynamicToStaticConversion, SectionReversibleStaticMigration}
+
+// NoSectionDeclaredError is the error for a manifest that declares no single
+// migration section.
+func NoSectionDeclaredError() error {
+	return fmt.Errorf("spec: exactly one of %s is required", strings.Join(sectionKeys, ", "))
+}
 
 // SectionKey returns the spec key that declares t, or "" for an unknown type.
 func (t MigrationType) SectionKey() string {
@@ -39,6 +50,8 @@ func (t MigrationType) SectionKey() string {
 		return SectionDynamicMigration
 	case MigrationTypeDynamicToStatic:
 		return SectionDynamicToStaticConversion
+	case MigrationTypeReversibleStatic:
+		return SectionReversibleStaticMigration
 	}
 	return ""
 }
@@ -172,6 +185,33 @@ type DynamicToStaticConversion struct {
 	Policies DynamicToStaticPolicies `yaml:"policies,omitempty" json:"policies,omitempty"`
 }
 
+// ReversibleRouteRef names the static route a reversible migration flips, and
+// the streaming domain of each cluster: sourceStreamingDomain is spec.source's,
+// targetStreamingDomain spec.target's. kcp cannot verify that mapping from the
+// Gateway CR, so the reconcile checks catch a swap from the live mirror rows.
+type ReversibleRouteRef struct {
+	Name                  string `yaml:"name" json:"name"`
+	SourceStreamingDomain string `yaml:"sourceStreamingDomain" json:"sourceStreamingDomain"`
+	TargetStreamingDomain string `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
+}
+
+// ReversibleStaticPolicies are the execute-time knobs of a reversible static
+// migration: only the shared ones.
+type ReversibleStaticPolicies struct {
+	CommonPolicies `yaml:",inline"`
+}
+
+// ReversibleStaticMigration moves topics and their clients across a static
+// route by reversing each mirror on a bidirectional cluster link, so every topic
+// stays mirrored back and the move can be undone. WritableOn names the domain
+// the topics must be writable on when the run ends.
+type ReversibleStaticMigration struct {
+	Route      ReversibleRouteRef       `yaml:"route" json:"route"`
+	WritableOn string                   `yaml:"writableOn" json:"writableOn"`
+	TopicGroup []TopicGroupEntry        `yaml:"topicGroup" json:"topicGroup"`
+	Policies   ReversibleStaticPolicies `yaml:"policies,omitempty" json:"policies,omitempty"`
+}
+
 // setSections returns the keys of the sections present, in canonical order.
 func (s GatewaySpec) setSections() []string {
 	var set []string
@@ -183,6 +223,9 @@ func (s GatewaySpec) setSections() []string {
 	}
 	if s.DynamicToStaticConversion != nil {
 		set = append(set, SectionDynamicToStaticConversion)
+	}
+	if s.ReversibleStaticMigration != nil {
+		set = append(set, SectionReversibleStaticMigration)
 	}
 	return set
 }
@@ -199,12 +242,16 @@ func (s GatewaySpec) MigrationType() MigrationType {
 		return MigrationTypeStatic
 	case s.DynamicMigration != nil:
 		return MigrationTypeDynamic
-	default:
+	case s.DynamicToStaticConversion != nil:
 		return MigrationTypeDynamicToStatic
+	case s.ReversibleStaticMigration != nil:
+		return MigrationTypeReversibleStatic
 	}
+	return ""
 }
 
-// DeclaredRoute returns the declared section's route, or the zero RouteRef.
+// DeclaredRoute returns the declared section's route, or the zero RouteRef. For
+// a reversible migration it is the route and its target-side domain.
 func (s GatewaySpec) DeclaredRoute() RouteRef {
 	switch s.MigrationType() {
 	case MigrationTypeStatic:
@@ -213,6 +260,9 @@ func (s GatewaySpec) DeclaredRoute() RouteRef {
 		return s.DynamicMigration.Route
 	case MigrationTypeDynamicToStatic:
 		return s.DynamicToStaticConversion.Route
+	case MigrationTypeReversibleStatic:
+		r := s.ReversibleStaticMigration.Route
+		return RouteRef{Name: r.Name, TargetStreamingDomain: r.TargetStreamingDomain}
 	}
 	return RouteRef{}
 }
@@ -227,6 +277,8 @@ func (s GatewaySpec) DeclaredCommonPolicies() CommonPolicies {
 		return s.DynamicMigration.Policies.CommonPolicies
 	case MigrationTypeDynamicToStatic:
 		return s.DynamicToStaticConversion.Policies.CommonPolicies
+	case MigrationTypeReversibleStatic:
+		return s.ReversibleStaticMigration.Policies.CommonPolicies
 	}
 	return CommonPolicies{}
 }
@@ -239,6 +291,8 @@ func (s GatewaySpec) DeclaredTopicGroup() []TopicGroupEntry {
 		return s.StaticMigration.TopicGroup
 	case MigrationTypeDynamic:
 		return s.DynamicMigration.TopicGroup
+	case MigrationTypeReversibleStatic:
+		return s.ReversibleStaticMigration.TopicGroup
 	}
 	return nil
 }
@@ -265,6 +319,8 @@ func (s GatewaySpec) ValidatePolicies() []error {
 		return s.DynamicMigration.Policies.Validate("spec." + SectionDynamicMigration + ".policies")
 	case MigrationTypeDynamicToStatic:
 		return s.DynamicToStaticConversion.Policies.Validate("spec." + SectionDynamicToStaticConversion + ".policies")
+	case MigrationTypeReversibleStatic:
+		return s.ReversibleStaticMigration.Policies.Validate("spec." + SectionReversibleStaticMigration + ".policies")
 	}
 	return nil
 }
@@ -279,6 +335,8 @@ func (s GatewaySpec) PolicyLogArgs() []any {
 		return s.DynamicMigration.Policies.LogArgs()
 	case MigrationTypeDynamicToStatic:
 		return s.DynamicToStaticConversion.Policies.LogArgs()
+	case MigrationTypeReversibleStatic:
+		return s.ReversibleStaticMigration.Policies.LogArgs()
 	}
 	return nil
 }
@@ -315,6 +373,10 @@ func (p DynamicToStaticPolicies) LogArgs() []any {
 		"detect_unrouted_commits_duration", p.DetectUnroutedCommitsDuration,
 		"offset_sync_concurrency", p.EffectiveOffsetSyncConcurrency(),
 	}, p.logArgs()...)
+}
+
+func (p ReversibleStaticPolicies) LogArgs() []any {
+	return p.logArgs()
 }
 
 // --- validation ---
@@ -397,6 +459,11 @@ func (p DynamicToStaticPolicies) Validate(path string) []error {
 	return append(errs, p.validate(path)...)
 }
 
+// Validate checks the reversible static policies.
+func (p ReversibleStaticPolicies) Validate(path string) []error {
+	return p.validate(path)
+}
+
 func validateRouteRef(path string, r RouteRef) []error {
 	var errs []error
 	if blank(r.Name) {
@@ -406,6 +473,34 @@ func validateRouteRef(path string, r RouteRef) []error {
 		errs = append(errs, fmt.Errorf("%s.targetStreamingDomain: must not be blank", path))
 	}
 	return errs
+}
+
+func validateReversibleRouteRef(path string, r ReversibleRouteRef) []error {
+	var errs []error
+	for _, f := range []struct{ name, value string }{
+		{"name", r.Name},
+		{"sourceStreamingDomain", r.SourceStreamingDomain},
+		{"targetStreamingDomain", r.TargetStreamingDomain},
+	} {
+		if blank(f.value) {
+			errs = append(errs, fmt.Errorf("%s.%s: must not be empty", path, f.name))
+		}
+	}
+	if !blank(r.SourceStreamingDomain) && r.SourceStreamingDomain == r.TargetStreamingDomain {
+		errs = append(errs, fmt.Errorf("%s: sourceStreamingDomain and targetStreamingDomain must differ (both %q)", path, r.SourceStreamingDomain))
+	}
+	return errs
+}
+
+func validateWritableOn(path string, m *ReversibleStaticMigration) []error {
+	switch r := m.Route; {
+	case blank(m.WritableOn):
+		return []error{fmt.Errorf("%s: must not be empty", path)}
+	case m.WritableOn != r.SourceStreamingDomain && m.WritableOn != r.TargetStreamingDomain:
+		return []error{fmt.Errorf("%s: %q is neither route.sourceStreamingDomain (%q) nor route.targetStreamingDomain (%q)",
+			path, m.WritableOn, r.SourceStreamingDomain, r.TargetStreamingDomain)}
+	}
+	return nil
 }
 
 // validateTopicGroup applies the structural rules for a migration's topic
@@ -460,8 +555,8 @@ func validateOffsetSyncPause(path string, c *OffsetSyncPause) []error {
 	return nil
 }
 
-// validateSection requires exactly one of the three sections and applies that
-// section's rules.
+// validateSection requires exactly one section and applies that section's
+// rules.
 func (s GatewaySpec) validateSection() []error {
 	set := s.setSections()
 	if len(set) != 1 {
@@ -491,6 +586,13 @@ func (s GatewaySpec) validateSection() []error {
 		p := "spec." + SectionDynamicToStaticConversion
 		m := s.DynamicToStaticConversion
 		errs = append(errs, validateRouteRef(p+".route", m.Route)...)
+		errs = append(errs, m.Policies.Validate(p+".policies")...)
+	case MigrationTypeReversibleStatic:
+		p := "spec." + SectionReversibleStaticMigration
+		m := s.ReversibleStaticMigration
+		errs = append(errs, validateReversibleRouteRef(p+".route", m.Route)...)
+		errs = append(errs, validateWritableOn(p+".writableOn", m)...)
+		errs = append(errs, validateTopicGroup(p+".topicGroup", m.TopicGroup)...)
 		errs = append(errs, m.Policies.Validate(p+".policies")...)
 	}
 	return errs

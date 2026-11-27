@@ -28,6 +28,10 @@ const minDetectionWindow = 10 * time.Second
 // DefaultOffsetSyncConcurrency applies when OffsetSyncConcurrency is 0.
 const DefaultOffsetSyncConcurrency = 8
 
+// SourceConfluentCloud is a Confluent Cloud source. Only this kind accepts it,
+// and only with reversibleStaticMigration; kind: Migration does not.
+const SourceConfluentCloud = "confluent-cloud"
+
 // GatewayMigration is the declarative form of a `kcp migration` run: the
 // topology, the cluster link, the gateway CRs, and the execute-time policy that
 // today are spread across 64 flags on four commands.
@@ -39,16 +43,29 @@ type GatewayMigration struct {
 }
 
 type GatewaySpec struct {
-	Source      Source             `yaml:"source" json:"source"`
+	Source      GatewaySource      `yaml:"source" json:"source"`
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Exactly one of the three sections is declared; it IS the migration type
+	// Exactly one of the sections is declared; it IS the migration type
 	// (see MigrationType). The live Gateway CR's route mode is checked against
 	// it by the reconcile preconditions, never used to choose it.
 	StaticMigration           *StaticMigration           `yaml:"staticMigration,omitempty" json:"staticMigration,omitempty"`
 	DynamicMigration          *DynamicMigration          `yaml:"dynamicMigration,omitempty" json:"dynamicMigration,omitempty"`
 	DynamicToStaticConversion *DynamicToStaticConversion `yaml:"dynamicToStaticConversion,omitempty" json:"dynamicToStaticConversion,omitempty"`
+	ReversibleStaticMigration *ReversibleStaticMigration `yaml:"reversibleStaticMigration,omitempty" json:"reversibleStaticMigration,omitempty"`
+}
+
+// GatewaySource is this kind's source envelope. It is deliberately not
+// manifest.Source, which kind: Migration shares: ClusterID and RestEndpoint
+// exist only for a Confluent source driven by reversibleStaticMigration, which
+// reads the source copy of a bidirectional cluster link over REST.
+type GatewaySource struct {
+	Type             string         `yaml:"type" json:"type"`
+	ClusterID        string         `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
+	RestEndpoint     string         `yaml:"restEndpoint,omitempty" json:"restEndpoint,omitempty"`
+	BootstrapServers []string       `yaml:"bootstrapServers" json:"bootstrapServers"`
+	Credentials      CredentialsRef `yaml:"credentials" json:"credentials"`
 }
 
 // GatewayTarget is the destination envelope. It is deliberately NOT
@@ -86,6 +103,10 @@ type GatewayClusterLink struct {
 	// (mirror promotion, offset sync). Always required — there is no derivation
 	// from the Kafka leg.
 	LinkCredentials CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
+	// SourceLinkCredentials is the source REST leg, for the source copy of a
+	// bidirectional link. Only reversibleStaticMigration uses it, and it is never
+	// derived from another field.
+	SourceLinkCredentials CredentialsRef `yaml:"sourceLinkCredentials,omitempty" json:"sourceLinkCredentials,omitempty"`
 }
 
 // TopicGroupEntry is a topic selection (literal names and/or anchored regex
@@ -246,7 +267,7 @@ func (g *GatewayMigration) Validate() []error {
 	}
 
 	// --- source ---
-	if err := validateEnum("spec.source.type", g.Spec.Source.Type, SourceMSK, SourceApacheKafka); err != nil {
+	if err := validateEnum("spec.source.type", g.Spec.Source.Type, SourceMSK, SourceApacheKafka, SourceConfluentPlatform, SourceConfluentCloud); err != nil {
 		errs = append(errs, err)
 	}
 	errs = append(errs, validateBootstrapServers("spec.source.bootstrapServers", g.Spec.Source.BootstrapServers)...)
@@ -286,6 +307,7 @@ func (g *GatewayMigration) Validate() []error {
 	if blankRef(g.Spec.ClusterLink.LinkCredentials) {
 		add("spec.clusterLink.linkCredentials: must not be empty")
 	}
+	errs = append(errs, g.validateSourceForSection()...)
 
 	// --- gateway ---
 	if blank(g.Spec.Gateway.Namespace) {
@@ -298,6 +320,49 @@ func (g *GatewayMigration) Validate() []error {
 	// --- the declared migration type: exactly one section, and its rules ---
 	errs = append(errs, g.Spec.validateSection()...)
 
+	return errs
+}
+
+// validateSourceForSection keeps the Confluent source types and fields to
+// reversibleStaticMigration, so they are never silently ignored by another
+// section. With no single section declared it reports nothing: validateSection
+// does.
+func (g *GatewayMigration) validateSourceForSection() []error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	src, link := g.Spec.Source, g.Spec.ClusterLink
+	confluent := src.Type == SourceConfluentPlatform || src.Type == SourceConfluentCloud
+	const section = SectionReversibleStaticMigration
+
+	switch g.Spec.MigrationType() {
+	case "":
+	case MigrationTypeReversibleStatic:
+		if !confluent && src.Type != "" {
+			add("spec.source.type: %s needs a Confluent source (%s or %s), got %q", section, SourceConfluentPlatform, SourceConfluentCloud, src.Type)
+		}
+		if blank(src.ClusterID) {
+			add("spec.source.clusterId: required for %s", section)
+		}
+		if blank(src.RestEndpoint) {
+			add("spec.source.restEndpoint: required for %s", section)
+		}
+		if blankRef(link.SourceLinkCredentials) {
+			add("spec.clusterLink.sourceLinkCredentials: required for %s", section)
+		}
+	default:
+		if confluent {
+			add("spec.source.type: %q is only supported with %s", src.Type, section)
+		}
+		if !blank(src.ClusterID) {
+			add("spec.source.clusterId: only used by %s", section)
+		}
+		if !blank(src.RestEndpoint) {
+			add("spec.source.restEndpoint: only used by %s", section)
+		}
+		if !blankRef(link.SourceLinkCredentials) {
+			add("spec.clusterLink.sourceLinkCredentials: only used by %s", section)
+		}
+	}
 	return errs
 }
 
@@ -371,6 +436,12 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 // there is no derivation from the Kafka leg.
 func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	return g.Spec.ClusterLink.LinkCredentials.ResolveTarget()
+}
+
+// SourceRestCredentials resolves the source REST leg, which reads the source copy
+// of a bidirectional cluster link. It reads spec.clusterLink.sourceLinkCredentials.
+func (g *GatewayMigration) SourceRestCredentials() (*targets.Credentials, error) {
+	return g.Spec.ClusterLink.SourceLinkCredentials.ResolveTarget()
 }
 
 // KubeconfigPath returns the kubeconfig every Kubernetes client kcp builds from

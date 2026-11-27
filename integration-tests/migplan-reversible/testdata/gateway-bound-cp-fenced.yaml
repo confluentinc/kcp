@@ -1,0 +1,39 @@
+# Static gateway CR fixture for the reversibleStaticMigration e2e: domains cp
+# (spec.source) and cc (spec.target), one bootstrap server id each, auth staged
+# for both on the route. The route is bound to cp and carries kcp's fence: a
+# flip that stopped part way.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-reversible-bound-cp-fenced
+spec:
+  streamingDomains:
+    - name: cp
+      kafkaCluster:
+        bootstrapServers:
+          - id: CP
+            endpoint: localhost:19192
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29192
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: cp
+        bootstrapServerId: CP
+      fence:
+        scope: ALL
+        errorCode: BROKER_NOT_AVAILABLE
+      security:
+        cluster:
+          cp:
+            secretStore: vault
+            authentication:
+              secretRef: cp-redundant-auth
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth

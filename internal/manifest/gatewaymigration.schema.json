@@ -27,11 +27,21 @@
           "properties": {
             "type": {
               "type": "string",
-              "description": "Source Kafka flavour. Gates authentication: iam is msk-only.",
+              "description": "Source Kafka flavour. Gates authentication: iam is msk-only. confluent-platform and confluent-cloud are for reversibleStaticMigration only.",
               "enum": [
                 "msk",
-                "apache-kafka"
+                "apache-kafka",
+                "confluent-platform",
+                "confluent-cloud"
               ]
+            },
+            "clusterId": {
+              "type": "string",
+              "description": "Source cluster ID, checked against the cluster kcp reads over the Kafka protocol and against the target copy of the cluster link. Required for reversibleStaticMigration, and refused with any other section."
+            },
+            "restEndpoint": {
+              "type": "string",
+              "description": "REST endpoint of the source cluster, used to read the source copy of a bidirectional cluster link. Required for reversibleStaticMigration, and refused with any other section."
             },
             "bootstrapServers": {
               "type": [
@@ -130,6 +140,10 @@
             "linkCredentials": {
               "type": "string",
               "description": "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg."
+            },
+            "sourceLinkCredentials": {
+              "type": "string",
+              "description": "Path to the REST credentials file (api_key/api_secret, basic, bearer, or mtls) for the source cluster's Admin REST API, which reads the source copy of a bidirectional cluster link. Required for reversibleStaticMigration, and refused with any other section; it is never derived from another field."
             }
           },
           "required": [
@@ -292,7 +306,7 @@
               "additionalProperties": false
             }
           },
-          "description": "Declares a static (all-at-once) migration: every selected topic cuts over together across a static route. The live route must be static. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
+          "description": "Declares a static (all-at-once) migration: every selected topic cuts over together across a static route. The live route must be static. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
           "required": [
             "route",
             "topicGroup"
@@ -404,7 +418,7 @@
               "additionalProperties": false
             }
           },
-          "description": "Declares a dynamic (topic-based) migration: topics cut over incrementally across a dynamic route, promoting mirror topics at zero lag. The live route must be dynamic. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
+          "description": "Declares a dynamic (topic-based) migration: topics cut over incrementally across a dynamic route, promoting mirror topics at zero lag. The live route must be dynamic. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
           "required": [
             "route",
             "topicGroup"
@@ -464,9 +478,110 @@
               "additionalProperties": false
             }
           },
-          "description": "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration or dynamicToStaticConversion is required.",
+          "description": "Declares a dynamic-to-static route conversion: after every topic on the cluster link has been migrated, convert the dynamic route to a static route bound to route.targetStreamingDomain, carrying consumer-group offsets across. The cluster link is the scope, with no topic selection: every mirror topic on the link must be promoted and routed to the target, and every source consumer group must have committed only on link topics, or the run is refused. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
           "required": [
             "route"
+          ],
+          "additionalProperties": false
+        },
+        "reversibleStaticMigration": {
+          "type": "object",
+          "properties": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The spec.routes[].name of the static route to fence and switch. Must exist in the initial CR, and carry no fence other than kcp's own."
+                },
+                "sourceStreamingDomain": {
+                  "type": "string",
+                  "description": "Name of the streaming domain, declared in the initial CR's spec.streamingDomains, whose cluster is spec.source. The route must carry pre-staged auth for it."
+                },
+                "targetStreamingDomain": {
+                  "type": "string",
+                  "description": "Name of the streaming domain, declared in the initial CR's spec.streamingDomains, whose cluster is spec.target. The route must carry pre-staged auth for it."
+                }
+              },
+              "description": "Names the static route on the live Gateway CR to move, and the streaming domain of each cluster.",
+              "required": [
+                "name",
+                "sourceStreamingDomain",
+                "targetStreamingDomain"
+              ],
+              "additionalProperties": false
+            },
+            "writableOn": {
+              "type": "string",
+              "description": "The streaming domain (route.sourceStreamingDomain or route.targetStreamingDomain) whose cluster the selected topics must be writable on, and the route bound to, when the run ends. Set it to the other domain to flip back."
+            },
+            "topicGroup": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "topics": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Topics to cut over, as a flat list of LITERAL names — not globs. Combined with topicPatterns: the union of the two is migrated. At least one of topics or topicPatterns is required. Each selected topic must exist on the source and be a mirror topic on the cluster link, or the run is refused."
+                  },
+                  "topicPatterns": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Topic selection as a list of anchored full-match regular expressions (RE2), matched against the topic names on the source cluster. Combined with topics: the union of the two is migrated. Use ['.*'] to select every source topic. At least one of topics or topicPatterns is required. Each selected topic must be a mirror topic on the cluster link, or the run is refused."
+                  }
+                },
+                "additionalProperties": false,
+                "anyOf": [
+                  {
+                    "required": [
+                      "topics"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "topicPatterns"
+                    ]
+                  }
+                ]
+              },
+              "description": "The topic selection that moves on this route. Exactly one entry today. It must cover every mirror topic on the cluster link, on either cluster, or the run is refused."
+            },
+            "policies": {
+              "type": "object",
+              "properties": {
+                "hotReloadTimeout": {
+                  "type": "string",
+                  "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+                  "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+                },
+                "gatewayConfigPort": {
+                  "type": "integer",
+                  "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the gateway default (9180)."
+                }
+              },
+              "description": "Execute-time defaults, read fresh on every execute. Each can be overridden for a single run by the matching `kcp migration cutover execute` flag.",
+              "additionalProperties": false
+            }
+          },
+          "description": "Declares a reversible static migration: topics and their clients move across a static route by reversing each mirror on a bidirectional cluster link instead of promoting it, so every topic stays mirrored back and the move can be undone. The live route must be static, and the cluster link must be bidirectional with consumer offset sync on and the single * LOCAL_MIRROR group filter on both copies. Not yet executable: kcp migration cutover execute --dry-run prints the plan. Exactly one of staticMigration, dynamicMigration, dynamicToStaticConversion or reversibleStaticMigration is required.",
+          "required": [
+            "route",
+            "writableOn",
+            "topicGroup"
           ],
           "additionalProperties": false
         }
@@ -492,6 +607,11 @@
         {
           "required": [
             "dynamicToStaticConversion"
+          ]
+        },
+        {
+          "required": [
+            "reversibleStaticMigration"
           ]
         }
       ]

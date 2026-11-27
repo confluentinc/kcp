@@ -9,7 +9,7 @@ import (
 
 func TestStaticPreconditionsHappy(t *testing.T) {
 	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
-	res, view, ok := CheckStaticPreconditions(in, staticGateway(), nil, "", ClusterIDs{})
+	res, view, ok := CheckStaticPreconditions(in, staticGateway(), LinkFacts{}, nil, "", ClusterIDs{})
 	if !ok {
 		t.Fatalf("expected pass, got %+v", res)
 	}
@@ -30,7 +30,7 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 	// valid done-state (the classifier lands the topics Unchanged), so a completed
 	// static migration re-reconciles to a clean no-op instead of a refusal.
 	// Preconditions pass and RoutesToTarget is correctly true.
-	res, view, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
+	res, view, ok := CheckStaticPreconditions(in, gw, LinkFacts{}, nil, "", ClusterIDs{})
 	if !ok {
 		t.Fatalf("an already-bound route must NOT fail preconditions (it is a valid done-state), got: %+v", res)
 	}
@@ -50,7 +50,7 @@ func TestStaticPreconditionsKcpFenceIsAResume(t *testing.T) {
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
 
-	if res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{}); !ok {
+	if res, _, ok := CheckStaticPreconditions(in, gw, LinkFacts{}, nil, "", ClusterIDs{}); !ok {
 		t.Fatalf("a route fenced by kcp must pass (it is a resume), got: %+v", res)
 	}
 }
@@ -80,7 +80,7 @@ func TestStaticPreconditionsFenceKcpDidNotWrite(t *testing.T) {
 			gw.Route.Raw["fence"] = tc.fence
 			in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
 
-			res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
+			res, _, ok := CheckStaticPreconditions(in, gw, LinkFacts{}, nil, "", ClusterIDs{})
 
 			if ok == tc.refused {
 				t.Fatalf("ok = %v, want %v for fence %v: %+v", ok, !tc.refused, tc.fence, res)
@@ -113,7 +113,7 @@ func TestStaticPreconditionsNulledFenceCountsAsUnfenced(t *testing.T) {
 	gw.Route.Raw["fence"] = nil
 	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
 
-	if _, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{}); !ok {
+	if _, _, ok := CheckStaticPreconditions(in, gw, LinkFacts{}, nil, "", ClusterIDs{}); !ok {
 		t.Error("a nulled fence must count as unfenced and pass")
 	}
 }
@@ -126,7 +126,7 @@ func TestStaticPreconditionsNulledFenceCountsAsUnfenced(t *testing.T) {
 func TestStaticPreconditionsSecretCheckSkipped(t *testing.T) {
 	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
 	const reason = "no permission to read secrets in namespace \"confluent\""
-	res, _, ok := CheckStaticPreconditions(in, staticGateway(), nil, reason, ClusterIDs{})
+	res, _, ok := CheckStaticPreconditions(in, staticGateway(), LinkFacts{}, nil, reason, ClusterIDs{})
 	if !ok {
 		t.Fatalf("a skipped secret check must not refuse the run, got %+v", res)
 	}
@@ -151,27 +151,27 @@ func TestStaticPreconditionsFailures(t *testing.T) {
 	base := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
 
 	// target domain not declared
-	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "gcp"}, staticGateway(), nil, "", ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "gcp"}, staticGateway(), LinkFacts{}, nil, "", ClusterIDs{}); ok {
 		t.Error("undeclared target domain must fail")
 	}
 	// route not found
-	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Type: TypeStatic, Route: "nope", TargetDomain: "cc"}, staticGateway(), nil, "", ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Type: TypeStatic, Route: "nope", TargetDomain: "cc"}, staticGateway(), LinkFacts{}, nil, "", ClusterIDs{}); ok {
 		t.Error("missing route must fail")
 	}
 	// no staged auth block for target
 	gw := staticGateway()
 	delete(gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any), "security")
-	if _, _, ok := CheckStaticPreconditions(base, gw, nil, "", ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, gw, LinkFacts{}, nil, "", ClusterIDs{}); ok {
 		t.Error("missing staged auth block must fail")
 	}
 	// missing secret
-	if _, _, ok := CheckStaticPreconditions(base, staticGateway(), []string{"cc-sasl-secret"}, "", ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, staticGateway(), LinkFacts{}, []string{"cc-sasl-secret"}, "", ClusterIDs{}); ok {
 		t.Error("a reported-missing secret must fail")
 	}
 	// route mode is dynamic, not static
 	dyn := staticGateway()
 	dyn.Route.Mode = "dynamic"
-	if _, _, ok := CheckStaticPreconditions(base, dyn, nil, "", ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, dyn, LinkFacts{}, nil, "", ClusterIDs{}); ok {
 		t.Error("a dynamic-mode route must fail static preconditions")
 	}
 }
@@ -183,5 +183,56 @@ func TestResolveStagedSecretNames(t *testing.T) {
 	}
 	if got := ResolveStagedSecretNames(staticGateway(), "gcp"); got != nil {
 		t.Fatalf("names for an undeclared/unstaged domain = %v, want nil", got)
+	}
+}
+
+func TestCheckStaticPreconditions_StagedAuthPinnedText(t *testing.T) {
+	const name = "route carries pre-staged auth for the target domain"
+	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
+	staged := func(gw *GatewayConfig) map[string]any {
+		return gw.Route.Raw["security"].(map[string]any)["cluster"].(map[string]any)["cc"].(map[string]any)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(gw *GatewayConfig)
+		want   string
+	}{
+		{"no block", func(gw *GatewayConfig) { delete(gw.Route.Raw, "security") },
+			`route "migration-route" has no pre-staged security.cluster.cc block — the redundant auth this switch depends on is not configured`},
+		{"no secretStore", func(gw *GatewayConfig) { delete(staged(gw), "secretStore") },
+			`route "migration-route"'s security.cluster.cc has no secretStore`},
+		{"no authentication", func(gw *GatewayConfig) { delete(staged(gw), "authentication") },
+			`route "migration-route"'s security.cluster.cc has no authentication block`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw := staticGateway()
+			tc.mutate(gw)
+			res, _, _ := CheckStaticPreconditions(in, gw, LinkFacts{}, nil, "", ClusterIDs{})
+			var got *PreconditionResult
+			for i := range res {
+				if res[i].Name == name {
+					got = &res[i]
+				}
+			}
+			if got == nil || got.OK || got.Detail != tc.want {
+				t.Errorf("check %q = %+v\nwant fail with detail\n%q", name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckStaticPreconditions_RefusesBidirectionalLink(t *testing.T) {
+	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
+	res, _, ok := CheckStaticPreconditions(in, staticGateway(), LinkFacts{Mode: "BIDIRECTIONAL"}, nil, "", ClusterIDs{})
+	if ok || !hasFailedCheck(res, LinkOneWayCheckName) {
+		t.Fatalf("ok = %v, want refused on %q: %+v", ok, LinkOneWayCheckName, res)
+	}
+}
+
+func TestCheckStaticPreconditions_RefusesUnhealthyLink(t *testing.T) {
+	in := ReconcileInput{Type: TypeStatic, Route: "migration-route", TargetDomain: "cc"}
+	res, _, ok := CheckStaticPreconditions(in, staticGateway(), LinkFacts{Error: "SOURCE_UNREACHABLE"}, nil, "", ClusterIDs{})
+	if ok || !hasFailedCheck(res, LinkHealthyCheckName) {
+		t.Fatalf("ok = %v, want refused on %q: %+v", ok, LinkHealthyCheckName, res)
 	}
 }

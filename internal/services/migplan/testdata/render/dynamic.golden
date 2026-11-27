@@ -1,0 +1,19 @@
+Migration plan · route "migration-route" → cc
+
+Route checks
+  [OK] route is dynamic
+  [OK] route binds exactly two domains
+  [OK] target domain is bound
+  [OK] coordination.group pinned on source
+  [OK] consumer offset sync disabled on link
+  [OK] offset-sync pause not requested
+  [OK] cluster link is not bidirectional
+  [OK] cluster link reports no error
+  [OK] source cluster matches the cluster link
+  [OK] target cluster matches the manifest
+  [OK] gateway routing patterns compile
+
+Topics · 1 requested
+  + orders  ready
+
+Plan: 1 to migrate, 0 unchanged  (plan ready)

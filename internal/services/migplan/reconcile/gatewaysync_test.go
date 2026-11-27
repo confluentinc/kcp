@@ -40,14 +40,14 @@ func staticFresh(s GatewaySync) *Plan {
 	gw := staticGateway()
 	gw.Sync = s
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
-	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 }
 
 func dynamicFresh(s GatewaySync) *Plan {
 	gw := dynGateway()
 	gw.Sync = s
 	in := ReconcileInput{Type: TypeDynamic, Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
-	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+	return Reconcile(in, gw, []string{"t1", "t2"}, []string{}, map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 }
 
 var freshScenarios = []syncScenario{{"static", staticFresh}, {"dynamic", dynamicFresh}}
@@ -115,7 +115,7 @@ func TestGatewaySyncOutOfSyncRefusesNothingToDo(t *testing.T) {
 	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	gw.Sync = testSync(SyncOutOfSync)
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
-	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, false, ClusterIDs{}, nil, "")
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorStopped}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if !p.Report.Refused() || p.NothingToDo {
 		t.Fatalf("a nothing-to-do plan on out-of-sync pods must be refused, got %+v", p)
 	}
@@ -127,7 +127,7 @@ func TestGatewaySyncOutOfSyncClearsRestore(t *testing.T) {
 		PauseConsumerOffsetSync: true, OffsetSyncBaselineEnabled: true}
 	run := func(s GatewaySync) *Plan {
 		gw.Sync = s
-		return Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, true, ClusterIDs{}, nil, "")
+		return Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, LinkFacts{OffsetSyncEnabled: true}, ClusterIDs{}, nil, "")
 	}
 	if !run(GatewaySync{}).Report.RestoreOffsetSync {
 		t.Fatal("fixture must owe a restore without the verdict")
@@ -160,7 +160,7 @@ func TestGatewaySyncCannotTellFencedAtStartRefuses(t *testing.T) {
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	gw.Sync = testSync(SyncCannotTell)
 	in := ReconcileInput{Type: TypeStatic, Topics: []string{"t1"}, Route: "migration-route", TargetDomain: "cc"}
-	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, false, ClusterIDs{}, nil, "")
+	p := Reconcile(in, gw, []string{"t1"}, []string{"t1"}, map[string]MirrorState{"t1": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatalf("a fenced-at-start plan must be refused on cannot tell, got %+v", p)
 	}
@@ -186,7 +186,7 @@ func TestGatewaySyncCannotTellUnchangedRefuses(t *testing.T) {
 		},
 	}
 	p := Reconcile(in, gw, []string{"t1", "t2"}, []string{"t1", "t2"},
-		map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, false, ClusterIDs{}, nil, "")
+		map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
 	if len(p.Report.Unchanged) != 1 {
 		t.Fatalf("fixture must leave one topic Unchanged, got %+v", p.Report)
 	}
@@ -233,4 +233,60 @@ func TestGatewaySyncConvert(t *testing.T) {
 			t.Fatalf("Detail = %q", d)
 		}
 	})
+}
+
+func cannotTellReversible(p *Plan) *Plan {
+	gw := reversibleGateway("cp", false)
+	gw.Sync = testSync(SyncCannotTell)
+	return applyGatewaySync(p, gw)
+}
+
+func TestApplyGatewaySync_ReversibleCannotTellWithFenceRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{Migratable: []TopicVerdict{{Topic: "a", Verdict: Migratable}}},
+		Artifacts: &Artifacts{FencedAtStart: true},
+		Reversal:  &Reversal{ReverseOn: SideTarget, Reverse: []string{"a"}}})
+	if !p.Report.Refused() || p.Artifacts != nil || p.Reversal != nil {
+		t.Fatalf("want a refusal stripped of artifacts and reversal, got %+v", p)
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "the fence") {
+		t.Errorf("detail = %q, want it to name the fence", pc.Detail)
+	}
+}
+
+func TestApplyGatewaySync_ReversibleCannotTellWithReversedTopicsRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{SwitchOnly: []TopicVerdict{{Topic: "a", Verdict: SwitchOnly}}},
+		Artifacts: &Artifacts{}})
+	if !p.Report.Refused() {
+		t.Fatal("a reversed topic relies on an earlier fence, so cannot-tell must refuse")
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "1 topic(s) already writable on the writable side") {
+		t.Errorf("detail = %q", pc.Detail)
+	}
+}
+
+// A reversible plan with nothing to do relies on the earlier switch having
+// reached the pods, as a finished static migration does.
+func TestApplyGatewaySync_ReversibleCannotTellNothingToDoRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic, NothingToDo: true,
+		Report: Report{Unchanged: []TopicVerdict{{Topic: "a", Verdict: Unchanged}, {Topic: "b", Verdict: Unchanged}}}})
+	if !p.Report.Refused() || p.NothingToDo {
+		t.Fatalf("want refused, got %+v", p)
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "2 topic(s) already writable on the writable side") {
+		t.Errorf("detail = %q", pc.Detail)
+	}
+}
+
+func TestApplyGatewaySync_ReversibleFreshCannotTellIsASkip(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{Migratable: []TopicVerdict{{Topic: "a", Verdict: Migratable}}},
+		Artifacts: &Artifacts{}})
+	if p.Report.Refused() || p.Artifacts == nil {
+		t.Fatalf("a fresh flip writes the fence first, so cannot-tell must not refuse: %+v", p.Report.Preconditions)
+	}
+	if pc := mustSyncPrecondition(t, p); !pc.Skipped {
+		t.Errorf("want a skip, got %+v", pc)
+	}
 }

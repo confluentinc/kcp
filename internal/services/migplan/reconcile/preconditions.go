@@ -97,7 +97,7 @@ func skip(name, detail string) PreconditionResult {
 
 // CheckPreconditions runs the dynamic-route run-level checks. ok is true
 // only if every check passed; on success view carries the resolved domains.
-func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled bool, ids ClusterIDs) ([]PreconditionResult, RouteView, bool) {
+func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, link LinkFacts, ids ClusterIDs) ([]PreconditionResult, RouteView, bool) {
 	var res []PreconditionResult
 	var view RouteView
 
@@ -141,7 +141,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, fail("coordination.group pinned on source", fmt.Sprintf("coordination.group is %q; must be the source domain %q", group, source)))
 	}
 
-	if !offsetSyncEnabled {
+	if !link.OffsetSyncEnabled {
 		res = append(res, pass("consumer offset sync disabled on link"))
 	} else {
 		res = append(res, fail("consumer offset sync disabled on link", fmt.Sprintf("consumer offset sync is enabled on the cluster link; disable it before running %s on a dynamic route", in.Type.sectionKey())))
@@ -155,6 +155,8 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, fail("offset-sync pause not requested",
 			fmt.Sprintf("%s cannot pause consumer offset sync: a dynamic route requires it to be disabled, so there is nothing to pause (the pause is only available on staticMigration)", in.Type.sectionKey())))
 	}
+
+	res = append(res, checkLinkOneWay(link.Mode), checkLinkHealthy(link.Error))
 
 	// Cluster identity: the clusters we read must be the migration's real source
 	// and destination. An empty id (destination omits source_cluster_id, or the

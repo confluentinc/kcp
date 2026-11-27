@@ -56,7 +56,7 @@ func staticGateway() *GatewayConfig {
 
 func TestPreconditionsHappy(t *testing.T) {
 	in := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
-	res, view, ok := CheckPreconditions(in, dynGateway(), false, ClusterIDs{})
+	res, view, ok := CheckPreconditions(in, dynGateway(), LinkFacts{}, ClusterIDs{})
 	if !ok {
 		t.Fatalf("expected pass, got %+v", res)
 	}
@@ -69,29 +69,29 @@ func TestPreconditionsFailures(t *testing.T) {
 	base := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
 
 	// target not bound
-	if _, _, ok := CheckPreconditions(ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "gcp"}, dynGateway(), false, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "gcp"}, dynGateway(), LinkFacts{}, ClusterIDs{}); ok {
 		t.Error("unbound target domain must fail")
 	}
 	// offset sync enabled
-	if _, _, ok := CheckPreconditions(base, dynGateway(), true, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(base, dynGateway(), LinkFacts{OffsetSyncEnabled: true}, ClusterIDs{}); ok {
 		t.Error("offset sync enabled must fail")
 	}
 	// coordination not on source
 	gw := dynGateway()
 	gw.Route.Rules["routing"].(map[string]any)["coordination"].(map[string]any)["group"] = "cc"
-	if _, _, ok := CheckPreconditions(base, gw, false, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(base, gw, LinkFacts{}, ClusterIDs{}); ok {
 		t.Error("coordination not on source must fail")
 	}
 	// static route
 	gw2 := dynGateway()
 	gw2.Route.Mode = "static"
-	if _, _, ok := CheckPreconditions(base, gw2, false, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(base, gw2, LinkFacts{}, ClusterIDs{}); ok {
 		t.Error("static route must fail (dynamic-only engine)")
 	}
 	// three bound domains
 	gw3 := dynGateway()
 	gw3.Route.BoundDomains = []string{"msk", "cc", "extra"}
-	if _, _, ok := CheckPreconditions(base, gw3, false, ClusterIDs{}); ok {
+	if _, _, ok := CheckPreconditions(base, gw3, LinkFacts{}, ClusterIDs{}); ok {
 		t.Error("more than two bound domains must fail")
 	}
 
@@ -101,7 +101,7 @@ func TestPreconditionsFailures(t *testing.T) {
 	gw4.Route.Rules["routing"].(map[string]any)["conditions"] = []any{
 		map[string]any{"streamingDomain": "cc", "topicPatterns": []any{"team-(a"}},
 	}
-	res, _, ok := CheckPreconditions(base, gw4, false, ClusterIDs{})
+	res, _, ok := CheckPreconditions(base, gw4, LinkFacts{}, ClusterIDs{})
 	if ok {
 		t.Error("an uncompilable operator routing pattern must fail")
 	}
@@ -124,20 +124,53 @@ func TestPreconditionsClusterIdentity(t *testing.T) {
 	gw := dynGateway()
 
 	// all identities line up → pass
-	if _, _, ok := CheckPreconditions(base, gw, false, ClusterIDs{Source: "src-1", Target: "tgt-1", LinkSource: "src-1"}); !ok {
+	if _, _, ok := CheckPreconditions(base, gw, LinkFacts{}, ClusterIDs{Source: "src-1", Target: "tgt-1", LinkSource: "src-1"}); !ok {
 		t.Error("matching cluster identities must pass")
 	}
 	// the link mirrors from a different source than spec.source → fail
-	if _, _, ok := CheckPreconditions(base, gw, false, ClusterIDs{Source: "src-1", Target: "tgt-1", LinkSource: "OTHER"}); ok {
+	if _, _, ok := CheckPreconditions(base, gw, LinkFacts{}, ClusterIDs{Source: "src-1", Target: "tgt-1", LinkSource: "OTHER"}); ok {
 		t.Error("link source != source cluster must fail")
 	}
 	// the target cluster reports a different id than spec.target.clusterId → fail
-	if _, _, ok := CheckPreconditions(base, gw, false, ClusterIDs{Source: "src-1", Target: "OTHER", LinkSource: "src-1"}); ok {
+	if _, _, ok := CheckPreconditions(base, gw, LinkFacts{}, ClusterIDs{Source: "src-1", Target: "OTHER", LinkSource: "src-1"}); ok {
 		t.Error("target cluster != manifest clusterId must fail")
 	}
 	// empty ids (destination omits source_cluster_id / metadata unavailable) →
 	// can't prove a mismatch, so it must skip (pass), not fail.
-	if _, _, ok := CheckPreconditions(base, gw, false, ClusterIDs{}); !ok {
+	if _, _, ok := CheckPreconditions(base, gw, LinkFacts{}, ClusterIDs{}); !ok {
 		t.Error("empty cluster ids must skip (pass), not fail")
+	}
+}
+
+func TestCheckPreconditions_RefusesBidirectionalLink(t *testing.T) {
+	in := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
+	res, _, ok := CheckPreconditions(in, dynGateway(), LinkFacts{Mode: "BIDIRECTIONAL"}, ClusterIDs{})
+	if ok || !hasFailedCheck(res, LinkOneWayCheckName) {
+		t.Fatalf("ok = %v, want refused on %q: %+v", ok, LinkOneWayCheckName, res)
+	}
+}
+
+func TestCheckPreconditions_RefusesUnhealthyLink(t *testing.T) {
+	in := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
+	res, _, ok := CheckPreconditions(in, dynGateway(), LinkFacts{Error: "AUTHENTICATION_ERROR"}, ClusterIDs{})
+	if ok || !hasFailedCheck(res, LinkHealthyCheckName) {
+		t.Fatalf("ok = %v, want refused on %q: %+v", ok, LinkHealthyCheckName, res)
+	}
+}
+
+// A link whose configs don't report link.mode is not evidence of a
+// bidirectional link, so the existing paths pass it.
+func TestCheckPreconditions_AbsentLinkModeIsOneWay(t *testing.T) {
+	in := ReconcileInput{Type: TypeDynamic, Route: "migration-route", TargetDomain: "cc"}
+	res, _, ok := CheckPreconditions(in, dynGateway(), LinkFacts{}, ClusterIDs{})
+	if !ok {
+		t.Fatalf("want ok, got %+v", res)
+	}
+	seen := map[string]bool{}
+	for _, r := range res {
+		seen[r.Name] = r.OK
+	}
+	if !seen[LinkOneWayCheckName] || !seen[LinkHealthyCheckName] {
+		t.Errorf("want both link checks reported as passing, got %+v", res)
 	}
 }
