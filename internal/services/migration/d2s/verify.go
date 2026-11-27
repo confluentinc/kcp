@@ -186,7 +186,7 @@ func convertFenceCheck(gw *reconcile.GatewayConfig) reconcile.PreconditionResult
 
 // refuse renders report as --dry-run would and returns ErrVerifyRefused carrying every failed check.
 func (a *D2SActions) refuse(config *migrun.MigrationConfig, report reconcile.Report) error {
-	migplan.RenderReport(a.deps.Out, report, migplan.RenderView{Route: config.Route, TargetDomain: a.deps.Input.TargetDomain, Conversion: true})
+	migplan.RenderReport(a.deps.Out, report, migplan.RenderView{Route: config.Route, TargetDomain: a.deps.Input.TargetDomain, Mode: reconcile.ModeConvert})
 	var reasons []string
 	for _, pc := range report.Preconditions {
 		if !pc.OK {

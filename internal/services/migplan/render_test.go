@@ -292,7 +292,7 @@ func TestRenderReport_ConversionWording(t *testing.T) {
 		ConvertToStatic: true,
 	}
 	var buf bytes.Buffer
-	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", ArtifactNote: "plan ready", Conversion: true})
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", ArtifactNote: "plan ready", Mode: reconcile.ModeConvert})
 	out := buf.String()
 
 	for _, want := range []string{
@@ -319,7 +319,7 @@ func TestRenderReport_ConversionBlockedTopicRefuses(t *testing.T) {
 		Unchanged:     []reconcile.TopicVerdict{{Topic: "orders", Verdict: reconcile.Unchanged}},
 	}
 	var buf bytes.Buffer
-	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Conversion: true})
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Mode: reconcile.ModeConvert})
 	out := buf.String()
 
 	for _, want := range []string{"Link topics · 2", "[FAIL] clicks", "blocked", "Plan: 2 link topics, 1 blocked  (refused — no artifacts)"} {
@@ -336,7 +336,7 @@ func TestRenderReport_ConversionAlreadyStatic(t *testing.T) {
 		Preconditions: []reconcile.PreconditionResult{{Name: "route is already static on the target domain", OK: true}},
 	}
 	var buf bytes.Buffer
-	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Conversion: true})
+	RenderReport(&buf, r, RenderView{Route: "tbm-route", TargetDomain: "destination-domain", Mode: reconcile.ModeConvert})
 	out := buf.String()
 
 	if !strings.Contains(out, "Plan: route already static on its target  (nothing to do)") {
@@ -364,5 +364,77 @@ func TestRenderReportShowsCheckEvidence(t *testing.T) {
 	}
 	if strings.Index(out, "↳ p-0: 41") < strings.Index(out, "gateway pods serve the CR") {
 		t.Errorf("evidence must render under its check; got:\n%s", out)
+	}
+}
+
+func reversibleView(rev *reconcile.Reversal) RenderView {
+	return RenderView{Route: "migration-route", TargetDomain: "cc", ArtifactNote: "plan ready", Mode: reconcile.ModeReversibleStatic, Reversal: rev}
+}
+
+func TestRenderReport_ReversibleHeaderAndReverseSide(t *testing.T) {
+	color.NoColor = true
+	rev := &reconcile.Reversal{
+		Sides:     reconcile.Sides{Writable: reconcile.SideTarget, Mirror: reconcile.SideSource, WritableDomain: "cc", MirrorDomain: "cp", Bound: reconcile.SideSource, Moving: true},
+		ReverseOn: reconcile.SideTarget, Reverse: []string{"a"},
+	}
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{{Name: "route is static", OK: true}},
+		Migratable:    []reconcile.TopicVerdict{{Topic: "a"}},
+		AwaitStopped:  []reconcile.TopicVerdict{{Topic: "b"}},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, reversibleView(rev))
+	out := buf.String()
+	for _, want := range []string{
+		`Reversible migration plan · route "migration-route": cp → cc`,
+		"Reversal runs on the target copy of the link (cc)",
+		"[OK] route is static",
+		"Topics · 2 requested",
+		"+ a",
+		"~ b",
+		"awaiting reversal",
+		"Plan: 1 to migrate, 1 awaiting reversal, 0 unchanged  (plan ready)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Back-out") || strings.Contains(out, "promotion") {
+		t.Errorf("a normal flip has no back-out line and no promotion:\n%s", out)
+	}
+}
+
+func TestRenderReport_ReversibleBackOutLine(t *testing.T) {
+	color.NoColor = true
+	rev := &reconcile.Reversal{
+		Sides:     reconcile.Sides{Writable: reconcile.SideSource, Mirror: reconcile.SideTarget, WritableDomain: "cp", MirrorDomain: "cc", Bound: reconcile.SideSource, Fenced: true, BackOut: true, Moving: true},
+		ReverseOn: reconcile.SideSource, SwitchOnly: []string{"b"},
+	}
+	r := reconcile.Report{SwitchOnly: []reconcile.TopicVerdict{{Topic: "b"}}}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, reversibleView(rev))
+	out := buf.String()
+	for _, want := range []string{
+		`Reversible migration plan · route "migration-route": cp → cp`,
+		"Back-out: the route stays on cp; the switch only removes kcp's fence",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Reversal runs on") {
+		t.Errorf("nothing to reverse, so no reversal line:\n%s", out)
+	}
+}
+
+// A refusal carries no reversal; the header still names the route and where
+// it was meant to end up.
+func TestRenderReport_ReversibleRefusalHeader(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{Preconditions: []reconcile.PreconditionResult{{Name: "cluster link exists on both clusters", Detail: "never created"}}}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, reversibleView(nil))
+	if out := buf.String(); !strings.Contains(out, `Reversible migration plan · route "migration-route" → cc`) {
+		t.Errorf("header missing in:\n%s", out)
 	}
 }

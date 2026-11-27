@@ -468,3 +468,100 @@ func TestWireGatewayAndSecrets_UsesTheInjectedServiceAndBuildsNone(t *testing.T)
 	require.Error(t, err, "with no injected service migplan builds its own")
 	assert.Contains(t, err.Error(), "spec.gateway.kubeconfig")
 }
+
+func reversibleGM(t *testing.T) *manifest.GatewayMigration {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) manifest.CredentialsRef {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		return manifest.CredentialsRef{Path: p}
+	}
+	g := &manifest.GatewayMigration{}
+	g.Spec.Source = manifest.GatewaySource{Type: manifest.SourceConfluentPlatform, ClusterID: "src-id", RestEndpoint: "http://src-rest:8090",
+		BootstrapServers: []string{"src:9092"}, Credentials: write("src.yaml", "unauthenticated_plaintext:\n  use: true\n")}
+	g.Spec.Target = manifest.GatewayTarget{Type: manifest.TargetConfluentPlatform, ClusterID: "tgt-id",
+		Kafka: &manifest.TargetKafka{RestEndpoint: "http://tgt-rest:8090", BootstrapServers: []string{"tgt:9092"}}}
+	g.Spec.ClusterLink = manifest.GatewayClusterLink{Name: "rev-link",
+		LinkCredentials:       write("link.yaml", "api_key: TGT_KEY\napi_secret: TGT_SECRET\n"),
+		SourceLinkCredentials: write("source-link.yaml", "api_key: SRC_KEY\napi_secret: SRC_SECRET\n")}
+	g.Spec.ReversibleStaticMigration = &manifest.ReversibleStaticMigration{
+		Route:      manifest.ReversibleRouteRef{Name: "migration-route", SourceStreamingDomain: "cp", TargetStreamingDomain: "cc"},
+		WritableOn: "cc",
+		TopicGroup: []manifest.TopicGroupEntry{{Topics: strs("a", "b"), TopicPatterns: strs(`rev\..*`)}},
+	}
+	return g
+}
+
+func TestBuildReversibleInput_FromManifest(t *testing.T) {
+	in, err := buildReversibleInput(reversibleGM(t))
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.ReversibleInput{
+		Topics:          []string{"a", "b"},
+		TopicPatterns:   []string{`rev\..*`},
+		Route:           "migration-route",
+		LinkName:        "rev-link",
+		SourceDomain:    "cp",
+		TargetDomain:    "cc",
+		WritableOn:      "cc",
+		SourceClusterID: "src-id",
+		TargetClusterID: "tgt-id",
+	}, in)
+}
+
+func TestBuildReversibleInput_NeedsOneTopicGroup(t *testing.T) {
+	g := reversibleGM(t)
+	g.Spec.ReversibleStaticMigration.TopicGroup = nil
+	_, err := buildReversibleInput(g)
+	require.ErrorContains(t, err, "spec.reversibleStaticMigration.topicGroup")
+}
+
+func TestBuildReconcileInput_ReversibleIsAnInternalError(t *testing.T) {
+	_, err := buildReconcileInput(reversibleGM(t))
+	require.ErrorContains(t, err, "internal error: reversibleStaticMigration is reconciled through its own input")
+}
+
+func TestBuildReversibleLinkCopies_WiresBothRESTLegs(t *testing.T) {
+	src, tgt, err := buildReversibleLinkCopies(reversibleGM(t))
+	require.NoError(t, err)
+	s, ok := src.(*ClusterLinkCopy)
+	require.True(t, ok)
+	d, ok := tgt.(*ClusterLinkCopy)
+	require.True(t, ok)
+	assert.Equal(t, "http://src-rest:8090", s.cfg.RestEndpoint)
+	assert.Equal(t, "src-id", s.cfg.ClusterID)
+	assert.Equal(t, "rev-link", s.cfg.LinkName)
+	assert.Equal(t, "http://tgt-rest:8090", d.cfg.RestEndpoint)
+	assert.Equal(t, "tgt-id", d.cfg.ClusterID)
+	assert.Equal(t, "rev-link", d.cfg.LinkName)
+	assert.NotSame(t, s.svc, d.svc, "each copy has its own REST service and HTTP client")
+}
+
+func TestBuildReversibleLinkCopies_SourceCredentialsErrorNamesTheLeg(t *testing.T) {
+	g := reversibleGM(t)
+	g.Spec.ClusterLink.SourceLinkCredentials = manifest.CredentialsRef{Path: filepath.Join(t.TempDir(), "missing.yaml")}
+	_, _, err := buildReversibleLinkCopies(g)
+	require.ErrorContains(t, err, "source REST credentials")
+}
+
+// The reversible type takes its own path: only it resolves the source REST leg.
+func TestReconcile_ReversibleTakesItsOwnPath(t *testing.T) {
+	g := reversibleGM(t)
+	g.Spec.ClusterLink.SourceLinkCredentials = manifest.CredentialsRef{Path: filepath.Join(t.TempDir(), "missing.yaml")}
+	_, err := Reconcile(context.Background(), g, WithOutput(io.Discard),
+		WithGatewaySource(&fakeGateway{}), WithSecretExistenceChecker(&fakeSecretChecker{}))
+	require.ErrorContains(t, err, "source REST credentials")
+}
+
+func TestReconcile_UnknownTypeErrors(t *testing.T) {
+	_, err := Reconcile(context.Background(), &manifest.GatewayMigration{}, WithOutput(io.Discard))
+	require.ErrorContains(t, err, "exactly one of")
+}
+
+func TestNewResult_CarriesReversal(t *testing.T) {
+	rev := &reconcile.Reversal{ReverseOn: reconcile.SideTarget, Reverse: []string{"a"}}
+	r := newResult(&reconcile.Plan{Mode: reconcile.ModeReversibleStatic, Reversal: rev, Artifacts: &reconcile.Artifacts{MigrateTopics: []string{"a"}}})
+	assert.Same(t, rev, r.Reversal)
+	assert.Equal(t, reconcile.ModeReversibleStatic, r.Mode)
+	assert.Nil(t, newResult(&reconcile.Plan{Mode: reconcile.ModeStatic}).Reversal)
+}

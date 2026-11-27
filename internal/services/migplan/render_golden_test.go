@@ -60,7 +60,7 @@ func TestRenderReport_Golden(t *testing.T) {
 				Route:        tc.in.Route,
 				TargetDomain: tc.in.TargetDomain,
 				ArtifactNote: "plan ready",
-				Conversion:   tc.in.Type == reconcile.TypeDynamicToStatic,
+				Mode:         plan.Mode,
 			})
 
 			path := filepath.Join("testdata", "render", tc.mode+".golden")
