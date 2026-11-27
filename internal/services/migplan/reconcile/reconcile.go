@@ -268,6 +268,10 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 		return &Plan{Mode: ModeConvert, Report: Report{Preconditions: []PreconditionResult{fail(
 			"conversion reconciled by ReconcileConvert",
 			"the declared type is a dynamic-to-static conversion, so this run must be reconciled by ReconcileConvert, not the topic-migration strategies")}}}
+	case TypeReversibleStatic:
+		return &Plan{Mode: ModeReversibleStatic, Report: Report{Preconditions: []PreconditionResult{fail(
+			"reversibleStaticMigration reconciled by ReconcileReversibleStatic",
+			"the declared type is a reversible static migration, so this run must be reconciled by ReconcileReversibleStatic, not the topic-migration strategies")}}}
 	default:
 		return &Plan{Report: Report{Preconditions: []PreconditionResult{fail(
 			"migration type declared",

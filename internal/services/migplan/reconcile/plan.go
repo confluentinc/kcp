@@ -177,4 +177,8 @@ type Plan struct {
 	// blocks; SwitchoverRules is a whole {route: …} — the route converted to
 	// static. Never "apply this as the whole CR."
 	Mode PlanMode
+
+	// Reversal is a reversible static plan's sides and topic lists; nil for
+	// every other mode and on a refusal.
+	Reversal *Reversal
 }

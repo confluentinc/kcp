@@ -80,18 +80,10 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, link LinkFac
 	// re-reconciles to a no-op. An already-bound route whose mirror is NOT stopped
 	// still FailFasts ("routes to target but its mirror is not yet promoted").
 
-	staged, hasStaged := stagedAuthFor(rc.Raw, in.TargetDomain)
-	switch {
-	case !hasStaged:
-		res = append(res, fail("route carries pre-staged auth for the target domain", fmt.Sprintf("route %q has no pre-staged security.cluster.%s block — the redundant auth this switch depends on is not configured", in.Route, in.TargetDomain)))
-	case stringField(staged, "secretStore") == "":
-		res = append(res, fail("route carries pre-staged auth for the target domain", fmt.Sprintf("route %q's security.cluster.%s has no secretStore", in.Route, in.TargetDomain)))
-	default:
-		if auth, ok := mapField(staged, "authentication"); !ok || len(auth) == 0 {
-			res = append(res, fail("route carries pre-staged auth for the target domain", fmt.Sprintf("route %q's security.cluster.%s has no authentication block", in.Route, in.TargetDomain)))
-		} else {
-			res = append(res, pass("route carries pre-staged auth for the target domain"))
-		}
+	if p := stagedAuthProblem(in.Route, rc.Raw, in.TargetDomain); p != "" {
+		res = append(res, fail("route carries pre-staged auth for the target domain", p))
+	} else {
+		res = append(res, pass("route carries pre-staged auth for the target domain"))
 	}
 
 	switch {
@@ -155,6 +147,23 @@ func staticDomainBootstrapIDs(gw *GatewayConfig) map[string]map[string]struct{} 
 		domains[name] = ids
 	}
 	return domains
+}
+
+// stagedAuthProblem says what is missing from route's pre-staged
+// security.cluster.<domain> block; "" when it carries a secretStore and an
+// authentication block.
+func stagedAuthProblem(routeName string, route map[string]any, domain string) string {
+	staged, ok := stagedAuthFor(route, domain)
+	switch {
+	case !ok:
+		return fmt.Sprintf("route %q has no pre-staged security.cluster.%s block — the redundant auth this switch depends on is not configured", routeName, domain)
+	case stringField(staged, "secretStore") == "":
+		return fmt.Sprintf("route %q's security.cluster.%s has no secretStore", routeName, domain)
+	}
+	if auth, ok := mapField(staged, "authentication"); !ok || len(auth) == 0 {
+		return fmt.Sprintf("route %q's security.cluster.%s has no authentication block", routeName, domain)
+	}
+	return ""
 }
 
 // stagedAuthFor returns route's pre-staged security.cluster.<domainName>

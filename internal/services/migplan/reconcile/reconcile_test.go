@@ -1255,3 +1255,14 @@ func TestReconcileConvert_UnrecognizedRouteModeNamesTheConversionDeclaration(t *
 		t.Fatalf("detail = %q", d)
 	}
 }
+
+func TestReconcile_ReversibleTypeIsNotReconciledHere(t *testing.T) {
+	in := ReconcileInput{Type: TypeReversibleStatic, Topics: []string{"a"}, Route: "migration-route", TargetDomain: "cc"}
+	p := Reconcile(in, reversibleGateway("cp", false), []string{"a"}, []string{"a"}, map[string]MirrorState{"a": MirrorActive}, LinkFacts{}, ClusterIDs{}, nil, "")
+	if !p.Report.Refused() || p.Mode != ModeReversibleStatic || p.Artifacts != nil {
+		t.Fatalf("want a refusal in mode %q, got mode %q: %+v", ModeReversibleStatic, p.Mode, p.Report)
+	}
+	if !hasFailedCheck(p.Report.Preconditions, "reversibleStaticMigration reconciled by ReconcileReversibleStatic") {
+		t.Errorf("preconditions = %+v", p.Report.Preconditions)
+	}
+}

@@ -234,3 +234,59 @@ func TestGatewaySyncConvert(t *testing.T) {
 		}
 	})
 }
+
+func cannotTellReversible(p *Plan) *Plan {
+	gw := reversibleGateway("cp", false)
+	gw.Sync = testSync(SyncCannotTell)
+	return applyGatewaySync(p, gw)
+}
+
+func TestApplyGatewaySync_ReversibleCannotTellWithFenceRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{Migratable: []TopicVerdict{{Topic: "a", Verdict: Migratable}}},
+		Artifacts: &Artifacts{FencedAtStart: true},
+		Reversal:  &Reversal{ReverseOn: SideTarget, Reverse: []string{"a"}}})
+	if !p.Report.Refused() || p.Artifacts != nil || p.Reversal != nil {
+		t.Fatalf("want a refusal stripped of artifacts and reversal, got %+v", p)
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "the fence") {
+		t.Errorf("detail = %q, want it to name the fence", pc.Detail)
+	}
+}
+
+func TestApplyGatewaySync_ReversibleCannotTellWithReversedTopicsRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{SwitchOnly: []TopicVerdict{{Topic: "a", Verdict: SwitchOnly}}},
+		Artifacts: &Artifacts{}})
+	if !p.Report.Refused() {
+		t.Fatal("a reversed topic relies on an earlier fence, so cannot-tell must refuse")
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "1 topic(s) already writable on the writable side") {
+		t.Errorf("detail = %q", pc.Detail)
+	}
+}
+
+// A reversible plan with nothing to do relies on the earlier switch having
+// reached the pods, as a finished static migration does.
+func TestApplyGatewaySync_ReversibleCannotTellNothingToDoRefuses(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic, NothingToDo: true,
+		Report: Report{Unchanged: []TopicVerdict{{Topic: "a", Verdict: Unchanged}, {Topic: "b", Verdict: Unchanged}}}})
+	if !p.Report.Refused() || p.NothingToDo {
+		t.Fatalf("want refused, got %+v", p)
+	}
+	if pc := mustSyncPrecondition(t, p); !strings.Contains(pc.Detail, "2 topic(s) already writable on the writable side") {
+		t.Errorf("detail = %q", pc.Detail)
+	}
+}
+
+func TestApplyGatewaySync_ReversibleFreshCannotTellIsASkip(t *testing.T) {
+	p := cannotTellReversible(&Plan{Mode: ModeReversibleStatic,
+		Report:    Report{Migratable: []TopicVerdict{{Topic: "a", Verdict: Migratable}}},
+		Artifacts: &Artifacts{}})
+	if p.Report.Refused() || p.Artifacts == nil {
+		t.Fatalf("a fresh flip writes the fence first, so cannot-tell must not refuse: %+v", p.Report.Preconditions)
+	}
+	if pc := mustSyncPrecondition(t, p); !pc.Skipped {
+		t.Errorf("want a skip, got %+v", pc)
+	}
+}

@@ -4,13 +4,15 @@ package reconcile
 // manifest.MigrationType's values: the reconcile core does not import manifest,
 // so the migplan layer maps one onto the other. STATIC is the all-at-once
 // strategy (reconcileStatic), DYNAMIC the topic-based one (reconcileDynamic),
-// DYNAMIC_TO_STATIC the route conversion (ReconcileConvert).
+// DYNAMIC_TO_STATIC the route conversion (ReconcileConvert), REVERSIBLE_STATIC
+// the reversible static migration (ReconcileReversibleStatic).
 type MigrationType string
 
 const (
-	TypeStatic          MigrationType = "STATIC"
-	TypeDynamic         MigrationType = "DYNAMIC"
-	TypeDynamicToStatic MigrationType = "DYNAMIC_TO_STATIC"
+	TypeStatic           MigrationType = "STATIC"
+	TypeDynamic          MigrationType = "DYNAMIC"
+	TypeDynamicToStatic  MigrationType = "DYNAMIC_TO_STATIC"
+	TypeReversibleStatic MigrationType = "REVERSIBLE_STATIC"
 )
 
 // sectionKey is the manifest section that declares this type, for refusals that
@@ -23,6 +25,8 @@ func (t MigrationType) sectionKey() string {
 		return "dynamicMigration"
 	case TypeDynamicToStatic:
 		return "dynamicToStaticConversion"
+	case TypeReversibleStatic:
+		return "reversibleStaticMigration"
 	}
 	return ""
 }
@@ -36,6 +40,9 @@ const (
 	ModeStatic  PlanMode = "static"
 	ModeDynamic PlanMode = "dynamic"
 	ModeConvert PlanMode = "convert"
+	// ModeReversibleStatic artifacts are the static route's: FenceRules a
+	// {fence: …} block, SwitchoverRules and RollbackFenceRules a whole route.
+	ModeReversibleStatic PlanMode = "reversible-static"
 )
 
 // RouteMode is the Gateway route's own mode (the CR's `mode` field, or the
